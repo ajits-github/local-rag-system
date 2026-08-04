@@ -1,0 +1,71 @@
+"""Single place mapping config `provider` strings to concrete component
+classes. Ingestion/retrieval pipelines and the API depend only on the base
+interfaces; this module is the one spot that knows about concrete
+implementations, so adding a new provider never touches pipeline code."""
+
+from __future__ import annotations
+
+from rag.config import AppConfig
+from rag.embedders.base import Embedder
+from rag.embedders.sentence_transformers_embedder import SentenceTransformersEmbedder
+from rag.generation.base import LLM
+from rag.generation.ollama_llm import OllamaLLM
+from rag.rerankers.base import Reranker
+from rag.rerankers.cohere import CohereReranker
+from rag.rerankers.cross_encoder import CrossEncoderReranker
+from rag.rerankers.noop import NoOpReranker
+from rag.vectorstore.base import VectorStore
+from rag.vectorstore.pgvector import PgVectorStore
+
+
+def build_embedder(config: AppConfig) -> Embedder:
+    if config.embedding.provider == "sentence_transformers":
+        return SentenceTransformersEmbedder(
+            model_name=config.embedding.model_name,
+            device=config.embedding.device,
+            batch_size=config.embedding.batch_size,
+            normalize=config.embedding.normalize,
+        )
+    raise ValueError(f"Unknown embedding provider: {config.embedding.provider}")
+
+
+def build_vectorstore(config: AppConfig) -> VectorStore:
+    if config.vectorstore.provider == "pgvector":
+        return PgVectorStore(
+            dsn=config.database_url(),
+            documents_table=config.vectorstore.documents_table,
+            chunks_table=config.vectorstore.chunks_table,
+            distance_metric=config.vectorstore.distance_metric,
+        )
+    raise ValueError(f"Unknown vectorstore provider: {config.vectorstore.provider}")
+
+
+def build_reranker(config: AppConfig) -> Reranker:
+    provider = config.reranker.provider
+    if provider == "none":
+        return NoOpReranker()
+    if provider == "cross_encoder":
+        return CrossEncoderReranker(
+            model_name=config.reranker.cross_encoder.model_name,
+            device=config.embedding.device,
+        )
+    if provider == "cohere":
+        api_key = config.cohere_api_key()
+        if not api_key:
+            raise RuntimeError(
+                "reranker.provider is 'cohere' but env var "
+                f"'{config.reranker.cohere.api_key_env_var}' is not set"
+            )
+        return CohereReranker(api_key=api_key, model_name=config.reranker.cohere.model_name)
+    raise ValueError(f"Unknown reranker provider: {provider}")
+
+
+def build_llm(config: AppConfig) -> LLM:
+    if config.generation.provider == "ollama":
+        return OllamaLLM(
+            model_name=config.generation.model_name,
+            base_url=config.ollama_base_url(),
+            temperature=config.generation.temperature,
+            max_tokens=config.generation.max_tokens,
+        )
+    raise ValueError(f"Unknown generation provider: {config.generation.provider}")

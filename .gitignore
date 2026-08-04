@@ -1,0 +1,38 @@
+# Environments
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local model / HF caches
+.cache/
+models/
+.hf_cache/
+
+# Docker volumes / local data
+pgdata/
+docker/pgdata/
+data/uploads/*
+!data/uploads/.gitkeep
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
