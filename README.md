@@ -188,6 +188,7 @@ regenerate it instead (see "Recording a new experiment").
 | 1 | TechFusion baseline (qwen2.5:1.5b, no reranker) | qwen2.5:1.5b | all-MiniLM-L6-v2 | none | 0.891 | 0.967 | 0.978 | 0.847 | 0.432 | 3.7s | techfusion | 2026-08-05 |
 | 2 | qwen2.5:3b (candidate generation model) | qwen2.5:3b | all-MiniLM-L6-v2 | none | 0.891 | 0.967 | 0.978 | 0.847 | 0.453 | 12.1s | techfusion | 2026-08-05 |
 | 3 | qwen2.5:3b + cross_encoder reranker | qwen2.5:3b | all-MiniLM-L6-v2 | cross_encoder (ms-marco-MiniLM-L-6-v2) | 0.891 | 0.967 | 0.978 | 0.822 | 0.507 | 10.1s | techfusion | 2026-08-05 |
+| 4 | qwen2.5:3b + cross_encoder + BGE-small embedder | qwen2.5:3b | bge-small-en-v1.5 | cross_encoder (ms-marco-MiniLM-L-6-v2) | 0.902 | 0.935 | 0.957 | 0.825 | 0.483 | 10.3s | techfusion-bge-small | 2026-08-05 |
 <!-- EXPERIMENTS_TABLE_END -->
 
 *Total latency is the mean of retrieval+generation per question, at the
