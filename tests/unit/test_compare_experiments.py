@@ -22,6 +22,7 @@ def _record(**overrides) -> dict:
         "label": "baseline",
         "timestamp": "2026-08-05T15:42:44+00:00",
         "generation_model": "qwen2.5:1.5b",
+        "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
         "reranker_provider": "none",
         "reranker_model": None,
         "recall_at_5": 0.891,
@@ -42,14 +43,26 @@ def test_render_table_empty_says_no_experiments():
 
 def test_render_table_includes_row_per_record():
     table = compare_experiments.render_table([_record()])
-    assert "| 1 | baseline | qwen2.5:1.5b | none | 0.891 | 0.967 | 0.978 | 0.847 | 0.432 | 3.7s | techfusion | 2026-08-05 |" in table
+    assert "| 1 | baseline | qwen2.5:1.5b | all-MiniLM-L6-v2 | none | 0.891 | 0.967 | 0.978 | 0.847 | 0.432 | 3.7s | techfusion | 2026-08-05 |" in table
 
 
 def test_render_table_shows_reranker_model_when_present():
     table = compare_experiments.render_table(
         [_record(reranker_provider="cross_encoder", reranker_model="cross-encoder/ms-marco-MiniLM-L-6-v2")]
     )
-    assert "cross_encoder (cross-encoder/ms-marco-MiniLM-L-6-v2)" in table
+    assert "cross_encoder (ms-marco-MiniLM-L-6-v2)" in table
+
+
+def test_render_table_shortens_embedder_namespace_prefix():
+    table = compare_experiments.render_table(
+        [_record(embedding_model="sentence-transformers/all-MiniLM-L6-v2")]
+    )
+    assert "all-MiniLM-L6-v2" in table
+    assert "sentence-transformers/all-MiniLM-L6-v2" not in table
+
+
+def test_short_model_name_handles_missing_value():
+    assert compare_experiments._short_model_name(None) == "?"
 
 
 def test_render_table_handles_missing_metrics_gracefully():

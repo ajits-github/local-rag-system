@@ -38,26 +38,35 @@ def _fmt(value, spec: str = ".3f") -> str:
     return "-" if value is None else format(value, spec)
 
 
+def _short_model_name(model_name: str | None) -> str:
+    """Drop a 'namespace/' prefix for table compactness, e.g.
+    'sentence-transformers/all-MiniLM-L6-v2' -> 'all-MiniLM-L6-v2'."""
+    if not model_name:
+        return "?"
+    return model_name.rsplit("/", 1)[-1]
+
+
 def render_table(records: list[dict]) -> str:
     if not records:
         return "No experiments recorded yet -- see scripts/record_experiment.py."
 
     header = (
-        "| # | Label | Generation model | Reranker | Recall@5 | Recall@10 "
+        "| # | Label | Generation model | Embedder | Reranker | Recall@5 | Recall@10 "
         "| Hit Rate@10 | MRR | Answer quality | Total latency | Dataset | Date |\n"
-        "|---|---|---|---|---|---|---|---|---|---|---|---|"
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|"
     )
     rows = [header]
     for i, r in enumerate(records, start=1):
         reranker = r.get("reranker_provider") or "none"
         if r.get("reranker_model"):
-            reranker = f"{reranker} ({r['reranker_model']})"
+            reranker = f"{reranker} ({_short_model_name(r['reranker_model'])})"
         total_latency_ms = r.get("total_latency_ms")
         total_latency = f"{total_latency_ms / 1000:.1f}s" if total_latency_ms is not None else "-"
         date = (r.get("timestamp") or "")[:10] or "-"
         rows.append(
             f"| {i} | {r.get('label') or r.get('experiment_id', '?')} "
-            f"| {r.get('generation_model', '?')} | {reranker} "
+            f"| {r.get('generation_model', '?')} | {_short_model_name(r.get('embedding_model'))} "
+            f"| {reranker} "
             f"| {_fmt(r.get('recall_at_5'))} | {_fmt(r.get('recall_at_10'))} "
             f"| {_fmt(r.get('hit_rate_at_10'))} | {_fmt(r.get('mrr'))} "
             f"| {_fmt(r.get('answer_quality'))} | {total_latency} "
