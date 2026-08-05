@@ -13,15 +13,17 @@ chunks from a different dataset than the one it's meant to be scoring
 Usage:
     python -m rag.eval.run_eval --gold data/eval/techfusion_gold.jsonl --dataset-id techfusion
     python -m rag.eval.run_eval --gold data/eval/sample_gold.jsonl --dataset-id sample_docs
-    python -m rag.eval.run_eval --gold data/eval/techfusion_gold.jsonl --dataset-id techfusion --skip-generation
+    python -m rag.eval.run_eval --gold data/eval/techfusion_gold.jsonl \
+        --dataset-id techfusion --skip-generation
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from rag.config import AppConfig, load_config
 from rag.eval.answer_quality import KeywordOverlapScorer
@@ -36,14 +38,17 @@ RECALL_CUTOFFS = (5, 10)
 
 
 def _mean(values: list[float]) -> float:
+    """Arithmetic mean of `values`, or 0.0 if empty."""
     return sum(values) / len(values) if values else 0.0
 
 
-def _config_summary(config: AppConfig) -> dict:
-    """Snapshot of the provider choices that produced this report -- makes
-    a saved baseline file self-describing, so a later comparison (e.g.
-    scripts/render_benchmarks.py) doesn't depend on remembering which
-    config was active when it was generated."""
+def _config_summary(config: AppConfig) -> dict[str, Any]:
+    """Snapshot the provider choices that produced this report.
+
+    Makes a saved baseline file self-describing, so a later comparison
+    (e.g. scripts/render_benchmarks.py) doesn't depend on remembering
+    which config was active when it was generated.
+    """
     return {
         "embedding_model": config.embedding.model_name,
         "chunking_provider": config.chunking.provider,
@@ -61,7 +66,33 @@ def evaluate(
     examples: list[GoldExample],
     dataset_id: str,
     run_generation: bool = True,
-) -> dict:
+) -> dict[str, Any]:
+    """Run retrieval (and optionally generation) over `examples` and score the results.
+
+    Every retrieval call is restricted to `dataset_id` via a mandatory
+    filter, so an evaluation can never silently score chunks retrieved
+    from a different dataset.
+
+    Parameters
+    ----------
+    pipeline : RetrievalPipeline
+        Pipeline to evaluate.
+    examples : list[GoldExample]
+        Gold questions to run.
+    dataset_id : str
+        Namespace to restrict every retrieval to.
+    run_generation : bool, optional
+        If True (default), also runs `pipeline.answer` for latency and
+        answer-quality metrics; if False, only retrieval metrics are
+        computed.
+
+    Returns
+    -------
+    dict[str, Any]
+        Report with `retrieval`, `hit_rate`, `mrr`, and (if
+        `run_generation`) `latency_ms`/`answer_quality` keys, plus
+        `per_example` detail.
+    """
     scorer = KeywordOverlapScorer() if run_generation else None
     dataset_filter = {"dataset_id": dataset_id}
 
@@ -72,7 +103,7 @@ def evaluate(
     total_ms_values: list[float] = []
     answerable_quality_scores: list[float] = []
     unanswerable_quality_scores: list[float] = []
-    per_example: list[dict] = []
+    per_example: list[dict[str, Any]] = []
 
     for example in examples:
         # Broad retrieval (top 10, un-truncated by the reranker) purely to
@@ -89,7 +120,7 @@ def evaluate(
         all_retrieved_sources.append(retrieved_sources)
         all_relevant.append(example.relevant_documents)
 
-        entry: dict = {
+        entry: dict[str, Any] = {
             "question": example.question,
             "question_type": example.question_type,
             "difficulty": example.difficulty,
@@ -115,12 +146,16 @@ def evaluate(
             if scorer is not None and example.expected_answer:
                 quality = scorer.score(example.question, result["answer"], example.expected_answer)
                 entry["answer_quality"] = quality
-                bucket = unanswerable_quality_scores if example.unanswerable else answerable_quality_scores
+                bucket = (
+                    unanswerable_quality_scores
+                    if example.unanswerable
+                    else answerable_quality_scores
+                )
                 bucket.append(quality)
 
         per_example.append(entry)
 
-    report: dict = {
+    report: dict[str, Any] = {
         "dataset_id": dataset_id,
         "num_examples": len(examples),
         "retrieval": {
@@ -164,19 +199,38 @@ def evaluate(
 
 def run(
     gold_path: Path, config_path: str | None, dataset_id: str, run_generation: bool = True
-) -> dict:
+) -> dict[str, Any]:
+    """Load config and gold data, run `evaluate`, and attach a report header.
+
+    Parameters
+    ----------
+    gold_path : Path
+        Path to a gold JSONL file.
+    config_path : str | None
+        Override config path, or None to use `config/default.yaml`.
+    dataset_id : str
+        Namespace to restrict every retrieval to.
+    run_generation : bool, optional
+        Passed through to `evaluate`, by default True.
+
+    Returns
+    -------
+    dict[str, Any]
+        `evaluate`'s report, plus `generated_at` and `config` keys.
+    """
     config = load_config(config_path) if config_path else load_config()
     pipeline = RetrievalPipeline(config)
     examples = load_gold_jsonl(gold_path)
     result = evaluate(pipeline, examples, dataset_id, run_generation=run_generation)
     return {
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": datetime.now(UTC).isoformat(),
         "config": _config_summary(config),
         **result,
     }
 
 
 def main() -> None:
+    """CLI entrypoint: parse args, run `evaluate`, and print the JSON report."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--gold", required=True, help="Path to a gold JSONL file")
     parser.add_argument(

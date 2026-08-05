@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from pydantic import ValidationError
@@ -9,7 +9,8 @@ from rag.schemas import Chunk, ChunkMetadata, RawDocument
 
 
 def test_raw_document_requires_content_and_timestamps():
-    now = datetime.now(timezone.utc)
+    """RawDocument accepts its required fields and defaults optional ones to None."""
+    now = datetime.now(UTC)
     doc = RawDocument(
         content="hello",
         source="a.txt",
@@ -22,12 +23,14 @@ def test_raw_document_requires_content_and_timestamps():
 
 
 def test_raw_document_missing_required_field_raises():
+    """Omitting a required timestamp field raises a pydantic ValidationError."""
     with pytest.raises(ValidationError):
         RawDocument(content="hello", source="a.txt", source_type="text")
 
 
 def test_chunk_metadata_chunk_id_convention():
-    now = datetime.now(timezone.utc)
+    """Chunk.id follows the f"{document_id}_{chunk_index}" convention."""
+    now = datetime.now(UTC)
     metadata = ChunkMetadata(
         document_id="doc-1",
         chunk_id="doc-1_0",
@@ -44,7 +47,8 @@ def test_chunk_metadata_chunk_id_convention():
 
 
 def test_chunk_metadata_requires_dataset_id():
-    now = datetime.now(timezone.utc)
+    """Omitting dataset_id raises a pydantic ValidationError (no silent default)."""
+    now = datetime.now(UTC)
     with pytest.raises(ValidationError):
         ChunkMetadata(
             document_id="doc-1",

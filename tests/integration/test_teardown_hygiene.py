@@ -1,8 +1,8 @@
-"""Proves the teardown mechanism every other integration test relies on
-(`VectorStore.delete_document`) actually leaves zero rows behind in both
-`documents` and `chunks` -- not just `chunks`, which is what the old
-`delete_chunks_by_document_id`-based teardown left orphaned (see
-PROJECT_JOURNAL.md for the incident this fixes).
+"""Proves `VectorStore.delete_document` leaves zero rows in both documents and chunks.
+
+Every other integration test relies on this teardown mechanism. Not just
+`chunks`, which is what the old `delete_chunks_by_document_id`-based
+teardown left orphaned (see PROJECT_JOURNAL.md for the incident this fixes).
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ from rag.ingestion.pipeline import IngestionPipeline
 
 
 def _row_counts(config, dataset_id: str) -> tuple[int, int]:
+    """Return (documents row count, chunks row count) for dataset_id."""
     conn = psycopg2.connect(config.database_url())
     try:
         with conn.cursor() as cur:
@@ -35,6 +36,7 @@ def _row_counts(config, dataset_id: str) -> tuple[int, int]:
 
 
 def test_delete_document_leaves_no_document_or_chunk_rows(require_postgres, config, tmp_path: Path):
+    """delete_document leaves zero rows in both documents and chunks tables."""
     dataset_id = f"pytest-teardown-{uuid.uuid4()}"
     pipeline = IngestionPipeline(config)
     path = tmp_path / "doc.txt"

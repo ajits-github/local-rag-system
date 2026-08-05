@@ -9,6 +9,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 
 
 def _load_script(name: str) -> object:
+    """Import a scripts/*.py module by file path (scripts/ isn't a package)."""
     spec = importlib.util.spec_from_file_location(name, SCRIPTS_DIR / f"{name}.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -19,6 +20,7 @@ record_experiment = _load_script("record_experiment")
 
 
 def _fake_eval_report() -> dict:
+    """Build a sample rag.eval.run_eval report with generation metrics."""
     return {
         "generated_at": "2026-08-06T00:00:00+00:00",
         "dataset_id": "unit-test-dataset",
@@ -31,6 +33,7 @@ def _fake_eval_report() -> dict:
 
 
 def test_build_experiment_record_reads_config_not_report():
+    """Config-derived record fields come from AppConfig, not the report's own summary."""
     # Config values must come from the actual AppConfig, not the report's
     # own (possibly incomplete/stale) embedded summary -- this is what lets
     # older eval reports (missing vector_store/reranker_model) still work.
@@ -52,6 +55,7 @@ def test_build_experiment_record_reads_config_not_report():
 
 
 def test_build_experiment_record_flattens_metrics_from_report():
+    """Retrieval/latency/quality metrics are flattened from the eval report."""
     config = load_config()
     record = record_experiment.build_experiment_record(
         _fake_eval_report(), config, "experiment_999", "unit test"
@@ -70,6 +74,7 @@ def test_build_experiment_record_flattens_metrics_from_report():
 
 
 def test_build_experiment_record_handles_missing_generation_fields():
+    """A --skip-generation report yields None for generation-derived fields."""
     # A --skip-generation report has no latency_ms/answer_quality at all.
     config = load_config()
     sparse_report = {
@@ -90,6 +95,7 @@ def test_build_experiment_record_handles_missing_generation_fields():
 
 
 def test_reranker_model_is_none_for_none_provider():
+    """_reranker_model returns None when the reranker provider is 'none'."""
     config = load_config()
     assert config.reranker.provider == "none"
     assert record_experiment._reranker_model(config) is None

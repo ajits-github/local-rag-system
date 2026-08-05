@@ -1,12 +1,15 @@
+"""pgvector `VectorStore` backend: Postgres + the pgvector extension."""
+
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import psycopg2
 import psycopg2.extras
 from pgvector.psycopg2 import register_vector
+from psycopg2.extensions import connection as PgConnection
 from psycopg2.pool import ThreadedConnectionPool
 
 from rag.schemas import Chunk, ChunkMetadata, SearchResult
@@ -27,20 +30,41 @@ class PgVectorStore(VectorStore):
         minconn: int = 1,
         maxconn: int = 5,
     ) -> None:
+        """Open a threaded connection pool against `dsn`.
+
+        Parameters
+        ----------
+        dsn : str
+            Postgres connection string.
+        documents_table : str, optional
+            Name of the documents table, by default ``"documents"``.
+        chunks_table : str, optional
+            Name of the chunks table, by default ``"chunks"``.
+        distance_metric : str, optional
+            One of ``"cosine"``, ``"l2"``, ``"inner_product"``, by default
+            ``"cosine"``.
+        minconn : int, optional
+            Minimum pooled connections, by default 1.
+        maxconn : int, optional
+            Maximum pooled connections, by default 5.
+        """
         self._documents_table = documents_table
         self._chunks_table = chunks_table
         self._distance_op = _DISTANCE_OPERATORS[distance_metric]
         self._pool = ThreadedConnectionPool(minconn, maxconn, dsn)
 
-    def _conn(self):
+    def _conn(self) -> PgConnection:
+        """Check out a pooled connection with the vector type adapter registered."""
         conn = self._pool.getconn()
         register_vector(conn)
         return conn
 
-    def _putconn(self, conn) -> None:
+    def _putconn(self, conn: PgConnection) -> None:
+        """Return a connection to the pool."""
         self._pool.putconn(conn)
 
     def health_check(self) -> bool:
+        """See `VectorStore.health_check`."""
         conn = self._conn()
         try:
             with conn.cursor() as cur:
@@ -55,6 +79,7 @@ class PgVectorStore(VectorStore):
     def get_or_create_document_id(
         self, source: str, checksum: str, dataset_id: str
     ) -> tuple[str, bool]:
+        """See `VectorStore.get_or_create_document_id`."""
         conn = self._conn()
         try:
             with conn:
@@ -65,13 +90,14 @@ class PgVectorStore(VectorStore):
                         (source, dataset_id),
                     )
                     row = cur.fetchone()
-                    now = datetime.now(timezone.utc)
+                    now = datetime.now(UTC)
 
                     if row is None:
                         document_id = str(uuid.uuid4())
                         cur.execute(
                             f"""INSERT INTO {self._documents_table}
-                                (document_id, source, dataset_id, checksum, created_at, last_modified)
+                                (document_id, source, dataset_id, checksum,
+                                 created_at, last_modified)
                                 VALUES (%s, %s, %s, %s, %s, %s)""",
                             (document_id, source, dataset_id, checksum, now, now),
                         )
@@ -91,6 +117,7 @@ class PgVectorStore(VectorStore):
             self._putconn(conn)
 
     def delete_chunks_by_document_id(self, document_id: str) -> None:
+        """See `VectorStore.delete_chunks_by_document_id`."""
         conn = self._conn()
         try:
             with conn:
@@ -103,6 +130,7 @@ class PgVectorStore(VectorStore):
             self._putconn(conn)
 
     def delete_document(self, document_id: str) -> None:
+        """See `VectorStore.delete_document`."""
         conn = self._conn()
         try:
             with conn:
@@ -115,6 +143,7 @@ class PgVectorStore(VectorStore):
             self._putconn(conn)
 
     def delete_dataset(self, dataset_id: str) -> None:
+        """See `VectorStore.delete_dataset`."""
         conn = self._conn()
         try:
             with conn:
@@ -127,6 +156,7 @@ class PgVectorStore(VectorStore):
             self._putconn(conn)
 
     def add_chunks(self, chunks: list[Chunk]) -> None:
+        """See `VectorStore.add_chunks`."""
         if not chunks:
             return
         conn = self._conn()
@@ -177,6 +207,7 @@ class PgVectorStore(VectorStore):
         top_k: int,
         filters: dict[str, Any] | None = None,
     ) -> list[SearchResult]:
+        """See `VectorStore.search`."""
         where_clauses = []
         params: list[Any] = [query_embedding]
 
@@ -212,9 +243,21 @@ class PgVectorStore(VectorStore):
         results = []
         for row in rows:
             (
-                chunk_id, document_id, chunk_index, content,
-                source, source_type, title, author, url,
-                created_at, last_modified, language, category, dataset_id, distance,
+                chunk_id,
+                document_id,
+                chunk_index,
+                content,
+                source,
+                source_type,
+                title,
+                author,
+                url,
+                created_at,
+                last_modified,
+                language,
+                category,
+                dataset_id,
+                distance,
             ) = row
             metadata = ChunkMetadata(
                 document_id=str(document_id),

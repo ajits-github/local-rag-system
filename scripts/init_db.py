@@ -22,6 +22,22 @@ from rag.config import DEFAULT_CONFIG_PATH, load_config  # noqa: E402
 
 
 def build_schema_sql(*, documents_table: str, chunks_table: str, dimension: int) -> str:
+    """Build the idempotent DDL that creates/migrates the documents and chunks tables.
+
+    Parameters
+    ----------
+    documents_table : str
+        Name of the documents table.
+    chunks_table : str
+        Name of the chunks table.
+    dimension : int
+        Embedding vector dimension, used for the chunks table's `VECTOR(n)` column.
+
+    Returns
+    -------
+    str
+        A multi-statement SQL script, safe to re-run.
+    """
     return f"""
     CREATE EXTENSION IF NOT EXISTS vector;
 
@@ -71,7 +87,8 @@ def build_schema_sql(*, documents_table: str, chunks_table: str, dimension: int)
         IF NOT EXISTS (
             SELECT 1 FROM pg_constraint WHERE conname = '{documents_table}_source_dataset_id_key'
         ) THEN
-            EXECUTE 'ALTER TABLE {documents_table} ADD CONSTRAINT {documents_table}_source_dataset_id_key UNIQUE (source, dataset_id)';
+            EXECUTE 'ALTER TABLE {documents_table} ADD CONSTRAINT '
+                '{documents_table}_source_dataset_id_key UNIQUE (source, dataset_id)';
         END IF;
     END $$;
 
@@ -93,6 +110,7 @@ def build_schema_sql(*, documents_table: str, chunks_table: str, dimension: int)
 
 
 def main() -> None:
+    """CLI entrypoint: build the schema SQL from config and run it."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH))
     args = parser.parse_args()
@@ -109,10 +127,13 @@ def main() -> None:
         with conn:
             with conn.cursor() as cur:
                 cur.execute(sql)
+        used_config = (
+            DEFAULT_CONFIG_PATH.name if args.config == str(DEFAULT_CONFIG_PATH) else args.config
+        )
         print(
             f"Initialized '{config.vectorstore.documents_table}' and "
             f"'{config.vectorstore.chunks_table}' (dim={config.embedding.dimension}) "
-            f"using {DEFAULT_CONFIG_PATH.name if args.config == str(DEFAULT_CONFIG_PATH) else args.config}"
+            f"using {used_config}"
         )
     finally:
         conn.close()

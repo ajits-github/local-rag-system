@@ -1,6 +1,8 @@
-"""Render a Markdown comparison table from every experiments/results/*.json
-record (written by scripts/record_experiment.py), save it to
-experiments/reports/comparison.md, and splice it into README.md between
+"""Render a Markdown comparison table from every experiment record.
+
+Reads every experiments/results/*.json record (written by
+scripts/record_experiment.py), saves the table to
+experiments/reports/comparison.md, and splices it into README.md between
 the EXPERIMENTS_TABLE markers so the README never has to be hand-edited
 after a new experiment is recorded.
 
@@ -14,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_RESULTS_DIR = ROOT / "experiments" / "results"
@@ -24,7 +27,20 @@ TABLE_START = "<!-- EXPERIMENTS_TABLE_START -->"
 TABLE_END = "<!-- EXPERIMENTS_TABLE_END -->"
 
 
-def load_records(results_dir: Path) -> list[dict]:
+def load_records(results_dir: Path) -> list[dict[str, Any]]:
+    """Load every experiment record JSON file, sorted by `experiment_id`.
+
+    Parameters
+    ----------
+    results_dir : Path
+        Directory containing `*.json` records written by `record_experiment.py`.
+
+    Returns
+    -------
+    list[dict[str, Any]]
+        Parsed records, ordered by `experiment_id` (not filename, so
+        "experiment_2" doesn't sort after "experiment_10").
+    """
     records = []
     for path in sorted(results_dir.glob("*.json")):
         records.append(json.loads(path.read_text(encoding="utf-8")))
@@ -34,19 +50,34 @@ def load_records(results_dir: Path) -> list[dict]:
     return records
 
 
-def _fmt(value, spec: str = ".3f") -> str:
+def _fmt(value: float | None, spec: str = ".3f") -> str:
+    """Format a metric value, or "-" if it's missing."""
     return "-" if value is None else format(value, spec)
 
 
 def _short_model_name(model_name: str | None) -> str:
-    """Drop a 'namespace/' prefix for table compactness, e.g.
-    'sentence-transformers/all-MiniLM-L6-v2' -> 'all-MiniLM-L6-v2'."""
+    """Drop a 'namespace/' prefix for table compactness.
+
+    E.g. 'sentence-transformers/all-MiniLM-L6-v2' -> 'all-MiniLM-L6-v2'.
+    """
     if not model_name:
         return "?"
     return model_name.rsplit("/", 1)[-1]
 
 
-def render_table(records: list[dict]) -> str:
+def render_table(records: list[dict[str, Any]]) -> str:
+    """Render a Markdown comparison table, one row per experiment record.
+
+    Parameters
+    ----------
+    records : list[dict[str, Any]]
+        Experiment records as loaded by `load_records`.
+
+    Returns
+    -------
+    str
+        A Markdown table, or a placeholder message if `records` is empty.
+    """
     if not records:
         return "No experiments recorded yet -- see scripts/record_experiment.py."
 
@@ -76,6 +107,18 @@ def render_table(records: list[dict]) -> str:
 
 
 def update_readme(table: str) -> bool:
+    """Splice `table` into README.md between the EXPERIMENTS_TABLE markers.
+
+    Parameters
+    ----------
+    table : str
+        Markdown table to insert.
+
+    Returns
+    -------
+    bool
+        True if README.md exists and both markers were found and updated.
+    """
     if not README_PATH.exists():
         return False
     text = README_PATH.read_text(encoding="utf-8")
@@ -88,6 +131,7 @@ def update_readme(table: str) -> bool:
 
 
 def main() -> None:
+    """CLI entrypoint: render the table, write it to disk, and update README.md."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--results-dir", default=str(DEFAULT_RESULTS_DIR))
     args = parser.parse_args()

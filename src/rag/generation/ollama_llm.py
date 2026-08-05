@@ -1,3 +1,5 @@
+"""`LLM` backed by a local Ollama server."""
+
 from __future__ import annotations
 
 import ollama
@@ -6,6 +8,8 @@ from rag.generation.base import LLM
 
 
 class OllamaLLM(LLM):
+    """Generates completions via a local (or remote) Ollama server."""
+
     def __init__(
         self,
         model_name: str = "qwen2.5:1.5b",
@@ -13,12 +17,26 @@ class OllamaLLM(LLM):
         temperature: float = 0.2,
         max_tokens: int = 512,
     ) -> None:
+        """Construct the Ollama client.
+
+        Parameters
+        ----------
+        model_name : str, optional
+            Ollama model tag, by default ``"qwen2.5:1.5b"``.
+        base_url : str, optional
+            Ollama server URL, by default ``"http://localhost:11434"``.
+        temperature : float, optional
+            Sampling temperature, by default 0.2.
+        max_tokens : int, optional
+            Maximum tokens to generate, by default 512.
+        """
         self._client = ollama.Client(host=base_url)
         self._model_name = model_name
         self._temperature = temperature
         self._max_tokens = max_tokens
 
     def generate(self, prompt: str) -> str:
+        """See `LLM.generate`."""
         response = self._client.generate(
             model=self._model_name,
             prompt=prompt,
@@ -27,6 +45,7 @@ class OllamaLLM(LLM):
         return response["response"]
 
     def health_check(self) -> bool:
+        """See `LLM.health_check`."""
         try:
             self._client.list()
             return True

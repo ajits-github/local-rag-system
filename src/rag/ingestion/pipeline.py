@@ -10,6 +10,7 @@ import argparse
 import hashlib
 import logging
 from pathlib import Path
+from typing import Any
 
 from rag.chunkers.registry import get_chunker
 from rag.cleaners.default_cleaner import DefaultCleaner
@@ -24,12 +25,25 @@ logger = logging.getLogger(__name__)
 
 
 class IngestionPipeline:
+    """Runs a document through loader -> cleaner -> chunker -> embedder -> writer."""
+
     def __init__(
         self,
         config: AppConfig,
         vectorstore: VectorStore | None = None,
         embedder: Embedder | None = None,
     ) -> None:
+        """Wire up the pipeline's stages from config (or injected instances).
+
+        Parameters
+        ----------
+        config : AppConfig
+            Application configuration.
+        vectorstore : VectorStore | None, optional
+            Vector store to write to; built from `config` if omitted.
+        embedder : Embedder | None, optional
+            Embedder to use; built from `config` if omitted.
+        """
         self._config = config
         self._vectorstore = vectorstore or build_vectorstore(config)
         self._embedder = embedder or build_embedder(config)
@@ -38,11 +52,44 @@ class IngestionPipeline:
         self._writer = Writer(self._embedder, self._vectorstore)
 
     def clear_dataset(self, dataset_id: str) -> None:
-        """Remove every document (and cascade its chunks) tagged with
-        dataset_id -- for re-ingesting a namespace from a clean slate."""
+        """Remove every document (and cascade its chunks) tagged with dataset_id.
+
+        For re-ingesting a namespace from a clean slate.
+
+        Parameters
+        ----------
+        dataset_id : str
+            The dataset namespace to clear.
+        """
         self._vectorstore.delete_dataset(dataset_id)
 
-    def ingest_file(self, path: Path, dataset_id: str, category: str | None = None) -> dict:
+    def ingest_file(
+        self, path: Path, dataset_id: str, category: str | None = None
+    ) -> dict[str, Any]:
+        """Load, clean, chunk, embed, and persist a single file.
+
+        Skips re-writing chunks if the file's checksum is unchanged since
+        the last ingestion of the same (source, dataset_id).
+
+        Parameters
+        ----------
+        path : Path
+            File to ingest.
+        dataset_id : str
+            Namespace tag stored on every chunk.
+        category : str | None, optional
+            Folder-derived category tag, by default None.
+
+        Returns
+        -------
+        dict[str, Any]
+            ``{"document_id", "chunks_written", "changed"}``.
+
+        Raises
+        ------
+        ValueError
+            If `path`'s extension isn't in `config.ingestion.supported_extensions`.
+        """
         path = Path(path)
         if path.suffix.lower() not in self._config.ingestion.supported_extensions:
             raise ValueError(f"Unsupported extension '{path.suffix}' for {path}")
@@ -56,7 +103,11 @@ class IngestionPipeline:
         if not changed:
             logger.info(
                 "skip_unchanged_document",
-                extra={"source": raw_document.source, "document_id": document_id, "dataset_id": dataset_id},
+                extra={
+                    "source": raw_document.source,
+                    "document_id": document_id,
+                    "dataset_id": dataset_id,
+                },
             )
             return {"document_id": document_id, "chunks_written": 0, "changed": False}
 
@@ -80,7 +131,7 @@ class IngestionPipeline:
         )
         return {"document_id": document_id, "chunks_written": len(chunks), "changed": True}
 
-    def ingest_path(self, path: Path, dataset_id: str) -> list[dict]:
+    def ingest_path(self, path: Path, dataset_id: str) -> list[dict[str, Any]]:
         """Ingest a single file, or recursively ingest a directory tree.
 
         Every chunk written is tagged with `dataset_id`, which isolates it
@@ -92,6 +143,18 @@ class IngestionPipeline:
         ingesting `data/knowledge_base` preserves `security`,
         `runbooks/postgres`, etc. as filterable metadata within that
         dataset.
+
+        Parameters
+        ----------
+        path : Path
+            A single file, or a directory to walk recursively.
+        dataset_id : str
+            Namespace tag stored on every chunk.
+
+        Returns
+        -------
+        list[dict[str, Any]]
+            One `ingest_file` result dict per file ingested.
         """
         path = Path(path)
         if not path.is_dir():
@@ -107,6 +170,7 @@ class IngestionPipeline:
 
 
 def main() -> None:
+    """CLI entrypoint: parse args and run `IngestionPipeline.ingest_path`."""
     from rag.logging_config import configure_logging
 
     parser = argparse.ArgumentParser(description="Ingest a file or directory into the vector store")

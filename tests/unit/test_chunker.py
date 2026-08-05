@@ -6,6 +6,7 @@ from rag.config import ChunkingConfig
 
 
 def test_recursive_chunker_splits_long_text_respecting_size():
+    """Long text is split into multiple chunks near the configured size."""
     chunker = RecursiveCharacterChunker(chunk_size=50, chunk_overlap=10)
     text = "word " * 200  # 1000 chars
 
@@ -16,12 +17,14 @@ def test_recursive_chunker_splits_long_text_respecting_size():
 
 
 def test_recursive_chunker_returns_single_chunk_for_short_text():
+    """Text shorter than chunk_size is returned as a single chunk."""
     chunker = RecursiveCharacterChunker(chunk_size=500, chunk_overlap=50)
     chunks = chunker.split("short text")
     assert chunks == ["short text"]
 
 
 def test_registry_builds_recursive_character_chunker():
+    """get_chunker builds a RecursiveCharacterChunker for that provider."""
     config = ChunkingConfig(provider="recursive_character", chunk_size=100, chunk_overlap=20)
     chunker = get_chunker(config)
     assert isinstance(chunker, RecursiveCharacterChunker)

@@ -7,6 +7,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 
 
 def _load_script(name: str) -> object:
+    """Import a scripts/*.py module by file path (scripts/ isn't a package)."""
     spec = importlib.util.spec_from_file_location(name, SCRIPTS_DIR / f"{name}.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -16,7 +17,8 @@ def _load_script(name: str) -> object:
 compare_experiments = _load_script("compare_experiments")
 
 
-def _record(**overrides) -> dict:
+def _record(**overrides: object) -> dict:
+    """Build a sample experiment record, overriding any fields given."""
     base = {
         "experiment_id": "experiment_001",
         "label": "baseline",
@@ -38,22 +40,35 @@ def _record(**overrides) -> dict:
 
 
 def test_render_table_empty_says_no_experiments():
+    """render_table returns a placeholder message for an empty record list."""
     assert "No experiments recorded" in compare_experiments.render_table([])
 
 
 def test_render_table_includes_row_per_record():
+    """render_table formats one Markdown row per experiment record."""
     table = compare_experiments.render_table([_record()])
-    assert "| 1 | baseline | qwen2.5:1.5b | all-MiniLM-L6-v2 | none | 0.891 | 0.967 | 0.978 | 0.847 | 0.432 | 3.7s | techfusion | 2026-08-05 |" in table
+    expected_row = (
+        "| 1 | baseline | qwen2.5:1.5b | all-MiniLM-L6-v2 | none | 0.891 | 0.967 "
+        "| 0.978 | 0.847 | 0.432 | 3.7s | techfusion | 2026-08-05 |"
+    )
+    assert expected_row in table
 
 
 def test_render_table_shows_reranker_model_when_present():
+    """render_table appends the reranker's model name in parentheses."""
     table = compare_experiments.render_table(
-        [_record(reranker_provider="cross_encoder", reranker_model="cross-encoder/ms-marco-MiniLM-L-6-v2")]
+        [
+            _record(
+                reranker_provider="cross_encoder",
+                reranker_model="cross-encoder/ms-marco-MiniLM-L-6-v2",
+            )
+        ]
     )
     assert "cross_encoder (ms-marco-MiniLM-L-6-v2)" in table
 
 
 def test_render_table_shortens_embedder_namespace_prefix():
+    """render_table drops the embedder's namespace/ prefix for compactness."""
     table = compare_experiments.render_table(
         [_record(embedding_model="sentence-transformers/all-MiniLM-L6-v2")]
     )
@@ -62,16 +77,19 @@ def test_render_table_shortens_embedder_namespace_prefix():
 
 
 def test_short_model_name_handles_missing_value():
+    """_short_model_name returns "?" for a missing model name."""
     assert compare_experiments._short_model_name(None) == "?"
 
 
 def test_render_table_handles_missing_metrics_gracefully():
+    """render_table prints "-" for metrics that are None."""
     table = compare_experiments.render_table([_record(answer_quality=None, total_latency_ms=None)])
     row = table.splitlines()[-1]
     assert "| - | - |" in row  # answer_quality then total_latency, both missing
 
 
 def test_load_records_sorts_by_experiment_id(tmp_path: Path):
+    """load_records orders by experiment_id, not filename lexical order."""
     (tmp_path / "experiment_002.json").write_text(
         '{"experiment_id": "experiment_002"}', encoding="utf-8"
     )
@@ -85,9 +103,11 @@ def test_load_records_sorts_by_experiment_id(tmp_path: Path):
 
 
 def test_update_readme_replaces_content_between_markers(tmp_path: Path, monkeypatch):
+    """update_readme swaps the content between the marker comments."""
     readme = tmp_path / "README.md"
     readme.write_text(
-        "# Title\n\n<!-- EXPERIMENTS_TABLE_START -->\nold table\n<!-- EXPERIMENTS_TABLE_END -->\n\nmore text\n",
+        "# Title\n\n<!-- EXPERIMENTS_TABLE_START -->\nold table\n"
+        "<!-- EXPERIMENTS_TABLE_END -->\n\nmore text\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(compare_experiments, "README_PATH", readme)
@@ -102,6 +122,7 @@ def test_update_readme_replaces_content_between_markers(tmp_path: Path, monkeypa
 
 
 def test_update_readme_returns_false_when_markers_missing(tmp_path: Path, monkeypatch):
+    """update_readme is a no-op returning False when markers aren't found."""
     readme = tmp_path / "README.md"
     readme.write_text("# Title\n\nno markers here\n", encoding="utf-8")
     monkeypatch.setattr(compare_experiments, "README_PATH", readme)

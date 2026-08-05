@@ -1,6 +1,8 @@
+"""Loader for `.docx` files."""
+
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import docx
@@ -10,13 +12,30 @@ from rag.schemas import RawDocument
 
 
 def _as_utc(value: datetime | None, fallback: datetime) -> datetime:
+    """Coerce a possibly-naive/possibly-missing timestamp to UTC-aware."""
     if value is None:
         return fallback
-    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    return value if value.tzinfo else value.replace(tzinfo=UTC)
 
 
 class DocxLoader(Loader):
+    """Extracts text and core properties from a Word document via `python-docx`."""
+
     def load(self, path: Path) -> RawDocument:
+        """Read `path` and join its paragraphs' text.
+
+        Parameters
+        ----------
+        path : Path
+            Path to the `.docx` file.
+
+        Returns
+        -------
+        RawDocument
+            Extracted content with title/author/language/timestamps from
+            the document's core properties, falling back to the filename/
+            filesystem timestamps where those properties are unset.
+        """
         document = docx.Document(str(path))
         content = "\n\n".join(p.text for p in document.paragraphs if p.text.strip())
         core = document.core_properties

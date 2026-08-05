@@ -32,6 +32,11 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "httpx>=0.27",
+    "pre-commit>=3.8",
+    "ruff>=0.6.9",
+    "mypy>=1.11",
+    "types-PyYAML",
+    "types-psycopg2",
 ]
 
 [build-system]
@@ -44,3 +49,59 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "D"]
+ignore = [
+    "D107",  # __init__ is documented on the class docstring, not the method
+    "D203",  # conflicts with D211 (no-blank-line-before-class)
+    "D213",  # conflicts with D212 (multi-line summary on first line)
+    "B008",  # FastAPI's Depends()/File()/Form() in defaults is idiomatic DI, not a bug
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D100", "D101", "D104"]  # test modules/classes don't need module/class docstrings
+"scripts/**" = ["D100"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.mypy]
+python_version = "3.11"
+mypy_path = "src"
+explicit_package_bases = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_optional = true
+check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = [
+    "langchain.*",
+    "langchain_community.*",
+    "langchain_text_splitters.*",
+    "sentence_transformers.*",
+    "pgvector.*",
+    "cohere.*",
+    "ollama.*",
+    "docx.*",
+    "pypdf.*",
+    "bs4.*",
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# numpy's shipped stubs use PEP 695 syntax mypy can only parse under
+# python_version >= 3.12; skip following into them rather than bumping the
+# project's target version just to satisfy a transitive dependency's stubs.
+module = "numpy.*"
+follow_imports = "skip"
+follow_imports_for_stubs = true
+ignore_errors = true

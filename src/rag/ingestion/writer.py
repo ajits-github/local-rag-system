@@ -8,7 +8,18 @@ from rag.vectorstore.base import VectorStore
 
 
 class Writer:
+    """Embeds chunk texts and persists them to the vector store."""
+
     def __init__(self, embedder: Embedder, vectorstore: VectorStore) -> None:
+        """Store the embedder/vectorstore this writer will use.
+
+        Parameters
+        ----------
+        embedder : Embedder
+            Embedder used to vectorize chunk texts.
+        vectorstore : VectorStore
+            Vector store the resulting chunks are persisted to.
+        """
         self._embedder = embedder
         self._vectorstore = vectorstore
 
@@ -20,6 +31,26 @@ class Writer:
         dataset_id: str,
         category: str | None = None,
     ) -> list[Chunk]:
+        """Embed `chunk_texts`, build `Chunk`s from `document`'s metadata, and persist them.
+
+        Parameters
+        ----------
+        document : RawDocument
+            The source document these chunks were split from.
+        document_id : str
+            Stable id of `document`, used as the `Chunk.id`/`chunk_id` prefix.
+        chunk_texts : list[str]
+            Chunk strings, in document order.
+        dataset_id : str
+            Namespace tag stored on every chunk.
+        category : str | None, optional
+            Folder-derived category tag, by default None.
+
+        Returns
+        -------
+        list[Chunk]
+            The persisted chunks, each with its embedding set.
+        """
         embeddings = self._embedder.embed_documents(chunk_texts)
         chunks = [
             Chunk(
@@ -42,7 +73,7 @@ class Writer:
                 ),
                 embedding=embedding,
             )
-            for i, (text, embedding) in enumerate(zip(chunk_texts, embeddings))
+            for i, (text, embedding) in enumerate(zip(chunk_texts, embeddings, strict=True))
         ]
         self._vectorstore.add_chunks(chunks)
         return chunks

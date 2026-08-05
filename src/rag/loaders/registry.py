@@ -1,3 +1,9 @@
+"""Maps a file's extension to the `Loader` that handles it.
+
+Simple enough to live as an inline extension->instance dict rather than
+going through `factory.py` (see CLAUDE.md's swap-point convention).
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -19,6 +25,23 @@ _LOADERS: dict[str, Loader] = {
 
 
 def get_loader(path: Path) -> Loader:
+    """Return the `Loader` registered for `path`'s file extension.
+
+    Parameters
+    ----------
+    path : Path
+        File whose extension selects the loader.
+
+    Returns
+    -------
+    Loader
+        The loader instance registered for that extension.
+
+    Raises
+    ------
+    ValueError
+        If no loader is registered for `path`'s extension.
+    """
     suffix = path.suffix.lower()
     loader = _LOADERS.get(suffix)
     if loader is None:

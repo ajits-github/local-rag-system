@@ -25,6 +25,7 @@ import json
 import shutil
 import sys
 from pathlib import Path
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -34,6 +35,7 @@ EXPERIMENTS_DIR = Path(__file__).resolve().parents[1] / "experiments"
 
 
 def _reranker_model(config: AppConfig) -> str | None:
+    """Return the active reranker's model name, or None for provider 'none'."""
     if config.reranker.provider == "cross_encoder":
         return config.reranker.cross_encoder.model_name
     if config.reranker.provider == "cohere":
@@ -42,13 +44,30 @@ def _reranker_model(config: AppConfig) -> str | None:
 
 
 def build_experiment_record(
-    eval_report: dict, config: AppConfig, experiment_id: str, label: str
-) -> dict:
-    """Flatten an eval report + the config that produced it into the fixed
-    schema experiments/ compares on. Config fields are read from `config`
-    (the actual file used), not from the report's own embedded summary,
-    so this works even against older reports that didn't capture every
-    field (e.g. vector_store, reranker_model)."""
+    eval_report: dict[str, Any], config: AppConfig, experiment_id: str, label: str
+) -> dict[str, Any]:
+    """Flatten an eval report and its config into the fixed experiments/ record schema.
+
+    Config fields are read from `config` (the actual file used), not from
+    the report's own embedded summary, so this works even against older
+    reports that didn't capture every field (e.g. vector_store, reranker_model).
+
+    Parameters
+    ----------
+    eval_report : dict[str, Any]
+        Parsed JSON output of `rag.eval.run_eval --verbose`.
+    config : AppConfig
+        The config that produced `eval_report`.
+    experiment_id : str
+        Identifier for this experiment, e.g. ``"experiment_002"``.
+    label : str
+        Short human-readable label, e.g. ``"cross-encoder reranker"``.
+
+    Returns
+    -------
+    dict[str, Any]
+        Flat record matching the `experiments/results/*.json` schema.
+    """
     retrieval = eval_report.get("retrieval", {})
     hit_rate = eval_report.get("hit_rate", {})
     latency = eval_report.get("latency_ms", {})
@@ -81,6 +100,7 @@ def build_experiment_record(
 
 
 def main() -> None:
+    """CLI entrypoint: build a record from an eval report and write it to disk."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--eval-output", required=True, help="Path to a rag.eval.run_eval JSON report"

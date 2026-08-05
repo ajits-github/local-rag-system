@@ -1,3 +1,5 @@
+"""Gold-data schema and path-suffix matching for retrieval evaluation."""
+
 from __future__ import annotations
 
 import json
@@ -28,6 +30,18 @@ class GoldExample(BaseModel):
 
 
 def load_gold_jsonl(path: str | Path) -> list[GoldExample]:
+    """Parse a gold JSONL file into `GoldExample` rows, skipping blank lines.
+
+    Parameters
+    ----------
+    path : str | Path
+        Path to the gold JSONL file.
+
+    Returns
+    -------
+    list[GoldExample]
+        One `GoldExample` per non-blank line.
+    """
     examples = []
     with open(path, encoding="utf-8") as f:
         for line in f:
@@ -39,17 +53,31 @@ def load_gold_jsonl(path: str | Path) -> list[GoldExample]:
 
 
 def _path_parts(path: str) -> tuple[str, ...]:
+    """Split a possibly-backslash path into POSIX-style path segments."""
     return PurePosixPath(path.replace("\\", "/")).parts
 
 
 def source_matches_relevant(retrieved_source: str, relevant_path: str) -> bool:
-    """True if `relevant_path`'s directory/file segments are a trailing
-    subsequence of `retrieved_source`'s segments — e.g. gold's
-    "knowledge_base/security/x.md" matches a stored source of
+    """Check whether `relevant_path`'s segments trail `retrieved_source`'s segments.
+
+    E.g. gold's "knowledge_base/security/x.md" matches a stored source of
     "data/knowledge_base/security/x.md" regardless of the "data/" root,
-    without either side needing to hardcode that root."""
+    without either side needing to hardcode that root.
+
+    Parameters
+    ----------
+    retrieved_source : str
+        A chunk's stored `source` path.
+    relevant_path : str
+        A gold example's relative `relevant_documents` entry.
+
+    Returns
+    -------
+    bool
+        True if `relevant_path` is a trailing subsequence of `retrieved_source`.
+    """
     retrieved_parts = _path_parts(retrieved_source)
     relevant_parts = _path_parts(relevant_path)
     if not relevant_parts or len(relevant_parts) > len(retrieved_parts):
         return False
-    return retrieved_parts[-len(relevant_parts):] == relevant_parts
+    return retrieved_parts[-len(relevant_parts) :] == relevant_parts

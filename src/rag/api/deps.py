@@ -21,36 +21,43 @@ from rag.vectorstore.base import VectorStore
 
 @lru_cache
 def get_config() -> AppConfig:
+    """Return the process-wide `AppConfig` singleton."""
     return load_config()
 
 
 @lru_cache
 def get_embedder() -> Embedder:
+    """Return the process-wide `Embedder` singleton."""
     return build_embedder(get_config())
 
 
 @lru_cache
 def get_vectorstore() -> VectorStore:
+    """Return the process-wide `VectorStore` singleton."""
     return build_vectorstore(get_config())
 
 
 @lru_cache
 def get_reranker() -> Reranker:
+    """Return the process-wide `Reranker` singleton."""
     return build_reranker(get_config())
 
 
 @lru_cache
 def get_llm() -> LLM:
+    """Return the process-wide `LLM` singleton."""
     return build_llm(get_config())
 
 
 @lru_cache
 def get_ingestion_pipeline() -> IngestionPipeline:
+    """Return the process-wide `IngestionPipeline` singleton."""
     return IngestionPipeline(get_config(), vectorstore=get_vectorstore(), embedder=get_embedder())
 
 
 @lru_cache
 def get_retrieval_pipeline() -> RetrievalPipeline:
+    """Return the process-wide `RetrievalPipeline` singleton."""
     return RetrievalPipeline(
         get_config(),
         vectorstore=get_vectorstore(),

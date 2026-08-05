@@ -12,6 +12,7 @@ TEST_DATASET_ID = "pytest-integration"
 def test_query_pipeline_answers_from_ingested_content(
     require_postgres, require_ollama, config, tmp_path: Path
 ):
+    """The full pipeline answers a question grounded in a just-ingested document."""
     ingestion = IngestionPipeline(config)
     path = tmp_path / f"doc-{uuid.uuid4()}.txt"
     path.write_text(

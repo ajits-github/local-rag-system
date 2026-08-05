@@ -1,3 +1,5 @@
+"""`Reranker` backed by the Cohere rerank API."""
+
 from __future__ import annotations
 
 from rag.rerankers.base import Reranker
@@ -5,11 +7,26 @@ from rag.schemas import SearchResult
 
 
 class CohereReranker(Reranker):
-    """Optional provider — only active if reranker.provider is set to
-    'cohere' AND its API key env var is set. Requires the 'cohere' extra:
-    pip install .[cohere]"""
+    """Optional provider, active only if reranker.provider is 'cohere' and its API key is set.
+
+    Requires the 'cohere' extra: pip install .[cohere]
+    """
 
     def __init__(self, api_key: str, model_name: str = "rerank-english-v3.0") -> None:
+        """Construct the Cohere client.
+
+        Parameters
+        ----------
+        api_key : str
+            Cohere API key.
+        model_name : str, optional
+            Cohere rerank model id, by default ``"rerank-english-v3.0"``.
+
+        Raises
+        ------
+        RuntimeError
+            If the optional ``cohere`` package isn't installed.
+        """
         try:
             import cohere
         except ImportError as exc:
@@ -21,6 +38,22 @@ class CohereReranker(Reranker):
         self._model_name = model_name
 
     def rerank(self, query: str, results: list[SearchResult], top_n: int) -> list[SearchResult]:
+        """Rescore `results` against `query` via the Cohere rerank API.
+
+        Parameters
+        ----------
+        query : str
+            The original user query.
+        results : list[SearchResult]
+            Vector-search results to rerank.
+        top_n : int
+            Maximum number of results to return.
+
+        Returns
+        -------
+        list[SearchResult]
+            Up to `top_n` results, rescored and sorted best-first.
+        """
         if not results:
             return results
         response = self._client.rerank(

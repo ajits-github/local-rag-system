@@ -1,3 +1,5 @@
+"""Loader for `.pdf` files."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -9,7 +11,23 @@ from rag.schemas import RawDocument
 
 
 class PDFLoader(Loader):
+    """Extracts text and metadata from a PDF via `pypdf`."""
+
     def load(self, path: Path) -> RawDocument:
+        """Read `path` and concatenate each page's extracted text.
+
+        Parameters
+        ----------
+        path : Path
+            Path to the PDF file.
+
+        Returns
+        -------
+        RawDocument
+            Extracted content with title/author from the PDF's document
+            info dictionary, falling back to the filename/filesystem
+            timestamps where the PDF has no metadata.
+        """
         reader = PdfReader(str(path))
         content = "\n\n".join(page.extract_text() or "" for page in reader.pages)
         meta = reader.metadata

@@ -1,7 +1,7 @@
-"""Proves the dataset_id isolation mechanism that keeps unrelated corpora
-(e.g. the real data/knowledge_base "techfusion" dataset and the
-data/sample_docs "sample_docs" dataset) from ever sharing retrieval
-results.
+"""Proves the dataset_id isolation mechanism that keeps unrelated corpora from sharing results.
+
+E.g. the real data/knowledge_base "techfusion" dataset and the
+data/sample_docs "sample_docs" dataset never share retrieval results.
 
 Self-contained by design: it ingests two small synthetic documents into
 two synthetic namespaces rather than depending on the real datasets being
@@ -23,6 +23,7 @@ from rag.retrieval.pipeline import RetrievalPipeline
 def test_dataset_filter_excludes_other_namespace_even_as_strong_distractor(
     require_postgres, config, tmp_path: Path
 ):
+    """The dataset_id filter isolates retrieval even against a near-identical distractor."""
     ns_a = f"pytest-isolation-a-{uuid.uuid4()}"
     ns_b = f"pytest-isolation-b-{uuid.uuid4()}"
 

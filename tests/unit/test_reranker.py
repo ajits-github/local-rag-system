@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from rag.rerankers.cross_encoder import CrossEncoderReranker
 from rag.rerankers.noop import NoOpReranker
@@ -8,7 +8,8 @@ from rag.schemas import Chunk, ChunkMetadata, SearchResult
 
 
 def _make_result(chunk_id: str, content: str, score: float) -> SearchResult:
-    now = datetime.now(timezone.utc)
+    """Build a SearchResult with minimal-but-valid chunk metadata."""
+    now = datetime.now(UTC)
     metadata = ChunkMetadata(
         document_id="doc-1",
         chunk_id=chunk_id,
@@ -23,6 +24,7 @@ def _make_result(chunk_id: str, content: str, score: float) -> SearchResult:
 
 
 def test_noop_reranker_truncates_to_top_n_without_reordering():
+    """NoOpReranker keeps original order and only truncates to top_n."""
     results = [_make_result(f"c{i}", f"content {i}", score=1.0 - i * 0.1) for i in range(5)]
 
     reranked = NoOpReranker().rerank("any query", results, top_n=2)
@@ -31,17 +33,20 @@ def test_noop_reranker_truncates_to_top_n_without_reordering():
 
 
 def test_cross_encoder_reranker_reorders_by_predicted_score(monkeypatch):
+    """CrossEncoderReranker reorders results by the model's predicted score."""
     results = [
         _make_result("low", "irrelevant text", score=0.9),
         _make_result("high", "very relevant text", score=0.1),
     ]
 
     class FakeCrossEncoder:
-        def __init__(self, *args, **kwargs):
-            pass
+        """Stand-in for sentence-transformers CrossEncoder."""
+
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            """Accept and ignore any CrossEncoder constructor args."""
 
         def predict(self, pairs):
-            # Score the second pair (originally lower vector-search score) higher.
+            """Score the second pair (originally lower vector-search score) higher."""
             return [0.1, 0.9]
 
     monkeypatch.setattr("rag.rerankers.cross_encoder.CrossEncoder", FakeCrossEncoder)
@@ -54,11 +59,16 @@ def test_cross_encoder_reranker_reorders_by_predicted_score(monkeypatch):
 
 
 def test_cross_encoder_reranker_handles_empty_results(monkeypatch):
+    """CrossEncoderReranker returns an empty list unchanged, without predicting."""
+
     class FakeCrossEncoder:
-        def __init__(self, *args, **kwargs):
-            pass
+        """Stand-in for sentence-transformers CrossEncoder."""
+
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            """Accept and ignore any CrossEncoder constructor args."""
 
         def predict(self, pairs):
+            """Unused: rerank short-circuits before calling predict on empty input."""
             return []
 
     monkeypatch.setattr("rag.rerankers.cross_encoder.CrossEncoder", FakeCrossEncoder)

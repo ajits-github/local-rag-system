@@ -24,6 +24,8 @@ class RawDocument(BaseModel):
 
 
 class ChunkMetadata(BaseModel):
+    """Metadata stored alongside a chunk's embedding in the vector store."""
+
     document_id: str
     chunk_id: str
     source: str
@@ -48,6 +50,8 @@ class ChunkMetadata(BaseModel):
 
 
 class Chunk(BaseModel):
+    """A unit of text plus its metadata and (once embedded) its vector."""
+
     id: str
     content: str
     metadata: ChunkMetadata
@@ -55,5 +59,7 @@ class Chunk(BaseModel):
 
 
 class SearchResult(BaseModel):
+    """A chunk returned by a vector store search, with its similarity score."""
+
     chunk: Chunk
     score: float

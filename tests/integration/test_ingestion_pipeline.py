@@ -9,11 +9,10 @@ TEST_DATASET_ID = "pytest-integration"
 
 
 def test_ingest_file_writes_chunks_and_is_idempotent(require_postgres, config, tmp_path: Path):
+    """Re-ingesting an unchanged file is a no-op; an edited file gets re-chunked."""
     pipeline = IngestionPipeline(config)
     path = tmp_path / f"doc-{uuid.uuid4()}.txt"
-    path.write_text(
-        "Local RAG systems combine retrieval with generation. " * 20, encoding="utf-8"
-    )
+    path.write_text("Local RAG systems combine retrieval with generation. " * 20, encoding="utf-8")
 
     result_1 = pipeline.ingest_file(path, TEST_DATASET_ID)
     assert result_1["changed"] is True

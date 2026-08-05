@@ -1,3 +1,5 @@
+"""Default `Cleaner`: whitespace/control-char normalization only."""
+
 from __future__ import annotations
 
 import re
@@ -13,6 +15,18 @@ class DefaultCleaner(Cleaner):
     """Whitespace/control-char normalization; no content rewriting."""
 
     def clean(self, text: str) -> str:
+        """Strip control characters, trailing whitespace, and excess blank lines.
+
+        Parameters
+        ----------
+        text : str
+            Raw text to normalize.
+
+        Returns
+        -------
+        str
+            Normalized, stripped text.
+        """
         text = _CONTROL_CHARS.sub("", text)
         text = _TRAILING_WHITESPACE.sub("\n", text)
         text = _MULTI_BLANK_LINES.sub("\n\n", text)

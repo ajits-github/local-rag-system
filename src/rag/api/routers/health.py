@@ -1,4 +1,8 @@
+"""`GET /health`: reports vectorstore/LLM connectivity."""
+
 from __future__ import annotations
+
+from typing import Any
 
 from fastapi import APIRouter, Depends
 
@@ -13,7 +17,21 @@ router = APIRouter()
 def health(
     vectorstore: VectorStore = Depends(get_vectorstore),
     llm: LLM = Depends(get_llm),
-) -> dict:
+) -> dict[str, Any]:
+    """Report overall status plus each dependency's individual reachability.
+
+    Parameters
+    ----------
+    vectorstore : VectorStore
+        Injected vector store singleton.
+    llm : LLM
+        Injected LLM singleton.
+
+    Returns
+    -------
+    dict[str, Any]
+        ``{"status": "ok" | "degraded", "dependencies": {...}}``.
+    """
     db_ok = vectorstore.health_check()
     llm_ok = llm.health_check()
     return {

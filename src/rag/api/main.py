@@ -1,3 +1,5 @@
+"""FastAPI application entrypoint: wires up config, middleware, and routers."""
+
 from __future__ import annotations
 
 from fastapi import FastAPI

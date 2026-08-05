@@ -1,7 +1,9 @@
+"""Loader for `.txt` and `.md` files."""
+
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import yaml
@@ -15,6 +17,19 @@ _FRONTMATTER_RE = re.compile(r"\A---[ \t]*\n(.*?\n)---[ \t]*\n?", re.DOTALL)
 
 
 def _split_frontmatter(raw: str) -> tuple[dict | None, str]:
+    """Split a leading YAML front-matter block off of `raw`, if present.
+
+    Parameters
+    ----------
+    raw : str
+        Full file content, possibly starting with a ``---``-delimited block.
+
+    Returns
+    -------
+    tuple[dict | None, str]
+        The parsed front-matter dict (or ``None`` if absent/invalid) and
+        the remaining content with the block stripped.
+    """
     match = _FRONTMATTER_RE.match(raw)
     if not match:
         return None, raw
@@ -24,14 +39,15 @@ def _split_frontmatter(raw: str) -> tuple[dict | None, str]:
         return None, raw
     if not isinstance(frontmatter, dict):
         return None, raw
-    return frontmatter, raw[match.end():]
+    return frontmatter, raw[match.end() :]
 
 
 def _parse_date(value: object) -> datetime | None:
+    """Parse a front-matter `YYYY-MM-DD` value into a UTC datetime, if valid."""
     if not value:
         return None
     try:
-        return datetime.strptime(str(value), "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        return datetime.strptime(str(value), "%Y-%m-%d").replace(tzinfo=UTC)
     except ValueError:
         return None
 
@@ -45,6 +61,20 @@ class TextLoader(Loader):
     """
 
     def load(self, path: Path) -> RawDocument:
+        """Read `path`, stripping and parsing YAML front-matter for Markdown.
+
+        Parameters
+        ----------
+        path : Path
+            Path to the `.txt` or `.md` file.
+
+        Returns
+        -------
+        RawDocument
+            Extracted content (front-matter block removed for Markdown),
+            with title/author/last_modified from the front-matter when
+            present, falling back to filename/filesystem values otherwise.
+        """
         raw = path.read_text(encoding="utf-8", errors="replace")
         created_at, last_modified = file_timestamps(path)
         source_type = "markdown" if path.suffix.lower() == ".md" else "text"

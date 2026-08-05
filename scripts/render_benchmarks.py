@@ -15,11 +15,13 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 DEFAULT_BASELINES_DIR = Path(__file__).resolve().parents[1] / "data" / "eval" / "baselines"
 
 
-def _load_rows(baselines_dir: Path) -> list[dict]:
+def _load_rows(baselines_dir: Path) -> list[dict[str, Any]]:
+    """Load each baseline JSON file into a flat row of table columns."""
     rows = []
     for path in sorted(baselines_dir.glob("*.json")):
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -40,12 +42,25 @@ def _load_rows(baselines_dir: Path) -> list[dict]:
     return rows
 
 
-def render_markdown_table(rows: list[dict]) -> str:
+def render_markdown_table(rows: list[dict[str, Any]]) -> str:
+    """Render a Markdown comparison table, one row per baseline file.
+
+    Parameters
+    ----------
+    rows : list[dict[str, Any]]
+        Rows as loaded by `_load_rows`.
+
+    Returns
+    -------
+    str
+        A Markdown table, or a placeholder message if `rows` is empty.
+    """
     if not rows:
         return "No baseline files found."
 
     header = (
-        "| Generation model | Reranker | Recall@5 | Recall@10 | MRR | Avg latency | Dataset | Date |\n"
+        "| Generation model | Reranker | Recall@5 | Recall@10 | MRR "
+        "| Avg latency | Dataset | Date |\n"
         "|---|---|---|---|---|---|---|---|"
     )
     lines = [header]
@@ -59,6 +74,7 @@ def render_markdown_table(rows: list[dict]) -> str:
 
 
 def main() -> None:
+    """CLI entrypoint: load baseline files and print the comparison table."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--baselines-dir", default=str(DEFAULT_BASELINES_DIR))
     args = parser.parse_args()

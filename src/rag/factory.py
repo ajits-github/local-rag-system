@@ -1,7 +1,9 @@
-"""Single place mapping config `provider` strings to concrete component
-classes. Ingestion/retrieval pipelines and the API depend only on the base
+"""Single place mapping config `provider` strings to concrete component classes.
+
+Ingestion/retrieval pipelines and the API depend only on the base
 interfaces; this module is the one spot that knows about concrete
-implementations, so adding a new provider never touches pipeline code."""
+implementations, so adding a new provider never touches pipeline code.
+"""
 
 from __future__ import annotations
 
@@ -19,6 +21,23 @@ from rag.vectorstore.pgvector import PgVectorStore
 
 
 def build_embedder(config: AppConfig) -> Embedder:
+    """Construct the `Embedder` selected by `config.embedding.provider`.
+
+    Parameters
+    ----------
+    config : AppConfig
+        Application configuration.
+
+    Returns
+    -------
+    Embedder
+        The constructed embedder instance.
+
+    Raises
+    ------
+    ValueError
+        If `config.embedding.provider` names an unknown provider.
+    """
     if config.embedding.provider == "sentence_transformers":
         return SentenceTransformersEmbedder(
             model_name=config.embedding.model_name,
@@ -30,6 +49,23 @@ def build_embedder(config: AppConfig) -> Embedder:
 
 
 def build_vectorstore(config: AppConfig) -> VectorStore:
+    """Construct the `VectorStore` selected by `config.vectorstore.provider`.
+
+    Parameters
+    ----------
+    config : AppConfig
+        Application configuration.
+
+    Returns
+    -------
+    VectorStore
+        The constructed vector store instance.
+
+    Raises
+    ------
+    ValueError
+        If `config.vectorstore.provider` names an unknown provider.
+    """
     if config.vectorstore.provider == "pgvector":
         return PgVectorStore(
             dsn=config.database_url(),
@@ -41,6 +77,25 @@ def build_vectorstore(config: AppConfig) -> VectorStore:
 
 
 def build_reranker(config: AppConfig) -> Reranker:
+    """Construct the `Reranker` selected by `config.reranker.provider`.
+
+    Parameters
+    ----------
+    config : AppConfig
+        Application configuration.
+
+    Returns
+    -------
+    Reranker
+        The constructed reranker instance.
+
+    Raises
+    ------
+    RuntimeError
+        If the `cohere` provider is selected but its API key env var is unset.
+    ValueError
+        If `config.reranker.provider` names an unknown provider.
+    """
     provider = config.reranker.provider
     if provider == "none":
         return NoOpReranker()
@@ -61,6 +116,23 @@ def build_reranker(config: AppConfig) -> Reranker:
 
 
 def build_llm(config: AppConfig) -> LLM:
+    """Construct the `LLM` selected by `config.generation.provider`.
+
+    Parameters
+    ----------
+    config : AppConfig
+        Application configuration.
+
+    Returns
+    -------
+    LLM
+        The constructed LLM client instance.
+
+    Raises
+    ------
+    ValueError
+        If `config.generation.provider` names an unknown provider.
+    """
     if config.generation.provider == "ollama":
         return OllamaLLM(
             model_name=config.generation.model_name,
