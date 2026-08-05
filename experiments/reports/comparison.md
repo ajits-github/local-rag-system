@@ -1,4 +1,5 @@
-| # | Label | Generation model | Reranker | Recall@5 | Recall@10 | Hit Rate@10 | MRR | Answer quality | Total latency | Dataset | Date |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| 1 | TechFusion baseline (qwen2.5:1.5b, no reranker) | qwen2.5:1.5b | none | 0.891 | 0.967 | 0.978 | 0.847 | 0.432 | 3.7s | techfusion | 2026-08-05 |
-| 2 | qwen2.5:3b (candidate generation model) | qwen2.5:3b | none | 0.891 | 0.967 | 0.978 | 0.847 | 0.453 | 12.1s | techfusion | 2026-08-05 |
+| # | Label | Generation model | Embedder | Reranker | Recall@5 | Recall@10 | Hit Rate@10 | MRR | Answer quality | Total latency | Dataset | Date |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | TechFusion baseline (qwen2.5:1.5b, no reranker) | qwen2.5:1.5b | all-MiniLM-L6-v2 | none | 0.891 | 0.967 | 0.978 | 0.847 | 0.432 | 3.7s | techfusion | 2026-08-05 |
+| 2 | qwen2.5:3b (candidate generation model) | qwen2.5:3b | all-MiniLM-L6-v2 | none | 0.891 | 0.967 | 0.978 | 0.847 | 0.453 | 12.1s | techfusion | 2026-08-05 |
+| 3 | qwen2.5:3b + cross_encoder reranker | qwen2.5:3b | all-MiniLM-L6-v2 | cross_encoder (ms-marco-MiniLM-L-6-v2) | 0.891 | 0.967 | 0.978 | 0.822 | 0.507 | 10.1s | techfusion | 2026-08-05 |
