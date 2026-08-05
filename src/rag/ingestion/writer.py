@@ -17,6 +17,7 @@ class Writer:
         document: RawDocument,
         document_id: str,
         chunk_texts: list[str],
+        dataset_id: str,
         category: str | None = None,
     ) -> list[Chunk]:
         embeddings = self._embedder.embed_documents(chunk_texts)
@@ -37,6 +38,7 @@ class Writer:
                     language=document.language,
                     chunk_index=i,
                     category=category,
+                    dataset_id=dataset_id,
                 ),
                 embedding=embedding,
             )

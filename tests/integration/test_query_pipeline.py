@@ -6,6 +6,8 @@ from pathlib import Path
 from rag.ingestion.pipeline import IngestionPipeline
 from rag.retrieval.pipeline import RetrievalPipeline
 
+TEST_DATASET_ID = "pytest-integration"
+
 
 def test_query_pipeline_answers_from_ingested_content(
     require_postgres, require_ollama, config, tmp_path: Path
@@ -17,13 +19,16 @@ def test_query_pipeline_answers_from_ingested_content(
         "extension, running on host port 15987.",
         encoding="utf-8",
     )
-    ingest_result = ingestion.ingest_file(path)
+    ingest_result = ingestion.ingest_file(path, TEST_DATASET_ID)
 
     retrieval = RetrievalPipeline(config)
     try:
-        result = retrieval.answer("What extension does the vector database use?")
+        result = retrieval.answer(
+            "What extension does the vector database use?",
+            filters={"dataset_id": TEST_DATASET_ID},
+        )
         assert isinstance(result["answer"], str)
         assert len(result["answer"]) > 0
         assert isinstance(result["sources"], list)
     finally:
-        ingestion._vectorstore.delete_chunks_by_document_id(ingest_result["document_id"])
+        ingestion._vectorstore.delete_document(ingest_result["document_id"])

@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from rag.schemas import Chunk, ChunkMetadata
 from rag.vectorstore.pgvector import PgVectorStore
 
+TEST_DATASET_ID = "pytest-integration"
+
 
 def _store(config) -> PgVectorStore:
     return PgVectorStore(
@@ -24,20 +26,38 @@ def test_document_id_is_stable_across_edits(require_postgres, config):
     store = _store(config)
     source = f"test-source-{uuid.uuid4()}"
 
-    doc_id_1, changed_1 = store.get_or_create_document_id(source, checksum="checksum-a")
-    doc_id_2, changed_2 = store.get_or_create_document_id(source, checksum="checksum-a")
-    doc_id_3, changed_3 = store.get_or_create_document_id(source, checksum="checksum-b")
+    doc_id_1, changed_1 = store.get_or_create_document_id(source, "checksum-a", TEST_DATASET_ID)
+    doc_id_2, changed_2 = store.get_or_create_document_id(source, "checksum-a", TEST_DATASET_ID)
+    doc_id_3, changed_3 = store.get_or_create_document_id(source, "checksum-b", TEST_DATASET_ID)
 
     assert doc_id_1 == doc_id_2 == doc_id_3
     assert changed_1 is True
     assert changed_2 is False
     assert changed_3 is True
 
+    store.delete_document(doc_id_1)
+
+
+def test_same_source_in_different_datasets_does_not_collide(require_postgres, config):
+    store = _store(config)
+    source = f"test-source-{uuid.uuid4()}"
+
+    doc_id_a, changed_a = store.get_or_create_document_id(source, "checksum-a", "pytest-ns-a")
+    doc_id_b, changed_b = store.get_or_create_document_id(source, "checksum-a", "pytest-ns-b")
+
+    try:
+        assert doc_id_a != doc_id_b
+        assert changed_a is True
+        assert changed_b is True
+    finally:
+        store.delete_document(doc_id_a)
+        store.delete_document(doc_id_b)
+
 
 def test_add_chunks_and_search_round_trip(require_postgres, config):
     store = _store(config)
     source = f"test-source-{uuid.uuid4()}"
-    document_id, _ = store.get_or_create_document_id(source, checksum="c1")
+    document_id, _ = store.get_or_create_document_id(source, "c1", TEST_DATASET_ID)
 
     dim = config.embedding.dimension
     now = datetime.now(timezone.utc)
@@ -50,6 +70,7 @@ def test_add_chunks_and_search_round_trip(require_postgres, config):
         created_at=now,
         last_modified=now,
         chunk_index=0,
+        dataset_id=TEST_DATASET_ID,
     )
     chunk = Chunk(
         id=metadata.chunk_id, content="hello integration test", metadata=metadata, embedding=embedding
@@ -60,4 +81,4 @@ def test_add_chunks_and_search_round_trip(require_postgres, config):
         results = store.search(embedding, top_k=5, filters={"document_id": document_id})
         assert any(r.chunk.id == metadata.chunk_id for r in results)
     finally:
-        store.delete_chunks_by_document_id(document_id)
+        store.delete_document(document_id)

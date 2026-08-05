@@ -52,14 +52,17 @@ class PgVectorStore(VectorStore):
         finally:
             self._putconn(conn)
 
-    def get_or_create_document_id(self, source: str, checksum: str) -> tuple[str, bool]:
+    def get_or_create_document_id(
+        self, source: str, checksum: str, dataset_id: str
+    ) -> tuple[str, bool]:
         conn = self._conn()
         try:
             with conn:
                 with conn.cursor() as cur:
                     cur.execute(
-                        f"SELECT document_id, checksum FROM {self._documents_table} WHERE source = %s",
-                        (source,),
+                        f"""SELECT document_id, checksum FROM {self._documents_table}
+                            WHERE source = %s AND dataset_id = %s""",
+                        (source, dataset_id),
                     )
                     row = cur.fetchone()
                     now = datetime.now(timezone.utc)
@@ -68,9 +71,9 @@ class PgVectorStore(VectorStore):
                         document_id = str(uuid.uuid4())
                         cur.execute(
                             f"""INSERT INTO {self._documents_table}
-                                (document_id, source, checksum, created_at, last_modified)
-                                VALUES (%s, %s, %s, %s, %s)""",
-                            (document_id, source, checksum, now, now),
+                                (document_id, source, dataset_id, checksum, created_at, last_modified)
+                                VALUES (%s, %s, %s, %s, %s, %s)""",
+                            (document_id, source, dataset_id, checksum, now, now),
                         )
                         return document_id, True
 
@@ -99,6 +102,30 @@ class PgVectorStore(VectorStore):
         finally:
             self._putconn(conn)
 
+    def delete_document(self, document_id: str) -> None:
+        conn = self._conn()
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        f"DELETE FROM {self._documents_table} WHERE document_id = %s",
+                        (document_id,),
+                    )
+        finally:
+            self._putconn(conn)
+
+    def delete_dataset(self, dataset_id: str) -> None:
+        conn = self._conn()
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        f"DELETE FROM {self._documents_table} WHERE dataset_id = %s",
+                        (dataset_id,),
+                    )
+        finally:
+            self._putconn(conn)
+
     def add_chunks(self, chunks: list[Chunk]) -> None:
         if not chunks:
             return
@@ -122,6 +149,7 @@ class PgVectorStore(VectorStore):
                             c.metadata.last_modified,
                             c.metadata.language,
                             c.metadata.category,
+                            c.metadata.dataset_id,
                         )
                         for c in chunks
                     ]
@@ -130,13 +158,14 @@ class PgVectorStore(VectorStore):
                         f"""INSERT INTO {self._chunks_table}
                             (chunk_id, document_id, chunk_index, content, embedding,
                              source, source_type, title, author, url,
-                             created_at, last_modified, language, category)
+                             created_at, last_modified, language, category, dataset_id)
                             VALUES %s
                             ON CONFLICT (chunk_id) DO UPDATE SET
                                 content = EXCLUDED.content,
                                 embedding = EXCLUDED.embedding,
                                 last_modified = EXCLUDED.last_modified,
-                                category = EXCLUDED.category""",
+                                category = EXCLUDED.category,
+                                dataset_id = EXCLUDED.dataset_id""",
                         rows,
                     )
         finally:
@@ -164,7 +193,7 @@ class PgVectorStore(VectorStore):
         sql = f"""
             SELECT chunk_id, document_id, chunk_index, content,
                    source, source_type, title, author, url,
-                   created_at, last_modified, language, category,
+                   created_at, last_modified, language, category, dataset_id,
                    embedding {self._distance_op} %s::vector AS distance
             FROM {self._chunks_table}
             {where_sql}
@@ -185,7 +214,7 @@ class PgVectorStore(VectorStore):
             (
                 chunk_id, document_id, chunk_index, content,
                 source, source_type, title, author, url,
-                created_at, last_modified, language, category, distance,
+                created_at, last_modified, language, category, dataset_id, distance,
             ) = row
             metadata = ChunkMetadata(
                 document_id=str(document_id),
@@ -200,6 +229,7 @@ class PgVectorStore(VectorStore):
                 language=language,
                 chunk_index=chunk_index,
                 category=category,
+                dataset_id=dataset_id,
             )
             chunk = Chunk(id=chunk_id, content=content, metadata=metadata)
             score = 1.0 - distance if self._distance_op == "<=>" else -distance

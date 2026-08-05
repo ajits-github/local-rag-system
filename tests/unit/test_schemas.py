@@ -36,7 +36,22 @@ def test_chunk_metadata_chunk_id_convention():
         created_at=now,
         last_modified=now,
         chunk_index=0,
+        dataset_id="test-dataset",
     )
     chunk = Chunk(id=metadata.chunk_id, content="text", metadata=metadata, embedding=[0.1, 0.2])
     assert chunk.id == f"{metadata.document_id}_{metadata.chunk_index}"
     assert chunk.embedding == [0.1, 0.2]
+
+
+def test_chunk_metadata_requires_dataset_id():
+    now = datetime.now(timezone.utc)
+    with pytest.raises(ValidationError):
+        ChunkMetadata(
+            document_id="doc-1",
+            chunk_id="doc-1_0",
+            source="a.txt",
+            source_type="text",
+            created_at=now,
+            last_modified=now,
+            chunk_index=0,
+        )

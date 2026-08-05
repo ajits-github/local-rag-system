@@ -13,9 +13,10 @@ up:
 down:
 	docker compose down
 
-# Ingest a file or directory: make ingest FILE=data/sample.pdf
+# Ingest a file or directory: make ingest FILE=data/sample_docs DATASET_ID=sample_docs
+# Add CLEAR=1 to wipe that dataset_id's existing documents/chunks first.
 ingest:
-	python -m rag.ingestion.pipeline $(FILE)
+	python -m rag.ingestion.pipeline $(FILE) --dataset-id $(DATASET_ID) $(if $(CLEAR),--clear,)
 
 # Query the running API: make query Q="what is pgvector?"
 query:

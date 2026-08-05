@@ -39,6 +39,12 @@ class ChunkMetadata(BaseModel):
     # the ingestion pipeline when walking a directory tree. None for
     # single-file ingestion or API uploads, which have no folder context.
     category: str | None = None
+    # Namespace tag (e.g. "techfusion", "sample_docs") every chunk must
+    # declare at ingestion time. No default: this is deliberate — omitting
+    # it silently would defeat the point, which is that two datasets can
+    # never accidentally share retrieval results. Required as a filter by
+    # eval/run_eval.py; available as an optional POST /query filter too.
+    dataset_id: str
 
 
 class Chunk(BaseModel):

@@ -17,6 +17,7 @@ def _make_result(chunk_id: str, content: str, score: float) -> SearchResult:
         created_at=now,
         last_modified=now,
         chunk_index=0,
+        dataset_id="test-dataset",
     )
     return SearchResult(chunk=Chunk(id=chunk_id, content=content, metadata=metadata), score=score)
 

@@ -21,8 +21,8 @@ checker built into the identity provider.
 
 Standard user accounts are **not required to rotate passwords on a fixed
 schedule**, provided multi-factor authentication (MFA) is enabled.
-**Privileged accounts** — including database administrators and anyone
-with production infrastructure access — **must rotate credentials every
+**Privileged accounts** (including database administrators and anyone
+with production infrastructure access) **must rotate credentials every
 90 days**.
 
 ## Multi-Factor Authentication

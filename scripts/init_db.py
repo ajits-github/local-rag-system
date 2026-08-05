@@ -27,10 +27,12 @@ def build_schema_sql(*, documents_table: str, chunks_table: str, dimension: int)
 
     CREATE TABLE IF NOT EXISTS {documents_table} (
         document_id UUID PRIMARY KEY,
-        source TEXT NOT NULL UNIQUE,
+        source TEXT NOT NULL,
+        dataset_id TEXT,
         checksum TEXT NOT NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-        last_modified TIMESTAMPTZ NOT NULL DEFAULT now()
+        last_modified TIMESTAMPTZ NOT NULL DEFAULT now(),
+        UNIQUE (source, dataset_id)
     );
 
     CREATE TABLE IF NOT EXISTS {chunks_table} (
@@ -47,17 +49,43 @@ def build_schema_sql(*, documents_table: str, chunks_table: str, dimension: int)
         created_at TIMESTAMPTZ NOT NULL,
         last_modified TIMESTAMPTZ NOT NULL,
         language TEXT,
-        category TEXT
+        category TEXT,
+        dataset_id TEXT
     );
 
-    -- Migration for tables created before `category` existed.
+    -- Migrations for tables created before `category`/`dataset_id` existed.
     ALTER TABLE {chunks_table} ADD COLUMN IF NOT EXISTS category TEXT;
+    ALTER TABLE {chunks_table} ADD COLUMN IF NOT EXISTS dataset_id TEXT;
+    ALTER TABLE {documents_table} ADD COLUMN IF NOT EXISTS dataset_id TEXT;
+
+    -- documents.source used to be UNIQUE on its own; identity is now scoped
+    -- per (source, dataset_id) so the same relative path can exist in two
+    -- different datasets without colliding.
+    DO $$
+    BEGIN
+        IF EXISTS (
+            SELECT 1 FROM pg_constraint WHERE conname = '{documents_table}_source_key'
+        ) THEN
+            EXECUTE 'ALTER TABLE {documents_table} DROP CONSTRAINT {documents_table}_source_key';
+        END IF;
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint WHERE conname = '{documents_table}_source_dataset_id_key'
+        ) THEN
+            EXECUTE 'ALTER TABLE {documents_table} ADD CONSTRAINT {documents_table}_source_dataset_id_key UNIQUE (source, dataset_id)';
+        END IF;
+    END $$;
 
     CREATE INDEX IF NOT EXISTS {chunks_table}_document_id_idx
         ON {chunks_table} (document_id);
 
     CREATE INDEX IF NOT EXISTS {chunks_table}_category_idx
         ON {chunks_table} (category);
+
+    CREATE INDEX IF NOT EXISTS {chunks_table}_dataset_id_idx
+        ON {chunks_table} (dataset_id);
+
+    CREATE INDEX IF NOT EXISTS {documents_table}_dataset_id_idx
+        ON {documents_table} (dataset_id);
 
     CREATE INDEX IF NOT EXISTS {chunks_table}_embedding_hnsw_idx
         ON {chunks_table} USING hnsw (embedding vector_cosine_ops);

@@ -28,6 +28,7 @@ docker/pgdata/
 data/uploads/*
 data/knowledge_base/
 data/eval/techfusion_gold.jsonl
+data/eval/baselines/
 !data/uploads/.gitkeep
 *.log
 
