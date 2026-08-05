@@ -171,31 +171,55 @@ waiting on LLM calls for every question.
 
 ## Benchmarks
 
-Saved eval runs (`--verbose` output, one JSON file per configuration under
-`data/eval/baselines/`) let comparative experiments (a new reranker, a
-bigger generation model, a different chunk size) be diffed against a
-known-good baseline instead of eyeballed. Baseline files themselves aren't
-committed (per dataset above), but the aggregate numbers below are just
-metrics, not corpus content, so they're safe to keep in this table.
+`experiments/` tracks comparable eval runs over time: `configs/` holds a
+snapshot of `config/default.yaml` per experiment, `results/` holds a flat
+JSON metrics record per experiment (schema below), and `reports/` holds
+the generated comparison table. Only aggregate metrics and config values
+are stored here, never corpus content or generated answers, so all three
+are safe to commit even though the underlying dataset isn't (per dataset
+above).
 
-| Generation model | Reranker | Recall@5 | Recall@10 | MRR | Avg latency | Dataset | Date |
-|---|---|---|---|---|---|---|---|
-| qwen2.5:1.5b | none | 0.891 | 0.967 | 0.847 | 3.7s | techfusion | 2026-08-05 |
+The table below is generated, not hand-written; don't edit it directly,
+regenerate it instead (see "Recording a new experiment").
 
-*Avg latency is the mean of retrieval+generation per question, at the
+<!-- EXPERIMENTS_TABLE_START -->
+| # | Label | Generation model | Reranker | Recall@5 | Recall@10 | Hit Rate@10 | MRR | Answer quality | Total latency | Dataset | Date |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | TechFusion baseline (qwen2.5:1.5b, no reranker) | qwen2.5:1.5b | none | 0.891 | 0.967 | 0.978 | 0.847 | 0.432 | 3.7s | techfusion | 2026-08-05 |
+<!-- EXPERIMENTS_TABLE_END -->
+
+*Total latency is the mean of retrieval+generation per question, at the
 config's production `rerank_top_n` (not the broader top-10 fetch used for
-Recall@10). 46-question TechFusion gold set, `dataset_id=techfusion`
-isolated from every other dataset (see Metadata & filtering above).*
+Recall@10). Every row measured against `dataset_id`-isolated retrieval
+(see Metadata & filtering above), so results are never contaminated by a
+different dataset in the same vector store.*
 
-To add a row after a config change:
-```
-python -m rag.eval.run_eval --gold data/eval/techfusion_gold.jsonl --dataset-id techfusion --verbose \
-  > data/eval/baselines/techfusion_baseline_<model>_reranker-<reranker>_$(date +%F).json
-python scripts/render_benchmarks.py
-```
-then paste the regenerated table (it covers every file already in
-`data/eval/baselines/`, so it always includes prior rows too) over the one
-above.
+### Recording a new experiment
+
+1. Change one thing in `config/default.yaml` (reranker, model, chunk size,
+   ...).
+2. Run the eval and save its full report:
+   ```
+   python -m rag.eval.run_eval --gold data/eval/techfusion_gold.jsonl \
+     --dataset-id techfusion --verbose > /tmp/eval_report.json
+   ```
+3. Register it as an experiment (never re-runs eval, just records the
+   report above):
+   ```
+   python scripts/record_experiment.py --eval-output /tmp/eval_report.json \
+     --experiment-id experiment_002 --label "cross-encoder reranker" \
+     --config config/default.yaml
+   ```
+4. Regenerate the comparison table (updates
+   `experiments/reports/comparison.md` and this README section in place):
+   ```
+   python scripts/compare_experiments.py
+   ```
+
+The eval report and per-question detail behind each experiment aren't
+committed (see Evaluation above); the flat metrics record and config
+snapshot under `experiments/` are what make the comparison reproducible
+without needing that raw file.
 
 ## Testing
 
