@@ -20,6 +20,7 @@ ALLOWED_FILTER_FIELDS = {
     "author",
     "url",
     "language",
+    "category",
 }
 
 

@@ -1,3 +1,0 @@
-{"query_id": "q1", "query": "What port does the local Postgres instance run on?", "relevant_document_ids": ["<document-id-of-README-or-docs-after-ingestion>"], "relevant_chunk_ids": [], "question_type": "factoid", "difficulty": "easy", "unanswerable": false}
-{"query_id": "q2", "query": "Which embedding model is used by default?", "relevant_document_ids": ["<document-id-of-README-or-docs-after-ingestion>"], "relevant_chunk_ids": [], "question_type": "factoid", "difficulty": "easy", "unanswerable": false}
-{"query_id": "q3", "query": "What is the CEO's home address?", "relevant_document_ids": [], "relevant_chunk_ids": [], "question_type": "out_of_scope", "difficulty": "hard", "unanswerable": true}

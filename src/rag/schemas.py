@@ -35,6 +35,10 @@ class ChunkMetadata(BaseModel):
     last_modified: datetime
     language: str | None = None
     chunk_index: int
+    # Relative folder path under the ingested root (e.g. "security"), set by
+    # the ingestion pipeline when walking a directory tree. None for
+    # single-file ingestion or API uploads, which have no folder context.
+    category: str | None = None
 
 
 class Chunk(BaseModel):

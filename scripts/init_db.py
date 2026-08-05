@@ -46,11 +46,18 @@ def build_schema_sql(*, documents_table: str, chunks_table: str, dimension: int)
         url TEXT,
         created_at TIMESTAMPTZ NOT NULL,
         last_modified TIMESTAMPTZ NOT NULL,
-        language TEXT
+        language TEXT,
+        category TEXT
     );
+
+    -- Migration for tables created before `category` existed.
+    ALTER TABLE {chunks_table} ADD COLUMN IF NOT EXISTS category TEXT;
 
     CREATE INDEX IF NOT EXISTS {chunks_table}_document_id_idx
         ON {chunks_table} (document_id);
+
+    CREATE INDEX IF NOT EXISTS {chunks_table}_category_idx
+        ON {chunks_table} (category);
 
     CREATE INDEX IF NOT EXISTS {chunks_table}_embedding_hnsw_idx
         ON {chunks_table} USING hnsw (embedding vector_cosine_ops);

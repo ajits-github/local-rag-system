@@ -12,7 +12,13 @@ class Writer:
         self._embedder = embedder
         self._vectorstore = vectorstore
 
-    def write(self, document: RawDocument, document_id: str, chunk_texts: list[str]) -> list[Chunk]:
+    def write(
+        self,
+        document: RawDocument,
+        document_id: str,
+        chunk_texts: list[str],
+        category: str | None = None,
+    ) -> list[Chunk]:
         embeddings = self._embedder.embed_documents(chunk_texts)
         chunks = [
             Chunk(
@@ -30,6 +36,7 @@ class Writer:
                     last_modified=document.last_modified,
                     language=document.language,
                     chunk_index=i,
+                    category=category,
                 ),
                 embedding=embedding,
             )

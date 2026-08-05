@@ -1,7 +1,14 @@
-"""Run retrieval evaluation (recall@k, MRR) against a gold JSONL dataset.
+"""Run retrieval + generation evaluation against a gold JSONL dataset.
+
+Works with any gold file matching GoldExample's schema (question /
+expected_answer / relevant_documents / question_type / difficulty /
+unanswerable) and any knowledge base, regardless of what root path it was
+ingested from -- nothing here is specific to a particular dataset.
 
 Usage:
-    python -m rag.eval.run_eval --gold data/eval/gold.jsonl [--k 5] [--config config/default.yaml]
+    python -m rag.eval.run_eval --gold data/eval/techfusion_gold.jsonl
+    python -m rag.eval.run_eval --gold data/eval/gold.jsonl --config config/other.yaml
+    python -m rag.eval.run_eval --gold data/eval/techfusion_gold.jsonl --skip-generation
 """
 
 from __future__ import annotations
@@ -11,55 +18,143 @@ import json
 from pathlib import Path
 
 from rag.config import load_config
-from rag.eval.gold_schema import load_gold_jsonl
-from rag.eval.metrics import mean_recall_at_k, mean_reciprocal_rank
+from rag.eval.answer_quality import KeywordOverlapScorer
+from rag.eval.gold_schema import GoldExample, load_gold_jsonl, source_matches_relevant
+from rag.eval.metrics import mean_hit_rate_at_k, mean_recall_at_k, mean_reciprocal_rank
 from rag.retrieval.pipeline import RetrievalPipeline
 
+# Broadest cutoff fetched per query; @5 is sliced from the same fetch so
+# each gold question only needs one retrieval call for both cutoffs.
+RETRIEVAL_K = 10
+RECALL_CUTOFFS = (5, 10)
 
-def run(gold_path: Path, config_path: str | None, k: int) -> dict:
-    config = load_config(config_path) if config_path else load_config()
-    pipeline = RetrievalPipeline(config)
 
-    examples = load_gold_jsonl(gold_path)
-    doc_retrieved, doc_relevant = [], []
-    chunk_retrieved, chunk_relevant = [], []
+def _mean(values: list[float]) -> float:
+    return sum(values) / len(values) if values else 0.0
+
+
+def evaluate(
+    pipeline: RetrievalPipeline,
+    examples: list[GoldExample],
+    run_generation: bool = True,
+) -> dict:
+    scorer = KeywordOverlapScorer() if run_generation else None
+
+    all_retrieved_sources: list[list[str]] = []
+    all_relevant: list[list[str]] = []
+    retrieval_ms_values: list[float] = []
+    generation_ms_values: list[float] = []
+    total_ms_values: list[float] = []
+    answerable_quality_scores: list[float] = []
+    unanswerable_quality_scores: list[float] = []
+    per_example: list[dict] = []
 
     for example in examples:
-        if example.unanswerable:
-            continue
-        results = pipeline.retrieve(example.query)
-        retrieved_doc_ids = [r.chunk.metadata.document_id for r in results]
-        retrieved_chunk_ids = [r.chunk.metadata.chunk_id for r in results]
+        # Broad retrieval (top 10, un-truncated by the reranker) purely to
+        # score retrieval quality at multiple cutoffs -- decoupled from the
+        # production-config latency measured via pipeline.answer() below.
+        retrieval_results = pipeline.retrieve(
+            example.question, top_k=RETRIEVAL_K, rerank_top_n=RETRIEVAL_K
+        )
+        retrieved_sources = [r.chunk.metadata.source for r in retrieval_results]
+        all_retrieved_sources.append(retrieved_sources)
+        all_relevant.append(example.relevant_documents)
 
-        if example.relevant_document_ids:
-            doc_retrieved.append(retrieved_doc_ids)
-            doc_relevant.append(set(example.relevant_document_ids))
-        if example.relevant_chunk_ids:
-            chunk_retrieved.append(retrieved_chunk_ids)
-            chunk_relevant.append(set(example.relevant_chunk_ids))
+        entry: dict = {
+            "question": example.question,
+            "question_type": example.question_type,
+            "difficulty": example.difficulty,
+            "unanswerable": example.unanswerable,
+            "relevant_documents": example.relevant_documents,
+            "retrieved_sources": retrieved_sources,
+        }
 
-    report: dict = {"num_examples": len(examples), "k": k}
-    if doc_retrieved:
-        report["document_level"] = {
-            f"recall@{k}": mean_recall_at_k(doc_retrieved, doc_relevant, k),
-            "mrr": mean_reciprocal_rank(doc_retrieved, doc_relevant),
+        if run_generation:
+            # Production-config answer (real rerank_top_n, real prompt and
+            # generation call) for latency + answer-quality measurement.
+            result = pipeline.answer(example.question)
+            retrieval_ms_values.append(result["retrieval_ms"])
+            generation_ms_values.append(result["generation_ms"])
+            total_ms_values.append(result["total_ms"])
+            entry.update(
+                answer=result["answer"],
+                retrieval_ms=result["retrieval_ms"],
+                generation_ms=result["generation_ms"],
+                total_ms=result["total_ms"],
+            )
+            if scorer is not None and example.expected_answer:
+                quality = scorer.score(example.question, result["answer"], example.expected_answer)
+                entry["answer_quality"] = quality
+                bucket = unanswerable_quality_scores if example.unanswerable else answerable_quality_scores
+                bucket.append(quality)
+
+        per_example.append(entry)
+
+    report: dict = {
+        "num_examples": len(examples),
+        "retrieval": {
+            f"recall@{k}": mean_recall_at_k(
+                all_retrieved_sources, all_relevant, k, source_matches_relevant
+            )
+            for k in RECALL_CUTOFFS
+        },
+        "hit_rate": {
+            f"hit_rate@{k}": mean_hit_rate_at_k(
+                all_retrieved_sources, all_relevant, k, source_matches_relevant
+            )
+            for k in RECALL_CUTOFFS
+        },
+        "mrr": mean_reciprocal_rank(all_retrieved_sources, all_relevant, source_matches_relevant),
+    }
+
+    if run_generation:
+        report["latency_ms"] = {
+            "retrieval_mean": _mean(retrieval_ms_values),
+            "generation_mean": _mean(generation_ms_values),
+            "total_mean": _mean(total_ms_values),
         }
-    if chunk_retrieved:
-        report["chunk_level"] = {
-            f"recall@{k}": mean_recall_at_k(chunk_retrieved, chunk_relevant, k),
-            "mrr": mean_reciprocal_rank(chunk_retrieved, chunk_relevant),
+        all_quality = answerable_quality_scores + unanswerable_quality_scores
+        report["answer_quality"] = {
+            "note": (
+                "Keyword-overlap heuristic (eval/answer_quality.py) -- a crude "
+                "placeholder, not a faithfulness/correctness judge. Particularly "
+                "unreliable on unanswerable questions, where a correct refusal "
+                "may share few keywords with the reference 'no answer' text. "
+                "See README Roadmap (RAGAS) for a real answer-quality suite."
+            ),
+            "mean_overall": _mean(all_quality),
+            "mean_answerable": _mean(answerable_quality_scores),
+            "mean_unanswerable": _mean(unanswerable_quality_scores),
         }
+
+    report["per_example"] = per_example
     return report
+
+
+def run(gold_path: Path, config_path: str | None, run_generation: bool = True) -> dict:
+    config = load_config(config_path) if config_path else load_config()
+    pipeline = RetrievalPipeline(config)
+    examples = load_gold_jsonl(gold_path)
+    return evaluate(pipeline, examples, run_generation=run_generation)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--gold", required=True, help="Path to a gold.jsonl file")
+    parser.add_argument("--gold", required=True, help="Path to a gold JSONL file")
     parser.add_argument("--config", default=None, help="Override config/default.yaml")
-    parser.add_argument("--k", type=int, default=5)
+    parser.add_argument(
+        "--skip-generation",
+        action="store_true",
+        help="Retrieval metrics only -- skips LLM generation, latency, and answer-quality scoring.",
+    )
+    parser.add_argument(
+        "--verbose", action="store_true", help="Include per-question detail in the printed report"
+    )
     args = parser.parse_args()
 
-    report = run(Path(args.gold), args.config, args.k)
+    report = run(Path(args.gold), args.config, run_generation=not args.skip_generation)
+    if not args.verbose:
+        report = {k: v for k, v in report.items() if k != "per_example"}
     print(json.dumps(report, indent=2))
 
 

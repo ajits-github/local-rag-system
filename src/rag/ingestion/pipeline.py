@@ -37,7 +37,7 @@ class IngestionPipeline:
         self._chunker = get_chunker(config.chunking)
         self._writer = Writer(self._embedder, self._vectorstore)
 
-    def ingest_file(self, path: Path) -> dict:
+    def ingest_file(self, path: Path, category: str | None = None) -> dict:
         path = Path(path)
         if path.suffix.lower() not in self._config.ingestion.supported_extensions:
             raise ValueError(f"Unsupported extension '{path.suffix}' for {path}")
@@ -59,7 +59,7 @@ class IngestionPipeline:
 
         cleaned = self._cleaner.clean(raw_document.content)
         chunk_texts = self._chunker.split(cleaned)
-        chunks = self._writer.write(raw_document, document_id, chunk_texts)
+        chunks = self._writer.write(raw_document, document_id, chunk_texts, category=category)
 
         logger.info(
             "ingested_document",
@@ -67,11 +67,19 @@ class IngestionPipeline:
                 "source": raw_document.source,
                 "document_id": document_id,
                 "chunk_count": len(chunks),
+                "category": category,
             },
         )
         return {"document_id": document_id, "chunks_written": len(chunks), "changed": True}
 
     def ingest_path(self, path: Path) -> list[dict]:
+        """Ingest a single file, or recursively ingest a directory tree.
+
+        When walking a directory, each file's path relative to `path` (minus
+        its own filename) is recorded as the chunk metadata's `category` —
+        e.g. ingesting `data/knowledge_base` preserves `security`,
+        `runbooks/postgres`, etc. as filterable metadata.
+        """
         path = Path(path)
         if not path.is_dir():
             return [self.ingest_file(path)]
@@ -79,7 +87,9 @@ class IngestionPipeline:
         results = []
         for ext in self._config.ingestion.supported_extensions:
             for file_path in sorted(path.rglob(f"*{ext}")):
-                results.append(self.ingest_file(file_path))
+                relative_dir = file_path.relative_to(path).parent
+                category = None if relative_dir == Path(".") else relative_dir.as_posix()
+                results.append(self.ingest_file(file_path, category=category))
         return results
 
 

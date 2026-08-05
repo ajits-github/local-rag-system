@@ -121,6 +121,7 @@ class PgVectorStore(VectorStore):
                             c.metadata.created_at,
                             c.metadata.last_modified,
                             c.metadata.language,
+                            c.metadata.category,
                         )
                         for c in chunks
                     ]
@@ -129,12 +130,13 @@ class PgVectorStore(VectorStore):
                         f"""INSERT INTO {self._chunks_table}
                             (chunk_id, document_id, chunk_index, content, embedding,
                              source, source_type, title, author, url,
-                             created_at, last_modified, language)
+                             created_at, last_modified, language, category)
                             VALUES %s
                             ON CONFLICT (chunk_id) DO UPDATE SET
                                 content = EXCLUDED.content,
                                 embedding = EXCLUDED.embedding,
-                                last_modified = EXCLUDED.last_modified""",
+                                last_modified = EXCLUDED.last_modified,
+                                category = EXCLUDED.category""",
                         rows,
                     )
         finally:
@@ -162,7 +164,7 @@ class PgVectorStore(VectorStore):
         sql = f"""
             SELECT chunk_id, document_id, chunk_index, content,
                    source, source_type, title, author, url,
-                   created_at, last_modified, language,
+                   created_at, last_modified, language, category,
                    embedding {self._distance_op} %s::vector AS distance
             FROM {self._chunks_table}
             {where_sql}
@@ -183,7 +185,7 @@ class PgVectorStore(VectorStore):
             (
                 chunk_id, document_id, chunk_index, content,
                 source, source_type, title, author, url,
-                created_at, last_modified, language, distance,
+                created_at, last_modified, language, category, distance,
             ) = row
             metadata = ChunkMetadata(
                 document_id=str(document_id),
@@ -197,6 +199,7 @@ class PgVectorStore(VectorStore):
                 last_modified=last_modified,
                 language=language,
                 chunk_index=chunk_index,
+                category=category,
             )
             chunk = Chunk(id=chunk_id, content=content, metadata=metadata)
             score = 1.0 - distance if self._distance_op == "<=>" else -distance

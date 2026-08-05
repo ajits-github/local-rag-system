@@ -24,6 +24,39 @@ def test_text_loader_reads_plain_text(tmp_path: Path):
     assert doc.source == str(path)
 
 
+def test_text_loader_parses_yaml_frontmatter(tmp_path: Path):
+    path = tmp_path / "policy.md"
+    path.write_text(
+        '---\n'
+        'title: "Access Control Policy"\n'
+        'owner: "Security Engineering"\n'
+        'last_reviewed: "2026-07-15"\n'
+        'tags: ["access", "rbac"]\n'
+        '---\n\n'
+        '# Access Control Policy\n\nBody text here.',
+        encoding="utf-8",
+    )
+
+    doc = TextLoader().load(path)
+
+    assert doc.title == "Access Control Policy"
+    assert doc.author == "Security Engineering"
+    assert doc.last_modified.strftime("%Y-%m-%d") == "2026-07-15"
+    assert "---" not in doc.content
+    assert "Body text here." in doc.content
+
+
+def test_text_loader_handles_markdown_without_frontmatter(tmp_path: Path):
+    path = tmp_path / "plain.md"
+    path.write_text("# Title\n\nbody, no frontmatter here", encoding="utf-8")
+
+    doc = TextLoader().load(path)
+
+    assert doc.title == "plain"  # falls back to filename stem
+    assert doc.author is None
+    assert doc.content == "# Title\n\nbody, no frontmatter here"
+
+
 def test_text_loader_detects_markdown(tmp_path: Path):
     path = tmp_path / "note.md"
     path.write_text("# Title\n\nbody", encoding="utf-8")

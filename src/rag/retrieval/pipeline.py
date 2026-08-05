@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from rag.config import AppConfig
@@ -43,12 +44,18 @@ class RetrievalPipeline:
         query: str,
         filters: dict[str, Any] | None = None,
         top_k: int | None = None,
+        rerank_top_n: int | None = None,
     ) -> list[SearchResult]:
+        """rerank_top_n overrides config's default truncation — needed by
+        callers (e.g. eval) that want more than the production-default
+        number of results back, such as computing Recall@10 when the
+        configured reranker normally truncates to top 3."""
         query_embedding = self._embedder.embed_query(query)
         results = self._vectorstore.search(
             query_embedding, top_k=top_k or self._config.retrieval.top_k, filters=filters
         )
-        return self._reranker.rerank(query, results, top_n=self._config.retrieval.rerank_top_n)
+        n = rerank_top_n if rerank_top_n is not None else self._config.retrieval.rerank_top_n
+        return self._reranker.rerank(query, results, top_n=n)
 
     def answer(
         self,
@@ -56,10 +63,13 @@ class RetrievalPipeline:
         filters: dict[str, Any] | None = None,
         top_k: int | None = None,
     ) -> dict[str, Any]:
+        t0 = time.perf_counter()
         results = self.retrieve(query, filters=filters, top_k=top_k)
+        t1 = time.perf_counter()
         context = "\n\n---\n\n".join(r.chunk.content for r in results)
         prompt = _PROMPT_TEMPLATE.format(context=context, query=query)
         answer_text = self._llm.generate(prompt)
+        t2 = time.perf_counter()
         return {
             "answer": answer_text,
             "sources": [
@@ -67,8 +77,12 @@ class RetrievalPipeline:
                     "chunk_id": r.chunk.metadata.chunk_id,
                     "document_id": r.chunk.metadata.document_id,
                     "source": r.chunk.metadata.source,
+                    "category": r.chunk.metadata.category,
                     "score": r.score,
                 }
                 for r in results
             ],
+            "retrieval_ms": (t1 - t0) * 1000,
+            "generation_ms": (t2 - t1) * 1000,
+            "total_ms": (t2 - t0) * 1000,
         }

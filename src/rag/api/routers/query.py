@@ -21,12 +21,16 @@ class SourceItem(BaseModel):
     chunk_id: str
     document_id: str
     source: str
+    category: str | None = None
     score: float
 
 
 class QueryResponse(BaseModel):
     answer: str
     sources: list[SourceItem]
+    retrieval_ms: float
+    generation_ms: float
+    total_ms: float
 
 
 @router.post("/query", response_model=QueryResponse)
