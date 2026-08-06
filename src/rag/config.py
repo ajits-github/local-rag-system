@@ -97,6 +97,42 @@ class GenerationConfig(BaseModel):
     prompt: PromptConfig = Field(default_factory=PromptConfig)
 
 
+class OpenAIJudgeConfig(BaseModel):
+    """Model/credential settings for the `openai` judge provider."""
+
+    model_name: str = "gpt-4o-mini"
+    api_key_env_var: str = "OPENAI_API_KEY"
+
+
+class AnthropicJudgeConfig(BaseModel):
+    """Model/credential settings for the `anthropic` judge provider."""
+
+    model_name: str = "claude-haiku-4-5-20251001"
+    api_key_env_var: str = "ANTHROPIC_API_KEY"
+
+
+class OllamaJudgeConfig(BaseModel):
+    """Model settings for the `ollama` (local, experimental) judge provider."""
+
+    model_name: str = "llama3.1:8b"
+
+
+class JudgeConfig(BaseModel):
+    """RAGAS judge LLM provider selection, independent of `generation`.
+
+    Never defaults to the generation models (qwen2.5:1.5b/3b) — hosted
+    providers are the primary supported path; `ollama` is offered for
+    free local experimentation only, with a different, non-default model.
+    """
+
+    provider: Literal["openai", "anthropic", "ollama"] = "openai"
+    temperature: float = 0.0
+    max_tokens: int = 1024
+    openai: OpenAIJudgeConfig = Field(default_factory=OpenAIJudgeConfig)
+    anthropic: AnthropicJudgeConfig = Field(default_factory=AnthropicJudgeConfig)
+    ollama: OllamaJudgeConfig = Field(default_factory=OllamaJudgeConfig)
+
+
 class RetrievalConfig(BaseModel):
     """Result-count tuning for the retrieval pipeline."""
 
@@ -125,6 +161,7 @@ class AppConfig(BaseModel):
     chunking: ChunkingConfig
     reranker: RerankerConfig
     generation: GenerationConfig
+    judge: JudgeConfig = Field(default_factory=JudgeConfig)
     retrieval: RetrievalConfig
     ingestion: IngestionConfig
 
@@ -173,6 +210,26 @@ class AppConfig(BaseModel):
             The API key, or ``None`` if that environment variable is unset.
         """
         return os.environ.get(self.reranker.cohere.api_key_env_var)
+
+    def openai_api_key(self) -> str | None:
+        """Resolve the OpenAI API key from `judge.openai.api_key_env_var`.
+
+        Returns
+        -------
+        str | None
+            The API key, or ``None`` if that environment variable is unset.
+        """
+        return os.environ.get(self.judge.openai.api_key_env_var)
+
+    def anthropic_api_key(self) -> str | None:
+        """Resolve the Anthropic API key from `judge.anthropic.api_key_env_var`.
+
+        Returns
+        -------
+        str | None
+            The API key, or ``None`` if that environment variable is unset.
+        """
+        return os.environ.get(self.judge.anthropic.api_key_env_var)
 
     def prompt_template_path(self) -> Path:
         """Resolve `generation.prompt.path`, relative to the repo root if not absolute.

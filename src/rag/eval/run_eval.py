@@ -141,6 +141,12 @@ def evaluate(
             total_ms_values.append(result["total_ms"])
             entry.update(
                 answer=result["answer"],
+                # Production-config sources-with-content (this answer()
+                # call's own retrieve, at real rerank_top_n) -- distinct
+                # from `retrieved_sources` above, which comes from the
+                # broader top-10 fetch used for Recall@10. Consumed by
+                # rag.eval.run_ragas_eval for RAGAS's retrieved_contexts.
+                generation_sources=result["sources"],
                 retrieval_ms=result["retrieval_ms"],
                 generation_ms=result["generation_ms"],
                 total_ms=result["total_ms"],

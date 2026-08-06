@@ -28,6 +28,12 @@ dependencies = [
 cohere = [
     "cohere>=5.0",
 ]
+ragas = [
+    "ragas>=0.3,<0.4",  # pulls in openai + datasets transitively
+]
+anthropic = [
+    "anthropic>=0.34",  # ragas does NOT pull this in on its own
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
@@ -86,6 +92,7 @@ check_untyped_defs = true
 module = [
     "langchain.*",
     "langchain_community.*",
+    "langchain_core.*",
     "langchain_text_splitters.*",
     "sentence_transformers.*",
     "pgvector.*",
@@ -94,6 +101,10 @@ module = [
     "docx.*",
     "pypdf.*",
     "bs4.*",
+    "ragas.*",
+    "datasets.*",
+    "openai.*",
+    "anthropic.*",
 ]
 ignore_missing_imports = true
 

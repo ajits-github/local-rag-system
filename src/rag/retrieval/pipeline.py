@@ -126,6 +126,9 @@ class RetrievalPipeline:
         -------
         dict[str, Any]
             ``{"answer", "sources", "retrieval_ms", "generation_ms", "total_ms"}``.
+            Each `sources` entry includes the chunk's raw `content`
+            alongside its metadata, so callers (e.g. RAGAS scoring) can
+            reuse this retrieval without a redundant call.
         """
         t0 = time.perf_counter()
         results = self.retrieve(query, filters=filters, top_k=top_k)
@@ -144,6 +147,7 @@ class RetrievalPipeline:
                     "source": r.chunk.metadata.source,
                     "category": r.chunk.metadata.category,
                     "score": r.score,
+                    "content": r.chunk.content,
                 }
                 for r in results
             ],

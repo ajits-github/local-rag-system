@@ -113,3 +113,42 @@ def test_build_experiment_record_includes_prompt_fields():
     assert record["prompt_id"] == config.generation.prompt.id
     assert record["prompt_version"] == config.generation.prompt.version
     assert record["prompt_file_checksum"] == expected_checksum
+
+
+def test_build_experiment_record_includes_ragas_fields_when_present():
+    """ragas_* fields are pulled from the report's "ragas" key when present."""
+    config = load_config()
+    report = _fake_eval_report()
+    report["ragas"] = {
+        "aggregate": {
+            "faithfulness": 0.81,
+            "answer_relevancy": 0.77,
+            "context_precision": 0.69,
+            "context_recall": 0.72,
+            "answer_correctness": 0.58,
+        },
+        "judge": {"provider": "openai", "model_name": "gpt-4o-mini"},
+    }
+
+    record = record_experiment.build_experiment_record(
+        report, config, "experiment_999", "unit test"
+    )
+
+    assert record["ragas_faithfulness"] == 0.81
+    assert record["ragas_answer_relevancy"] == 0.77
+    assert record["ragas_context_precision"] == 0.69
+    assert record["ragas_context_recall"] == 0.72
+    assert record["ragas_answer_correctness"] == 0.58
+    assert record["ragas_judge_provider"] == "openai"
+    assert record["ragas_judge_model"] == "gpt-4o-mini"
+
+
+def test_build_experiment_record_ragas_fields_none_for_reports_without_ragas_key():
+    """Older, non-ragas reports yield None for every ragas_* field (backward compat)."""
+    config = load_config()
+    record = record_experiment.build_experiment_record(
+        _fake_eval_report(), config, "experiment_999", "unit test"
+    )
+
+    assert record["ragas_faithfulness"] is None
+    assert record["ragas_judge_provider"] is None

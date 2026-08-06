@@ -29,6 +29,7 @@ data/uploads/*
 data/knowledge_base/
 data/eval/techfusion_gold.jsonl
 data/eval/baselines/
+data/eval/manual_review/
 !data/uploads/.gitkeep
 *.log
 

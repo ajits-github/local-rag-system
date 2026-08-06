@@ -34,3 +34,25 @@ def test_ollama_base_url_has_sane_default(monkeypatch):
     config = load_config()
     monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
     assert config.ollama_base_url() == "http://localhost:11434"
+
+
+def test_judge_default_provider_is_not_a_generation_model():
+    """The default judge provider/model never matches the generation model."""
+    config = load_config()
+    assert config.judge.provider == "openai"
+    assert config.judge.ollama.model_name not in {"qwen2.5:1.5b", "qwen2.5:3b"}
+    assert config.judge.ollama.model_name != config.generation.model_name
+
+
+def test_openai_api_key_resolves_from_env(monkeypatch):
+    """openai_api_key() reads OPENAI_API_KEY from the process environment."""
+    config = load_config()
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-123")
+    assert config.openai_api_key() == "sk-test-123"
+
+
+def test_anthropic_api_key_resolves_from_env(monkeypatch):
+    """anthropic_api_key() reads ANTHROPIC_API_KEY from the process environment."""
+    config = load_config()
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-123")
+    assert config.anthropic_api_key() == "sk-ant-test-123"

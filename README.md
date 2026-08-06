@@ -174,12 +174,56 @@ for the configured pipeline:
   the latency number).
 - **Answer quality**: a keyword-overlap heuristic scored against
   `expected_answer` (see the caveat in its own output; it's a placeholder,
-  not a correctness judge; RAGAS is the real fix, see Roadmap).
+  not a correctness judge — see the RAGAS section below for the real one).
 
 Add `--verbose` to include full per-question detail (retrieved sources,
 generated answer, individual scores) in the JSON output, or
 `--skip-generation` to get only the retrieval metrics quickly, without
 waiting on LLM calls for every question.
+
+### RAGAS generation-quality evaluation (optional)
+
+An opt-in, additive layer on top of the metrics above: faithfulness,
+answer relevancy, context precision, context recall, and (if supported
+cleanly by the installed RAGAS version) answer correctness — each scored
+by an independently-configured LLM judge, not by `qwen2.5:1.5b`/`3b` (the
+models already used for generation). Install with:
+```
+pip install .[ragas]         # local (ollama) judge
+pip install .[ragas,anthropic]  # + hosted anthropic judge
+```
+The judge is selected via `config/default.yaml`'s `judge:` block
+(`provider: openai | anthropic | ollama`, each with its own model/API-key
+settings, resolved from `*_env_var` environment variables — never
+hardcoded). `ollama` is offered for free local experimentation only; the
+docs and RAGAS's own guidance both note small local judges give less
+reliable scores than a hosted model.
+
+```
+python -m rag.eval.run_ragas_eval --gold data/eval/sample_gold.jsonl \
+    --dataset-id sample_docs --verbose > /tmp/ragas_report.json
+```
+`--sample-size` (default **15**) caps how many gold questions get judged —
+validate cost, latency, and score quality on a small subset before
+scaling up to the full 46-question TechFusion gold set. The report
+records per-question and aggregate scores, the judge's provider/model and
+estimated API usage, `prompt_id`/`prompt_version`, and the RAG config that
+produced it — feed it into `scripts/record_experiment.py` exactly like a
+normal `run_eval.py` report; the ragas fields are captured alongside the
+rest.
+
+**RAGAS scores are not validated until reviewed against real human
+judgment.** Two scripts help with that:
+```
+python scripts/generate_manual_review.py --eval-output /tmp/ragas_report.json --num-rows 10
+# ... fill in the human_faithful/human_correct/human_relevant/human_correct_refusal
+# fields in the generated JSONL by hand ...
+python scripts/compare_ragas_manual.py --ragas-output /tmp/ragas_report.json \
+    --manual-review data/eval/manual_review/sample_docs_manual_review.jsonl
+```
+The comparison report shows where the judge agrees or disagrees with the
+human labels — do not treat RAGAS scores as ground truth until you've run
+this and reviewed the result yourself.
 
 ## Benchmarks
 
@@ -214,7 +258,8 @@ different dataset in the same vector store.*
 
 1. Change one thing in `config/default.yaml` (reranker, model, chunk size,
    prompt version, ...).
-2. Run the eval and save its full report:
+2. Run the eval and save its full report (or `rag.eval.run_ragas_eval` for
+   the RAGAS-scored variant, see above):
    ```
    python -m rag.eval.run_eval --gold data/eval/techfusion_gold.jsonl \
      --dataset-id techfusion --verbose > /tmp/eval_report.json
@@ -230,7 +275,8 @@ different dataset in the same vector store.*
    a `prompt_file_checksum`, the same way it captures
    `embedding_model`/`chunk_size`/`reranker_model` — a prompt wording
    change is its own comparable experiment axis, tracked exactly like any
-   other config change.
+   other config change. If the report came from `run_ragas_eval`, the
+   RAGAS aggregate scores and judge provider/model are captured too.
 4. Regenerate the comparison table (updates
    `experiments/reports/comparison.md` and this README section in place):
    ```
@@ -263,8 +309,9 @@ Deferred for now, tracked here rather than left as empty scaffolding:
   (`rerankers/cross_encoder.py`) with real benchmarking/tuning.
 - **Cohere Reranking**: mature the scaffolded optional `cohere` provider
   (`rerankers/cohere.py`) once there's a use case needing a hosted reranker.
-- **RAGAS**: plug a standard answer-quality/faithfulness metric suite into
-  `eval/answer_quality.py`, replacing the keyword-overlap placeholder.
+- **RAGAS scaling**: validate the judge against human labels
+  (`scripts/compare_ragas_manual.py`) and, once trusted, scale from the
+  15-question default sample to the full 46-question TechFusion gold set.
 - **LangGraph**: move retrieval/generation orchestration to a graph for
   multi-step or agentic query handling.
 - **MCP**: expose ingest/query as MCP tools for use from other agents.

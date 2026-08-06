@@ -73,6 +73,9 @@ def build_experiment_record(
     hit_rate = eval_report.get("hit_rate", {})
     latency = eval_report.get("latency_ms", {})
     answer_quality = eval_report.get("answer_quality", {})
+    ragas = eval_report.get("ragas", {})
+    ragas_aggregate = ragas.get("aggregate", {})
+    ragas_judge = ragas.get("judge", {})
 
     return {
         "experiment_id": experiment_id,
@@ -102,6 +105,13 @@ def build_experiment_record(
         "retrieval_latency_ms": latency.get("retrieval_mean"),
         "generation_latency_ms": latency.get("generation_mean"),
         "total_latency_ms": latency.get("total_mean"),
+        "ragas_faithfulness": ragas_aggregate.get("faithfulness"),
+        "ragas_answer_relevancy": ragas_aggregate.get("answer_relevancy"),
+        "ragas_context_precision": ragas_aggregate.get("context_precision"),
+        "ragas_context_recall": ragas_aggregate.get("context_recall"),
+        "ragas_answer_correctness": ragas_aggregate.get("answer_correctness"),
+        "ragas_judge_provider": ragas_judge.get("provider"),
+        "ragas_judge_model": ragas_judge.get("model_name"),
     }
 
 

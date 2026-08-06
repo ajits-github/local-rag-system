@@ -3,7 +3,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from rag.config import load_config
-from rag.prompts.loader import PromptTemplate
+from rag.eval.gold_schema import GoldExample
+from rag.eval.run_eval import evaluate
 from rag.retrieval.pipeline import RetrievalPipeline
 from rag.schemas import Chunk, ChunkMetadata, SearchResult
 
@@ -36,20 +37,20 @@ class FakeVectorStore:
         return True
 
     def get_or_create_document_id(self, source: str, checksum: str, dataset_id: str):
-        """Unused by RetrievalPipeline; not exercised by these tests."""
+        """Unused by evaluate(); not exercised by these tests."""
         raise NotImplementedError
 
     def delete_chunks_by_document_id(self, document_id: str) -> None:
-        """Unused by RetrievalPipeline; not exercised by these tests."""
+        """Unused by evaluate(); not exercised by these tests."""
 
     def delete_document(self, document_id: str) -> None:
-        """Unused by RetrievalPipeline; not exercised by these tests."""
+        """Unused by evaluate(); not exercised by these tests."""
 
     def delete_dataset(self, dataset_id: str) -> None:
-        """Unused by RetrievalPipeline; not exercised by these tests."""
+        """Unused by evaluate(); not exercised by these tests."""
 
     def add_chunks(self, chunks: list[Chunk]) -> None:
-        """Unused by RetrievalPipeline; not exercised by these tests."""
+        """Unused by evaluate(); not exercised by these tests."""
 
     def search(self, query_embedding, top_k, filters=None) -> list[SearchResult]:
         """Return the fixed results, ignoring the query embedding/filters."""
@@ -77,75 +78,19 @@ class FakeReranker:
 
 
 class FakeLLM:
-    """LLM double that records the last prompt it was called with."""
-
-    def __init__(self, response: str = "fake answer") -> None:
-        """Store the fixed response this double's generate() will return."""
-        self._response = response
-        self.last_prompt: str | None = None
+    """LLM double that always returns a fixed response."""
 
     def generate(self, prompt: str) -> str:
-        """Record `prompt` and return the fixed response."""
-        self.last_prompt = prompt
-        return self._response
+        """Return a fixed response, ignoring `prompt`."""
+        return "fake answer"
 
     def health_check(self) -> bool:
         """Report healthy, always."""
         return True
 
 
-def test_answer_builds_labeled_context_and_uses_configured_prompt():
-    """answer() labels each chunk with its source and renders the configured v1 prompt."""
-    results = [
-        _make_result("c1", "Alpha content.", source="a.md", score=0.9),
-        _make_result("c2", "Beta content.", source="b.md", score=0.8),
-    ]
-    llm = FakeLLM()
-    pipeline = RetrievalPipeline(
-        load_config(),
-        vectorstore=FakeVectorStore(results),
-        embedder=FakeEmbedder(),
-        reranker=FakeReranker(),
-        llm=llm,
-    )
-
-    pipeline.answer("What is alpha?")
-
-    assert llm.last_prompt is not None
-    assert "[Source 1: a.md]\nAlpha content." in llm.last_prompt
-    assert "[Source 2: b.md]\nBeta content." in llm.last_prompt
-    assert llm.last_prompt.startswith("Answer the question using only the context below.")
-
-
-def test_pipeline_uses_injected_prompt_template_with_system_message():
-    """A non-empty system_template is concatenated ahead of the rendered user message."""
-    template = PromptTemplate(
-        prompt_id="test",
-        version="v-test",
-        description="test",
-        system_template="SYSTEM: {query}",
-        user_template="USER: {context}",
-        required_variables=["context", "query"],
-        created_at="2026-08-06",
-    )
-    results = [_make_result("c1", "content", source="a.md", score=1.0)]
-    llm = FakeLLM()
-    pipeline = RetrievalPipeline(
-        load_config(),
-        vectorstore=FakeVectorStore(results),
-        embedder=FakeEmbedder(),
-        reranker=FakeReranker(),
-        llm=llm,
-        prompt_template=template,
-    )
-
-    pipeline.answer("hi")
-
-    assert llm.last_prompt == "SYSTEM: hi\n\nUSER: [Source 1: a.md]\ncontent"
-
-
-def test_answer_sources_include_chunk_content():
-    """Each entry in answer()'s sources list includes the chunk's raw content."""
+def test_evaluate_per_example_includes_generation_sources_with_content():
+    """per_example entries carry generation_sources (with chunk content) from answer()."""
     results = [_make_result("c1", "Alpha content.", source="a.md", score=0.9)]
     pipeline = RetrievalPipeline(
         load_config(),
@@ -154,7 +99,11 @@ def test_answer_sources_include_chunk_content():
         reranker=FakeReranker(),
         llm=FakeLLM(),
     )
+    examples = [GoldExample(question="What is alpha?", expected_answer="Alpha.")]
 
-    result = pipeline.answer("What is alpha?")
+    report = evaluate(pipeline, examples, dataset_id="test-dataset", run_generation=True)
 
-    assert result["sources"][0]["content"] == "Alpha content."
+    entry = report["per_example"][0]
+    assert "generation_sources" in entry
+    assert entry["generation_sources"][0]["content"] == "Alpha content."
+    assert entry["generation_sources"][0]["source"] == "a.md"
