@@ -71,3 +71,11 @@ def test_anthropic_api_key_resolves_from_env(monkeypatch):
     config = load_config()
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-123")
     assert config.anthropic_api_key() == "sk-ant-test-123"
+
+
+def test_default_config_mlflow_is_enabled_with_local_sqlite_backend():
+    """config/default.yaml enables MLflow by default, using a local SQLite-backed tracking store."""
+    config = load_config()
+    assert config.mlflow.enabled is True
+    assert config.mlflow.tracking_uri == "sqlite:///mlflow.db"
+    assert config.mlflow.experiment_name == "local-rag-system"

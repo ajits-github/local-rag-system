@@ -141,6 +141,22 @@ class JudgeConfig(BaseModel):
     ollama: OllamaJudgeConfig = Field(default_factory=OllamaJudgeConfig)
 
 
+class MLflowConfig(BaseModel):
+    """Experiment-tracking sink: every `scripts/record_experiment.py` run also logs to MLflow.
+
+    Local SQLite backend by default (`sqlite:///mlflow.db`) -- no server
+    required, matching this project's offline-first design. (MLflow's
+    older plain-filesystem backend, `file:./mlruns`, is deprecated as of
+    MLflow 3.x -- new installs raise unless a database-backed store is
+    used.) Point `tracking_uri` at a real MLflow server later without any
+    code changes.
+    """
+
+    enabled: bool = True
+    tracking_uri: str = "sqlite:///mlflow.db"
+    experiment_name: str = "local-rag-system"
+
+
 class RetrievalConfig(BaseModel):
     """Result-count tuning for the retrieval pipeline."""
 
@@ -170,6 +186,7 @@ class AppConfig(BaseModel):
     reranker: RerankerConfig
     generation: GenerationConfig
     judge: JudgeConfig = Field(default_factory=JudgeConfig)
+    mlflow: MLflowConfig = Field(default_factory=MLflowConfig)
     retrieval: RetrievalConfig
     ingestion: IngestionConfig
 

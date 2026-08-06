@@ -25,6 +25,9 @@ models/
 # Docker volumes / local data
 pgdata/
 docker/pgdata/
+mlruns/
+mlartifacts/
+mlflow.db
 data/uploads/*
 data/knowledge_base/
 data/eval/techfusion_gold.jsonl

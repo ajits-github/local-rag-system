@@ -34,6 +34,9 @@ ragas = [
 anthropic = [
     "anthropic>=0.34",  # ragas does NOT pull this in on its own
 ]
+mlflow = [
+    "mlflow>=2.14",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
@@ -105,6 +108,7 @@ module = [
     "datasets.*",
     "openai.*",
     "anthropic.*",
+    "mlflow.*",
 ]
 ignore_missing_imports = true
 

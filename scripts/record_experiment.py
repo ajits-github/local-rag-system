@@ -5,6 +5,8 @@ for embedding/chunking/reranker/generation/vectorstore settings) plus the
 eval report's own metrics, and writes:
   - experiments/results/<experiment-id>.json  (flat, comparable record)
   - experiments/configs/<experiment-id>.yaml  (config snapshot)
+  - an MLflow run (params/metrics/artifacts), unless config.mlflow.enabled
+    is false -- see rag.eval.mlflow_logger.
 
 This never re-runs evaluation -- it only records an existing report. Run
 `rag.eval.run_eval --verbose` first, then point this at its output.
@@ -31,6 +33,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from rag.config import DEFAULT_CONFIG_PATH, AppConfig, load_config  # noqa: E402
+from rag.eval.mlflow_logger import log_experiment  # noqa: E402
 
 EXPERIMENTS_DIR = Path(__file__).resolve().parents[1] / "experiments"
 
@@ -144,9 +147,18 @@ def main() -> None:
 
     results_path = results_dir / f"{args.experiment_id}.json"
     results_path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
-    shutil.copy(args.config, configs_dir / f"{args.experiment_id}.yaml")
+    config_snapshot_path = configs_dir / f"{args.experiment_id}.yaml"
+    shutil.copy(args.config, config_snapshot_path)
 
     print(f"Recorded {args.experiment_id} -> {results_path}")
+
+    run_id = log_experiment(
+        record,
+        config.mlflow,
+        artifact_paths=[Path(args.eval_output), results_path, config_snapshot_path],
+    )
+    if run_id:
+        print(f"Logged to MLflow run {run_id} (tracking_uri={config.mlflow.tracking_uri})")
 
 
 if __name__ == "__main__":

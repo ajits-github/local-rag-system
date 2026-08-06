@@ -279,16 +279,53 @@ different dataset in the same vector store.*
    change is its own comparable experiment axis, tracked exactly like any
    other config change. If the report came from `run_ragas_eval`, the
    RAGAS aggregate scores and judge provider/model are captured too.
+
+   This step also logs the same params/metrics as an MLflow run (see
+   "MLflow tracking" below), unless `mlflow.enabled: false` in
+   `config/default.yaml`.
 4. Regenerate the comparison table (updates
    `experiments/reports/comparison.md` and this README section in place):
    ```
    python scripts/compare_experiments.py
    ```
+   Pass `--exclude experiment_id[,experiment_id...]` to leave a
+   non-comparable record (e.g. a small pilot subset run at a different
+   sample size) out of the table.
 
 The eval report and per-question detail behind each experiment aren't
 committed (see Evaluation above); the flat metrics record and config
 snapshot under `experiments/` are what make the comparison reproducible
 without needing that raw file.
+
+### MLflow tracking
+
+Every `scripts/record_experiment.py` call also logs an MLflow run:
+config fields as params, all deterministic/RAGAS/latency metrics as
+metrics (fields that are `None` for a given report -- e.g. a pre-RAGAS
+run's `ragas_*` fields -- are simply not logged, rather than logged as
+`0`), and the raw eval-output JSON plus the recorded record JSON and
+config YAML as artifacts. Requires the `mlflow` extra
+(`pip install .[mlflow]`); if `mlflow.enabled: true` (the default) and
+the package isn't installed, recording fails loudly rather than silently
+skipping the MLflow half of "record an experiment."
+
+Local by default, no server required: `mlflow.tracking_uri` defaults to
+`sqlite:///mlflow.db` (a local SQLite file -- MLflow's older plain
+filesystem backend, `file:./mlruns`, is deprecated as of MLflow 3.x).
+View it with:
+```
+mlflow ui --backend-store-uri sqlite:///mlflow.db
+```
+Point `tracking_uri` at a real MLflow tracking server later without any
+code changes.
+
+`scripts/backfill_mlflow.py` logs every already-recorded
+`experiments/results/*.json` into MLflow in one pass -- used once to
+backfill `experiment_001`-`experiment_008` after MLflow was integrated;
+useful again if `mlflow.db`/`mlruns/` is ever deleted and needs
+rebuilding from the (committed) `experiments/` records. It only attaches
+each record's own JSON and config YAML as artifacts, not the original raw
+eval-output JSON, which isn't preserved for older experiments.
 
 ## Testing
 

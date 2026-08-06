@@ -67,6 +67,11 @@ judge:
   ollama:
     model_name: llama3.1:8b # deliberately distinct from generation.model_name
 
+mlflow:
+  enabled: true
+  tracking_uri: "sqlite:///mlflow.db" # swap point: local sqlite file | a real MLflow tracking server URL
+  experiment_name: local-rag-system
+
 retrieval:
   top_k: 5
   rerank_top_n: 3
