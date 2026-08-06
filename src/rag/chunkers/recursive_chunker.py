@@ -5,6 +5,7 @@ from __future__ import annotations
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from rag.chunkers.base import Chunker
+from rag.schemas import ChunkSpan
 
 
 class RecursiveCharacterChunker(Chunker):
@@ -28,17 +29,23 @@ class RecursiveCharacterChunker(Chunker):
             chunk_size=chunk_size, chunk_overlap=chunk_overlap
         )
 
-    def split(self, text: str) -> list[str]:
+    def split(self, text: str, source_type: str | None = None) -> list[ChunkSpan]:
         """Split `text` into chunks using the configured size/overlap.
+
+        `source_type` is accepted for interface parity with `Chunker.split`
+        but ignored — this chunker has no structural awareness of any
+        source type.
 
         Parameters
         ----------
         text : str
             Cleaned document text.
+        source_type : str | None, optional
+            Unused, by default None.
 
         Returns
         -------
-        list[str]
-            Chunk strings, in document order.
+        list[ChunkSpan]
+            Chunk spans (no structural hints set), in document order.
         """
-        return self._splitter.split_text(text)
+        return [ChunkSpan(text=t) for t in self._splitter.split_text(text)]

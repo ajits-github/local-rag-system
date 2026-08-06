@@ -180,6 +180,12 @@ class PgVectorStore(VectorStore):
                             c.metadata.language,
                             c.metadata.category,
                             c.metadata.dataset_id,
+                            c.metadata.content_type,
+                            c.metadata.section_path,
+                            c.metadata.code_language,
+                            c.metadata.table_headers,
+                            c.metadata.attachment_name,
+                            c.metadata.source_anchor,
                         )
                         for c in chunks
                     ]
@@ -188,14 +194,22 @@ class PgVectorStore(VectorStore):
                         f"""INSERT INTO {self._chunks_table}
                             (chunk_id, document_id, chunk_index, content, embedding,
                              source, source_type, title, author, url,
-                             created_at, last_modified, language, category, dataset_id)
+                             created_at, last_modified, language, category, dataset_id,
+                             content_type, section_path, code_language, table_headers,
+                             attachment_name, source_anchor)
                             VALUES %s
                             ON CONFLICT (chunk_id) DO UPDATE SET
                                 content = EXCLUDED.content,
                                 embedding = EXCLUDED.embedding,
                                 last_modified = EXCLUDED.last_modified,
                                 category = EXCLUDED.category,
-                                dataset_id = EXCLUDED.dataset_id""",
+                                dataset_id = EXCLUDED.dataset_id,
+                                content_type = EXCLUDED.content_type,
+                                section_path = EXCLUDED.section_path,
+                                code_language = EXCLUDED.code_language,
+                                table_headers = EXCLUDED.table_headers,
+                                attachment_name = EXCLUDED.attachment_name,
+                                source_anchor = EXCLUDED.source_anchor""",
                         rows,
                     )
         finally:
@@ -225,6 +239,8 @@ class PgVectorStore(VectorStore):
             SELECT chunk_id, document_id, chunk_index, content,
                    source, source_type, title, author, url,
                    created_at, last_modified, language, category, dataset_id,
+                   content_type, section_path, code_language, table_headers,
+                   attachment_name, source_anchor,
                    embedding {self._distance_op} %s::vector AS distance
             FROM {self._chunks_table}
             {where_sql}
@@ -257,6 +273,12 @@ class PgVectorStore(VectorStore):
                 language,
                 category,
                 dataset_id,
+                content_type,
+                section_path,
+                code_language,
+                table_headers,
+                attachment_name,
+                source_anchor,
                 distance,
             ) = row
             metadata = ChunkMetadata(
@@ -273,6 +295,12 @@ class PgVectorStore(VectorStore):
                 chunk_index=chunk_index,
                 category=category,
                 dataset_id=dataset_id,
+                content_type=content_type,
+                section_path=section_path,
+                code_language=code_language,
+                table_headers=list(table_headers) if table_headers is not None else None,
+                attachment_name=attachment_name,
+                source_anchor=source_anchor,
             )
             chunk = Chunk(id=chunk_id, content=content, metadata=metadata)
             score = 1.0 - distance if self._distance_op == "<=>" else -distance

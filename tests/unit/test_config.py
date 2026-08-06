@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from rag.config import load_config
+from rag.config import ChunkingConfig, load_config
 
 
 def test_load_default_config_has_expected_defaults():
@@ -12,6 +12,21 @@ def test_load_default_config_has_expected_defaults():
     assert config.generation.model_name == "qwen2.5:1.5b"
     assert config.vectorstore.connection_env_var == "DATABASE_URL"
     assert config.reranker.provider == "none"
+
+
+def test_default_config_chunking_provider_is_structured_markdown():
+    """config/default.yaml's chunking.provider defaults to structured_markdown with its tunables."""
+    config = load_config()
+    assert config.chunking.provider == "structured_markdown"
+    assert config.chunking.structured_markdown.table_row_group_size == 20
+    assert config.chunking.structured_markdown.max_atomic_block_chars == 2000
+
+
+def test_chunking_config_structured_markdown_validates_with_defaults():
+    """ChunkingConfig(provider='structured_markdown') validates with correct nested defaults."""
+    config = ChunkingConfig(provider="structured_markdown")
+    assert config.structured_markdown.table_row_group_size == 20
+    assert config.structured_markdown.max_atomic_block_chars == 2000
 
 
 def test_database_url_resolves_from_env(monkeypatch):

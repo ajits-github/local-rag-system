@@ -114,9 +114,9 @@ class IngestionPipeline:
         self._vectorstore.delete_chunks_by_document_id(document_id)
 
         cleaned = self._cleaner.clean(raw_document.content)
-        chunk_texts = self._chunker.split(cleaned)
+        chunk_spans = self._chunker.split(cleaned, source_type=raw_document.source_type)
         chunks = self._writer.write(
-            raw_document, document_id, chunk_texts, dataset_id=dataset_id, category=category
+            raw_document, document_id, chunk_spans, dataset_id=dataset_id, category=category
         )
 
         logger.info(

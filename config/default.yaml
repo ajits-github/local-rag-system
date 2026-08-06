@@ -28,9 +28,12 @@ vectorstore:
   distance_metric: cosine
 
 chunking:
-  provider: recursive_character # swap point
+  provider: structured_markdown # swap point: recursive_character | structured_markdown
   chunk_size: 500
   chunk_overlap: 50
+  structured_markdown:
+    table_row_group_size: 20
+    max_atomic_block_chars: 2000
 
 reranker:
   provider: none # swap point: none | cross_encoder | cohere

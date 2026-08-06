@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from rag.chunkers.base import Chunker
 from rag.chunkers.recursive_chunker import RecursiveCharacterChunker
+from rag.chunkers.structured_markdown import StructuredMarkdownChunker
 from rag.config import ChunkingConfig
 
 
@@ -32,5 +33,12 @@ def get_chunker(config: ChunkingConfig) -> Chunker:
     if config.provider == "recursive_character":
         return RecursiveCharacterChunker(
             chunk_size=config.chunk_size, chunk_overlap=config.chunk_overlap
+        )
+    if config.provider == "structured_markdown":
+        return StructuredMarkdownChunker(
+            chunk_size=config.chunk_size,
+            chunk_overlap=config.chunk_overlap,
+            table_row_group_size=config.structured_markdown.table_row_group_size,
+            max_atomic_block_chars=config.structured_markdown.max_atomic_block_chars,
         )
     raise ValueError(f"Unknown chunking provider: {config.provider}")

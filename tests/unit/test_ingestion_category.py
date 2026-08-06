@@ -128,3 +128,97 @@ def test_ingest_path_different_dataset_ids_are_independent(tmp_path: Path):
 
     dataset_ids = {c.metadata.dataset_id for c in vectorstore.written_chunks}
     assert dataset_ids == {"dataset-a", "dataset-b"}
+
+
+def test_ingest_table_chunk_tagged_content_type_table(tmp_path: Path):
+    """A Markdown table in an ingested file produces a chunk with content_type='table'."""
+    root = tmp_path / "kb"
+    root.mkdir(parents=True)
+    (root / "doc.md").write_text(
+        "# Report\n\n| Name | Value |\n|---|---|\n| a | 1 |\n| b | 2 |\n",
+        encoding="utf-8",
+    )
+
+    pipeline, vectorstore = _pipeline()
+    pipeline.ingest_path(root, "test-dataset")
+
+    table_chunks = [c for c in vectorstore.written_chunks if c.metadata.content_type == "table"]
+    assert len(table_chunks) == 1
+    assert table_chunks[0].metadata.table_headers == ["Name", "Value"]
+    assert table_chunks[0].metadata.section_path == "Report"
+
+
+def test_ingest_code_chunk_tagged_content_type_code_with_language(tmp_path: Path):
+    """A fenced Python block in an ingested file produces a chunk tagged content_type='code'."""
+    root = tmp_path / "kb"
+    root.mkdir(parents=True)
+    (root / "doc.md").write_text(
+        "# Runbook\n\nRun this:\n\n```python\ndef retry():\n    return True\n```\n",
+        encoding="utf-8",
+    )
+
+    pipeline, vectorstore = _pipeline()
+    pipeline.ingest_path(root, "test-dataset")
+
+    code_chunks = [c for c in vectorstore.written_chunks if c.metadata.content_type == "code"]
+    assert len(code_chunks) == 1
+    assert code_chunks[0].metadata.code_language == "python"
+    assert code_chunks[0].metadata.section_path == "Runbook"
+
+
+def test_ingest_configuration_chunk_tagged_content_type_configuration(tmp_path: Path):
+    """A fenced JSON block in an ingested file produces a content_type='configuration' chunk."""
+    root = tmp_path / "kb"
+    root.mkdir(parents=True)
+    (root / "doc.md").write_text(
+        '# Config\n\n```json\n{"retries": 3}\n```\n',
+        encoding="utf-8",
+    )
+
+    pipeline, vectorstore = _pipeline()
+    pipeline.ingest_path(root, "test-dataset")
+
+    config_chunks = [
+        c for c in vectorstore.written_chunks if c.metadata.content_type == "configuration"
+    ]
+    assert len(config_chunks) == 1
+    assert config_chunks[0].metadata.code_language == "json"
+
+
+def test_ingest_chart_caption_chunk_tagged_content_type_chart(tmp_path: Path):
+    """A ```text fence + emphasis caption in an ingested file produces content_type='chart'."""
+    root = tmp_path / "kb"
+    root.mkdir(parents=True)
+    (root / "doc.md").write_text(
+        "# Capacity\n\n```text\nQ1 |####\nQ2 |######\n```\n\n*Chart caption: usage grew.*\n",
+        encoding="utf-8",
+    )
+
+    pipeline, vectorstore = _pipeline()
+    pipeline.ingest_path(root, "test-dataset")
+
+    chart_chunks = [c for c in vectorstore.written_chunks if c.metadata.content_type == "chart"]
+    assert len(chart_chunks) == 1
+    assert "Chart caption: usage grew." in chart_chunks[0].content
+
+
+def test_ingest_mixed_prose_and_table_preserves_section_context(tmp_path: Path):
+    """Prose before/after a table, and the table itself, all keep the same section_path."""
+    root = tmp_path / "kb"
+    root.mkdir(parents=True)
+    (root / "doc.md").write_text(
+        "# Metrics\n\nSome intro prose about metrics.\n\n"
+        "| Name | Value |\n|---|---|\n| a | 1 |\n\n"
+        "Some closing prose about metrics.\n",
+        encoding="utf-8",
+    )
+
+    pipeline, vectorstore = _pipeline()
+    pipeline.ingest_path(root, "test-dataset")
+
+    chunks = vectorstore.written_chunks
+    assert chunks  # sanity
+    assert all(c.metadata.section_path == "Metrics" for c in chunks)
+    content_types = {c.metadata.content_type for c in chunks}
+    assert "table" in content_types
+    assert "prose" in content_types

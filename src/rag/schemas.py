@@ -23,6 +23,24 @@ class RawDocument(BaseModel):
     extra: dict[str, Any] = Field(default_factory=dict)
 
 
+class ChunkSpan(BaseModel):
+    """One chunk of text plus optional structural hints from a `Chunker`.
+
+    All hint fields default to `None`. `Writer.write` fills in
+    `content_type="prose"` for any span that leaves it unset, so every
+    persisted `ChunkMetadata.content_type` is always a concrete string,
+    never `None`.
+    """
+
+    text: str
+    content_type: str | None = None
+    section_path: str | None = None
+    code_language: str | None = None
+    table_headers: list[str] | None = None
+    attachment_name: str | None = None
+    source_anchor: str | None = None
+
+
 class ChunkMetadata(BaseModel):
     """Metadata stored alongside a chunk's embedding in the vector store."""
 
@@ -47,6 +65,15 @@ class ChunkMetadata(BaseModel):
     # never accidentally share retrieval results. Required as a filter by
     # eval/run_eval.py; available as an optional POST /query filter too.
     dataset_id: str
+    # Structured-content hints from ChunkSpan, carried through per-chunk
+    # (not per-document) so a table row and a prose paragraph from the
+    # same file can be tagged differently. See ChunkSpan for details.
+    content_type: str | None = None
+    section_path: str | None = None
+    code_language: str | None = None
+    table_headers: list[str] | None = None
+    attachment_name: str | None = None
+    source_anchor: str | None = None
 
 
 class Chunk(BaseModel):

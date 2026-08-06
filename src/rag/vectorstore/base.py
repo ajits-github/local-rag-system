@@ -25,6 +25,7 @@ ALLOWED_FILTER_FIELDS = {
     "language",
     "category",
     "dataset_id",
+    "content_type",
 }
 
 

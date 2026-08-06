@@ -66,13 +66,29 @@ def build_schema_sql(*, documents_table: str, chunks_table: str, dimension: int)
         last_modified TIMESTAMPTZ NOT NULL,
         language TEXT,
         category TEXT,
-        dataset_id TEXT
+        dataset_id TEXT,
+        content_type TEXT,
+        section_path TEXT,
+        code_language TEXT,
+        table_headers TEXT[],
+        attachment_name TEXT,
+        source_anchor TEXT
     );
 
     -- Migrations for tables created before `category`/`dataset_id` existed.
     ALTER TABLE {chunks_table} ADD COLUMN IF NOT EXISTS category TEXT;
     ALTER TABLE {chunks_table} ADD COLUMN IF NOT EXISTS dataset_id TEXT;
     ALTER TABLE {documents_table} ADD COLUMN IF NOT EXISTS dataset_id TEXT;
+
+    -- Migrations for tables created before the structured-content metadata
+    -- fields (content_type/section_path/code_language/table_headers/
+    -- attachment_name/source_anchor) existed.
+    ALTER TABLE {chunks_table} ADD COLUMN IF NOT EXISTS content_type TEXT;
+    ALTER TABLE {chunks_table} ADD COLUMN IF NOT EXISTS section_path TEXT;
+    ALTER TABLE {chunks_table} ADD COLUMN IF NOT EXISTS code_language TEXT;
+    ALTER TABLE {chunks_table} ADD COLUMN IF NOT EXISTS table_headers TEXT[];
+    ALTER TABLE {chunks_table} ADD COLUMN IF NOT EXISTS attachment_name TEXT;
+    ALTER TABLE {chunks_table} ADD COLUMN IF NOT EXISTS source_anchor TEXT;
 
     -- documents.source used to be UNIQUE on its own; identity is now scoped
     -- per (source, dataset_id) so the same relative path can exist in two
@@ -97,6 +113,9 @@ def build_schema_sql(*, documents_table: str, chunks_table: str, dimension: int)
 
     CREATE INDEX IF NOT EXISTS {chunks_table}_category_idx
         ON {chunks_table} (category);
+
+    CREATE INDEX IF NOT EXISTS {chunks_table}_content_type_idx
+        ON {chunks_table} (content_type);
 
     CREATE INDEX IF NOT EXISTS {chunks_table}_dataset_id_idx
         ON {chunks_table} (dataset_id);

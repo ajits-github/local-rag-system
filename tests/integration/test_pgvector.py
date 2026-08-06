@@ -90,3 +90,100 @@ def test_add_chunks_and_search_round_trip(require_postgres, config):
         assert any(r.chunk.id == metadata.chunk_id for r in results)
     finally:
         store.delete_document(document_id)
+
+
+def test_structured_content_fields_round_trip(require_postgres, config):
+    """All 6 structured-content metadata fields (incl. table_headers: list[str]) round-trip."""
+    store = _store(config)
+    source = f"test-source-{uuid.uuid4()}"
+    document_id, _ = store.get_or_create_document_id(source, "c1", TEST_DATASET_ID)
+
+    dim = config.embedding.dimension
+    now = datetime.now(UTC)
+    embedding = [1.0] + [0.0] * (dim - 1)
+    metadata = ChunkMetadata(
+        document_id=document_id,
+        chunk_id=f"{document_id}_0",
+        source=source,
+        source_type="markdown",
+        created_at=now,
+        last_modified=now,
+        chunk_index=0,
+        dataset_id=TEST_DATASET_ID,
+        content_type="table",
+        section_path="Top > Sub",
+        code_language=None,
+        table_headers=["Name", "Value"],
+        attachment_name=None,
+        source_anchor="rows 1-20",
+    )
+    chunk = Chunk(id=metadata.chunk_id, content="| a | 1 |", metadata=metadata, embedding=embedding)
+
+    store.add_chunks([chunk])
+    try:
+        results = store.search(embedding, top_k=5, filters={"document_id": document_id})
+        found = next(r for r in results if r.chunk.id == metadata.chunk_id)
+        assert found.chunk.metadata.content_type == "table"
+        assert found.chunk.metadata.section_path == "Top > Sub"
+        assert found.chunk.metadata.table_headers == ["Name", "Value"]
+        assert found.chunk.metadata.source_anchor == "rows 1-20"
+        assert found.chunk.metadata.code_language is None
+        assert found.chunk.metadata.attachment_name is None
+    finally:
+        store.delete_document(document_id)
+
+
+def test_structured_content_fields_refresh_on_reingestion(require_postgres, config):
+    """ON CONFLICT DO UPDATE refreshes the 6 new fields too, not just content/embedding."""
+    store = _store(config)
+    source = f"test-source-{uuid.uuid4()}"
+    document_id, _ = store.get_or_create_document_id(source, "c1", TEST_DATASET_ID)
+
+    dim = config.embedding.dimension
+    now = datetime.now(UTC)
+    embedding = [1.0] + [0.0] * (dim - 1)
+    chunk_id = f"{document_id}_0"
+
+    first = Chunk(
+        id=chunk_id,
+        content="original prose",
+        metadata=ChunkMetadata(
+            document_id=document_id,
+            chunk_id=chunk_id,
+            source=source,
+            source_type="markdown",
+            created_at=now,
+            last_modified=now,
+            chunk_index=0,
+            dataset_id=TEST_DATASET_ID,
+            content_type="prose",
+        ),
+        embedding=embedding,
+    )
+    second = Chunk(
+        id=chunk_id,
+        content="| a | 1 |",
+        metadata=ChunkMetadata(
+            document_id=document_id,
+            chunk_id=chunk_id,
+            source=source,
+            source_type="markdown",
+            created_at=now,
+            last_modified=now,
+            chunk_index=0,
+            dataset_id=TEST_DATASET_ID,
+            content_type="table",
+            table_headers=["Name", "Value"],
+        ),
+        embedding=embedding,
+    )
+
+    store.add_chunks([first])
+    store.add_chunks([second])
+    try:
+        results = store.search(embedding, top_k=5, filters={"document_id": document_id})
+        found = next(r for r in results if r.chunk.id == chunk_id)
+        assert found.chunk.metadata.content_type == "table"
+        assert found.chunk.metadata.table_headers == ["Name", "Value"]
+    finally:
+        store.delete_document(document_id)

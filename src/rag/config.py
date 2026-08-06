@@ -49,12 +49,20 @@ class VectorStoreConfig(BaseModel):
     distance_metric: Literal["cosine", "l2", "inner_product"] = "cosine"
 
 
+class StructuredMarkdownConfig(BaseModel):
+    """Tunables specific to the `structured_markdown` chunking provider."""
+
+    table_row_group_size: int = 20
+    max_atomic_block_chars: int = 2000
+
+
 class ChunkingConfig(BaseModel):
     """Chunker provider selection and chunk size/overlap parameters."""
 
-    provider: Literal["recursive_character"] = "recursive_character"
+    provider: Literal["recursive_character", "structured_markdown"] = "structured_markdown"
     chunk_size: int = 500
     chunk_overlap: int = 50
+    structured_markdown: StructuredMarkdownConfig = Field(default_factory=StructuredMarkdownConfig)
 
 
 class CrossEncoderConfig(BaseModel):
