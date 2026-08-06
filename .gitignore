@@ -28,8 +28,11 @@ docker/pgdata/
 data/uploads/*
 data/knowledge_base/
 data/eval/techfusion_gold.jsonl
+data/eval/techfusion_gold_ragas_sample15.jsonl
 data/eval/baselines/
 data/eval/manual_review/
+experiments/reports/experiment_007_ragas_pilot_report.md
+experiments/reports/experiment_008_ragas_full_report.md
 !data/uploads/.gitkeep
 *.log
 

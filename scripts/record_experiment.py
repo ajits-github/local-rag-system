@@ -84,6 +84,7 @@ def build_experiment_record(
         "generation_model": config.generation.model_name,
         "embedding_model": config.embedding.model_name,
         "vector_store": config.vectorstore.provider,
+        "chunking_provider": config.chunking.provider,
         "chunk_size": config.chunking.chunk_size,
         "chunk_overlap": config.chunking.chunk_overlap,
         "reranker_provider": config.reranker.provider,
