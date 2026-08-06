@@ -27,13 +27,17 @@ TABLE_START = "<!-- EXPERIMENTS_TABLE_START -->"
 TABLE_END = "<!-- EXPERIMENTS_TABLE_END -->"
 
 
-def load_records(results_dir: Path) -> list[dict[str, Any]]:
+def load_records(results_dir: Path, exclude: set[str] | None = None) -> list[dict[str, Any]]:
     """Load every experiment record JSON file, sorted by `experiment_id`.
 
     Parameters
     ----------
     results_dir : Path
         Directory containing `*.json` records written by `record_experiment.py`.
+    exclude : set[str] | None, optional
+        `experiment_id`s to omit -- for records that exist (e.g. a small
+        pilot subset) but aren't comparable to the rest of the table, by
+        default None.
 
     Returns
     -------
@@ -41,9 +45,12 @@ def load_records(results_dir: Path) -> list[dict[str, Any]]:
         Parsed records, ordered by `experiment_id` (not filename, so
         "experiment_2" doesn't sort after "experiment_10").
     """
+    exclude = exclude or set()
     records = []
     for path in sorted(results_dir.glob("*.json")):
-        records.append(json.loads(path.read_text(encoding="utf-8")))
+        record = json.loads(path.read_text(encoding="utf-8"))
+        if record.get("experiment_id") not in exclude:
+            records.append(record)
     # Order by experiment_id so "experiment_2" doesn't sort before
     # "experiment_10" the way plain filename sorting would.
     records.sort(key=lambda r: r.get("experiment_id", ""))
@@ -83,8 +90,9 @@ def render_table(records: list[dict[str, Any]]) -> str:
 
     header = (
         "| # | Label | Generation model | Embedder | Reranker | Recall@5 | Recall@10 "
-        "| Hit Rate@10 | MRR | Answer quality | Total latency | Dataset | Date |\n"
-        "|---|---|---|---|---|---|---|---|---|---|---|---|---|"
+        "| Hit Rate@10 | MRR | Answer quality | RAGAS Faithful | RAGAS Correct "
+        "| Total latency | Dataset | Date |\n"
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"
     )
     rows = [header]
     for i, r in enumerate(records, start=1):
@@ -100,7 +108,9 @@ def render_table(records: list[dict[str, Any]]) -> str:
             f"| {reranker} "
             f"| {_fmt(r.get('recall_at_5'))} | {_fmt(r.get('recall_at_10'))} "
             f"| {_fmt(r.get('hit_rate_at_10'))} | {_fmt(r.get('mrr'))} "
-            f"| {_fmt(r.get('answer_quality'))} | {total_latency} "
+            f"| {_fmt(r.get('answer_quality'))} "
+            f"| {_fmt(r.get('ragas_faithfulness'))} | {_fmt(r.get('ragas_answer_correctness'))} "
+            f"| {total_latency} "
             f"| {r.get('dataset_id', '?')} | {date} |"
         )
     return "\n".join(rows)
@@ -134,9 +144,15 @@ def main() -> None:
     """CLI entrypoint: render the table, write it to disk, and update README.md."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--results-dir", default=str(DEFAULT_RESULTS_DIR))
+    parser.add_argument(
+        "--exclude",
+        default="",
+        help="Comma-separated experiment_ids to omit (e.g. a non-comparable pilot subset)",
+    )
     args = parser.parse_args()
 
-    records = load_records(Path(args.results_dir))
+    exclude = {e.strip() for e in args.exclude.split(",") if e.strip()}
+    records = load_records(Path(args.results_dir), exclude=exclude)
     table = render_table(records)
 
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)

@@ -49,9 +49,18 @@ def test_render_table_includes_row_per_record():
     table = compare_experiments.render_table([_record()])
     expected_row = (
         "| 1 | baseline | qwen2.5:1.5b | all-MiniLM-L6-v2 | none | 0.891 | 0.967 "
-        "| 0.978 | 0.847 | 0.432 | 3.7s | techfusion | 2026-08-05 |"
+        "| 0.978 | 0.847 | 0.432 | - | - | 3.7s | techfusion | 2026-08-05 |"
     )
     assert expected_row in table
+
+
+def test_render_table_includes_ragas_columns_when_present():
+    """render_table shows ragas_faithfulness/ragas_answer_correctness when a record has them."""
+    table = compare_experiments.render_table(
+        [_record(ragas_faithfulness=0.786, ragas_answer_correctness=0.469)]
+    )
+    row = table.splitlines()[-1]
+    assert "| 0.786 | 0.469 |" in row
 
 
 def test_render_table_shows_reranker_model_when_present():
@@ -82,10 +91,11 @@ def test_short_model_name_handles_missing_value():
 
 
 def test_render_table_handles_missing_metrics_gracefully():
-    """render_table prints "-" for metrics that are None."""
+    """render_table prints "-" for metrics that are None or absent (e.g. pre-RAGAS records)."""
     table = compare_experiments.render_table([_record(answer_quality=None, total_latency_ms=None)])
     row = table.splitlines()[-1]
-    assert "| - | - |" in row  # answer_quality then total_latency, both missing
+    # answer_quality, ragas_faithfulness (absent), ragas_answer_correctness (absent), total_latency
+    assert "| - | - | - | - |" in row
 
 
 def test_load_records_sorts_by_experiment_id(tmp_path: Path):
@@ -100,6 +110,20 @@ def test_load_records_sorts_by_experiment_id(tmp_path: Path):
     records = compare_experiments.load_records(tmp_path)
 
     assert [r["experiment_id"] for r in records] == ["experiment_001", "experiment_002"]
+
+
+def test_load_records_omits_excluded_experiment_ids(tmp_path: Path):
+    """load_records drops experiment_ids passed in `exclude` (e.g. a non-comparable pilot)."""
+    (tmp_path / "experiment_001.json").write_text(
+        '{"experiment_id": "experiment_001"}', encoding="utf-8"
+    )
+    (tmp_path / "experiment_002.json").write_text(
+        '{"experiment_id": "experiment_002"}', encoding="utf-8"
+    )
+
+    records = compare_experiments.load_records(tmp_path, exclude={"experiment_002"})
+
+    assert [r["experiment_id"] for r in records] == ["experiment_001"]
 
 
 def test_update_readme_replaces_content_between_markers(tmp_path: Path, monkeypatch):
