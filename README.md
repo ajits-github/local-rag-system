@@ -110,6 +110,15 @@ embedding model, chunk size/overlap, reranker (`none` / `cross_encoder` /
 `--config path/to/other.yaml` on the ingestion/eval CLIs, or by editing the
 default file directly for local experiments.
 
+Generation prompts are versioned YAML files under
+`src/rag/prompts/templates/` (`rag_answer_v1.yaml`, `rag_answer_v2.yaml`,
+...), loaded and validated by `src/rag/prompts/loader.py`. The active
+version is selected by `config/default.yaml`'s `generation.prompt` block
+(`id`, `version`, `path`); `RetrievalPipeline` loads it once at
+construction and rejects the file if its own declared `prompt_id`/`version`
+don't match what's configured. `rag_answer_v2.yaml` ships as an example of
+a stricter grounding/citation prompt but isn't active by default.
+
 ## Metadata & filtering
 
 Every chunk carries: `document_id, chunk_id, source, source_type, title,
@@ -147,10 +156,13 @@ either, for the same reason; point `--gold` at your own to reproduce that
 kind of evaluation.
 
 ```
-python -m rag.eval.run_eval --gold data/eval/sample_gold.jsonl
+python -m rag.eval.run_eval --gold data/eval/sample_gold.jsonl --dataset-id sample_docs
 ```
-Point `--gold` at any gold file to evaluate any dataset; nothing about the
-runner is tied to a particular one. Reports, for the configured pipeline:
+`--dataset-id` is mandatory, it's injected as a filter on every retrieval
+the runner makes, so an evaluation can never silently score chunks from a
+different dataset. Point `--gold`/`--dataset-id` at any gold file and
+dataset; nothing about the runner is tied to a particular one. Reports,
+for the configured pipeline:
 - **Recall@5 / Recall@10** and **Hit Rate@5 / Hit Rate@10**: recall
   averages the fraction of *all* relevant documents found per question;
   hit rate is binary (was *any* relevant document found), so the two
@@ -201,7 +213,7 @@ different dataset in the same vector store.*
 ### Recording a new experiment
 
 1. Change one thing in `config/default.yaml` (reranker, model, chunk size,
-   ...).
+   prompt version, ...).
 2. Run the eval and save its full report:
    ```
    python -m rag.eval.run_eval --gold data/eval/techfusion_gold.jsonl \
@@ -214,6 +226,11 @@ different dataset in the same vector store.*
      --experiment-id experiment_002 --label "cross-encoder reranker" \
      --config config/default.yaml
    ```
+   Every recorded experiment also captures `prompt_id`/`prompt_version` and
+   a `prompt_file_checksum`, the same way it captures
+   `embedding_model`/`chunk_size`/`reranker_model` — a prompt wording
+   change is its own comparable experiment axis, tracked exactly like any
+   other config change.
 4. Regenerate the comparison table (updates
    `experiments/reports/comparison.md` and this README section in place):
    ```

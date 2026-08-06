@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 from pathlib import Path
 
@@ -99,3 +100,16 @@ def test_reranker_model_is_none_for_none_provider():
     config = load_config()
     assert config.reranker.provider == "none"
     assert record_experiment._reranker_model(config) is None
+
+
+def test_build_experiment_record_includes_prompt_fields():
+    """The record captures prompt_id/prompt_version and a deterministic file checksum."""
+    config = load_config()
+    record = record_experiment.build_experiment_record(
+        _fake_eval_report(), config, "experiment_999", "unit test"
+    )
+
+    expected_checksum = hashlib.sha256(config.prompt_template_path().read_bytes()).hexdigest()
+    assert record["prompt_id"] == config.generation.prompt.id
+    assert record["prompt_version"] == config.generation.prompt.version
+    assert record["prompt_file_checksum"] == expected_checksum

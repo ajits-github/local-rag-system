@@ -56,6 +56,8 @@ def _config_summary(config: AppConfig) -> dict[str, Any]:
         "chunk_overlap": config.chunking.chunk_overlap,
         "reranker_provider": config.reranker.provider,
         "generation_model": config.generation.model_name,
+        "prompt_id": config.generation.prompt.id,
+        "prompt_version": config.generation.prompt.version,
         "retrieval_top_k": config.retrieval.top_k,
         "rerank_top_n": config.retrieval.rerank_top_n,
     }

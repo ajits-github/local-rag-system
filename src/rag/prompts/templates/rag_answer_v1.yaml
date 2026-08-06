@@ -1,0 +1,20 @@
+prompt_id: rag_answer
+version: v1
+description: >
+  Baseline generation prompt. Byte-identical to the original hardcoded
+  _PROMPT_TEMPLATE constant that lived in retrieval/pipeline.py before
+  prompt versioning was introduced.
+system_template: ""
+user_template: |-
+  Answer the question using only the context below. If the context doesn't contain the answer, say you don't know.
+
+  Context:
+  {context}
+
+  Question: {query}
+
+  Answer:
+required_variables:
+  - context
+  - query
+created_at: "2026-08-06"

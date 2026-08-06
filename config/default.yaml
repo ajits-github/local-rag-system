@@ -46,6 +46,10 @@ generation:
   base_url_env_var: OLLAMA_BASE_URL
   temperature: 0.2
   max_tokens: 512
+  prompt:
+    id: rag_answer
+    version: v1
+    path: src/rag/prompts/templates/rag_answer_v1.yaml
 
 retrieval:
   top_k: 5

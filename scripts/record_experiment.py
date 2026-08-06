@@ -21,6 +21,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import shutil
 import sys
@@ -84,6 +85,11 @@ def build_experiment_record(
         "chunk_overlap": config.chunking.chunk_overlap,
         "reranker_provider": config.reranker.provider,
         "reranker_model": _reranker_model(config),
+        "prompt_id": config.generation.prompt.id,
+        "prompt_version": config.generation.prompt.version,
+        "prompt_file_checksum": hashlib.sha256(
+            config.prompt_template_path().read_bytes()
+        ).hexdigest(),
         "retrieval_top_k": config.retrieval.top_k,
         "rerank_top_n": config.retrieval.rerank_top_n,
         "dataset_id": eval_report.get("dataset_id"),

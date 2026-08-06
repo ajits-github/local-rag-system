@@ -9,19 +9,19 @@ from rag.config import AppConfig
 from rag.embedders.base import Embedder
 from rag.factory import build_embedder, build_llm, build_reranker, build_vectorstore
 from rag.generation.base import LLM
+from rag.prompts.loader import PromptTemplate, load_prompt_template_from_config
 from rag.rerankers.base import Reranker
 from rag.schemas import SearchResult
 from rag.vectorstore.base import VectorStore
 
-_PROMPT_TEMPLATE = """Answer the question using only the context below. \
-If the context doesn't contain the answer, say you don't know.
 
-Context:
-{context}
-
-Question: {query}
-
-Answer:"""
+def _build_context(results: list[SearchResult]) -> str:
+    """Join reranked chunks into a "[Source N: ...]"-labeled context block."""
+    labeled = [
+        f"[Source {i}: {r.chunk.metadata.source}]\n{r.chunk.content}"
+        for i, r in enumerate(results, start=1)
+    ]
+    return "\n\n---\n\n".join(labeled)
 
 
 class RetrievalPipeline:
@@ -34,6 +34,7 @@ class RetrievalPipeline:
         embedder: Embedder | None = None,
         reranker: Reranker | None = None,
         llm: LLM | None = None,
+        prompt_template: PromptTemplate | None = None,
     ) -> None:
         """Wire up the pipeline's stages from config (or injected instances).
 
@@ -49,12 +50,16 @@ class RetrievalPipeline:
             Reranker applied to search results; built from `config` if omitted.
         llm : LLM | None, optional
             LLM used for generation; built from `config` if omitted.
+        prompt_template : PromptTemplate | None, optional
+            Prompt template used for generation; loaded from
+            `config.generation.prompt` if omitted.
         """
         self._config = config
         self._vectorstore = vectorstore or build_vectorstore(config)
         self._embedder = embedder or build_embedder(config)
         self._reranker = reranker or build_reranker(config)
         self._llm = llm or build_llm(config)
+        self._prompt_template = prompt_template or load_prompt_template_from_config(config)
 
     def retrieve(
         self,
@@ -125,8 +130,9 @@ class RetrievalPipeline:
         t0 = time.perf_counter()
         results = self.retrieve(query, filters=filters, top_k=top_k)
         t1 = time.perf_counter()
-        context = "\n\n---\n\n".join(r.chunk.content for r in results)
-        prompt = _PROMPT_TEMPLATE.format(context=context, query=query)
+        context = _build_context(results)
+        system, user = self._prompt_template.render(context=context, query=query)
+        prompt = f"{system}\n\n{user}" if system else user
         answer_text = self._llm.generate(prompt)
         t2 = time.perf_counter()
         return {

@@ -17,7 +17,8 @@ import yaml
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
-DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "default.yaml"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_CONFIG_PATH = REPO_ROOT / "config" / "default.yaml"
 
 
 class AppMeta(BaseModel):
@@ -77,6 +78,14 @@ class RerankerConfig(BaseModel):
     cohere: CohereRerankConfig = Field(default_factory=CohereRerankConfig)
 
 
+class PromptConfig(BaseModel):
+    """Selects and locates the active generation prompt template."""
+
+    id: str = "rag_answer"
+    version: str = "v1"
+    path: str = "src/rag/prompts/templates/rag_answer_v1.yaml"
+
+
 class GenerationConfig(BaseModel):
     """LLM provider selection and generation parameters."""
 
@@ -85,6 +94,7 @@ class GenerationConfig(BaseModel):
     base_url_env_var: str = "OLLAMA_BASE_URL"
     temperature: float = 0.2
     max_tokens: int = 512
+    prompt: PromptConfig = Field(default_factory=PromptConfig)
 
 
 class RetrievalConfig(BaseModel):
@@ -163,6 +173,17 @@ class AppConfig(BaseModel):
             The API key, or ``None`` if that environment variable is unset.
         """
         return os.environ.get(self.reranker.cohere.api_key_env_var)
+
+    def prompt_template_path(self) -> Path:
+        """Resolve `generation.prompt.path`, relative to the repo root if not absolute.
+
+        Returns
+        -------
+        Path
+            The resolved path to the configured prompt template YAML file.
+        """
+        candidate = Path(self.generation.prompt.path)
+        return candidate if candidate.is_absolute() else REPO_ROOT / candidate
 
 
 @lru_cache(maxsize=8)
