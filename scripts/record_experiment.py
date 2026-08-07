@@ -97,8 +97,10 @@ def build_experiment_record(
         "prompt_file_checksum": hashlib.sha256(
             config.prompt_template_path().read_bytes()
         ).hexdigest(),
+        "retrieval_provider": config.retrieval.provider,
         "retrieval_top_k": config.retrieval.top_k,
         "rerank_top_n": config.retrieval.rerank_top_n,
+        "rrf_k": (config.retrieval.hybrid.rrf_k if config.retrieval.provider == "hybrid" else None),
         "dataset_id": eval_report.get("dataset_id"),
         "recall_at_5": retrieval.get("recall@5"),
         "recall_at_10": retrieval.get("recall@10"),

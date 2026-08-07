@@ -152,3 +152,28 @@ def test_build_experiment_record_ragas_fields_none_for_reports_without_ragas_key
 
     assert record["ragas_faithfulness"] is None
     assert record["ragas_judge_provider"] is None
+
+
+def test_build_experiment_record_captures_dense_retrieval_provider():
+    """A dense-provider config records retrieval_provider='dense' and rrf_k=None."""
+    config = load_config()
+    assert config.retrieval.provider == "dense"
+    record = record_experiment.build_experiment_record(
+        _fake_eval_report(), config, "experiment_999", "unit test"
+    )
+
+    assert record["retrieval_provider"] == "dense"
+    assert record["rrf_k"] is None
+
+
+def test_build_experiment_record_captures_hybrid_retrieval_provider_and_rrf_k():
+    """A hybrid-provider config records retrieval_provider='hybrid' and its configured rrf_k."""
+    config = load_config().model_copy(deep=True)
+    config.retrieval.provider = "hybrid"
+    config.retrieval.hybrid.rrf_k = 30
+    record = record_experiment.build_experiment_record(
+        _fake_eval_report(), config, "experiment_999", "unit test"
+    )
+
+    assert record["retrieval_provider"] == "hybrid"
+    assert record["rrf_k"] == 30

@@ -144,6 +144,17 @@ def test_log_experiment_logs_params_and_metrics(monkeypatch: pytest.MonkeyPatch)
     assert fake.metrics["recall_at_5"] == 0.9
 
 
+def test_log_experiment_logs_retrieval_provider_and_rrf_k(monkeypatch: pytest.MonkeyPatch):
+    """retrieval_provider/rrf_k are logged as params, not silently dropped."""
+    fake = _install_fake_mlflow(monkeypatch)
+    config = MLflowConfig()
+
+    log_experiment(_record(retrieval_provider="hybrid", rrf_k=60), config)
+
+    assert fake.params["retrieval_provider"] == "hybrid"
+    assert fake.params["rrf_k"] == 60
+
+
 def test_log_experiment_skips_none_valued_fields(monkeypatch: pytest.MonkeyPatch):
     """A None-valued field (e.g. a pre-RAGAS record's ragas_* fields) is never logged."""
     fake = _install_fake_mlflow(monkeypatch)

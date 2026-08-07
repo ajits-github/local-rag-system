@@ -89,21 +89,23 @@ def render_table(records: list[dict[str, Any]]) -> str:
         return "No experiments recorded yet -- see scripts/record_experiment.py."
 
     header = (
-        "| # | Label | Generation model | Embedder | Reranker | Recall@5 | Recall@10 "
+        "| # | Label | Retrieval | Generation model | Embedder | Reranker | Recall@5 | Recall@10 "
         "| Hit Rate@10 | MRR | Answer quality | RAGAS Faithful | RAGAS Correct "
         "| Total latency | Dataset | Date |\n"
-        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"
     )
     rows = [header]
     for i, r in enumerate(records, start=1):
         reranker = r.get("reranker_provider") or "none"
         if r.get("reranker_model"):
             reranker = f"{reranker} ({_short_model_name(r['reranker_model'])})"
+        retrieval_provider = r.get("retrieval_provider") or "dense"
         total_latency_ms = r.get("total_latency_ms")
         total_latency = f"{total_latency_ms / 1000:.1f}s" if total_latency_ms is not None else "-"
         date = (r.get("timestamp") or "")[:10] or "-"
         rows.append(
             f"| {i} | {r.get('label') or r.get('experiment_id', '?')} "
+            f"| {retrieval_provider} "
             f"| {r.get('generation_model', '?')} | {_short_model_name(r.get('embedding_model'))} "
             f"| {reranker} "
             f"| {_fmt(r.get('recall_at_5'))} | {_fmt(r.get('recall_at_10'))} "

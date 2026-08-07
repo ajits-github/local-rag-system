@@ -48,10 +48,19 @@ def test_render_table_includes_row_per_record():
     """render_table formats one Markdown row per experiment record."""
     table = compare_experiments.render_table([_record()])
     expected_row = (
-        "| 1 | baseline | qwen2.5:1.5b | all-MiniLM-L6-v2 | none | 0.891 | 0.967 "
+        "| 1 | baseline | dense | qwen2.5:1.5b | all-MiniLM-L6-v2 | none | 0.891 | 0.967 "
         "| 0.978 | 0.847 | 0.432 | - | - | 3.7s | techfusion | 2026-08-05 |"
     )
     assert expected_row in table
+
+
+def test_render_table_shows_retrieval_provider():
+    """render_table shows retrieval_provider, defaulting to 'dense' for pre-hybrid records."""
+    table = compare_experiments.render_table([_record(retrieval_provider="hybrid")])
+    assert "| baseline | hybrid |" in table
+
+    table_default = compare_experiments.render_table([_record()])
+    assert "| baseline | dense |" in table_default
 
 
 def test_render_table_includes_ragas_columns_when_present():
