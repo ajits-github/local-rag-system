@@ -9,6 +9,37 @@ offline on a CPU-only, 8GB-RAM machine; no API keys required by default.
 
 See [`CLAUDE.md`](CLAUDE.md) for the architecture map and module conventions.
 
+## Architecture
+
+```mermaid
+flowchart TD
+    Docs["Documents / Knowledge Sources"] --> Ingestion["Ingestion Pipeline"]
+    Ingestion --> DB[("PostgreSQL + pgvector")]
+
+    User(("User")) --> API["FastAPI"]
+    API --> Retrieval["Retrieval"]
+    DB --> Retrieval
+    Retrieval --> Prompt["Prompt Builder"]
+    Prompt --> LLM["LLM"]
+    LLM -->|"Answer + Sources"| User
+
+    Retrieval --> Evaluation
+    LLM --> Evaluation["Evaluation<br/>Recall@k / MRR / RAGAS"]
+```
+
+For the detailed system view, see [`docs/architecture.md`](docs/architecture.md).
+
+| Component | Current implementation | Configurable / future |
+|---|---|---|
+| Embeddings | all-MiniLM-L6-v2 | swappable |
+| Vector DB | PostgreSQL + pgvector | swappable |
+| Chunker | structured Markdown | swappable |
+| Retrieval | dense vector search | hybrid retrieval |
+| Reranker | optional cross-encoder | Cohere / none |
+| LLM | Qwen2.5 via Ollama | swappable |
+| Prompt | versioned YAML templates | v1 / v2 |
+| Evaluation | Recall@k, MRR, RAGAS | extensible |
+
 ## Prerequisites
 
 - Python 3.11+
@@ -344,7 +375,6 @@ either is unreachable.
 
 Deferred for now, tracked here rather than left as empty scaffolding:
 
-- **Hybrid Search**: combine vector similarity with keyword/BM25 search.
 - **Cross Encoder**: mature the scaffolded `cross_encoder` reranker
   (`rerankers/cross_encoder.py`) with real benchmarking/tuning.
 - **Cohere Reranking**: mature the scaffolded optional `cohere` provider
