@@ -177,6 +177,28 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # The postgres service above starts with an empty database -- no
+      # `vector` extension, no tables. Without this, /health's vectorstore
+      # check would report "unreachable" on every single call (the pgvector
+      # type adapter can't register against a database that doesn't have
+      # the extension yet), which used to exhaust the app's connection pool
+      # under repeated polling. See PROJECT_JOURNAL.md for the full story;
+      # the pool-exhaustion bug itself is now fixed at the code level
+      # (src/rag/vectorstore/pgvector.py), but the schema still needs to
+      # exist for this smoke test to assert a genuinely healthy container.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - run: pip install .
+
+      - name: Initialize schema (pgvector extension + tables)
+        env:
+          DATABASE_URL: postgresql://rag:rag@localhost:5432/ragdb
+        run: python scripts/init_db.py
+
       # --network host: on GitHub-hosted Linux runners this lets the
       # container reach the postgres service on localhost:5432 the same
       # way the job's own steps do, without wiring a user-defined network

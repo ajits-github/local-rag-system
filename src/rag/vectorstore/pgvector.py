@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import Any
 
@@ -175,167 +177,164 @@ class PgVectorStore(VectorStore):
         self._distance_op = _DISTANCE_OPERATORS[distance_metric]
         self._pool = ThreadedConnectionPool(minconn, maxconn, dsn)
 
-    def _conn(self) -> PgConnection:
-        """Check out a pooled connection with the vector type adapter registered."""
-        conn = self._pool.getconn()
-        register_vector(conn)
-        return conn
+    @contextmanager
+    def _connection(self) -> Iterator[PgConnection]:
+        """Check out a pooled connection, guaranteeing it's always returned.
 
-    def _putconn(self, conn: PgConnection) -> None:
-        """Return a connection to the pool."""
-        self._pool.putconn(conn)
+        `register_vector(conn)` runs *inside* the try/finally, not before
+        it -- a connection checked out via `pool.getconn()` is only ever
+        "ours" for as long as we hold a reference to it, so anything that
+        can raise between checkout and use (registering the vector type
+        adapter included) must already be inside the block that returns
+        it, or the connection leaks out of the pool forever. This was the
+        root cause of a real `PoolError: connection pool exhausted`: the
+        previous `_conn()` helper called `pool.getconn()` then
+        `register_vector(conn)` as two separate statements *before*
+        returning to the caller's own `try/finally`, so a `register_vector`
+        failure (e.g. the `vector` extension not yet installed on a fresh
+        database) checked out a connection that no `finally` block ever
+        saw, let alone returned.
+
+        Yields
+        ------
+        PgConnection
+            A pooled connection with the pgvector type adapter registered.
+        """
+        conn = self._pool.getconn()
+        try:
+            register_vector(conn)
+            yield conn
+        finally:
+            self._pool.putconn(conn)
 
     def health_check(self) -> bool:
         """See `VectorStore.health_check`."""
-        conn = self._conn()
         try:
-            with conn.cursor() as cur:
+            with self._connection() as conn, conn.cursor() as cur:
                 cur.execute("SELECT 1;")
                 cur.fetchone()
             return True
         except Exception:
             return False
-        finally:
-            self._putconn(conn)
 
     def get_or_create_document_id(
         self, source: str, checksum: str, dataset_id: str
     ) -> tuple[str, bool]:
         """See `VectorStore.get_or_create_document_id`."""
-        conn = self._conn()
-        try:
-            with conn:
-                with conn.cursor() as cur:
+        with self._connection() as conn:
+            with conn, conn.cursor() as cur:
+                cur.execute(
+                    f"""SELECT document_id, checksum FROM {self._documents_table}
+                        WHERE source = %s AND dataset_id = %s""",
+                    (source, dataset_id),
+                )
+                row = cur.fetchone()
+                now = datetime.now(UTC)
+
+                if row is None:
+                    document_id = str(uuid.uuid4())
                     cur.execute(
-                        f"""SELECT document_id, checksum FROM {self._documents_table}
-                            WHERE source = %s AND dataset_id = %s""",
-                        (source, dataset_id),
+                        f"""INSERT INTO {self._documents_table}
+                            (document_id, source, dataset_id, checksum,
+                             created_at, last_modified)
+                            VALUES (%s, %s, %s, %s, %s, %s)""",
+                        (document_id, source, dataset_id, checksum, now, now),
                     )
-                    row = cur.fetchone()
-                    now = datetime.now(UTC)
+                    return document_id, True
 
-                    if row is None:
-                        document_id = str(uuid.uuid4())
-                        cur.execute(
-                            f"""INSERT INTO {self._documents_table}
-                                (document_id, source, dataset_id, checksum,
-                                 created_at, last_modified)
-                                VALUES (%s, %s, %s, %s, %s, %s)""",
-                            (document_id, source, dataset_id, checksum, now, now),
-                        )
-                        return document_id, True
-
-                    document_id, existing_checksum = row
-                    changed = existing_checksum != checksum
-                    if changed:
-                        cur.execute(
-                            f"""UPDATE {self._documents_table}
-                                SET checksum = %s, last_modified = %s
-                                WHERE document_id = %s""",
-                            (checksum, now, document_id),
-                        )
-                    return str(document_id), changed
-        finally:
-            self._putconn(conn)
+                document_id, existing_checksum = row
+                changed = existing_checksum != checksum
+                if changed:
+                    cur.execute(
+                        f"""UPDATE {self._documents_table}
+                            SET checksum = %s, last_modified = %s
+                            WHERE document_id = %s""",
+                        (checksum, now, document_id),
+                    )
+                return str(document_id), changed
 
     def delete_chunks_by_document_id(self, document_id: str) -> None:
         """See `VectorStore.delete_chunks_by_document_id`."""
-        conn = self._conn()
-        try:
-            with conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        f"DELETE FROM {self._chunks_table} WHERE document_id = %s",
-                        (document_id,),
-                    )
-        finally:
-            self._putconn(conn)
+        with self._connection() as conn:
+            with conn, conn.cursor() as cur:
+                cur.execute(
+                    f"DELETE FROM {self._chunks_table} WHERE document_id = %s",
+                    (document_id,),
+                )
 
     def delete_document(self, document_id: str) -> None:
         """See `VectorStore.delete_document`."""
-        conn = self._conn()
-        try:
-            with conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        f"DELETE FROM {self._documents_table} WHERE document_id = %s",
-                        (document_id,),
-                    )
-        finally:
-            self._putconn(conn)
+        with self._connection() as conn:
+            with conn, conn.cursor() as cur:
+                cur.execute(
+                    f"DELETE FROM {self._documents_table} WHERE document_id = %s",
+                    (document_id,),
+                )
 
     def delete_dataset(self, dataset_id: str) -> None:
         """See `VectorStore.delete_dataset`."""
-        conn = self._conn()
-        try:
-            with conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        f"DELETE FROM {self._documents_table} WHERE dataset_id = %s",
-                        (dataset_id,),
-                    )
-        finally:
-            self._putconn(conn)
+        with self._connection() as conn:
+            with conn, conn.cursor() as cur:
+                cur.execute(
+                    f"DELETE FROM {self._documents_table} WHERE dataset_id = %s",
+                    (dataset_id,),
+                )
 
     def add_chunks(self, chunks: list[Chunk]) -> None:
         """See `VectorStore.add_chunks`."""
         if not chunks:
             return
-        conn = self._conn()
-        try:
-            with conn:
-                with conn.cursor() as cur:
-                    rows = [
-                        (
-                            c.metadata.chunk_id,
-                            c.metadata.document_id,
-                            c.metadata.chunk_index,
-                            c.content,
-                            c.embedding,
-                            c.metadata.source,
-                            c.metadata.source_type,
-                            c.metadata.title,
-                            c.metadata.author,
-                            c.metadata.url,
-                            c.metadata.created_at,
-                            c.metadata.last_modified,
-                            c.metadata.language,
-                            c.metadata.category,
-                            c.metadata.dataset_id,
-                            c.metadata.content_type,
-                            c.metadata.section_path,
-                            c.metadata.code_language,
-                            c.metadata.table_headers,
-                            c.metadata.attachment_name,
-                            c.metadata.source_anchor,
-                        )
-                        for c in chunks
-                    ]
-                    psycopg2.extras.execute_values(
-                        cur,
-                        f"""INSERT INTO {self._chunks_table}
-                            (chunk_id, document_id, chunk_index, content, embedding,
-                             source, source_type, title, author, url,
-                             created_at, last_modified, language, category, dataset_id,
-                             content_type, section_path, code_language, table_headers,
-                             attachment_name, source_anchor)
-                            VALUES %s
-                            ON CONFLICT (chunk_id) DO UPDATE SET
-                                content = EXCLUDED.content,
-                                embedding = EXCLUDED.embedding,
-                                last_modified = EXCLUDED.last_modified,
-                                category = EXCLUDED.category,
-                                dataset_id = EXCLUDED.dataset_id,
-                                content_type = EXCLUDED.content_type,
-                                section_path = EXCLUDED.section_path,
-                                code_language = EXCLUDED.code_language,
-                                table_headers = EXCLUDED.table_headers,
-                                attachment_name = EXCLUDED.attachment_name,
-                                source_anchor = EXCLUDED.source_anchor""",
-                        rows,
+        with self._connection() as conn:
+            with conn, conn.cursor() as cur:
+                rows = [
+                    (
+                        c.metadata.chunk_id,
+                        c.metadata.document_id,
+                        c.metadata.chunk_index,
+                        c.content,
+                        c.embedding,
+                        c.metadata.source,
+                        c.metadata.source_type,
+                        c.metadata.title,
+                        c.metadata.author,
+                        c.metadata.url,
+                        c.metadata.created_at,
+                        c.metadata.last_modified,
+                        c.metadata.language,
+                        c.metadata.category,
+                        c.metadata.dataset_id,
+                        c.metadata.content_type,
+                        c.metadata.section_path,
+                        c.metadata.code_language,
+                        c.metadata.table_headers,
+                        c.metadata.attachment_name,
+                        c.metadata.source_anchor,
                     )
-        finally:
-            self._putconn(conn)
+                    for c in chunks
+                ]
+                psycopg2.extras.execute_values(
+                    cur,
+                    f"""INSERT INTO {self._chunks_table}
+                        (chunk_id, document_id, chunk_index, content, embedding,
+                         source, source_type, title, author, url,
+                         created_at, last_modified, language, category, dataset_id,
+                         content_type, section_path, code_language, table_headers,
+                         attachment_name, source_anchor)
+                        VALUES %s
+                        ON CONFLICT (chunk_id) DO UPDATE SET
+                            content = EXCLUDED.content,
+                            embedding = EXCLUDED.embedding,
+                            last_modified = EXCLUDED.last_modified,
+                            category = EXCLUDED.category,
+                            dataset_id = EXCLUDED.dataset_id,
+                            content_type = EXCLUDED.content_type,
+                            section_path = EXCLUDED.section_path,
+                            code_language = EXCLUDED.code_language,
+                            table_headers = EXCLUDED.table_headers,
+                            attachment_name = EXCLUDED.attachment_name,
+                            source_anchor = EXCLUDED.source_anchor""",
+                    rows,
+                )
 
     def search(
         self,
@@ -356,13 +355,9 @@ class PgVectorStore(VectorStore):
             LIMIT %s
         """
 
-        conn = self._conn()
-        try:
-            with conn.cursor() as cur:
-                cur.execute(sql, params)
-                rows = cur.fetchall()
-        finally:
-            self._putconn(conn)
+        with self._connection() as conn, conn.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
 
         results = []
         for row in rows:
@@ -398,13 +393,9 @@ class PgVectorStore(VectorStore):
         where_sql, filter_params = _build_where_clause(filters)
         sql = f"SELECT {_METADATA_COLUMNS} FROM {self._chunks_table} {where_sql}"
 
-        conn = self._conn()
-        try:
-            with conn.cursor() as cur:
-                cur.execute(sql, filter_params)
-                rows = cur.fetchall()
-        finally:
-            self._putconn(conn)
+        with self._connection() as conn, conn.cursor() as cur:
+            cur.execute(sql, filter_params)
+            rows = cur.fetchall()
 
         if not rows:
             return []
