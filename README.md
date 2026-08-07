@@ -1,5 +1,7 @@
 # local-rag-system
 
+[![CI](https://github.com/ajits-github/local-rag-system/actions/workflows/ci.yml/badge.svg)](https://github.com/ajits-github/local-rag-system/actions/workflows/ci.yml)
+
 A modular, config-driven local RAG system: sentence-transformers embeddings,
 Postgres+pgvector storage, Ollama generation, FastAPI serving. Every infra
 choice (embedding model, vector backend, chunker, reranker, LLM) is
@@ -487,6 +489,30 @@ the prod-override form) is already running, and proves the *containerized*
 API can reach Postgres+pgvector and native Ollama, then does a real
 ingest -> query round trip against them (see
 [Containerized development](#containerized-development) above).
+
+## Continuous Integration
+
+`.github/workflows/ci.yml` runs on every PR/push to `main` (and via manual
+`workflow_dispatch`), in four parallel jobs:
+
+- **code-quality** — `pre-commit run --all-files` (ruff, ruff-format, mypy,
+  hygiene hooks — the same checks `pre-commit install` runs locally).
+- **unit-tests** — the full `tests/unit` suite; no external services.
+- **integration-tests** — `tests/integration` against a `pgvector/pgvector:pg16`
+  service container spun up by the workflow itself (not your local `make up`
+  stack). Tests gated on a local Ollama (`require_ollama` in
+  `tests/integration/conftest.py`) skip cleanly, since CI doesn't run Ollama.
+- **docker-build** — builds the production image from `Dockerfile`, runs it
+  against the same Postgres service container, and checks `GET /health`
+  reports `vectorstore: ok` (Ollama is expected `unreachable` here, for the
+  same reason as above). No image is pushed anywhere yet.
+
+What CI intentionally leaves out: RAGAS scoring, hosted-judge (OpenAI/
+Anthropic) calls, MLflow experiment logging, and the full TechFusion
+evaluation — all of these need either a local Ollama, hosted API keys, or
+minutes-long LLM calls that don't belong in per-PR feedback. They stay
+manual, run locally via `scripts/record_experiment.py` /
+`eval/run_ragas_eval.py` as today.
 
 ## Roadmap
 
