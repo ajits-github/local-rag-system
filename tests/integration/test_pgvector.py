@@ -187,3 +187,91 @@ def test_structured_content_fields_refresh_on_reingestion(require_postgres, conf
         assert found.chunk.metadata.table_headers == ["Name", "Value"]
     finally:
         store.delete_document(document_id)
+
+
+def test_search_keyword_finds_lexical_match(require_postgres, config):
+    """search_keyword() finds a chunk via an exact-token match, using a placeholder embedding."""
+    store = _store(config)
+    source = f"test-source-{uuid.uuid4()}"
+    document_id, _ = store.get_or_create_document_id(source, "c1", TEST_DATASET_ID)
+
+    dim = config.embedding.dimension
+    now = datetime.now(UTC)
+    chunk_id = f"{document_id}_0"
+    chunk = Chunk(
+        id=chunk_id,
+        content="The retry_transient helper retries TimeoutError and ConnectionError.",
+        metadata=ChunkMetadata(
+            document_id=document_id,
+            chunk_id=chunk_id,
+            source=source,
+            source_type="text",
+            created_at=now,
+            last_modified=now,
+            chunk_index=0,
+            dataset_id=TEST_DATASET_ID,
+        ),
+        embedding=[0.0] * dim,
+    )
+
+    store.add_chunks([chunk])
+    try:
+        results = store.search_keyword(
+            "retry_transient", top_k=5, filters={"document_id": document_id}
+        )
+        assert any(r.chunk.id == chunk_id for r in results)
+    finally:
+        store.delete_document(document_id)
+
+
+def test_search_keyword_respects_filters_and_rejects_disallowed_key(require_postgres, config):
+    """search_keyword() applies metadata filters and rejects a non-whitelisted filter key."""
+    store = _store(config)
+    source = f"test-source-{uuid.uuid4()}"
+    document_id, _ = store.get_or_create_document_id(source, "c1", TEST_DATASET_ID)
+
+    dim = config.embedding.dimension
+    now = datetime.now(UTC)
+    chunk_id = f"{document_id}_0"
+    chunk = Chunk(
+        id=chunk_id,
+        content="A distinctive keyword-search phrase for filter testing.",
+        metadata=ChunkMetadata(
+            document_id=document_id,
+            chunk_id=chunk_id,
+            source=source,
+            source_type="text",
+            created_at=now,
+            last_modified=now,
+            chunk_index=0,
+            dataset_id=TEST_DATASET_ID,
+        ),
+        embedding=[0.0] * dim,
+    )
+
+    store.add_chunks([chunk])
+    try:
+        matching = store.search_keyword(
+            "distinctive", top_k=5, filters={"document_id": document_id}
+        )
+        assert any(r.chunk.id == chunk_id for r in matching)
+
+        other_doc_only = store.search_keyword(
+            "distinctive", top_k=5, filters={"document_id": str(uuid.uuid4())}
+        )
+        assert not any(r.chunk.id == chunk_id for r in other_doc_only)
+
+        try:
+            store.search_keyword("distinctive", top_k=5, filters={"chunk_id": chunk_id})
+            raise AssertionError("expected ValueError for a disallowed filter key")
+        except ValueError as exc:
+            assert "not allowed" in str(exc)
+    finally:
+        store.delete_document(document_id)
+
+
+def test_search_keyword_empty_corpus_returns_empty_list(require_postgres, config):
+    """search_keyword() returns [] (not an error) when no chunks match the filters."""
+    store = _store(config)
+    results = store.search_keyword("anything", top_k=5, filters={"document_id": str(uuid.uuid4())})
+    assert results == []

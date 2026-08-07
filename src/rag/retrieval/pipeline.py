@@ -11,6 +11,7 @@ from rag.factory import build_embedder, build_llm, build_reranker, build_vectors
 from rag.generation.base import LLM
 from rag.prompts.loader import PromptTemplate, load_prompt_template_from_config
 from rag.rerankers.base import Reranker
+from rag.retrieval.fusion import reciprocal_rank_fusion
 from rag.schemas import SearchResult
 from rag.vectorstore.base import VectorStore
 
@@ -68,7 +69,14 @@ class RetrievalPipeline:
         top_k: int | None = None,
         rerank_top_n: int | None = None,
     ) -> list[SearchResult]:
-        """Embed `query`, search the vector store, and rerank the results.
+        """Retrieve candidates (dense-only or hybrid, per `config.retrieval.provider`), then rerank.
+
+        When `config.retrieval.provider == "hybrid"`, dense (embedding)
+        search and keyword (BM25) search are each run at `top_k`, then
+        fused via Reciprocal Rank Fusion
+        (`config.retrieval.hybrid.rrf_k`) before reranking. When
+        `"dense"` (the default), behavior is unchanged from plain vector
+        search.
 
         `rerank_top_n` overrides config's default truncation — needed by
         callers (e.g. eval) that want more than the production-default
@@ -81,10 +89,10 @@ class RetrievalPipeline:
             The user's query text.
         filters : dict[str, Any] | None, optional
             Exact-match metadata filters passed through to
-            `VectorStore.search`.
+            `VectorStore.search`/`search_keyword`.
         top_k : int | None, optional
-            Number of results to fetch from the vector store; defaults to
-            `config.retrieval.top_k`.
+            Number of results to fetch from the vector store (from each
+            branch, in hybrid mode); defaults to `config.retrieval.top_k`.
         rerank_top_n : int | None, optional
             Number of results to keep after reranking; defaults to
             `config.retrieval.rerank_top_n`.
@@ -95,11 +103,21 @@ class RetrievalPipeline:
             Reranked results, best-first.
         """
         query_embedding = self._embedder.embed_query(query)
-        results = self._vectorstore.search(
-            query_embedding, top_k=top_k or self._config.retrieval.top_k, filters=filters
-        )
+        fetch_k = top_k or self._config.retrieval.top_k
+        if self._config.retrieval.provider == "hybrid":
+            dense_results = self._vectorstore.search(
+                query_embedding, top_k=fetch_k, filters=filters
+            )
+            keyword_results = self._vectorstore.search_keyword(
+                query, top_k=fetch_k, filters=filters
+            )
+            candidates = reciprocal_rank_fusion(
+                [dense_results, keyword_results], k=self._config.retrieval.hybrid.rrf_k
+            )
+        else:
+            candidates = self._vectorstore.search(query_embedding, top_k=fetch_k, filters=filters)
         n = rerank_top_n if rerank_top_n is not None else self._config.retrieval.rerank_top_n
-        return self._reranker.rerank(query, results, top_n=n)
+        return self._reranker.rerank(query, candidates, top_n=n)
 
     def answer(
         self,

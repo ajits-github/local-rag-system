@@ -25,11 +25,19 @@ def _make_result(chunk_id: str, content: str, source: str, score: float) -> Sear
 
 
 class FakeVectorStore:
-    """Minimal VectorStore double returning a fixed set of search results."""
+    """Minimal VectorStore double returning fixed sets of search/search_keyword results.
 
-    def __init__(self, results: list[SearchResult]) -> None:
-        """Store the fixed results this double's search() will return."""
+    Records every `search`/`search_keyword` call (method name + kwargs)
+    in `self.calls` so tests can assert exactly what `retrieve()` invoked.
+    """
+
+    def __init__(
+        self, results: list[SearchResult], keyword_results: list[SearchResult] | None = None
+    ) -> None:
+        """Store the fixed results this double's search()/search_keyword() will return."""
         self._results = results
+        self._keyword_results = keyword_results if keyword_results is not None else []
+        self.calls: list[tuple[str, dict]] = []
 
     def health_check(self) -> bool:
         """Report healthy, always."""
@@ -52,8 +60,14 @@ class FakeVectorStore:
         """Unused by RetrievalPipeline; not exercised by these tests."""
 
     def search(self, query_embedding, top_k, filters=None) -> list[SearchResult]:
-        """Return the fixed results, ignoring the query embedding/filters."""
+        """Record the call and return the fixed dense results, ignoring the embedding."""
+        self.calls.append(("search", {"top_k": top_k, "filters": filters}))
         return self._results[:top_k]
+
+    def search_keyword(self, query, top_k, filters=None) -> list[SearchResult]:
+        """Record the call and return the fixed keyword results, ignoring the query text."""
+        self.calls.append(("search_keyword", {"top_k": top_k, "filters": filters}))
+        return self._keyword_results[:top_k]
 
 
 class FakeEmbedder:
@@ -158,3 +172,93 @@ def test_answer_sources_include_chunk_content():
     result = pipeline.answer("What is alpha?")
 
     assert result["sources"][0]["content"] == "Alpha content."
+
+
+def test_retrieve_dense_provider_never_calls_search_keyword():
+    """Default (dense) provider: retrieve() only calls search(), never search_keyword()."""
+    results = [_make_result("c1", "Alpha content.", source="a.md", score=0.9)]
+    vectorstore = FakeVectorStore(results)
+    config = load_config()
+    assert config.retrieval.provider == "dense"
+    pipeline = RetrievalPipeline(
+        config, vectorstore=vectorstore, embedder=FakeEmbedder(), reranker=FakeReranker()
+    )
+
+    pipeline.retrieve("What is alpha?")
+
+    methods_called = [call[0] for call in vectorstore.calls]
+    assert methods_called == ["search"]
+
+
+def test_retrieve_dense_provider_calls_search_with_configured_top_k():
+    """Dense provider's search() call uses config.retrieval.top_k and passes filters through."""
+    results = [_make_result("c1", "Alpha content.", source="a.md", score=0.9)]
+    vectorstore = FakeVectorStore(results)
+    config = load_config()
+    pipeline = RetrievalPipeline(
+        config, vectorstore=vectorstore, embedder=FakeEmbedder(), reranker=FakeReranker()
+    )
+
+    pipeline.retrieve("What is alpha?", filters={"dataset_id": "techfusion"})
+
+    assert vectorstore.calls == [
+        ("search", {"top_k": config.retrieval.top_k, "filters": {"dataset_id": "techfusion"}})
+    ]
+
+
+def test_retrieve_hybrid_provider_calls_both_search_methods():
+    """Hybrid provider: retrieve() calls both search() and search_keyword() with matching args."""
+    dense_results = [_make_result("c1", "Alpha content.", source="a.md", score=0.9)]
+    keyword_results = [_make_result("c2", "Beta content.", source="b.md", score=5.0)]
+    vectorstore = FakeVectorStore(dense_results, keyword_results)
+    config = load_config().model_copy(deep=True)
+    config.retrieval.provider = "hybrid"
+    pipeline = RetrievalPipeline(
+        config, vectorstore=vectorstore, embedder=FakeEmbedder(), reranker=FakeReranker()
+    )
+
+    pipeline.retrieve("What is alpha?", filters={"dataset_id": "techfusion"})
+
+    methods_called = [call[0] for call in vectorstore.calls]
+    assert methods_called == ["search", "search_keyword"]
+    for _method, kwargs in vectorstore.calls:
+        assert kwargs == {"top_k": config.retrieval.top_k, "filters": {"dataset_id": "techfusion"}}
+
+
+def test_retrieve_hybrid_provider_fuses_dense_and_keyword_results():
+    """Hybrid provider fuses both branches via RRF before handing off to the reranker."""
+    shared = _make_result("shared", "In both.", source="a.md", score=0.9)
+    dense_only = _make_result("dense-only", "Dense only.", source="b.md", score=0.5)
+    keyword_only = _make_result("keyword-only", "Keyword only.", source="c.md", score=3.0)
+    vectorstore = FakeVectorStore(
+        results=[shared, dense_only], keyword_results=[shared, keyword_only]
+    )
+    config = load_config().model_copy(deep=True)
+    config.retrieval.provider = "hybrid"
+    pipeline = RetrievalPipeline(
+        config, vectorstore=vectorstore, embedder=FakeEmbedder(), reranker=FakeReranker()
+    )
+
+    fused = pipeline.retrieve("query", top_k=10, rerank_top_n=10)
+
+    ids = [r.chunk.id for r in fused]
+    assert set(ids) == {"shared", "dense-only", "keyword-only"}
+    # "shared" is ranked 1st in both branches, so it must outrank either
+    # single-branch result -- the direct signature of correct RRF fusion.
+    assert ids[0] == "shared"
+
+
+def test_retrieve_hybrid_uses_configured_rrf_k():
+    """A different config.retrieval.hybrid.rrf_k threads through to the fused RRF score."""
+    shared = _make_result("shared", "In both.", source="a.md", score=0.9)
+    vectorstore = FakeVectorStore(results=[shared], keyword_results=[shared])
+    config = load_config().model_copy(deep=True)
+    config.retrieval.provider = "hybrid"
+    config.retrieval.hybrid.rrf_k = 1
+    pipeline = RetrievalPipeline(
+        config, vectorstore=vectorstore, embedder=FakeEmbedder(), reranker=FakeReranker()
+    )
+
+    fused = pipeline.retrieve("query", top_k=5, rerank_top_n=5)
+
+    assert fused[0].score == 2 * (1.0 / 2)  # k=1, rank=1 in both lists: 2 * 1/(1+1)

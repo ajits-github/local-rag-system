@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from rag.config import ChunkingConfig, load_config
+from rag.config import ChunkingConfig, HybridRetrievalConfig, load_config
 
 
 def test_load_default_config_has_expected_defaults():
@@ -79,3 +79,24 @@ def test_default_config_mlflow_is_enabled_with_local_sqlite_backend():
     assert config.mlflow.enabled is True
     assert config.mlflow.tracking_uri == "sqlite:///mlflow.db"
     assert config.mlflow.experiment_name == "local-rag-system"
+
+
+def test_default_config_retrieval_provider_is_dense():
+    """config/default.yaml's retrieval.provider defaults to dense-only, hybrid tunables ready."""
+    config = load_config()
+    assert config.retrieval.provider == "dense"
+    assert config.retrieval.hybrid.rrf_k == 60
+
+
+def test_hybrid_retrieval_config_defaults():
+    """HybridRetrievalConfig() has the standard RRF k=60 default."""
+    assert HybridRetrievalConfig().rrf_k == 60
+
+
+def test_retrieval_config_hybrid_validates_with_custom_rrf_k():
+    """RetrievalConfig(provider='hybrid') accepts a custom nested rrf_k."""
+    config = load_config().model_copy(deep=True)
+    config.retrieval.provider = "hybrid"
+    config.retrieval.hybrid.rrf_k = 30
+    assert config.retrieval.provider == "hybrid"
+    assert config.retrieval.hybrid.rrf_k == 30

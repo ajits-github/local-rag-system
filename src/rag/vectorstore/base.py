@@ -153,3 +153,38 @@ class VectorStore(ABC):
         ValueError
             If `filters` contains a key not in `ALLOWED_FILTER_FIELDS`.
         """
+
+    @abstractmethod
+    def search_keyword(
+        self,
+        query: str,
+        top_k: int,
+        filters: dict[str, Any] | None = None,
+    ) -> list[SearchResult]:
+        """Lexical (BM25) search over chunk content, optionally restricted by metadata filters.
+
+        Parameters
+        ----------
+        query : str
+            The raw query text (tokenized internally; not an embedding).
+        top_k : int
+            Maximum number of results to return.
+        filters : dict[str, Any] | None, optional
+            Exact-match metadata filters; keys must be in
+            `ALLOWED_FILTER_FIELDS`.
+
+        Returns
+        -------
+        list[SearchResult]
+            Matching chunks with BM25 scores, ranked best-first. `.score`
+            is the raw BM25 score (unbounded, not comparable across
+            queries) -- callers that need a comparable ranking signal
+            across dense and keyword results should fuse via
+            `rag.retrieval.fusion.reciprocal_rank_fusion`, not compare
+            `.score` directly.
+
+        Raises
+        ------
+        ValueError
+            If `filters` contains a key not in `ALLOWED_FILTER_FIELDS`.
+        """

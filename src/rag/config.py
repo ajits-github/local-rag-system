@@ -157,11 +157,19 @@ class MLflowConfig(BaseModel):
     experiment_name: str = "local-rag-system"
 
 
-class RetrievalConfig(BaseModel):
-    """Result-count tuning for the retrieval pipeline."""
+class HybridRetrievalConfig(BaseModel):
+    """Tunables specific to the `hybrid` retrieval provider."""
 
+    rrf_k: int = 60
+
+
+class RetrievalConfig(BaseModel):
+    """Retrieval provider selection and result-count tuning."""
+
+    provider: Literal["dense", "hybrid"] = "dense"
     top_k: int = 5
     rerank_top_n: int = 3
+    hybrid: HybridRetrievalConfig = Field(default_factory=HybridRetrievalConfig)
 
 
 class IngestionConfig(BaseModel):

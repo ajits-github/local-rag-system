@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -11,11 +12,132 @@ import psycopg2.extras
 from pgvector.psycopg2 import register_vector
 from psycopg2.extensions import connection as PgConnection
 from psycopg2.pool import ThreadedConnectionPool
+from rank_bm25 import BM25Okapi
 
 from rag.schemas import Chunk, ChunkMetadata, SearchResult
 from rag.vectorstore.base import ALLOWED_FILTER_FIELDS, VectorStore
 
 _DISTANCE_OPERATORS = {"cosine": "<=>", "l2": "<->", "inner_product": "<#>"}
+_TOKEN_RE = re.compile(r"\w+")
+
+# Columns shared by search()'s and search_keyword()'s SELECTs (everything
+# except the dense-only `embedding`/`distance` and keyword-only ranking).
+_METADATA_COLUMNS = """chunk_id, document_id, chunk_index, content,
+    source, source_type, title, author, url,
+    created_at, last_modified, language, category, dataset_id,
+    content_type, section_path, code_language, table_headers,
+    attachment_name, source_anchor"""
+
+
+def _build_where_clause(filters: dict[str, Any] | None) -> tuple[str, list[Any]]:
+    """Build a `WHERE ...` SQL fragment and its bound params from a filters dict.
+
+    Module-level (not a method) so it's directly unit-testable without
+    constructing a `PgVectorStore`/opening a DB connection. Shared by
+    `PgVectorStore.search` and `.search_keyword` -- the only piece of
+    their query construction that's actually identical; their
+    ranking/limiting SQL diverges (`search` ranks+limits in SQL via
+    `ORDER BY ... LIMIT`, `search_keyword` fetches the full filtered set
+    unranked and ranks in Python via BM25).
+
+    Parameters
+    ----------
+    filters : dict[str, Any] | None
+        Exact-match metadata filters; keys must be in `ALLOWED_FILTER_FIELDS`.
+
+    Returns
+    -------
+    tuple[str, list[Any]]
+        ``(where_sql, params)`` -- `where_sql` is ``""`` or
+        ``"WHERE key = %s AND ..."``; `params` holds the bound values in
+        the same order as the `%s` placeholders.
+
+    Raises
+    ------
+    ValueError
+        If `filters` contains a key not in `ALLOWED_FILTER_FIELDS`.
+    """
+    where_clauses = []
+    params: list[Any] = []
+    if filters:
+        for key, value in filters.items():
+            if key not in ALLOWED_FILTER_FIELDS:
+                raise ValueError(f"Filtering on '{key}' is not allowed")
+            where_clauses.append(f"{key} = %s")
+            params.append(value)
+    where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+    return where_sql, params
+
+
+def _row_to_metadata(row: tuple[Any, ...]) -> tuple[str, str, ChunkMetadata]:
+    """Unpack one `_METADATA_COLUMNS`-shaped row into (chunk_id, content, ChunkMetadata)."""
+    (
+        chunk_id,
+        document_id,
+        chunk_index,
+        content,
+        source,
+        source_type,
+        title,
+        author,
+        url,
+        created_at,
+        last_modified,
+        language,
+        category,
+        dataset_id,
+        content_type,
+        section_path,
+        code_language,
+        table_headers,
+        attachment_name,
+        source_anchor,
+    ) = row
+    metadata = ChunkMetadata(
+        document_id=str(document_id),
+        chunk_id=chunk_id,
+        source=source,
+        source_type=source_type,
+        title=title,
+        author=author,
+        url=url,
+        created_at=created_at,
+        last_modified=last_modified,
+        language=language,
+        chunk_index=chunk_index,
+        category=category,
+        dataset_id=dataset_id,
+        content_type=content_type,
+        section_path=section_path,
+        code_language=code_language,
+        table_headers=list(table_headers) if table_headers is not None else None,
+        attachment_name=attachment_name,
+        source_anchor=source_anchor,
+    )
+    return chunk_id, content, metadata
+
+
+def _tokenize(text: str) -> list[str]:
+    r"""Split `text` into lowercase word tokens for BM25.
+
+    Uses `\\w+` (word characters: letters, digits, underscore) rather
+    than a plain whitespace split, so punctuation attached to a token
+    (e.g. JSON's `"maximum_wait_minutes":`, or a trailing period in
+    prose) doesn't prevent it from matching a plain-word query term.
+    Still no stemming/lemmatization -- only exact (post-punctuation-
+    stripping) token matches.
+
+    Parameters
+    ----------
+    text : str
+        Raw text to tokenize.
+
+    Returns
+    -------
+    list[str]
+        Lowercase word tokens, in order.
+    """
+    return _TOKEN_RE.findall(text.lower())
 
 
 class PgVectorStore(VectorStore):
@@ -222,25 +344,11 @@ class PgVectorStore(VectorStore):
         filters: dict[str, Any] | None = None,
     ) -> list[SearchResult]:
         """See `VectorStore.search`."""
-        where_clauses = []
-        params: list[Any] = [query_embedding]
-
-        if filters:
-            for key, value in filters.items():
-                if key not in ALLOWED_FILTER_FIELDS:
-                    raise ValueError(f"Filtering on '{key}' is not allowed")
-                where_clauses.append(f"{key} = %s")
-                params.append(value)
-
-        where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
-        params.extend([query_embedding, top_k])
+        where_sql, filter_params = _build_where_clause(filters)
+        params: list[Any] = [query_embedding, *filter_params, query_embedding, top_k]
 
         sql = f"""
-            SELECT chunk_id, document_id, chunk_index, content,
-                   source, source_type, title, author, url,
-                   created_at, last_modified, language, category, dataset_id,
-                   content_type, section_path, code_language, table_headers,
-                   attachment_name, source_anchor,
+            SELECT {_METADATA_COLUMNS},
                    embedding {self._distance_op} %s::vector AS distance
             FROM {self._chunks_table}
             {where_sql}
@@ -258,51 +366,58 @@ class PgVectorStore(VectorStore):
 
         results = []
         for row in rows:
-            (
-                chunk_id,
-                document_id,
-                chunk_index,
-                content,
-                source,
-                source_type,
-                title,
-                author,
-                url,
-                created_at,
-                last_modified,
-                language,
-                category,
-                dataset_id,
-                content_type,
-                section_path,
-                code_language,
-                table_headers,
-                attachment_name,
-                source_anchor,
-                distance,
-            ) = row
-            metadata = ChunkMetadata(
-                document_id=str(document_id),
-                chunk_id=chunk_id,
-                source=source,
-                source_type=source_type,
-                title=title,
-                author=author,
-                url=url,
-                created_at=created_at,
-                last_modified=last_modified,
-                language=language,
-                chunk_index=chunk_index,
-                category=category,
-                dataset_id=dataset_id,
-                content_type=content_type,
-                section_path=section_path,
-                code_language=code_language,
-                table_headers=list(table_headers) if table_headers is not None else None,
-                attachment_name=attachment_name,
-                source_anchor=source_anchor,
-            )
+            *metadata_row, distance = row
+            chunk_id, content, metadata = _row_to_metadata(tuple(metadata_row))
             chunk = Chunk(id=chunk_id, content=content, metadata=metadata)
             score = 1.0 - distance if self._distance_op == "<=>" else -distance
             results.append(SearchResult(chunk=chunk, score=score))
+        return results
+
+    def search_keyword(
+        self,
+        query: str,
+        top_k: int,
+        filters: dict[str, Any] | None = None,
+    ) -> list[SearchResult]:
+        r"""See `VectorStore.search_keyword`.
+
+        Builds a fresh in-memory `rank_bm25.BM25Okapi` index per call from
+        the (optionally filtered) chunk content fetched via SQL -- no
+        persistent BM25 index or caching. At this project's current scale
+        (a few hundred chunks per dataset), rebuilding per query is
+        sub-second and avoids the invalidation complexity of caching an
+        index that would need to track re-ingestion; revisit (e.g. a
+        persistent index, or Postgres `tsvector`/`ts_rank` full-text
+        search) if corpus size ever grows enough to make this measurably
+        slow. Tokenization (`_tokenize`) is `\\w+`-based -- lowercase word
+        tokens with surrounding punctuation stripped, so e.g. JSON's
+        `"maximum_wait_minutes":` still matches a plain query token
+        `maximum_wait_minutes`. Still no stemming/lemmatization, so this
+        only finds exact (post-punctuation-stripping) token matches.
+        """
+        where_sql, filter_params = _build_where_clause(filters)
+        sql = f"SELECT {_METADATA_COLUMNS} FROM {self._chunks_table} {where_sql}"
+
+        conn = self._conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(sql, filter_params)
+                rows = cur.fetchall()
+        finally:
+            self._putconn(conn)
+
+        if not rows:
+            return []
+
+        unpacked = [_row_to_metadata(row) for row in rows]
+        tokenized_corpus = [_tokenize(content) for _, content, _ in unpacked]
+        bm25 = BM25Okapi(tokenized_corpus)
+        scores = bm25.get_scores(_tokenize(query))
+
+        ranked_indices = sorted(range(len(unpacked)), key=lambda i: scores[i], reverse=True)
+        results = []
+        for i in ranked_indices[:top_k]:
+            chunk_id, content, metadata = unpacked[i]
+            chunk = Chunk(id=chunk_id, content=content, metadata=metadata)
+            results.append(SearchResult(chunk=chunk, score=float(scores[i])))
         return results
