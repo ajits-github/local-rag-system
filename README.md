@@ -133,6 +133,116 @@ For the detailed system view, see [`docs/architecture.md`](docs/architecture.md)
      -d '{"query": "What MFA methods are approved?", "filters": {"category": "security"}}'
    ```
 
+## Containerized development
+
+Postgres+pgvector and the API can both run in containers; Ollama stays
+native on Windows (see [Windows-specific limitations](#windows-specific-limitations)
+below for why). `docker-compose.yml` builds `rag-api` from the repo's
+multi-stage `Dockerfile` and wires it to `postgres` and to the host's
+Ollama via `host.docker.internal`.
+
+Requires **Docker Compose V2** (`docker compose ...`, bundled with Docker
+Desktop) — `deploy.resources.limits` in `docker-compose.yml` is only
+honored by V2 outside of Swarm mode.
+
+1. Copy `.env.example` to `.env` if you haven't already (Setup step 2
+   above); no changes needed for a default containerized run.
+2. Build and start both services:
+   ```
+   docker compose up -d --build
+   ```
+   The first build downloads and compiles roughly 1-2 GB of Python ML
+   dependencies (PyTorch, a transitive dependency of sentence-transformers,
+   dominates this); later builds reuse Docker's layer cache and are much
+   faster unless `pyproject.toml` changes.
+3. Initialize the schema (same script as native dev, now pointed at the
+   containerized Postgres via `DATABASE_URL` in `.env`):
+   ```
+   python scripts/init_db.py
+   ```
+4. Confirm both dependencies are reachable *from inside the container*:
+   ```
+   curl http://localhost:8000/health
+   ```
+   `{"status": "ok", "dependencies": {"vectorstore": "ok", "llm": "ok"}}`
+   means the container reached both Postgres and your native Ollama
+   through `host.docker.internal`. `"degraded"` with `"llm": "unreachable"`
+   almost always means Ollama isn't running on the host (see Prerequisites).
+5. Ingest and query exactly as in native dev — same port, same endpoints:
+   ```
+   curl -s -X POST http://localhost:8000/ingest \
+     -F "dataset_id=sample_docs" \
+     -F "files=@data/sample_docs/password-policy.md"
+
+   curl -s -X POST http://localhost:8000/query -H "Content-Type: application/json" \
+     -d '{"query": "What is the password policy?", "filters": {"dataset_id": "sample_docs"}}'
+   ```
+6. Or run the bundled smoke test, which checks both dependencies and
+   exercises a full ingest -> query round trip in one shot:
+   ```
+   scripts/smoke_test_containers.sh
+   ```
+7. `src/` and `config/` are bind-mounted read/write and uvicorn runs with
+   `--reload`, so editing code behaves like native dev — no rebuild needed
+   for Python changes. Rebuild only when `pyproject.toml` (dependencies)
+   changes:
+   ```
+   docker compose up -d --build
+   ```
+8. Tear down:
+   ```
+   docker compose down          # keeps the pgdata volume (default)
+   docker compose down -v       # also deletes it -- drops all ingested data
+   ```
+
+### Production-shaped run
+
+`docker-compose.prod.yml` layers on top of `docker-compose.yml` to drop the
+`src`/`config` bind-mounts (the image's baked-in code runs, not the host's
+live source), remove `--reload`, stop publishing Postgres's port to the
+host network, and tighten health-check timing:
+
+```
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+```
+
+This is a same-host "productionized" run, not a substitute for a real
+orchestrator — see [Roadmap](#roadmap) for the Kubernetes path if scale
+ever demands it.
+
+### What's in the image (and what isn't)
+
+The multi-stage `Dockerfile` installs the project with `pip install .` (no
+extras) into a venv in a discarded `builder` stage, then copies just that
+venv plus `src/` and `config/` into the final image. `tests/`, `scripts/`,
+`data/`, `experiments/`, and the `[dev]`/`[ragas]`/`[mlflow]`/`[anthropic]`/
+`[cohere]` extras never ship in it — none of them are needed to serve the
+API, and RAGAS alone would pull in `datasets`+`openai` unnecessarily. The
+container runs as a non-root `rag` user.
+
+### Windows-specific limitations
+
+- `host.docker.internal` is a Docker Desktop feature (Windows/Mac); native
+  Linux Docker doesn't resolve it by default. `docker-compose.yml` adds an
+  `extra_hosts: host.docker.internal:host-gateway` entry so the same file
+  also works unmodified on a Linux host.
+- Ollama stays outside Docker entirely in this setup. Running it inside
+  WSL2 instead of natively on Windows would add a second network hop
+  (WSL2 <-> Docker Desktop's own VM) that plain native-Windows Ollama
+  avoids — there's no reason to do that here.
+- Bind-mounted volumes (`./src`, `./config`, `./data/uploads`) don't hit
+  the Linux bind-mount UID/GID mismatch problem: Docker Desktop's Windows
+  file sharing doesn't enforce host-side POSIX permissions, so the
+  non-root `rag` user inside the container can read and write them without
+  any `chown`/`chmod` step. The same compose file on native Linux would
+  need the container's UID to match the host user's (or a `chmod`/ACL
+  adjustment) to get the same result.
+- The embedding model (`sentence-transformers/all-MiniLM-L6-v2`) downloads
+  from Hugging Face Hub to `$HOME/.cache/huggingface` on first use inside
+  the container (`$HOME=/app`, owned by `rag`) if it isn't already cached
+  there — this needs outbound internet access the *first* time a
+  container starts from a fresh image/volume, same as it would natively.
+
 ## Configuration
 
 All provider choices and tunables live in `config/default.yaml`:
@@ -370,6 +480,13 @@ Unit tests (`tests/unit`) mock all external I/O and always run. Integration
 tests (`tests/integration`) assume Postgres (`make up`) and a local Ollama
 with `qwen2.5:1.5b` are already running, and skip with a clear message if
 either is unreachable.
+
+`scripts/smoke_test_containers.sh` is a separate check for the
+containerized setup specifically: it assumes `docker compose up -d` (or
+the prod-override form) is already running, and proves the *containerized*
+API can reach Postgres+pgvector and native Ollama, then does a real
+ingest -> query round trip against them (see
+[Containerized development](#containerized-development) above).
 
 ## Roadmap
 

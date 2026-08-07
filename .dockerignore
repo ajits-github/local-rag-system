@@ -1,8 +1,48 @@
+# VCS
 .git
 .gitignore
-.venv
-.pytest_cache
-__pycache__
-data
-tests
+.github/
+
+# Local dev
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+*.egg-info
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Project-specific: not needed by the running API image
+tests/
+scripts/
+experiments/
+data/
+docs/
+notebooks/
+*.db
+mlflow.db
+mlruns/
+
+# Docs and compose/Dockerfile itself (not needed inside the image)
 README.md
+CLAUDE.md
+PROJECT_JOURNAL.md
+docker-compose*.yml
+Dockerfile*
+.dockerignore
+.pre-commit-config.yaml

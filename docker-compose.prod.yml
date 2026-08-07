@@ -1,0 +1,54 @@
+# Production-shaped override layered on top of docker-compose.yml:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# This is a same-host "productionized" run (immutable image, no source
+# mounts, DB not exposed to the host network, stricter health-check
+# timing) — NOT a substitute for a real orchestrator. For multi-instance /
+# multi-host production, the next step is Kubernetes manifests (not
+# included here; see README's containerization roadmap).
+#
+# `.env.prod` (git-ignored, not committed — see .env.example for the
+# shape) supplies POSTGRES_*, DATABASE_URL components, and secrets for
+# this file, kept separate from the `.env` used by plain docker-compose.yml
+# so a dev's local .env can never accidentally get used in prod:
+#   docker compose --env-file .env.prod -f docker-compose.yml -f docker-compose.prod.yml up -d
+services:
+  postgres:
+    restart: always
+    # Not exposed to the host network in prod — reachable only from other
+    # containers on the compose network. Use `docker compose exec postgres
+    # psql ...` or a port-forward for manual access instead.
+    #
+    # !override is load-bearing here, not decoration: compose merges
+    # ports/volumes lists by target (adds/updates entries) rather than
+    # replacing them, so a plain `ports: []` would leave the base file's
+    # "15987:5432" publish in place instead of removing it. Requires
+    # Compose 2.24+ (this repo's dev machine has 2.24.6; confirmed via
+    # `docker compose config` that this actually clears the base's ports
+    # entry rather than just failing to add a new one).
+    ports: !override []
+    healthcheck:
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  rag-api:
+    restart: always
+    # Swap to a pre-built, registry-tagged image once CI publishes one;
+    # until then this still builds locally from the same Dockerfile.
+    # image: registry.example.com/local-rag-system:latest
+    # !override: replaces (not merges with) docker-compose.yml's volumes
+    # list -- same target-keyed merge behavior as ports above. Without it,
+    # the base file's src/config bind mounts would still be present
+    # alongside this one, defeating the point of an "immutable image" prod
+    # run. Uploaded documents still need to persist, so that mount stays.
+    volumes: !override
+      - ./data/uploads:/app/data/uploads
+    # No --reload: the container restarts on crash instead of watching for
+    # file changes that will never come (image is immutable).
+    command: ["uvicorn", "rag.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    healthcheck:
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
