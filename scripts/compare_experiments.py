@@ -89,10 +89,12 @@ def render_table(records: list[dict[str, Any]]) -> str:
         return "No experiments recorded yet -- see scripts/record_experiment.py."
 
     header = (
-        "| # | Label | Retrieval | Generation model | Embedder | Reranker | Recall@5 | Recall@10 "
-        "| Hit Rate@10 | MRR | Answer quality | RAGAS Faithful | RAGAS Correct "
+        "| # | Label | Retrieval | Generation model | Embedder | Reranker | Prompt | Rel.Exp "
+        "| Recall@5 | Recall@10 "
+        "| Hit Rate@10 | MRR | Answer quality | Supp.Ctx Hit | Img Hit "
+        "| RAGAS Faithful | RAGAS Correct "
         "| Total latency | Dataset | Date |\n"
-        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"
     )
     rows = [header]
     for i, r in enumerate(records, start=1):
@@ -100,6 +102,12 @@ def render_table(records: list[dict[str, Any]]) -> str:
         if r.get("reranker_model"):
             reranker = f"{reranker} ({_short_model_name(r['reranker_model'])})"
         retrieval_provider = r.get("retrieval_provider") or "dense"
+        prompt_version = r.get("prompt_version") or "-"
+        relationship_expansion = r.get("relationship_expansion_enabled")
+        if relationship_expansion is None:
+            rel_exp = "-"
+        else:
+            rel_exp = "on" if relationship_expansion else "off"
         total_latency_ms = r.get("total_latency_ms")
         total_latency = f"{total_latency_ms / 1000:.1f}s" if total_latency_ms is not None else "-"
         date = (r.get("timestamp") or "")[:10] or "-"
@@ -107,10 +115,12 @@ def render_table(records: list[dict[str, Any]]) -> str:
             f"| {i} | {r.get('label') or r.get('experiment_id', '?')} "
             f"| {retrieval_provider} "
             f"| {r.get('generation_model', '?')} | {_short_model_name(r.get('embedding_model'))} "
-            f"| {reranker} "
+            f"| {reranker} | {prompt_version} | {rel_exp} "
             f"| {_fmt(r.get('recall_at_5'))} | {_fmt(r.get('recall_at_10'))} "
             f"| {_fmt(r.get('hit_rate_at_10'))} | {_fmt(r.get('mrr'))} "
             f"| {_fmt(r.get('answer_quality'))} "
+            f"| {_fmt(r.get('supporting_context_hit_rate'))} "
+            f"| {_fmt(r.get('relevant_image_hit_rate'))} "
             f"| {_fmt(r.get('ragas_faithfulness'))} | {_fmt(r.get('ragas_answer_correctness'))} "
             f"| {total_latency} "
             f"| {r.get('dataset_id', '?')} | {date} |"

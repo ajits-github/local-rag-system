@@ -79,6 +79,8 @@ def build_experiment_record(
     ragas = eval_report.get("ragas", {})
     ragas_aggregate = ragas.get("aggregate", {})
     ragas_judge = ragas.get("judge", {})
+    reference_context_analysis = eval_report.get("reference_context_analysis", {})
+    relevant_image_hit_rate = eval_report.get("relevant_image_hit_rate", {})
 
     return {
         "experiment_id": experiment_id,
@@ -101,6 +103,15 @@ def build_experiment_record(
         "retrieval_top_k": config.retrieval.top_k,
         "rerank_top_n": config.retrieval.rerank_top_n,
         "rrf_k": (config.retrieval.hybrid.rrf_k if config.retrieval.provider == "hybrid" else None),
+        # Multimodal/relationship-aware milestone fields -- None for any
+        # report predating them (older gold schema has no reference_contexts/
+        # relevant_images to compute these from at all, not just missing data).
+        "relationship_expansion_enabled": config.retrieval.relationship_expansion.enabled,
+        "vision_provider": config.vision.provider,
+        "supporting_context_hit_rate": reference_context_analysis.get(
+            "supporting_context_hit_rate"
+        ),
+        "relevant_image_hit_rate": relevant_image_hit_rate.get("hit_rate"),
         "dataset_id": eval_report.get("dataset_id"),
         "recall_at_5": retrieval.get("recall@5"),
         "recall_at_10": retrieval.get("recall@10"),
