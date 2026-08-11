@@ -139,14 +139,29 @@ def _rows() -> list[dict[str, Any]]:
     ]
 
 
-def test_score_missing_ragas_package_raises_runtime_error():
-    """score() raises RuntimeError pointing at the ragas extra when ragas isn't installed."""
+def test_score_missing_ragas_package_raises_runtime_error(monkeypatch):
+    """score() raises RuntimeError pointing at the ragas extra when ragas isn't importable.
+
+    `sys.modules["ragas"] = None` forces the next `import ragas` to raise
+    `ImportError` regardless of whether the `ragas` extra actually happens
+    to be installed in the active venv (it is, in this project's own dev
+    environment, since real RAGAS runs are part of this repo's workflow --
+    see CLAUDE.md) -- this simulates the "not installed" branch
+    deterministically rather than depending on venv state.
+    """
+    monkeypatch.setitem(sys.modules, "ragas", None)
     with pytest.raises(RuntimeError, match=r"pip install \.\[ragas\]"):
         score([], judge_llm=FakeLLM(), embedder=FakeEmbedder())
 
 
-def test_build_dataset_missing_datasets_package_raises_runtime_error():
-    """build_dataset() raises RuntimeError pointing at the ragas extra when datasets is missing."""
+def test_build_dataset_missing_datasets_package_raises_runtime_error(monkeypatch):
+    """build_dataset() raises RuntimeError pointing at the ragas extra when datasets is missing.
+
+    See `test_score_missing_ragas_package_raises_runtime_error`'s
+    docstring for why `sys.modules` is patched directly rather than
+    relying on the package actually being absent.
+    """
+    monkeypatch.setitem(sys.modules, "datasets", None)
     with pytest.raises(RuntimeError, match=r"pip install \.\[ragas\]"):
         build_dataset(_rows())
 
