@@ -1,10 +1,18 @@
-# Default configuration for local-rag-system.
+# Experiment A (multimodal/relationship-aware milestone): prompt v2,
+# text-only image handling, relationship expansion OFF, hosted vision OFF.
+# Baseline retrieval config matches experiment_010 (hybrid + no reranker),
+# not config/default.yaml's committed dense/none -- see docs/architecture.md
+# and PROJECT_JOURNAL.md for why (the committed default and the last
+# recorded experiment had diverged; this milestone's A/B experiments hold
+# the *last recorded* config fixed, confirmed with the user).
+# Used with --config for rag.eval.run_eval; never overwrites
+# config/default.yaml itself.
 #
 # Every component below is a "swap point": change `provider` (and its
 # provider-specific block) to try a different embedding model, vector
 # backend, chunker, reranker, or LLM without touching pipeline code.
 #
-# Secrets and host/port values are never hardcoded here — fields ending in
+# Secrets and host/port values are never hardcoded here: fields ending in
 # `_env_var` name an environment variable that is resolved at load time by
 # rag.config.Settings.
 
@@ -51,8 +59,8 @@ generation:
   max_tokens: 512
   prompt:
     id: rag_answer
-    version: v1
-    path: src/rag/prompts/templates/rag_answer_v1.yaml
+    version: v2 # only change vs config/default.yaml (was v1) -- stricter grounding/refusal prompt
+    path: src/rag/prompts/templates/rag_answer_v2.yaml
 
 judge:
   provider: openai # swap point: openai | anthropic | ollama (ollama = local, for experimentation only)
@@ -73,13 +81,13 @@ mlflow:
   experiment_name: local-rag-system
 
 retrieval:
-  provider: dense # swap point: dense | hybrid (BM25 + dense, fused via RRF)
+  provider: hybrid # matches experiment_010 (was dense in config/default.yaml)
   top_k: 5
   rerank_top_n: 3
   hybrid:
     rrf_k: 60
   relationship_expansion:
-    enabled: false # no-op when false; see docs/architecture.md
+    enabled: false # Experiment A: relationship expansion OFF
     include_parent: true
     include_neighbors: true
     max_related_elements: 3
@@ -88,4 +96,4 @@ ingestion:
   supported_extensions: [".pdf", ".docx", ".html", ".htm", ".txt", ".md"]
 
 vision:
-  provider: none # swap point: none (only provider implemented so far; see docs/architecture.md)
+  provider: none # Experiment A: text-only image handling, hosted vision OFF

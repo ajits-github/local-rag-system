@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -39,6 +39,19 @@ class ChunkSpan(BaseModel):
     table_headers: list[str] | None = None
     attachment_name: str | None = None
     source_anchor: str | None = None
+    # Relationship-aware ingestion (multimodal milestone): id of the nearest
+    # preceding prose chunk sharing this span's section_path, set by
+    # Writer.write's single pass over chunk_spans (chunkers don't know
+    # chunk_id, which is assigned at write time) -- None for prose spans
+    # themselves and for a non-prose span with no preceding prose in its
+    # section. See structured_markdown.py for how image spans are produced.
+    parent_chunk_id: str | None = None
+    # Set only for a vision-generated sibling of an image span (see
+    # VisionProvider); vision_description is that generated text, stored
+    # separately from (never overwriting) the image span's own
+    # caption/alt-text-derived `text`.
+    vision_generated: bool = False
+    vision_description: str | None = None
 
 
 class ChunkMetadata(BaseModel):
@@ -74,6 +87,11 @@ class ChunkMetadata(BaseModel):
     table_headers: list[str] | None = None
     attachment_name: str | None = None
     source_anchor: str | None = None
+    # See ChunkSpan for what these mean; carried through per-chunk into
+    # persisted metadata the same way the structured-content hints above are.
+    parent_chunk_id: str | None = None
+    vision_generated: bool = False
+    vision_description: str | None = None
 
 
 class Chunk(BaseModel):
@@ -86,7 +104,17 @@ class Chunk(BaseModel):
 
 
 class SearchResult(BaseModel):
-    """A chunk returned by a vector store search, with its similarity score."""
+    """A chunk returned by a vector store search, with its similarity score.
+
+    `origin`/`expanded_from` distinguish directly-retrieved results from
+    ones added afterward by relationship expansion (see
+    retrieval/pipeline.py). Expanded results keep their originating chunk's
+    `score` field meaningless for ranking purposes -- they are appended
+    after the ranked list, never interleaved into it or given a fabricated
+    comparable score.
+    """
 
     chunk: Chunk
     score: float
+    origin: Literal["retrieved", "expanded"] = "retrieved"
+    expanded_from: str | None = None

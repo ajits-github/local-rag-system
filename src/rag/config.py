@@ -163,6 +163,22 @@ class HybridRetrievalConfig(BaseModel):
     rrf_k: int = 60
 
 
+class RelationshipExpansionConfig(BaseModel):
+    """Post-rerank context-expansion tunables (multimodal milestone).
+
+    Disabled by default -- a no-op when `enabled` is left `false`, so
+    existing retrieval behavior is unchanged unless a config explicitly
+    opts in. `include_caption` is deliberately not a field here: captions
+    are folded into their image chunk's own text (see
+    chunkers/structured_markdown.py), so there's nothing separate to fetch.
+    """
+
+    enabled: bool = False
+    include_parent: bool = True
+    include_neighbors: bool = True
+    max_related_elements: int = 3
+
+
 class RetrievalConfig(BaseModel):
     """Retrieval provider selection and result-count tuning."""
 
@@ -170,6 +186,9 @@ class RetrievalConfig(BaseModel):
     top_k: int = 5
     rerank_top_n: int = 3
     hybrid: HybridRetrievalConfig = Field(default_factory=HybridRetrievalConfig)
+    relationship_expansion: RelationshipExpansionConfig = Field(
+        default_factory=RelationshipExpansionConfig
+    )
 
 
 class IngestionConfig(BaseModel):
@@ -178,6 +197,21 @@ class IngestionConfig(BaseModel):
     supported_extensions: list[str] = Field(
         default_factory=lambda: [".pdf", ".docx", ".html", ".htm", ".txt", ".md"]
     )
+
+
+class VisionConfig(BaseModel):
+    """Vision provider selection for image-derived indexable content.
+
+    `"none"` (the default, and the only provider actually exercised so
+    far) means no image bytes are ever read and no VisionProvider is
+    constructed -- text-only image handling (alt text/caption only, see
+    chunkers/structured_markdown.py) works with this config untouched.
+    Concrete hosted providers are added to `factory.build_vision_provider`
+    only once explicitly approved for a real (credit-consuming) run; no
+    hosted provider name is declared here yet.
+    """
+
+    provider: Literal["none"] = "none"
 
 
 class AppConfig(BaseModel):
@@ -197,6 +231,7 @@ class AppConfig(BaseModel):
     mlflow: MLflowConfig = Field(default_factory=MLflowConfig)
     retrieval: RetrievalConfig
     ingestion: IngestionConfig
+    vision: VisionConfig = Field(default_factory=VisionConfig)
 
     # -- resolved env accessors -------------------------------------------------
     # Kept as methods (not fields) so they always read the *current* process

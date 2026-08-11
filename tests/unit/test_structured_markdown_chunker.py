@@ -164,3 +164,72 @@ def test_mermaid_language_defaults_to_code():
 
     assert spans[0].content_type == "code"
     assert spans[0].code_language == "mermaid"
+
+
+def test_standalone_image_line_becomes_its_own_image_span():
+    """A `![alt](path)` line alone on its line is a dedicated content_type='image' span."""
+    chunker = StructuredMarkdownChunker()
+    text = (
+        "Some intro prose.\n\n"
+        "![Service topology](images/topology.png)\n\n"
+        "More prose after the image."
+    )
+
+    spans = chunker.split(text, source_type="markdown")
+
+    image_spans = [s for s in spans if s.content_type == "image"]
+    assert len(image_spans) == 1
+    assert image_spans[0].attachment_name == "topology.png"
+    assert image_spans[0].source_anchor == "images/topology.png"
+    assert "![Service topology](images/topology.png)" in image_spans[0].text
+
+
+def test_image_caption_folds_into_the_same_image_span():
+    """An emphasis-wrapped paragraph right after an image line joins that image's own span."""
+    chunker = StructuredMarkdownChunker()
+    text = "![Diagram](images/x.png)\n\n*Figure 1: Components and dependencies.*\n\nNext para."
+
+    spans = chunker.split(text, source_type="markdown")
+
+    image_spans = [s for s in spans if s.content_type == "image"]
+    assert len(image_spans) == 1
+    assert "Figure 1: Components and dependencies." in image_spans[0].text
+    # The caption text is consumed into the image span, not left as its own
+    # separate prose span.
+    assert not any("Figure 1" in s.text for s in spans if s.content_type != "image")
+
+
+def test_image_without_caption_is_still_its_own_span():
+    """An image line with no following emphasis-wrapped paragraph is still a bare image span."""
+    chunker = StructuredMarkdownChunker()
+    text = "![Diagram](images/x.png)\n\nA plain paragraph, not a caption."
+
+    spans = chunker.split(text, source_type="markdown")
+
+    image_spans = [s for s in spans if s.content_type == "image"]
+    assert len(image_spans) == 1
+    assert image_spans[0].text == "![Diagram](images/x.png)"
+    prose_spans = [s for s in spans if s.content_type != "image"]
+    assert any("A plain paragraph, not a caption." in s.text for s in prose_spans)
+
+
+def test_image_span_section_path_matches_surrounding_headers():
+    """An image span picks up section_path from the same header-tracking logic as other spans."""
+    chunker = StructuredMarkdownChunker()
+    text = "# Top\n\n## Sub\n\n![Diagram](images/x.png)"
+
+    spans = chunker.split(text, source_type="markdown")
+
+    image_spans = [s for s in spans if s.content_type == "image"]
+    assert len(image_spans) == 1
+    assert image_spans[0].section_path == "Top > Sub"
+
+
+def test_non_asset_image_extension_is_not_treated_as_a_block():
+    """A standalone image-syntax line pointing at a non-asset extension stays ordinary prose."""
+    chunker = StructuredMarkdownChunker()
+    text = "![Not an asset](https://example.com/tracking-pixel.gif?x=1)"
+
+    spans = chunker.split(text, source_type="markdown")
+
+    assert all(s.content_type != "image" for s in spans)

@@ -100,3 +100,40 @@ def test_retrieval_config_hybrid_validates_with_custom_rrf_k():
     config.retrieval.hybrid.rrf_k = 30
     assert config.retrieval.provider == "hybrid"
     assert config.retrieval.hybrid.rrf_k == 30
+
+
+def test_default_config_relationship_expansion_disabled_by_default():
+    """config/default.yaml's relationship_expansion is off, a no-op unless explicitly enabled."""
+    config = load_config()
+    expansion = config.retrieval.relationship_expansion
+    assert expansion.enabled is False
+    assert expansion.include_parent is True
+    assert expansion.include_neighbors is True
+    assert expansion.max_related_elements == 3
+
+
+def test_default_config_vision_provider_is_none():
+    """config/default.yaml's vision.provider defaults to 'none' -- no image bytes ever read."""
+    config = load_config()
+    assert config.vision.provider == "none"
+
+
+def test_multimodal_v2_text_only_experiment_config_loads_with_expected_overrides():
+    """The Experiment A config activates prompt v2 + hybrid retrieval, expansion off."""
+    config = load_config("config/experiments/multimodal-v2-text-only.yaml")
+    assert config.generation.prompt.version == "v2"
+    assert config.retrieval.provider == "hybrid"
+    assert config.reranker.provider == "none"
+    assert config.retrieval.relationship_expansion.enabled is False
+    assert config.vision.provider == "none"
+    assert config.generation.model_name == "qwen2.5:1.5b"
+
+
+def test_multimodal_v2_relationship_experiment_config_only_differs_by_expansion():
+    """The Experiment B config matches Experiment A except relationship_expansion.enabled=True."""
+    config_a = load_config("config/experiments/multimodal-v2-text-only.yaml")
+    config_b = load_config("config/experiments/multimodal-v2-relationship.yaml")
+    assert config_b.retrieval.relationship_expansion.enabled is True
+    a_dict = config_a.model_dump(exclude={"retrieval": {"relationship_expansion": {"enabled"}}})
+    b_dict = config_b.model_dump(exclude={"retrieval": {"relationship_expansion": {"enabled"}}})
+    assert a_dict == b_dict

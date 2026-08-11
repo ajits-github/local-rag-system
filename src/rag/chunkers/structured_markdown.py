@@ -17,17 +17,22 @@ priority order:
    consumed verbatim — a `|a|b|`-looking line or a `#` comment *inside* a
    code sample is never reinterpreted, because the fence scanner never
    hands those lines to the table/header detectors.
-2. Outside a fence, `#`, `|`, and ```` ``` ```` are mutually exclusive
-   leading tokens, so header/table-start/fence-start detection never
-   genuinely competes for the same line.
-3. The only real ambiguity is chart-vs-plain-fence: a ```` ```text ````
-   fence only becomes `content_type="chart"` when it's immediately
-   followed (at most one blank line) by a paragraph wholly wrapped in
-   `*...*`/`_..._` emphasis; otherwise it's `code`/`configuration` per
-   its language tag.
-4. Attachment tagging never creates a block boundary of its own — it's a
-   property layered onto whichever prose sub-chunk(s) literally contain
-   the link, computed after normal prose splitting.
+2. Outside a fence, `#`, `|`, ```` ``` ````, and a standalone `![...](...)`
+   image line are mutually exclusive leading tokens, so header/table-start/
+   fence-start/image-line detection never genuinely competes for the same
+   line.
+3. The only real ambiguity is chart-vs-plain-fence, and image-vs-plain-
+   image: a ```` ```text ```` fence only becomes `content_type="chart"`,
+   and a standalone image line only picks up a `content_type="image"`
+   caption, when immediately followed (at most one blank line) by a
+   paragraph wholly wrapped in `*...*`/`_..._` emphasis -- both cases share
+   the same caption-lookahead helper (`_peek_caption`); otherwise a fence is
+   `code`/`configuration` per its language tag, and a bare image line is
+   still its own `content_type="image"` span, just without a caption.
+4. An image link *embedded inline within a prose paragraph* (not alone on
+   its own line) does not create a block boundary — that's still just
+   attachment tagging, a property layered onto whichever prose sub-chunk(s)
+   literally contain the link, computed after normal prose splitting.
 """
 
 from __future__ import annotations
@@ -45,6 +50,13 @@ _TABLE_SEPARATOR_RE = re.compile(r"^\s*\|?(?:\s*:?-{1,}:?\s*\|)+\s*:?-{1,}:?\s*\
 _FENCE_START_RE = re.compile(r"^```(\S*)[ \t]*$")
 _FENCE_END_RE = re.compile(r"^```[ \t]*$")
 _MARKDOWN_LINK_RE = re.compile(r"!?\[([^\]\[]*)\]\(([^()\s]+)\)")
+# A line that is *only* an image reference (as opposed to an image link
+# embedded inline within a prose paragraph, which `_tag_attachments` still
+# handles). Matches the consistent pattern in the multimodal KB documents:
+# an image markdown line on its own, optionally followed by an
+# emphasis-wrapped caption paragraph -- the same shape `_consume_fence`
+# already recognizes for chart fence+caption.
+_IMAGE_LINE_RE = re.compile(r"^!\[([^\]\[]*)\]\(([^()\s]+)\)\s*$")
 _ATTACHMENT_EXTENSIONS = {
     ".svg",
     ".png",
@@ -184,6 +196,13 @@ class StructuredMarkdownChunker(Chunker):
                 )
                 continue
 
+            image_match = _IMAGE_LINE_RE.match(line)
+            if image_match and self._is_attachment_target(image_match.group(2)):
+                flush_pending()
+                target = image_match.group(2)
+                i = self._consume_image(lines, i, target, current_section_path(), spans)
+                continue
+
             pending.append(line)
             i += 1
 
@@ -211,17 +230,9 @@ class StructuredMarkdownChunker(Chunker):
         fence_text = "\n".join(fence_lines)
         after_fence = j
 
-        k = j
-        if k < n and lines[k].strip() == "":
-            k += 1
-        caption_lines: list[str] = []
-        m = k
-        while m < n and lines[m].strip() != "":
-            caption_lines.append(lines[m])
-            m += 1
-        caption_text = "\n".join(caption_lines).strip()
+        caption_text, m = self._peek_caption(lines, after_fence)
 
-        if lang and lang.lower() == "text" and caption_lines and _is_emphasis_wrapped(caption_text):
+        if lang and lang.lower() == "text" and caption_text and _is_emphasis_wrapped(caption_text):
             spans.append(
                 ChunkSpan(
                     text=f"{fence_text}\n\n{caption_text}",
@@ -257,6 +268,82 @@ class StructuredMarkdownChunker(Chunker):
                 )
         return after_fence
 
+    def _consume_image(
+        self,
+        lines: list[str],
+        start: int,
+        target: str,
+        section_path: str | None,
+        spans: list[ChunkSpan],
+    ) -> int:
+        """Consume one standalone image line (and its caption, if any); return the next index.
+
+        Mirrors `_consume_fence`'s chart handling: the caption is folded
+        into the same span's `text` (not modeled as a separate element) so
+        an image and its caption are always retrieved/expanded together.
+        """
+        image_line = lines[start]
+        after_image = start + 1
+        caption_text, m = self._peek_caption(lines, after_image)
+
+        if caption_text and _is_emphasis_wrapped(caption_text):
+            text = f"{image_line}\n\n{caption_text}"
+            next_index = m
+        else:
+            text = image_line
+            next_index = after_image
+
+        spans.append(
+            ChunkSpan(
+                text=text,
+                content_type="image",
+                section_path=section_path,
+                attachment_name=PurePosixPath(target).name,
+                source_anchor=target,
+            )
+        )
+        return next_index
+
+    @staticmethod
+    def _peek_caption(lines: list[str], start: int) -> tuple[str, int]:
+        """Return the paragraph at `start` (skipping one leading blank line) and its end index.
+
+        Shared by `_consume_fence` (chart captions) and `_consume_image`
+        (image captions) -- a pure lookahead that never mutates state.
+        Callers decide whether the returned text qualifies as a caption
+        (via `_is_emphasis_wrapped`); if it doesn't, they ignore the
+        returned end index and let normal prose flow pick the lines back up.
+
+        Parameters
+        ----------
+        lines : list[str]
+            The document's lines.
+        start : int
+            Index to start looking from (immediately after the fence/image).
+
+        Returns
+        -------
+        tuple[str, int]
+            ``(paragraph_text, index_after_paragraph)``.
+        """
+        n = len(lines)
+        k = start
+        if k < n and lines[k].strip() == "":
+            k += 1
+        caption_lines: list[str] = []
+        m = k
+        while m < n and lines[m].strip() != "":
+            caption_lines.append(lines[m])
+            m += 1
+        return "\n".join(caption_lines).strip(), m
+
+    @staticmethod
+    def _is_attachment_target(target: str) -> bool:
+        """Return whether `target` (a markdown link/image URL) points at a local asset file."""
+        if target.startswith(("http://", "https://", "mailto:")):
+            return False
+        return PurePosixPath(target).suffix.lower() in _ATTACHMENT_EXTENSIONS
+
     def _flush_prose(self, lines: list[str], section_path: str | None) -> list[ChunkSpan]:
         """Split a buffered prose run via the prose chunker, tagging section_path/attachments."""
         joined = "\n".join(lines)
@@ -276,9 +363,7 @@ class StructuredMarkdownChunker(Chunker):
             source_anchor: str | None = None
             for match in _MARKDOWN_LINK_RE.finditer(span.text):
                 target = match.group(2)
-                if target.startswith(("http://", "https://", "mailto:")):
-                    continue
-                if PurePosixPath(target).suffix.lower() not in _ATTACHMENT_EXTENSIONS:
+                if not self._is_attachment_target(target):
                     continue
                 attachment_name = PurePosixPath(target).name
                 source_anchor = target

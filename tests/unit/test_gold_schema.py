@@ -2,7 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from rag.eval.gold_schema import GoldExample, load_gold_jsonl, source_matches_relevant
+from rag.eval.gold_schema import (
+    GoldExample,
+    load_gold_jsonl,
+    normalize_for_match,
+    reference_context_is_supported,
+    source_matches_relevant,
+)
 
 
 def test_load_gold_jsonl_parses_each_line(tmp_path: Path):
@@ -38,6 +44,82 @@ def test_gold_example_defaults():
     assert example.expected_answer is None
     assert example.relevant_documents == []
     assert example.unanswerable is False
+    assert example.content_type is None
+    assert example.reference_contexts == []
+    assert example.reference_visual_contexts == []
+    assert example.relevant_images == []
+    assert example.relevant_sections == []
+    assert example.requires_vision is False
+    assert example.requires_relationship_expansion is False
+
+
+def test_old_schema_gold_file_still_parses(tmp_path: Path):
+    """A gold file with none of the new multimodal fields still parses (backward compatibility)."""
+    path = tmp_path / "old.jsonl"
+    path.write_text(
+        '{"question": "what?", "expected_answer": "an answer", '
+        '"relevant_documents": ["knowledge_base/a.md"], "question_type": "single_document", '
+        '"difficulty": "easy", "unanswerable": false}\n',
+        encoding="utf-8",
+    )
+
+    examples = load_gold_jsonl(path)
+
+    assert len(examples) == 1
+    assert examples[0].requires_vision is False
+    assert examples[0].reference_contexts == []
+
+
+def test_new_schema_fields_parse():
+    """A gold row with every new multimodal field populates them correctly."""
+    example = GoldExample.model_validate(
+        {
+            "question": "What P95 latency is shown at 14:00?",
+            "expected_answer": "420 ms.",
+            "relevant_documents": ["knowledge_base/operations/api-performance-review.md"],
+            "content_type": "image_only",
+            "requires_vision": True,
+            "requires_relationship_expansion": False,
+            "relevant_images": ["knowledge_base/operations/images/api-latency-by-hour.png"],
+            "relevant_sections": [],
+            "reference_contexts": [],
+            "reference_visual_contexts": [
+                "The API latency chart shows P95 latency at 14:00 as 420 ms."
+            ],
+        }
+    )
+
+    assert example.content_type == "image_only"
+    assert example.requires_vision is True
+    assert example.relevant_images == ["knowledge_base/operations/images/api-latency-by-hour.png"]
+    assert example.reference_visual_contexts == [
+        "The API latency chart shows P95 latency at 14:00 as 420 ms."
+    ]
+
+
+def test_normalize_for_match_collapses_whitespace_and_lowercases():
+    """normalize_for_match smooths line-wraps/case, not semantics."""
+    assert normalize_for_match("Retry  Lock\nTTL") == "retry lock ttl"
+
+
+def test_reference_context_is_supported_finds_verbatim_substring():
+    """A reference_contexts entry matches when it's a normalized substring of a candidate."""
+    candidates = ['Some prose.\n\n```json\n{"retry_lock_ttl_seconds": 600}\n```\n\nMore prose.']
+    assert reference_context_is_supported('{"retry_lock_ttl_seconds": 600}', candidates)
+
+
+def test_reference_context_is_supported_rejects_paraphrase():
+    """A paraphrased reference (not a verbatim excerpt) is correctly reported as unsupported."""
+    candidates = ["The retry lock lasts ten minutes before expiring."]
+    assert not reference_context_is_supported(
+        '{"retry_lock_ttl_seconds": 600}',
+        candidates,
+    )
+
+
+def test_reference_context_is_supported_false_for_blank_reference():
+    """A blank/whitespace-only reference never counts as supported."""
+    assert not reference_context_is_supported("   ", ["anything at all"])
 
 
 def test_source_matches_relevant_ignores_root_prefix():

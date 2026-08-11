@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from rag.config import load_config
-from rag.factory import build_judge_llm, build_reranker
+from rag.factory import build_judge_llm, build_reranker, build_vision_provider
 from rag.generation.anthropic_llm import AnthropicLLM
 from rag.generation.ollama_llm import OllamaLLM
 from rag.generation.openai_llm import OpenAILLM
@@ -82,3 +82,19 @@ def test_build_judge_llm_unknown_provider_raises_value_error():
 
     with pytest.raises(ValueError, match="Unknown judge provider"):
         build_judge_llm(config)
+
+
+def test_build_vision_provider_none_returns_none():
+    """vision.provider='none' (the default) returns None -- no VisionProvider instantiated."""
+    config = load_config()
+    assert config.vision.provider == "none"
+    assert build_vision_provider(config) is None
+
+
+def test_build_vision_provider_unknown_provider_raises_value_error():
+    """An unrecognized vision.provider raises ValueError, matching the other build_* functions."""
+    config = load_config().model_copy(deep=True)
+    config.vision.provider = "not-a-real-provider"  # type: ignore[assignment]
+
+    with pytest.raises(ValueError, match="Unknown vision provider"):
+        build_vision_provider(config)

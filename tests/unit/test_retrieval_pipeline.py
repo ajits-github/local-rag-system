@@ -126,8 +126,8 @@ def test_answer_builds_labeled_context_and_uses_configured_prompt():
     pipeline.answer("What is alpha?")
 
     assert llm.last_prompt is not None
-    assert "[Source 1: a.md]\nAlpha content." in llm.last_prompt
-    assert "[Source 2: b.md]\nBeta content." in llm.last_prompt
+    assert "[Source 1: a.md | prose]\nAlpha content." in llm.last_prompt
+    assert "[Source 2: b.md | prose]\nBeta content." in llm.last_prompt
     assert llm.last_prompt.startswith("Answer the question using only the context below.")
 
 
@@ -155,7 +155,7 @@ def test_pipeline_uses_injected_prompt_template_with_system_message():
 
     pipeline.answer("hi")
 
-    assert llm.last_prompt == "SYSTEM: hi\n\nUSER: [Source 1: a.md]\ncontent"
+    assert llm.last_prompt == "SYSTEM: hi\n\nUSER: [Source 1: a.md | prose]\ncontent"
 
 
 def test_answer_sources_include_chunk_content():

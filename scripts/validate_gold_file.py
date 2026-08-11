@@ -13,6 +13,13 @@ Checks, in order:
      at least one example (hard fail -- proves buckets are "clearly
      identifiable").
   5. no duplicate questions, case-folded exact match (hard fail).
+  6. each reference_contexts entry resolves (verbatim, whitespace-
+     normalized) somewhere in its relevant_documents' raw file text
+     (warning only -- see eval.gold_schema.reference_context_is_supported's
+     documented limitation). Matched against the file's raw bytes, not the
+     loader-parsed/cleaned text, because a reference can legitimately come
+     from YAML front-matter that TextLoader strips before chunking (e.g. an
+     "owner: ..." field used to answer an ownership question).
 
 Exit code is non-zero iff checks 2, 4, or 5 find a problem.
 
@@ -34,7 +41,11 @@ from rag.cleaners.default_cleaner import DefaultCleaner  # noqa: E402
 from rag.config import DEFAULT_CONFIG_PATH, AppConfig, load_config  # noqa: E402
 from rag.eval.answer_quality import KeywordOverlapScorer  # noqa: E402
 from rag.eval.content_type import build_document_content_types, classify_example  # noqa: E402
-from rag.eval.gold_schema import GoldExample, load_gold_jsonl  # noqa: E402
+from rag.eval.gold_schema import (  # noqa: E402
+    GoldExample,
+    load_gold_jsonl,
+    reference_context_is_supported,
+)
 from rag.loaders.registry import get_loader  # noqa: E402
 
 _STRUCTURED_BUCKETS = ("table", "code_configuration", "chart")
@@ -48,6 +59,20 @@ def _load_document_text(data_root: Path, relative_path: str) -> str | None:
         return None
     raw = get_loader(file_path).load(file_path)
     return DefaultCleaner().clean(raw.content)
+
+
+def _load_raw_file_text(data_root: Path, relative_path: str) -> str | None:
+    """Read one `relevant_documents` entry's raw file bytes as text, or None if missing.
+
+    Deliberately *not* run through a loader/cleaner: a `reference_contexts`
+    entry can legitimately come from YAML front-matter (e.g. an
+    `owner: ...` field), which `TextLoader` strips before the loader-parsed
+    text/chunking pipeline ever sees it.
+    """
+    file_path = data_root / relative_path
+    if not file_path.is_file():
+        return None
+    return file_path.read_text(encoding="utf-8", errors="replace")
 
 
 def validate(
@@ -126,6 +151,28 @@ def validate(
     for question, count in seen.items():
         if count > 1:
             errors.append(f"Duplicate question ({count}x): {question!r}")
+
+    raw_document_texts: dict[str, str] = {}
+    for example in examples:
+        for relative_path in example.relevant_documents:
+            if relative_path in raw_document_texts:
+                continue
+            text = _load_raw_file_text(data_root, relative_path)
+            if text is not None:
+                raw_document_texts[relative_path] = text
+
+    for example in examples:
+        candidates = [
+            raw_document_texts[p] for p in example.relevant_documents if p in raw_document_texts
+        ]
+        if not candidates:
+            continue
+        for reference in example.reference_contexts:
+            if not reference_context_is_supported(reference, candidates):
+                warnings.append(
+                    f"reference_contexts entry not found (verbatim, whitespace-normalized) "
+                    f"in its relevant_documents: {reference!r} (question: {example.question!r})"
+                )
 
     return errors, warnings
 

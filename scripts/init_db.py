@@ -90,6 +90,20 @@ def build_schema_sql(*, documents_table: str, chunks_table: str, dimension: int)
     ALTER TABLE {chunks_table} ADD COLUMN IF NOT EXISTS attachment_name TEXT;
     ALTER TABLE {chunks_table} ADD COLUMN IF NOT EXISTS source_anchor TEXT;
 
+    -- Migrations for tables created before the multimodal/relationship-aware
+    -- ingestion milestone: parent_chunk_id links a table/code/config/chart/
+    -- image chunk to the nearest preceding prose chunk in its section (no
+    -- FK -- parent and child chunks land in the same insert batch, and
+    -- deletion is always whole-document via ON DELETE CASCADE, so a
+    -- self-referential FK's insert-ordering fragility isn't worth taking on).
+    -- vision_generated/vision_description hold a VisionProvider's output,
+    -- kept on a separate sibling chunk from -- never overwriting -- the
+    -- image's original caption/alt-text chunk.
+    ALTER TABLE {chunks_table} ADD COLUMN IF NOT EXISTS parent_chunk_id TEXT;
+    ALTER TABLE {chunks_table} ADD COLUMN IF NOT EXISTS vision_description TEXT;
+    ALTER TABLE {chunks_table}
+        ADD COLUMN IF NOT EXISTS vision_generated BOOLEAN NOT NULL DEFAULT FALSE;
+
     -- documents.source used to be UNIQUE on its own; identity is now scoped
     -- per (source, dataset_id) so the same relative path can exist in two
     -- different datasets without colliding.
@@ -125,6 +139,23 @@ def build_schema_sql(*, documents_table: str, chunks_table: str, dimension: int)
 
     CREATE INDEX IF NOT EXISTS {chunks_table}_embedding_hnsw_idx
         ON {chunks_table} USING hnsw (embedding vector_cosine_ops);
+
+    CREATE INDEX IF NOT EXISTS {chunks_table}_parent_chunk_id_idx
+        ON {chunks_table} (parent_chunk_id);
+
+    -- Caches a VisionProvider's generated description per image, keyed by
+    -- the image file's own sha256 checksum, so an unchanged image is never
+    -- reprocessed by a (cost-incurring) hosted call across documents or
+    -- ingestion runs. Postgres-backed rather than a separate cache service
+    -- (see docs/architecture.md) -- no concrete use case for Redis here.
+    CREATE TABLE IF NOT EXISTS image_description_cache (
+        image_checksum TEXT PRIMARY KEY,
+        source_path TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        model_name TEXT NOT NULL,
+        description TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
     """
 
 

@@ -188,3 +188,96 @@ class VectorStore(ABC):
         ValueError
             If `filters` contains a key not in `ALLOWED_FILTER_FIELDS`.
         """
+
+    @abstractmethod
+    def get_chunks_by_ids(self, chunk_ids: list[str]) -> list[Chunk]:
+        """Fetch chunks by primary key, e.g. to resolve a `parent_chunk_id` reference.
+
+        Used by relationship expansion (retrieval/pipeline.py) -- callers
+        only ever pass ids already sourced from an already-`dataset_id`-
+        filtered `SearchResult` (a `parent_chunk_id` on a chunk's own
+        metadata), so this never needs its own `dataset_id` check to stay
+        isolated: a `chunk_id`/`document_id` is never shared across
+        datasets (see CLAUDE.md's "Document identity" section).
+
+        Parameters
+        ----------
+        chunk_ids : list[str]
+            Chunk ids to fetch.
+
+        Returns
+        -------
+        list[Chunk]
+            Matching chunks, in no particular order; ids with no matching
+            row are silently omitted (e.g. a stale `parent_chunk_id` from a
+            deleted chunk).
+        """
+
+    @abstractmethod
+    def get_chunks_by_section(self, document_id: str, section_path: str | None) -> list[Chunk]:
+        """Fetch every chunk of one document's section, ordered by `chunk_index`.
+
+        Used by relationship expansion to compute a retrieved chunk's
+        immediate neighbors (previous/next by `chunk_index`) within the
+        same section. `document_id` already uniquely scopes to one
+        dataset, so this cannot cross a `dataset_id` boundary.
+
+        Parameters
+        ----------
+        document_id : str
+            The document to fetch chunks from.
+        section_path : str | None
+            The `section_path` value to match exactly (including `None`,
+            for chunks with no section context).
+
+        Returns
+        -------
+        list[Chunk]
+            Matching chunks, ordered by `chunk_index` ascending.
+        """
+
+    @abstractmethod
+    def get_cached_image_description(self, image_checksum: str) -> str | None:
+        """Look up a previously-generated vision description by image checksum.
+
+        Parameters
+        ----------
+        image_checksum : str
+            sha256 of the image file's bytes.
+
+        Returns
+        -------
+        str | None
+            The cached description, or `None` on a cache miss.
+        """
+
+    @abstractmethod
+    def cache_image_description(
+        self,
+        image_checksum: str,
+        source_path: str,
+        provider: str,
+        model_name: str,
+        description: str,
+    ) -> None:
+        """Persist a vision-generated description, keyed by image checksum.
+
+        So an unchanged image is never reprocessed by a (cost-incurring)
+        hosted VisionProvider call, even across documents or ingestion
+        runs. Postgres-backed rather than a separate cache service, per
+        this project's "prefer Postgres over Redis absent a concrete need"
+        convention.
+
+        Parameters
+        ----------
+        image_checksum : str
+            sha256 of the image file's bytes.
+        source_path : str
+            Path the image was read from, for provenance/debugging.
+        provider : str
+            The `VisionProvider.provider_name` that produced this description.
+        model_name : str
+            The `VisionProvider.model_name` that produced this description.
+        description : str
+            The generated description text.
+        """

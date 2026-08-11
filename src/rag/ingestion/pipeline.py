@@ -16,10 +16,11 @@ from rag.chunkers.registry import get_chunker
 from rag.cleaners.default_cleaner import DefaultCleaner
 from rag.config import AppConfig, load_config
 from rag.embedders.base import Embedder
-from rag.factory import build_embedder, build_vectorstore
+from rag.factory import build_embedder, build_vectorstore, build_vision_provider
 from rag.ingestion.writer import Writer
 from rag.loaders.registry import get_loader
 from rag.vectorstore.base import VectorStore
+from rag.vision.base import VisionProvider
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,7 @@ class IngestionPipeline:
         config: AppConfig,
         vectorstore: VectorStore | None = None,
         embedder: Embedder | None = None,
+        vision_provider: VisionProvider | None = None,
     ) -> None:
         """Wire up the pipeline's stages from config (or injected instances).
 
@@ -43,13 +45,21 @@ class IngestionPipeline:
             Vector store to write to; built from `config` if omitted.
         embedder : Embedder | None, optional
             Embedder to use; built from `config` if omitted.
+        vision_provider : VisionProvider | None, optional
+            Vision provider passed to `Writer`; built from
+            `config.vision.provider` if omitted (`None` for `"none"`, the
+            only provider implemented so far -- so this is `None` in
+            practice until a hosted provider exists). Inject a test mock
+            here to exercise vision-mode ingestion without config changes.
         """
         self._config = config
         self._vectorstore = vectorstore or build_vectorstore(config)
         self._embedder = embedder or build_embedder(config)
         self._cleaner = DefaultCleaner()
         self._chunker = get_chunker(config.chunking)
-        self._writer = Writer(self._embedder, self._vectorstore)
+        self._writer = Writer(
+            self._embedder, self._vectorstore, vision_provider or build_vision_provider(config)
+        )
 
     def clear_dataset(self, dataset_id: str) -> None:
         """Remove every document (and cascade its chunks) tagged with dataset_id.

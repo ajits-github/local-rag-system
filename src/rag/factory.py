@@ -20,6 +20,7 @@ from rag.rerankers.cross_encoder import CrossEncoderReranker
 from rag.rerankers.noop import NoOpReranker
 from rag.vectorstore.base import VectorStore
 from rag.vectorstore.pgvector import PgVectorStore
+from rag.vision.base import VisionProvider
 
 
 def build_embedder(config: AppConfig) -> Embedder:
@@ -143,6 +144,35 @@ def build_llm(config: AppConfig) -> LLM:
             max_tokens=config.generation.max_tokens,
         )
     raise ValueError(f"Unknown generation provider: {config.generation.provider}")
+
+
+def build_vision_provider(config: AppConfig) -> VisionProvider | None:
+    """Construct the `VisionProvider` selected by `config.vision.provider`, if any.
+
+    `None` for the `"none"` provider (the only one implemented so far) --
+    callers (`IngestionPipeline`) must treat `None` as "text-only image
+    handling," never call `describe_image`, and never read image bytes.
+    No hosted provider branch exists yet; one is added here only once
+    explicitly approved for a real run (see docs/architecture.md).
+
+    Parameters
+    ----------
+    config : AppConfig
+        Application configuration.
+
+    Returns
+    -------
+    VisionProvider | None
+        The constructed vision provider, or `None` for `"none"`.
+
+    Raises
+    ------
+    ValueError
+        If `config.vision.provider` names an unknown provider.
+    """
+    if config.vision.provider == "none":
+        return None
+    raise ValueError(f"Unknown vision provider: {config.vision.provider}")
 
 
 def build_judge_llm(config: AppConfig) -> LLM:

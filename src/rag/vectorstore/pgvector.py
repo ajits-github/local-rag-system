@@ -28,7 +28,8 @@ _METADATA_COLUMNS = """chunk_id, document_id, chunk_index, content,
     source, source_type, title, author, url,
     created_at, last_modified, language, category, dataset_id,
     content_type, section_path, code_language, table_headers,
-    attachment_name, source_anchor"""
+    attachment_name, source_anchor, parent_chunk_id,
+    vision_generated, vision_description"""
 
 
 def _build_where_clause(filters: dict[str, Any] | None) -> tuple[str, list[Any]]:
@@ -94,6 +95,9 @@ def _row_to_metadata(row: tuple[Any, ...]) -> tuple[str, str, ChunkMetadata]:
         table_headers,
         attachment_name,
         source_anchor,
+        parent_chunk_id,
+        vision_generated,
+        vision_description,
     ) = row
     metadata = ChunkMetadata(
         document_id=str(document_id),
@@ -115,6 +119,9 @@ def _row_to_metadata(row: tuple[Any, ...]) -> tuple[str, str, ChunkMetadata]:
         table_headers=list(table_headers) if table_headers is not None else None,
         attachment_name=attachment_name,
         source_anchor=source_anchor,
+        parent_chunk_id=parent_chunk_id,
+        vision_generated=bool(vision_generated),
+        vision_description=vision_description,
     )
     return chunk_id, content, metadata
 
@@ -309,6 +316,9 @@ class PgVectorStore(VectorStore):
                         c.metadata.table_headers,
                         c.metadata.attachment_name,
                         c.metadata.source_anchor,
+                        c.metadata.parent_chunk_id,
+                        c.metadata.vision_generated,
+                        c.metadata.vision_description,
                     )
                     for c in chunks
                 ]
@@ -319,7 +329,8 @@ class PgVectorStore(VectorStore):
                          source, source_type, title, author, url,
                          created_at, last_modified, language, category, dataset_id,
                          content_type, section_path, code_language, table_headers,
-                         attachment_name, source_anchor)
+                         attachment_name, source_anchor, parent_chunk_id,
+                         vision_generated, vision_description)
                         VALUES %s
                         ON CONFLICT (chunk_id) DO UPDATE SET
                             content = EXCLUDED.content,
@@ -332,7 +343,10 @@ class PgVectorStore(VectorStore):
                             code_language = EXCLUDED.code_language,
                             table_headers = EXCLUDED.table_headers,
                             attachment_name = EXCLUDED.attachment_name,
-                            source_anchor = EXCLUDED.source_anchor""",
+                            source_anchor = EXCLUDED.source_anchor,
+                            parent_chunk_id = EXCLUDED.parent_chunk_id,
+                            vision_generated = EXCLUDED.vision_generated,
+                            vision_description = EXCLUDED.vision_description""",
                     rows,
                 )
 
@@ -412,3 +426,66 @@ class PgVectorStore(VectorStore):
             chunk = Chunk(id=chunk_id, content=content, metadata=metadata)
             results.append(SearchResult(chunk=chunk, score=float(scores[i])))
         return results
+
+    def get_chunks_by_ids(self, chunk_ids: list[str]) -> list[Chunk]:
+        """See `VectorStore.get_chunks_by_ids`."""
+        if not chunk_ids:
+            return []
+        sql = f"SELECT {_METADATA_COLUMNS} FROM {self._chunks_table} WHERE chunk_id = ANY(%s)"
+        with self._connection() as conn, conn.cursor() as cur:
+            cur.execute(sql, (chunk_ids,))
+            rows = cur.fetchall()
+        return [
+            Chunk(id=chunk_id, content=content, metadata=metadata)
+            for chunk_id, content, metadata in (_row_to_metadata(row) for row in rows)
+        ]
+
+    def get_chunks_by_section(self, document_id: str, section_path: str | None) -> list[Chunk]:
+        """See `VectorStore.get_chunks_by_section`."""
+        section_clause = "section_path = %s" if section_path is not None else "section_path IS NULL"
+        sql = f"""SELECT {_METADATA_COLUMNS} FROM {self._chunks_table}
+            WHERE document_id = %s AND {section_clause}
+            ORDER BY chunk_index"""
+        params: tuple[Any, ...] = (
+            (document_id, section_path) if section_path is not None else (document_id,)
+        )
+        with self._connection() as conn, conn.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+        return [
+            Chunk(id=chunk_id, content=content, metadata=metadata)
+            for chunk_id, content, metadata in (_row_to_metadata(row) for row in rows)
+        ]
+
+    def get_cached_image_description(self, image_checksum: str) -> str | None:
+        """See `VectorStore.get_cached_image_description`."""
+        with self._connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT description FROM image_description_cache WHERE image_checksum = %s",
+                (image_checksum,),
+            )
+            row = cur.fetchone()
+        return row[0] if row else None
+
+    def cache_image_description(
+        self,
+        image_checksum: str,
+        source_path: str,
+        provider: str,
+        model_name: str,
+        description: str,
+    ) -> None:
+        """See `VectorStore.cache_image_description`."""
+        with self._connection() as conn:
+            with conn, conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO image_description_cache
+                        (image_checksum, source_path, provider, model_name, description)
+                        VALUES (%s, %s, %s, %s, %s)
+                        ON CONFLICT (image_checksum) DO UPDATE SET
+                            source_path = EXCLUDED.source_path,
+                            provider = EXCLUDED.provider,
+                            model_name = EXCLUDED.model_name,
+                            description = EXCLUDED.description""",
+                    (image_checksum, source_path, provider, model_name, description),
+                )

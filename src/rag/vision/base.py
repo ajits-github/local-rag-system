@@ -1,11 +1,14 @@
-"""Future extension point: image/diagram understanding.
+"""Vision provider: image/diagram understanding for image-derived indexable content.
 
-Not wired up anywhere in this codebase yet -- no concrete implementation,
-no config block, no factory dispatch, no caller. Ingesting the SVG asset
-under data/knowledge_base/assets/ and calling a vision model against it
-are both out of scope for the structured-content-ingestion milestone;
-this ABC only documents the shape a future implementation would take,
-matching this repo's existing base.py-ABC-per-swap-point pattern.
+`config.vision.provider`/`factory.build_vision_provider` wire this ABC in
+(see multimodal-ingestion milestone), but the only provider actually
+implemented and exercised so far is `"none"` (`build_vision_provider`
+returns `None`) -- text-only image handling (alt text/caption, see
+chunkers/structured_markdown.py) needs no VisionProvider at all. No
+hosted-API-calling concrete subclass exists yet; one is added here only
+once a provider/model is chosen and a real (credit-consuming) run is
+separately approved. Tests use a local mock subclass, never a class capable
+of a real network call.
 """
 
 from __future__ import annotations
@@ -16,6 +19,16 @@ from pathlib import Path
 
 class VisionProvider(ABC):
     """Describes an image file in natural language, for ingestion as chunk text."""
+
+    @property
+    @abstractmethod
+    def provider_name(self) -> str:
+        """Short identifier for this provider (e.g. "openai"), for cache/provenance records."""
+
+    @property
+    @abstractmethod
+    def model_name(self) -> str:
+        """The specific model used, for cache/provenance records."""
 
     @abstractmethod
     def describe_image(self, image_path: Path, alt_text: str | None = None) -> str:
@@ -35,4 +48,6 @@ class VisionProvider(ABC):
             A natural-language description suitable for embedding as
             chunk content. Implementations must not fabricate specifics
             (colors, counts, unlabeled relationships) they cannot verify.
+            Callers (Writer) store this separately from -- never
+            overwriting -- the image's original caption/alt-text.
         """
