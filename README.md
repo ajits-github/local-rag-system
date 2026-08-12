@@ -75,13 +75,10 @@ For the detailed system view, see [`docs/architecture.md`](docs/architecture.md)
    ```
    cp .env.example .env
    ```
-   Already have a Postgres+pgvector container running locally (e.g. from
-   earlier work)? Point `DATABASE_URL` at it directly instead of bringing up
-   the bundled `docker-compose.yml` in step 3; just make sure `POSTGRES_DB`
-   in `.env` matches its actual database name, and still run
-   `python scripts/init_db.py` against it (idempotent, safe to run against
-   a database that already has the tables) to create/migrate the
-   `documents`/`chunks` tables.
+   Already have a Postgres+pgvector container running locally? Point
+   `DATABASE_URL` at it directly instead of step 3's `docker-compose.yml`
+   (match `POSTGRES_DB` to its real name), then still run
+   `python scripts/init_db.py` (idempotent) to create/migrate the schema.
 3. Bring up Postgres+pgvector and initialize the schema:
    ```
    make up
@@ -100,14 +97,13 @@ For the detailed system view, see [`docs/architecture.md`](docs/architecture.md)
    ```
    python -m rag.ingestion.pipeline data/sample_docs
    ```
-   This repo doesn't ship a large real-world knowledge base. One
+   This repo doesn't ship a large real-world knowledge base. A larger one
    (internally called "TechFusion") was used against this pipeline during
    development, with a folder-per-category layout (`engineering/`,
    `security/`, `hr/`, etc.) preserved as filterable `category` metadata,
-   but neither that knowledge base nor its gold eval set are committed here
-   (see `data/README.md` / `data/VALIDATION.md` for how it was structured).
-   Point the same ingestion command at your own directory to reproduce
-   that; the path is always a CLI argument, never hardcoded.
+   but neither it nor its gold eval set are committed here. Point the same
+   ingestion command at your own directory to reproduce that; the path is
+   always a CLI argument, never hardcoded.
 
    Re-running ingestion on unchanged files is a no-op (checksum-based, no
    duplicate chunks); edited files are detected and re-chunked in place
@@ -138,112 +134,42 @@ For the detailed system view, see [`docs/architecture.md`](docs/architecture.md)
 ## Containerized development
 
 Postgres+pgvector and the API can both run in containers; Ollama stays
-native on Windows (see [Windows-specific limitations](#windows-specific-limitations)
-below for why). `docker-compose.yml` builds `rag-api` from the repo's
-multi-stage `Dockerfile` and wires it to `postgres` and to the host's
-Ollama via `host.docker.internal`.
+native on Windows. `docker-compose.yml` builds `rag-api` from the repo's
+multi-stage `Dockerfile` (no `tests`/`scripts`/`data`/optional extras in
+the final image; runs as non-root) and wires it to `postgres` and to the
+host's Ollama via `host.docker.internal`. Requires **Docker Compose V2**.
 
-Requires **Docker Compose V2** (`docker compose ...`, bundled with Docker
-Desktop) — `deploy.resources.limits` in `docker-compose.yml` is only
-honored by V2 outside of Swarm mode.
+```
+docker compose up -d --build          # first build pulls ~1-2GB of ML deps (PyTorch); later ones are cached
+python scripts/init_db.py             # against the containerized Postgres, via DATABASE_URL in .env
+curl http://localhost:8000/health     # {"vectorstore":"ok","llm":"ok"} confirms it reached both deps
+scripts/smoke_test_containers.sh      # full ingest -> query round trip, one shot
+docker compose down                   # add -v to also drop the pgdata volume
+```
+Ingest/query work exactly as in native dev, same port/endpoints. `src/`
+and `config/` are bind-mounted with `--reload`, so Python edits need no
+rebuild — only `pyproject.toml` changes do.
 
-1. Copy `.env.example` to `.env` if you haven't already (Setup step 2
-   above); no changes needed for a default containerized run.
-2. Build and start both services:
-   ```
-   docker compose up -d --build
-   ```
-   The first build downloads and compiles roughly 1-2 GB of Python ML
-   dependencies (PyTorch, a transitive dependency of sentence-transformers,
-   dominates this); later builds reuse Docker's layer cache and are much
-   faster unless `pyproject.toml` changes.
-3. Initialize the schema (same script as native dev, now pointed at the
-   containerized Postgres via `DATABASE_URL` in `.env`):
-   ```
-   python scripts/init_db.py
-   ```
-4. Confirm both dependencies are reachable *from inside the container*:
-   ```
-   curl http://localhost:8000/health
-   ```
-   `{"status": "ok", "dependencies": {"vectorstore": "ok", "llm": "ok"}}`
-   means the container reached both Postgres and your native Ollama
-   through `host.docker.internal`. `"degraded"` with `"llm": "unreachable"`
-   almost always means Ollama isn't running on the host (see Prerequisites).
-5. Ingest and query exactly as in native dev — same port, same endpoints:
-   ```
-   curl -s -X POST http://localhost:8000/ingest \
-     -F "dataset_id=sample_docs" \
-     -F "files=@data/sample_docs/password-policy.md"
-
-   curl -s -X POST http://localhost:8000/query -H "Content-Type: application/json" \
-     -d '{"query": "What is the password policy?", "filters": {"dataset_id": "sample_docs"}}'
-   ```
-6. Or run the bundled smoke test, which checks both dependencies and
-   exercises a full ingest -> query round trip in one shot:
-   ```
-   scripts/smoke_test_containers.sh
-   ```
-7. `src/` and `config/` are bind-mounted read/write and uvicorn runs with
-   `--reload`, so editing code behaves like native dev — no rebuild needed
-   for Python changes. Rebuild only when `pyproject.toml` (dependencies)
-   changes:
-   ```
-   docker compose up -d --build
-   ```
-8. Tear down:
-   ```
-   docker compose down          # keeps the pgdata volume (default)
-   docker compose down -v       # also deletes it -- drops all ingested data
-   ```
-
-### Production-shaped run
-
-`docker-compose.prod.yml` layers on top of `docker-compose.yml` to drop the
-`src`/`config` bind-mounts (the image's baked-in code runs, not the host's
-live source), remove `--reload`, stop publishing Postgres's port to the
-host network, and tighten health-check timing:
-
+**Production-shaped run**: `docker-compose.prod.yml` drops the bind
+mounts and `--reload`, stops publishing Postgres's port, and tightens
+health-check timing (same-host "productionized," not a Kubernetes
+substitute — see [Roadmap](#roadmap)):
 ```
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 ```
 
-This is a same-host "productionized" run, not a substitute for a real
-orchestrator — see [Roadmap](#roadmap) for the Kubernetes path if scale
-ever demands it.
+### Windows-specific notes
 
-### What's in the image (and what isn't)
-
-The multi-stage `Dockerfile` installs the project with `pip install .` (no
-extras) into a venv in a discarded `builder` stage, then copies just that
-venv plus `src/` and `config/` into the final image. `tests/`, `scripts/`,
-`data/`, `experiments/`, and the `[dev]`/`[ragas]`/`[mlflow]`/`[anthropic]`/
-`[cohere]` extras never ship in it — none of them are needed to serve the
-API, and RAGAS alone would pull in `datasets`+`openai` unnecessarily. The
-container runs as a non-root `rag` user.
-
-### Windows-specific limitations
-
-- `host.docker.internal` is a Docker Desktop feature (Windows/Mac); native
-  Linux Docker doesn't resolve it by default. `docker-compose.yml` adds an
-  `extra_hosts: host.docker.internal:host-gateway` entry so the same file
-  also works unmodified on a Linux host.
-- Ollama stays outside Docker entirely in this setup. Running it inside
-  WSL2 instead of natively on Windows would add a second network hop
-  (WSL2 <-> Docker Desktop's own VM) that plain native-Windows Ollama
-  avoids — there's no reason to do that here.
-- Bind-mounted volumes (`./src`, `./config`, `./data/uploads`) don't hit
-  the Linux bind-mount UID/GID mismatch problem: Docker Desktop's Windows
-  file sharing doesn't enforce host-side POSIX permissions, so the
-  non-root `rag` user inside the container can read and write them without
-  any `chown`/`chmod` step. The same compose file on native Linux would
-  need the container's UID to match the host user's (or a `chmod`/ACL
-  adjustment) to get the same result.
-- The embedding model (`sentence-transformers/all-MiniLM-L6-v2`) downloads
-  from Hugging Face Hub to `$HOME/.cache/huggingface` on first use inside
-  the container (`$HOME=/app`, owned by `rag`) if it isn't already cached
-  there — this needs outbound internet access the *first* time a
-  container starts from a fresh image/volume, same as it would natively.
+- `host.docker.internal` (used to reach native Ollama) is a Docker Desktop
+  feature; `docker-compose.yml` also adds `extra_hosts:
+  host.docker.internal:host-gateway` so it resolves on native Linux too.
+- Docker Desktop's Windows file sharing doesn't enforce host-side POSIX
+  permissions, so the non-root `rag` user can read/write the bind-mounted
+  volumes without any `chown`/`chmod` step (native Linux would need the
+  container UID to match the host user's).
+- The embedding model downloads from Hugging Face Hub on first use inside
+  a fresh container/volume if not already cached — needs outbound internet
+  that one time, same as native.
 
 ## Configuration
 
@@ -291,12 +217,11 @@ and the same `run_eval` command work regardless of what directory you
 actually ingested from.
 
 `data/eval/sample_gold.jsonl` is a tiny smoke-test gold file bundled with
-this repo, matching `data/sample_docs/`. A larger 46-question gold set
-(`question_type`s `single_document`/`multi_hop`, plus unanswerable
-questions) was used against the private TechFusion knowledge base
-mentioned above during development. That gold file isn't committed here
-either, for the same reason; point `--gold` at your own to reproduce that
-kind of evaluation.
+this repo, matching `data/sample_docs/`. A much larger gold set
+(`question_type`s `single_document`/`multi_hop`, plus unanswerable and
+multimodal questions) was used against the private TechFusion knowledge
+base during development; it isn't committed here either. Point `--gold`
+at your own to reproduce that kind of evaluation.
 
 ```
 python -m rag.eval.run_eval --gold data/eval/sample_gold.jsonl --dataset-id sample_docs
@@ -347,13 +272,11 @@ python -m rag.eval.run_ragas_eval --gold data/eval/sample_gold.jsonl \
     --dataset-id sample_docs --verbose > /tmp/ragas_report.json
 ```
 `--sample-size` (default **15**) caps how many gold questions get judged —
-validate cost, latency, and score quality on a small subset before
-scaling up to the full 46-question TechFusion gold set. The report
-records per-question and aggregate scores, the judge's provider/model and
-estimated API usage, `prompt_id`/`prompt_version`, and the RAG config that
-produced it — feed it into `scripts/record_experiment.py` exactly like a
-normal `run_eval.py` report; the ragas fields are captured alongside the
-rest.
+validate cost, latency, and score quality on a small subset before scaling
+up to a full gold set. The report records per-question and aggregate
+scores, judge provider/model and estimated API usage, `prompt_id`/
+`prompt_version`, and the RAG config that produced it — feed it into
+`scripts/record_experiment.py` exactly like a normal `run_eval.py` report.
 
 **RAGAS scores are not validated until reviewed against real human
 judgment.** Two scripts help with that:
@@ -406,42 +329,15 @@ Recall@10). Every row measured against `dataset_id`-isolated retrieval
 (see Metadata & filtering above), so results are never contaminated by a
 different dataset in the same vector store.*
 
-**Experiments 11-12** are the multimodal/relationship-aware milestone's
-controlled A/B pair (prompt v2, image-aware chunking, identical in every
-respect except `Rel.Exp`) -- run entirely against local Postgres and
-native Ollama (`qwen2.5:1.5b`); **zero hosted vision or judge API calls**
-were made for either. Relationship expansion (#12) raised
-`Supp.Ctx Hit` (0.697 -> 0.788) and `Img Hit` (0.579 -> 0.842) without
-moving Recall/MRR at all (expansion is appended after the ranked cutoff,
-by design), at roughly 2.6x the total latency of #11.
-
-**Experiment 13** adds RAGAS generation-quality scoring (OpenAI
-`gpt-4o-mini` judge) on top of #12's config, against a stratified
-15-question sample of `techfusion_gold.jsonl` (one question per authored
-`content_type` bucket -- image-only, chart, table-image, relationship-
-aware, unanswerable-visual, etc. -- plus 6 plain-text questions spanning
-difficulty/multi-hop/unanswerable). Recall/MRR/Answer-quality read lower
-than #11-12 not because generation regressed, but because this 15-question
-sample is deliberately skewed toward the hardest, most vision-dependent
-questions in the gold set rather than the full 84 -- not directly
-comparable to #11/#12's numbers. Actual judge cost was ~$0.04 (240 calls,
-~192K input / ~18K output tokens). See `docs/architecture.md` and
-`PROJECT_JOURNAL.md` for the full design, the stratification method, and
-hand-inspected findings (including a confirmed generation hallucination
-the RAGAS faithfulness score caught).
-
-**Experiment 14** swaps only the generation model, `qwen2.5:1.5b` ->
-`qwen2.5:3b`, on top of #12's config, run against the full 84 questions
-(deterministic only, no hosted API). Retrieval-side metrics are identical
-to #12 by construction (generation model can't change what's retrieved);
-`Answer quality` rose modestly (0.418 -> 0.452), and a concrete
-hallucination found in #13 (the idempotency-key question) flipped to a
-correct "I don't know" refusal under the identical retrieval miss --
-evidence for a model-capability gap rather than a prompt-wording gap, at
-the cost of ~1.5x generation latency (13.0s -> 19.0s/question). See
-`docs/architecture.md`/`PROJECT_JOURNAL.md` for the full comparison,
-including a same-day correction to #13's original write-up of that
-hallucination (it was checked against the wrong context the first time).
+**Experiments 11-14** are the multimodal/relationship-aware milestone:
+11-12 isolate relationship expansion (identical Recall/MRR, higher
+`Supp.Ctx Hit`/`Img Hit`, ~2.6x latency); 13 adds RAGAS scoring on a
+stratified 15-question sample (not directly comparable to 11/12/14's
+full-84-question numbers); 14 swaps the generation model
+(`qwen2.5:1.5b` -> `qwen2.5:3b`) on top of 12's config. All local/Ollama
+except 13's judge calls (~$0.04 total). Full analysis, per-question
+findings, and a correction to one of 13's original claims are in
+[`docs/architecture.md`](docs/architecture.md) and `PROJECT_JOURNAL.md`.
 
 ### Recording a new experiment
 
@@ -460,59 +356,31 @@ hallucination (it was checked against the wrong context the first time).
      --experiment-id experiment_002 --label "cross-encoder reranker" \
      --config config/default.yaml
    ```
-   Every recorded experiment also captures `prompt_id`/`prompt_version` and
-   a `prompt_file_checksum`, the same way it captures
-   `embedding_model`/`chunk_size`/`reranker_model` — a prompt wording
-   change is its own comparable experiment axis, tracked exactly like any
-   other config change. If the report came from `run_ragas_eval`, the
-   RAGAS aggregate scores and judge provider/model are captured too.
-
-   This step also logs the same params/metrics as an MLflow run (see
-   "MLflow tracking" below), unless `mlflow.enabled: false` in
-   `config/default.yaml`.
+   Captures every config axis (embedding model, chunk size, reranker,
+   prompt version + checksum, and RAGAS scores if present) and also logs
+   an MLflow run (see "MLflow tracking" below), unless `mlflow.enabled:
+   false`.
 4. Regenerate the comparison table (updates
    `experiments/reports/comparison.md` and this README section in place):
    ```
    python scripts/compare_experiments.py
    ```
    Pass `--exclude experiment_id[,experiment_id...]` to leave a
-   non-comparable record (e.g. a small pilot subset run at a different
-   sample size) out of the table.
-
-The eval report and per-question detail behind each experiment aren't
-committed (see Evaluation above); the flat metrics record and config
-snapshot under `experiments/` are what make the comparison reproducible
-without needing that raw file.
+   non-comparable record (e.g. a small pilot run at a different sample
+   size) out of the table.
 
 ### MLflow tracking
 
-Every `scripts/record_experiment.py` call also logs an MLflow run:
-config fields as params, all deterministic/RAGAS/latency metrics as
-metrics (fields that are `None` for a given report -- e.g. a pre-RAGAS
-run's `ragas_*` fields -- are simply not logged, rather than logged as
-`0`), and the raw eval-output JSON plus the recorded record JSON and
-config YAML as artifacts. Requires the `mlflow` extra
-(`pip install .[mlflow]`); if `mlflow.enabled: true` (the default) and
-the package isn't installed, recording fails loudly rather than silently
-skipping the MLflow half of "record an experiment."
-
-Local by default, no server required: `mlflow.tracking_uri` defaults to
-`sqlite:///mlflow.db` (a local SQLite file -- MLflow's older plain
-filesystem backend, `file:./mlruns`, is deprecated as of MLflow 3.x).
-View it with:
+Every `scripts/record_experiment.py` call also logs an MLflow run (config
+as params, metrics, and the eval-output/record/config files as artifacts).
+Requires the `mlflow` extra (`pip install .[mlflow]`) — fails loudly rather
+than silently skipping if enabled but not installed. Local by default, no
+server required (`mlflow.tracking_uri: sqlite:///mlflow.db`):
 ```
 mlflow ui --backend-store-uri sqlite:///mlflow.db
 ```
-Point `tracking_uri` at a real MLflow tracking server later without any
-code changes.
-
-`scripts/backfill_mlflow.py` logs every already-recorded
-`experiments/results/*.json` into MLflow in one pass -- used once to
-backfill `experiment_001`-`experiment_008` after MLflow was integrated;
-useful again if `mlflow.db`/`mlruns/` is ever deleted and needs
-rebuilding from the (committed) `experiments/` records. It only attaches
-each record's own JSON and config YAML as artifacts, not the original raw
-eval-output JSON, which isn't preserved for older experiments.
+`scripts/backfill_mlflow.py` re-logs every `experiments/results/*.json`
+into MLflow in one pass, useful if `mlflow.db`/`mlruns/` is ever deleted.
 
 ## Testing
 
@@ -565,9 +433,10 @@ Deferred for now, tracked here rather than left as empty scaffolding:
   (`rerankers/cross_encoder.py`) with real benchmarking/tuning.
 - **Cohere Reranking**: mature the scaffolded optional `cohere` provider
   (`rerankers/cohere.py`) once there's a use case needing a hosted reranker.
-- **RAGAS scaling**: validate the judge against human labels
-  (`scripts/compare_ragas_manual.py`) and, once trusted, scale from the
-  15-question default sample to the full 46-question TechFusion gold set.
+- **RAGAS trust**: judge-vs-human agreement has been spot-checked
+  (`scripts/compare_ragas_manual.py`) on several samples, but scores still
+  aren't validated against human labels by default — see the caveat in
+  every RAGAS report.
 - **LangGraph**: move retrieval/generation orchestration to a graph for
   multi-step or agentic query handling.
 - **MCP**: expose ingest/query as MCP tools for use from other agents.
