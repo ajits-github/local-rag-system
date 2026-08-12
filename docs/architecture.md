@@ -472,6 +472,58 @@ touching the prompt. If a broader faithfulness problem shows up under a
 full-scale RAGAS run or manual review, revisit; until then, model choice
 is a cheaper lever than prompt iteration for this failure mode.
 
+### The full-scale systematic check (experiment_015)
+
+Experiment_014's conclusion above explicitly flagged what it couldn't
+claim: "this is one hand-verified example, not a systematic faithfulness
+comparison... a real answer would need either a second RAGAS pass (paid,
+not run here) or a manual review pass." `experiment_015` is that pass —
+the best config found so far (`qwen2.5:3b`, prompt v2, hybrid+RRF
+retrieval, relationship expansion on) scored with RAGAS (`gpt-4o-mini`
+judge) against **all 84 questions**, not a stratified subsample. Same
+config file as experiment_014
+(`config/experiments/multimodal-v2-relationship-qwen3b.yaml`), just run
+through `rag.eval.run_ragas_eval --sample-size 84` instead of
+`rag.eval.run_eval`.
+
+Retrieval-side metrics are, as expected, bit-for-bit identical to
+experiment_012/014 (Recall@5 0.911, Recall@10 0.946, MRR 0.824,
+`supporting_context_hit_rate` 0.788, `relevant_image_hit_rate` 0.842) —
+generation model and judge scoring can't change what gets retrieved.
+
+**RAGAS aggregate, full 84 questions**: faithfulness **0.898**,
+answer_relevancy 0.530, context_precision 0.659, context_recall 0.741,
+answer_correctness **0.513**. Both faithfulness and answer_correctness
+are the highest recorded for this project across every experiment run so
+far (previous highs: faithfulness 0.844 at `experiment_007`'s 15-question
+v1 pilot on the pre-multimodal schema; answer_correctness 0.591 at
+`experiment_009`'s 15-question hybrid pilot). This is the first time the
+full canonical 84-question gold set — not a stratified sample — has been
+scored by RAGAS, so it's also the most representative faithfulness/
+correctness number this project has produced. Answers experiment_014's
+open question directly: the qwen2.5:3b + prompt v2 + relationship
+expansion combination generalizes as a real faithfulness improvement
+across the whole gold set, not just the one idempotency-key case that
+motivated testing it.
+
+`answer_quality` (keyword-overlap) came out 0.442, close to but not
+identical to experiment_014's deterministic-only 0.452 run under the
+same config — expected minor run-to-run variance from LLM sampling
+(`temperature=0.2`, not `0.0`), not a regression; RAGAS's own metrics are
+the ones actually being trusted here, not this heuristic (see "My
+keyword-overlap answer-quality metric" reasoning in `ISSUES.md`).
+
+**Cost, from the judge's own tracked usage** (not estimated): 1,431 API
+calls, 1,115,731 input tokens, 101,857 output tokens on `gpt-4o-mini`.
+At published per-token pricing ($0.15/1M input, $0.60/1M output): input
+$0.1674 + output $0.0611 = **$0.2285 total**, in line with the pre-run
+estimate (~$0.20-0.25) scaled up from experiment_013's 15-question
+$0.04. The run hit several transient `RateLimitError (429)` responses
+from OpenAI's `gpt-4o-mini` TPM limit partway through (visible in raw
+run output) — RAGAS's own executor retried each automatically; the final
+report shows `num_scored=84`, `metrics_failed={}`, so nothing was lost or
+silently dropped.
+
 ### Production considerations (documented, not built)
 
 Hosted vision API cost, image size/type limits, retries/backoff, rate

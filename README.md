@@ -321,6 +321,7 @@ regenerate it instead (see "Recording a new experiment").
 | 12 | Multimodal milestone Experiment B: identical to experiment_011 except relationship expansion ON (parent+neighbors, max 3) | hybrid | qwen2.5:1.5b | all-MiniLM-L6-v2 | none | v2 | on | 0.911 | 0.946 | 0.952 | 0.824 | 0.418 | 0.788 | 0.842 | - | - | 13.7s | techfusion | 2026-08-11 |
 | 13 | prompt v2 + relationship expansion + RAGAS (15-q stratified sample) | hybrid | qwen2.5:1.5b | all-MiniLM-L6-v2 | none | v2 | on | 0.800 | 0.867 | 0.867 | 0.697 | 0.328 | 0.625 | 0.875 | 0.700 | 0.409 | 7.4s | techfusion | 2026-08-12 |
 | 14 | qwen2.5:3b generation model (vs experiment_012's qwen2.5:1.5b), full 84 questions, prompt v2 + relationship expansion | hybrid | qwen2.5:3b | all-MiniLM-L6-v2 | none | v2 | on | 0.911 | 0.946 | 0.952 | 0.824 | 0.452 | 0.788 | 0.842 | - | - | 19.2s | techfusion | 2026-08-12 |
+| 15 | Biggest config: qwen2.5:3b + prompt v2 + hybrid+relationship expansion + RAGAS, full 84 questions | hybrid | qwen2.5:3b | all-MiniLM-L6-v2 | none | v2 | on | 0.911 | 0.946 | 0.952 | 0.824 | 0.442 | 0.788 | 0.842 | 0.898 | 0.513 | 18.4s | techfusion | 2026-08-12 |
 <!-- EXPERIMENTS_TABLE_END -->
 
 *Total latency is the mean of retrieval+generation per question, at the
@@ -329,15 +330,20 @@ Recall@10). Every row measured against `dataset_id`-isolated retrieval
 (see Metadata & filtering above), so results are never contaminated by a
 different dataset in the same vector store.*
 
-**Experiments 11-14** are the multimodal/relationship-aware milestone:
+**Experiments 11-15** are the multimodal/relationship-aware milestone:
 11-12 isolate relationship expansion (identical Recall/MRR, higher
 `Supp.Ctx Hit`/`Img Hit`, ~2.6x latency); 13 adds RAGAS scoring on a
-stratified 15-question sample (not directly comparable to 11/12/14's
+stratified 15-question sample (not directly comparable to 11/12/14/15's
 full-84-question numbers); 14 swaps the generation model
-(`qwen2.5:1.5b` -> `qwen2.5:3b`) on top of 12's config. All local/Ollama
-except 13's judge calls (~$0.04 total). Full analysis, per-question
-findings, and a correction to one of 13's original claims are in
-[`docs/architecture.md`](docs/architecture.md) and `PROJECT_JOURNAL.md`.
+(`qwen2.5:1.5b` -> `qwen2.5:3b`) on top of 12's config; 15 is #14's config
+(the best found so far) RAGAS-scored against the **full 84-question gold
+set**, not a sample. Faithfulness (0.898) and answer_correctness (0.513)
+are the highest recorded for this project. Total hosted judge cost across
+13+15: **$0.2684** (13: $0.0399; 15: $0.2285, from tracked usage — 1,431
+calls, 1,115,731 input / 101,857 output tokens on `gpt-4o-mini`). Full
+analysis, per-question findings, and a correction to one of 13's original
+claims are in [`docs/architecture.md`](docs/architecture.md) and
+`PROJECT_JOURNAL.md`.
 
 ### Recording a new experiment
 
