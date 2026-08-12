@@ -396,6 +396,8 @@ regenerate it instead (see "Recording a new experiment").
 | 10 | hybrid retrieval (BM25+dense, RRF k=60, punctuation-aware tokenizer) full 62-question vs. experiment_008 dense baseline | hybrid | qwen2.5:1.5b | all-MiniLM-L6-v2 | none | v1 | - | 0.903 | 0.944 | 0.952 | 0.865 | 0.391 | - | - | 0.841 | 0.504 | 2.1s | techfusion | 2026-08-07 |
 | 11 | Multimodal milestone Experiment A: prompt v2, hybrid+RRF (matches experiment_010), text-only image handling, relationship expansion OFF, hosted vision OFF | hybrid | qwen2.5:1.5b | all-MiniLM-L6-v2 | none | v2 | off | 0.911 | 0.946 | 0.952 | 0.824 | 0.413 | 0.697 | 0.579 | - | - | 5.2s | techfusion | 2026-08-11 |
 | 12 | Multimodal milestone Experiment B: identical to experiment_011 except relationship expansion ON (parent+neighbors, max 3) | hybrid | qwen2.5:1.5b | all-MiniLM-L6-v2 | none | v2 | on | 0.911 | 0.946 | 0.952 | 0.824 | 0.418 | 0.788 | 0.842 | - | - | 13.7s | techfusion | 2026-08-11 |
+| 13 | prompt v2 + relationship expansion + RAGAS (15-q stratified sample) | hybrid | qwen2.5:1.5b | all-MiniLM-L6-v2 | none | v2 | on | 0.800 | 0.867 | 0.867 | 0.697 | 0.328 | 0.625 | 0.875 | 0.700 | 0.409 | 7.4s | techfusion | 2026-08-12 |
+| 14 | qwen2.5:3b generation model (vs experiment_012's qwen2.5:1.5b), full 84 questions, prompt v2 + relationship expansion | hybrid | qwen2.5:3b | all-MiniLM-L6-v2 | none | v2 | on | 0.911 | 0.946 | 0.952 | 0.824 | 0.452 | 0.788 | 0.842 | - | - | 19.2s | techfusion | 2026-08-12 |
 <!-- EXPERIMENTS_TABLE_END -->
 
 *Total latency is the mean of retrieval+generation per question, at the
@@ -411,9 +413,35 @@ native Ollama (`qwen2.5:1.5b`); **zero hosted vision or judge API calls**
 were made for either. Relationship expansion (#12) raised
 `Supp.Ctx Hit` (0.697 -> 0.788) and `Img Hit` (0.579 -> 0.842) without
 moving Recall/MRR at all (expansion is appended after the ranked cutoff,
-by design), at roughly 2.6x the total latency of #11. See
-`docs/architecture.md` and `PROJECT_JOURNAL.md` for the full design and
-hand-inspected findings behind these numbers.
+by design), at roughly 2.6x the total latency of #11.
+
+**Experiment 13** adds RAGAS generation-quality scoring (OpenAI
+`gpt-4o-mini` judge) on top of #12's config, against a stratified
+15-question sample of `techfusion_gold.jsonl` (one question per authored
+`content_type` bucket -- image-only, chart, table-image, relationship-
+aware, unanswerable-visual, etc. -- plus 6 plain-text questions spanning
+difficulty/multi-hop/unanswerable). Recall/MRR/Answer-quality read lower
+than #11-12 not because generation regressed, but because this 15-question
+sample is deliberately skewed toward the hardest, most vision-dependent
+questions in the gold set rather than the full 84 -- not directly
+comparable to #11/#12's numbers. Actual judge cost was ~$0.04 (240 calls,
+~192K input / ~18K output tokens). See `docs/architecture.md` and
+`PROJECT_JOURNAL.md` for the full design, the stratification method, and
+hand-inspected findings (including a confirmed generation hallucination
+the RAGAS faithfulness score caught).
+
+**Experiment 14** swaps only the generation model, `qwen2.5:1.5b` ->
+`qwen2.5:3b`, on top of #12's config, run against the full 84 questions
+(deterministic only, no hosted API). Retrieval-side metrics are identical
+to #12 by construction (generation model can't change what's retrieved);
+`Answer quality` rose modestly (0.418 -> 0.452), and a concrete
+hallucination found in #13 (the idempotency-key question) flipped to a
+correct "I don't know" refusal under the identical retrieval miss --
+evidence for a model-capability gap rather than a prompt-wording gap, at
+the cost of ~1.5x generation latency (13.0s -> 19.0s/question). See
+`docs/architecture.md`/`PROJECT_JOURNAL.md` for the full comparison,
+including a same-day correction to #13's original write-up of that
+hallucination (it was checked against the wrong context the first time).
 
 ### Recording a new experiment
 

@@ -361,6 +361,117 @@ concrete findings (including a documented false-negative gap in the
 `vision_behavior_breakdown` heuristic, caught by reading actual model
 answers rather than trusting the aggregate counts).
 
+### RAGAS run on the multimodal gold set (experiment_013)
+
+The first RAGAS run against the rewritten 84-question
+`techfusion_gold.jsonl` (all prior RAGAS records — experiments 7/8 — judged
+the older 46/62-question schema, pre-multimodal). Scored a **stratified
+15-question sample**, `data/eval/techfusion_gold_v2_ragas_sample15.jsonl`,
+built by `scripts/build_ragas_sample15.py` (deterministic, file-order
+selection — not random): one question from each of the 9 authored
+`content_type` buckets (`architecture_diagram`, `chart`, `table_image`,
+`image_only`, `caption_answerable`, `relationship_aware`, `text_only`,
+`text_plus_image`, `unanswerable_visual`), plus 6 from the plain/
+uncategorized bucket spanning `question_type` (single_document/multi_hop),
+`difficulty` (easy/medium/hard), and one `unanswerable=true` case — so the
+sample represents both the multimodal edge cases and the 62/84-question
+ordinary-retrieval majority. All fields pass through untouched from the
+source gold file; the old `techfusion_gold_ragas_sample15.jsonl` (pre-
+multimodal schema) is untouched.
+
+Run against Experiment B's config (prompt v2, hybrid+RRF, relationship
+expansion on) with judge `openai`/`gpt-4o-mini`. Recorded as
+`experiment_013`. Actual cost: 240 judge calls, ~192K input / ~18K output
+tokens, roughly $0.04 — well under the pre-run estimate.
+
+**Aggregate RAGAS scores**: faithfulness 0.700, answer_relevancy 0.558,
+context_precision 0.259, context_recall 0.411, answer_correctness 0.409.
+Deterministic Recall@5/@10/MRR/answer_quality on this same sample
+(0.800/0.867/0.697/0.328) read noticeably lower than experiment_011/012's
+84-question numbers — **not a generation regression**: the 15-question
+sample is deliberately weighted toward the hardest and most
+vision-dependent questions in the gold set (9 of 15 rows are the
+specialty multimodal buckets, several `requires_vision=true`), so it isn't
+directly comparable to the full-set numbers.
+
+Two concrete hand-inspected findings from the per-question detail:
+- **A genuine hallucination under a retrieval miss, correctly caught —
+  and corrected below.** For "How long are idempotency keys retained?"
+  (gold: "24 hours", relevant document
+  `knowledge_base/engineering/api-development-guidelines.md`),
+  `qwen2.5:1.5b` answered "annually" — faithfulness scored `0.0`,
+  answer_correctness `0.189`. **Correction**: an earlier draft of this
+  section claimed the retrieved context "literally contains
+  'Idempotency-Key for 24 hours'" — that was checked against the gold
+  file's `reference_contexts` (ground truth), not against what was
+  actually retrieved, and was wrong. The actual `generation_sources` for
+  this question never included the correct document at all (a genuine
+  Recall/retrieval miss, bucket C in the A/B/C split) — confirmed by
+  re-inspecting the raw per-example sources directly. So the failure is
+  really two layered problems: retrieval missed the right document, *and*
+  `qwen2.5:1.5b` then violated prompt v2's rule 3 ("if the context does
+  not contain enough information to answer, say clearly that you don't
+  know") by fabricating "annually" instead of admitting it couldn't
+  answer. `experiment_014` (below) reruns the identical question under
+  the identical retrieval miss with `qwen2.5:3b`, which correctly
+  answered "The context provided does not contain any information about
+  the retention period for idempotency keys" — same missing evidence,
+  correct refusal instead of a hallucination.
+- **`context_precision`/`context_recall` read nearly 0 for most
+  `requires_vision=true` questions** (e.g. the `architecture_diagram`,
+  `table_image`, `relationship_aware` rows), even where `faithfulness` is
+  high (the model correctly declined to fabricate a number). This is
+  RAGAS's LLM judge scoring precision/recall against `expected_answer`
+  text, not against `reference_contexts`/`relevant_images` — a
+  text-only-mode question whose gold answer describes a visual fact the
+  model correctly refused to state will score low on these two metrics by
+  construction, independent of whether the refusal itself was correct
+  (see `vision_behavior_breakdown` above for the metric that actually
+  judges refusal-vs-hallucination). Not a RAGAS bug, but a reason not to
+  read `context_precision`/`context_recall` in isolation for this gold
+  set's vision-required rows.
+
+### Bigger local model: qwen2.5:3b vs qwen2.5:1.5b (experiment_014)
+
+Prompted by experiment_013's hallucination finding above, and by the
+question of whether that pointed at a prompt gap (needing a `v3`) or a
+model-capability ceiling: `config/experiments/multimodal-v2-relationship-qwen3b.yaml`
+is identical to Experiment B (`multimodal-v2-relationship.yaml`) except
+`generation.model_name: qwen2.5:3b`. Run as a full 84-question
+deterministic eval (`rag.eval.run_eval`, no RAGAS/hosted API — local
+Ollama only), recorded as `experiment_014`.
+
+Retrieval-side metrics (Recall@5/@10, MRR, `supporting_context_hit_rate`,
+`relevant_image_hit_rate`) came out **identical** to `experiment_012`
+(0.911/0.946/0.824/0.788/0.842) — expected, since retrieval config is
+unchanged and generation model choice can't affect what gets retrieved.
+`answer_quality` (the crude keyword-overlap heuristic) rose modestly,
+0.418 → 0.452, and the idempotency-key question specifically flipped from
+a hallucination to a correct refusal (see above) — consistent with the
+bigger model more reliably following prompt v2's rule 3, not with a
+prompt-wording gap. The cost: generation latency rose substantially,
+13.0s → 19.0s mean per question (total 13.7s → 19.2s), roughly 1.5x.
+
+Two things not measured directly and worth flagging rather than
+overclaiming: (1) this is one hand-verified example, not a systematic
+faithfulness comparison across all 84 questions — a real answer would
+need either a second RAGAS pass (paid, not run here) or a manual review
+pass over both models' answers; (2) `retrieval_latency_ms` read
+notably different between experiment_012 (710ms) and experiment_014
+(240ms) despite identical retrieval config and the same underlying
+index — plausible causes (DB connection/cache warmth, background system
+load) weren't isolated, so don't read that gap as caused by the
+generation model swap.
+
+**Conclusion carried into the prompt-v3 question**: hold off on a new
+prompt version for now. The one concrete failure available pointed at
+model capability (a small model fabricating an answer instead of
+admitting uncertainty), and swapping to a bigger local model — already
+available, zero additional cost — fixed that specific case without
+touching the prompt. If a broader faithfulness problem shows up under a
+full-scale RAGAS run or manual review, revisit; until then, model choice
+is a cheaper lever than prompt iteration for this failure mode.
+
 ### Production considerations (documented, not built)
 
 Hosted vision API cost, image size/type limits, retries/backoff, rate
