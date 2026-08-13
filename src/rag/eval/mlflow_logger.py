@@ -8,6 +8,7 @@ experiment becomes an MLflow run, not just a JSON/YAML file on disk.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +36,52 @@ _PARAM_FIELDS = [
     "ragas_judge_provider",
     "ragas_judge_model",
 ]
+
+
+def _slug(value: Any, default: str = "na") -> str:
+    """Lowercase, hyphen-joined, filesystem/URL-safe token from `value`.
+
+    ``None``/empty -> `default` so a missing field never collapses the
+    run name into a double-underscore or a leading/trailing separator.
+    """
+    if value in (None, ""):
+        return default
+    text = re.sub(r"[^a-zA-Z0-9_]+", "-", str(value)).strip("-").lower()
+    return text or default
+
+
+def build_run_name(record: dict[str, Any]) -> str:
+    """Build a human-readable MLflow run name from a record.
+
+    E.g. ``experiment_015_qwen2-5-3b_v2_hybrid_rel-exp``. Never changes
+    the MLflow-assigned run UUID (`run.info.run_id`) --
+    `run_name` is purely the display label passed to `mlflow.start_run`.
+    Built from fields already present in `build_experiment_record`'s
+    schema (`scripts/record_experiment.py`), so no new record fields are
+    required; a record missing a field (e.g. an older, pre-multimodal
+    experiment with no `relationship_expansion_enabled`) just omits that
+    segment rather than failing.
+
+    Parameters
+    ----------
+    record : dict[str, Any]
+        A flat `experiments/results/*.json`-shaped record.
+
+    Returns
+    -------
+    str
+        An underscore-joined, MLflow-run-name-safe slug.
+    """
+    segments = [
+        _slug(record.get("experiment_id"), default="run"),
+        _slug(record.get("generation_model")),
+        _slug(record.get("prompt_version")),
+        _slug(record.get("retrieval_provider")),
+    ]
+    if record.get("relationship_expansion_enabled"):
+        segments.append("rel-exp")
+    return "_".join(s for s in segments if s != "na")
+
 
 # Every numeric field in the record schema.
 _METRIC_FIELDS = [
@@ -104,11 +151,17 @@ def log_experiment(
     mlflow.set_tracking_uri(mlflow_config.tracking_uri)
     mlflow.set_experiment(mlflow_config.experiment_name)
 
-    with mlflow.start_run(run_name=record.get("experiment_id")) as run:
+    with mlflow.start_run(run_name=build_run_name(record)) as run:
         mlflow.set_tags(
             {
                 "experiment_id": record.get("experiment_id") or "",
                 "label": record.get("label") or "",
+                "generation_model": record.get("generation_model") or "",
+                "prompt_version": record.get("prompt_version") or "",
+                "retrieval_provider": record.get("retrieval_provider") or "",
+                "reranker_provider": record.get("reranker_provider") or "",
+                "relationship_expansion": str(bool(record.get("relationship_expansion_enabled"))),
+                "dataset_id": record.get("dataset_id") or "",
             }
         )
         for field in _PARAM_FIELDS:

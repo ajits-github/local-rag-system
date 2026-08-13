@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 
 from rag.config import MLflowConfig
-from rag.eval.mlflow_logger import log_experiment
+from rag.eval.mlflow_logger import build_run_name, log_experiment
 
 
 class _FakeRunInfo:
@@ -175,7 +175,83 @@ def test_log_experiment_tags_experiment_id_and_label(monkeypatch: pytest.MonkeyP
 
     assert fake.tags["experiment_id"] == "experiment_042"
     assert fake.tags["label"] == "my label"
-    assert fake.run_names == ["experiment_042"]
+
+
+def test_log_experiment_uses_readable_run_name(monkeypatch: pytest.MonkeyPatch):
+    """The MLflow run_name is a readable slug, not the bare experiment_id."""
+    fake = _install_fake_mlflow(monkeypatch)
+    config = MLflowConfig()
+    record = _record(
+        experiment_id="experiment_015",
+        generation_model="qwen2.5:3b",
+        prompt_version="v2",
+        retrieval_provider="hybrid",
+        relationship_expansion_enabled=True,
+    )
+
+    log_experiment(record, config)
+
+    assert fake.run_names == [build_run_name(record)]
+    assert fake.run_names[0] != "experiment_015"
+    assert "experiment_015" in fake.run_names[0]
+    assert "rel-exp" in fake.run_names[0]
+
+
+def test_log_experiment_sets_new_provenance_tags(monkeypatch: pytest.MonkeyPatch):
+    """generation_model/prompt_version/retrieval/reranker/relationship/dataset are tagged."""
+    fake = _install_fake_mlflow(monkeypatch)
+    config = MLflowConfig()
+    record = _record(
+        generation_model="qwen2.5:3b",
+        prompt_version="v2",
+        retrieval_provider="hybrid",
+        reranker_provider="none",
+        relationship_expansion_enabled=True,
+        dataset_id="techfusion",
+    )
+
+    log_experiment(record, config)
+
+    assert fake.tags["generation_model"] == "qwen2.5:3b"
+    assert fake.tags["prompt_version"] == "v2"
+    assert fake.tags["retrieval_provider"] == "hybrid"
+    assert fake.tags["reranker_provider"] == "none"
+    assert fake.tags["relationship_expansion"] == "True"
+    assert fake.tags["dataset_id"] == "techfusion"
+
+
+def test_log_experiment_provenance_tags_default_safely_for_older_records(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A pre-multimodal record (no relationship_expansion_enabled/dataset_id) tags cleanly."""
+    fake = _install_fake_mlflow(monkeypatch)
+    config = MLflowConfig()
+
+    log_experiment(_record(), config)  # no relationship_expansion_enabled/dataset_id override
+
+    assert fake.tags["relationship_expansion"] == "False"
+    assert fake.tags["dataset_id"] == ""
+
+
+def test_build_run_name_omits_missing_segments():
+    """A record missing optional fields still produces a valid, readable run name."""
+    name = build_run_name({"experiment_id": "experiment_001"})
+    assert name == "experiment_001"
+
+
+def test_build_run_name_includes_rel_exp_only_when_enabled():
+    """The 'rel-exp' segment appears only when relationship_expansion_enabled is truthy."""
+    base = {
+        "experiment_id": "experiment_011",
+        "generation_model": "qwen2.5:1.5b",
+        "prompt_version": "v2",
+        "retrieval_provider": "hybrid",
+    }
+    without = build_run_name(base)
+    with_expansion = build_run_name({**base, "relationship_expansion_enabled": True})
+
+    assert "rel-exp" not in without
+    assert with_expansion == f"{without}_rel-exp"
 
 
 def test_log_experiment_attaches_existing_artifact_paths(
