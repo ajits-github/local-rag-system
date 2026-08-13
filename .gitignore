@@ -46,6 +46,9 @@ experiments/reports/experiment_008_ragas_full_report.md
 # Interview prep (private)
 ISSUES.md
 
+# Local prompt drafts (private)
+.claude-prompts/
+
 # IDE
 .vscode/
 .idea/
