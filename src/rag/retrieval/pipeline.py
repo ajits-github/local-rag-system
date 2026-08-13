@@ -12,7 +12,7 @@ from rag.generation.base import LLM
 from rag.prompts.loader import PromptTemplate, load_prompt_template_from_config
 from rag.rerankers.base import Reranker
 from rag.retrieval.fusion import reciprocal_rank_fusion
-from rag.schemas import Chunk, SearchResult
+from rag.schemas import Chunk, RetrievalAttribution, SearchResult
 from rag.vectorstore.base import VectorStore
 
 
@@ -155,6 +155,56 @@ class RetrievalPipeline:
         if self._config.retrieval.relationship_expansion.enabled:
             return self._expand_with_relationships(reranked)
         return reranked
+
+    def retrieve_attribution(
+        self,
+        query: str,
+        filters: dict[str, Any] | None = None,
+        top_k: int | None = None,
+    ) -> RetrievalAttribution:
+        """Return dense, BM25, and RRF-fused rankings independently, before rerank/expansion.
+
+        An observability-only sibling to `retrieve()`, not a replacement
+        for it: `retrieve()`'s own behavior (including which provider it
+        uses, reranking, and relationship expansion) is completely
+        unchanged by this method's existence. Always computes *both*
+        dense and BM25 -- unlike `retrieve()`, which only computes BM25
+        when `config.retrieval.provider == "hybrid"` -- so attribution
+        can answer "what would each retriever alone have found" even
+        when production is configured for `"dense"`. Uses
+        `config.retrieval.hybrid.rrf_k` for fusion regardless of
+        `config.retrieval.provider`, since that value has a config
+        default even when hybrid isn't the active provider.
+
+        Never calls `self._reranker` or `_expand_with_relationships` --
+        the returned rankings are exactly what dense search, BM25 search,
+        and RRF fusion produced, so a `NoOpReranker`'s `results[:top_n]`
+        truncation and relationship expansion can never influence them.
+
+        Parameters
+        ----------
+        query : str
+            The user's query text.
+        filters : dict[str, Any] | None, optional
+            Exact-match metadata filters, passed through to both
+            `search`/`search_keyword` identically.
+        top_k : int | None, optional
+            Number of results fetched *per retriever* (not a combined
+            total); defaults to `config.retrieval.top_k`.
+
+        Returns
+        -------
+        RetrievalAttribution
+            `dense`/`bm25`/`fused`, each independently ranked best-first.
+        """
+        query_embedding = self._embedder.embed_query(query)
+        fetch_k = top_k or self._config.retrieval.top_k
+        dense_results = self._vectorstore.search(query_embedding, top_k=fetch_k, filters=filters)
+        bm25_results = self._vectorstore.search_keyword(query, top_k=fetch_k, filters=filters)
+        fused_results = reciprocal_rank_fusion(
+            [dense_results, bm25_results], k=self._config.retrieval.hybrid.rrf_k
+        )
+        return RetrievalAttribution(dense=dense_results, bm25=bm25_results, fused=fused_results)
 
     def _expand_with_relationships(self, results: list[SearchResult]) -> list[SearchResult]:
         """Append parent/neighbor context for each result, per `retrieval.relationship_expansion`.

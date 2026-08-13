@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 
 from rag.config import load_config
 from rag.prompts.loader import PromptTemplate
+from rag.retrieval.fusion import reciprocal_rank_fusion
 from rag.retrieval.pipeline import RetrievalPipeline
 from rag.schemas import Chunk, ChunkMetadata, SearchResult
 
@@ -262,3 +263,109 @@ def test_retrieve_hybrid_uses_configured_rrf_k():
     fused = pipeline.retrieve("query", top_k=5, rerank_top_n=5)
 
     assert fused[0].score == 2 * (1.0 / 2)  # k=1, rank=1 in both lists: 2 * 1/(1+1)
+
+
+class _RerankerSpy:
+    """Reranker double recording whether rerank() was ever invoked."""
+
+    def __init__(self) -> None:
+        """Start with no recorded calls."""
+        self.called = False
+
+    def rerank(self, query: str, results: list[SearchResult], top_n: int) -> list[SearchResult]:
+        """Record that rerank() ran, then truncate like a real reranker would."""
+        self.called = True
+        return results[:top_n]
+
+
+def test_retrieve_attribution_dense_matches_vectorstore_search():
+    """attribution.dense is exactly what vectorstore.search() returned."""
+    dense_results = [_make_result("d1", "Dense one.", source="a.md", score=0.9)]
+    keyword_results = [_make_result("k1", "Keyword one.", source="b.md", score=3.0)]
+    vectorstore = FakeVectorStore(dense_results, keyword_results)
+    pipeline = RetrievalPipeline(
+        load_config(), vectorstore=vectorstore, embedder=FakeEmbedder(), reranker=FakeReranker()
+    )
+
+    attribution = pipeline.retrieve_attribution("query")
+
+    assert [r.chunk.id for r in attribution.dense] == ["d1"]
+
+
+def test_retrieve_attribution_bm25_matches_vectorstore_search_keyword():
+    """attribution.bm25 is exactly what vectorstore.search_keyword() returned."""
+    dense_results = [_make_result("d1", "Dense one.", source="a.md", score=0.9)]
+    keyword_results = [_make_result("k1", "Keyword one.", source="b.md", score=3.0)]
+    vectorstore = FakeVectorStore(dense_results, keyword_results)
+    pipeline = RetrievalPipeline(
+        load_config(), vectorstore=vectorstore, embedder=FakeEmbedder(), reranker=FakeReranker()
+    )
+
+    attribution = pipeline.retrieve_attribution("query")
+
+    assert [r.chunk.id for r in attribution.bm25] == ["k1"]
+
+
+def test_retrieve_attribution_fused_matches_manual_rrf():
+    """attribution.fused equals reciprocal_rank_fusion() over the same dense/bm25 lists."""
+    dense_results = [
+        _make_result("d1", "Dense one.", source="a.md", score=0.9),
+        _make_result("shared", "Shared.", source="s.md", score=0.5),
+    ]
+    keyword_results = [
+        _make_result("shared", "Shared.", source="s.md", score=3.0),
+        _make_result("k1", "Keyword one.", source="b.md", score=2.0),
+    ]
+    vectorstore = FakeVectorStore(dense_results, keyword_results)
+    config = load_config().model_copy(deep=True)
+    pipeline = RetrievalPipeline(
+        config, vectorstore=vectorstore, embedder=FakeEmbedder(), reranker=FakeReranker()
+    )
+
+    attribution = pipeline.retrieve_attribution("query", top_k=10)
+
+    expected = reciprocal_rank_fusion(
+        [dense_results, keyword_results], k=config.retrieval.hybrid.rrf_k
+    )
+    assert [r.chunk.id for r in attribution.fused] == [r.chunk.id for r in expected]
+
+
+def test_retrieve_attribution_never_calls_reranker():
+    """retrieve_attribution() never truncates via the reranker, unlike retrieve()."""
+    dense_results = [
+        _make_result(f"d{i}", f"Dense {i}.", source="a.md", score=1.0) for i in range(5)
+    ]
+    vectorstore = FakeVectorStore(dense_results, dense_results)
+    spy = _RerankerSpy()
+    config = load_config().model_copy(deep=True)
+    config.retrieval.rerank_top_n = 1  # would aggressively truncate if applied
+    pipeline = RetrievalPipeline(
+        config, vectorstore=vectorstore, embedder=FakeEmbedder(), reranker=spy
+    )
+
+    attribution = pipeline.retrieve_attribution("query", top_k=5)
+
+    assert spy.called is False
+    assert len(attribution.dense) == 5
+
+
+def test_retrieve_attribution_never_expands_relationships():
+    """retrieve_attribution() never calls relationship expansion, even when enabled.
+
+    FakeVectorStore doesn't implement get_chunks_by_ids/get_chunks_by_section
+    at all, so this would raise AttributeError if expansion ran -- not
+    raising, plus every result staying origin="retrieved", is the proof.
+    """
+    dense_results = [_make_result("d1", "Dense one.", source="a.md", score=0.9)]
+    vectorstore = FakeVectorStore(dense_results, dense_results)
+    config = load_config().model_copy(deep=True)
+    config.retrieval.relationship_expansion.enabled = True
+    pipeline = RetrievalPipeline(
+        config, vectorstore=vectorstore, embedder=FakeEmbedder(), reranker=FakeReranker()
+    )
+
+    attribution = pipeline.retrieve_attribution("query")
+
+    assert all(r.origin == "retrieved" for r in attribution.dense)
+    assert all(r.origin == "retrieved" for r in attribution.bm25)
+    assert all(r.origin == "retrieved" for r in attribution.fused)

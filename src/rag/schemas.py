@@ -118,3 +118,20 @@ class SearchResult(BaseModel):
     score: float
     origin: Literal["retrieved", "expanded"] = "retrieved"
     expanded_from: str | None = None
+
+
+class RetrievalAttribution(BaseModel):
+    """Raw, per-retriever rankings from one query, before rerank/expansion.
+
+    Produced by `RetrievalPipeline.retrieve_attribution` (see that
+    method's docstring) — purely additive/observability: nothing in the
+    production `retrieve()`/`answer()` path constructs or consumes this.
+    Each list is independently ranked (`dense`/`bm25` best-first from
+    their own retriever; `fused` best-first by RRF score), and none of
+    them have been through `Reranker.rerank` (so no `rerank_top_n`
+    truncation) or relationship expansion.
+    """
+
+    dense: list[SearchResult]
+    bm25: list[SearchResult]
+    fused: list[SearchResult]

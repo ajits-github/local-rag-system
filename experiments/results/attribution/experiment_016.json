@@ -1,0 +1,2125 @@
+{
+  "experiment_id": "experiment_016",
+  "label": "dense vs BM25 vs hybrid retrieval attribution (84-question TechFusion gold set)",
+  "record_type": "retrieval_attribution",
+  "generated_at": "2026-08-13T16:33:17.875029+00:00",
+  "config": {
+    "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
+    "rrf_k": 60,
+    "retrieval_k": 10
+  },
+  "dataset_id": "techfusion",
+  "num_examples": 84,
+  "retrieval_k": 10,
+  "note": "Ranks and Recall/Hit-Rate/MRR are the only cross-retriever comparison made here -- raw dense cosine-similarity, BM25, and RRF scores are on different scales and are never compared directly (see fusion.py).",
+  "metrics_by_retriever": {
+    "dense": {
+      "recall@5": 0.8988095238095238,
+      "recall@10": 0.9523809523809523,
+      "hit_rate@5": 0.9166666666666666,
+      "hit_rate@10": 0.9642857142857143,
+      "mrr": 0.7970379818594104
+    },
+    "bm25": {
+      "recall@5": 0.8392857142857143,
+      "recall@10": 0.9047619047619048,
+      "hit_rate@5": 0.8571428571428571,
+      "hit_rate@10": 0.9166666666666666,
+      "mrr": 0.7414021164021164
+    },
+    "hybrid": {
+      "recall@5": 0.9107142857142857,
+      "recall@10": 0.9464285714285714,
+      "hit_rate@5": 0.9285714285714286,
+      "hit_rate@10": 0.9523809523809523,
+      "mrr": 0.8250228937728937
+    }
+  },
+  "contribution_buckets": {
+    "both_success": 77,
+    "neither_success": 3,
+    "dense_only_success": 4
+  },
+  "rrf_impact": {
+    "degraded": 6,
+    "unchanged": 69,
+    "not_applicable": 3,
+    "rescued": 4,
+    "improved": 2
+  },
+  "reference_context_by_retriever": {
+    "dense": {
+      "buckets": {
+        "B": 20,
+        "A": 46,
+        "C": 3,
+        "not_applicable": 15
+      },
+      "supporting_context_hit_rate": 0.696969696969697
+    },
+    "bm25": {
+      "buckets": {
+        "B": 23,
+        "A": 42,
+        "C": 7,
+        "not_applicable": 12
+      },
+      "supporting_context_hit_rate": 0.6461538461538462
+    },
+    "hybrid": {
+      "buckets": {
+        "B": 15,
+        "A": 51,
+        "C": 3,
+        "not_applicable": 15
+      },
+      "supporting_context_hit_rate": 0.7727272727272727
+    }
+  },
+  "breakdowns": {
+    "content_type": {
+      "architecture_diagram": {
+        "count": 1,
+        "by_retriever": {
+          "dense": {
+            "recall@5": 1.0,
+            "recall@10": 1.0,
+            "hit_rate@5": 1.0
+          },
+          "bm25": {
+            "recall@5": 0.0,
+            "recall@10": 0.0,
+            "hit_rate@5": 0.0
+          },
+          "hybrid": {
+            "recall@5": 0.0,
+            "recall@10": 1.0,
+            "hit_rate@5": 0.0
+          }
+        }
+      },
+      "caption_answerable": {
+        "count": 4,
+        "by_retriever": {
+          "dense": {
+            "recall@5": 1.0,
+            "recall@10": 1.0,
+            "hit_rate@5": 1.0
+          },
+          "bm25": {
+            "recall@5": 1.0,
+            "recall@10": 1.0,
+            "hit_rate@5": 1.0
+          },
+          "hybrid": {
+            "recall@5": 1.0,
+            "recall@10": 1.0,
+            "hit_rate@5": 1.0
+          }
+        }
+      },
+      "chart": {
+        "count": 1,
+        "by_retriever": {
+          "dense": {
+            "recall@5": 1.0,
+            "recall@10": 1.0,
+            "hit_rate@5": 1.0
+          },
+          "bm25": {
+            "recall@5": 1.0,
+            "recall@10": 1.0,
+            "hit_rate@5": 1.0
+          },
+          "hybrid": {
+            "recall@5": 1.0,
+            "recall@10": 1.0,
+            "hit_rate@5": 1.0
+          }
+        }
+      },
+      "image_only": {
+        "count": 2,
+        "by_retriever": {
+          "dense": {
+            "recall@5": 0.5,
+            "recall@10": 1.0,
+            "hit_rate@5": 0.5
+          },
+          "bm25": {
+            "recall@5": 0.5,
+            "recall@10": 1.0,
+            "hit_rate@5": 0.5
+          },
+          "hybrid": {
+            "recall@5": 1.0,
+            "recall@10": 1.0,
+            "hit_rate@5": 1.0
+          }
+        }
+      },
+      "relationship_aware": {
+        "count": 3,
+        "by_retriever": {
+          "dense": {
+            "recall@5": 1.0,
+            "recall@10": 1.0,
+            "hit_rate@5": 1.0
+          },
+          "bm25": {
+            "recall@5": 1.0,
+            "recall@10": 1.0,
+            "hit_rate@5": 1.0
+          },
+          "hybrid": {
+            "recall@5": 1.0,
+            "recall@10": 1.0,
+            "hit_rate@5": 1.0
+          }
+        }
+      },
+      "table_image": {
+        "count": 1,
+        "by_retriever": {
+          "dense": {
+            "recall@5": 1.0,
+            "recall@10": 1.0,
+            "hit_rate@5": 1.0
+          },
+          "bm25": {
+            "recall@5": 1.0,
+            "recall@10": 1.0,
+            "hit_rate@5": 1.0
+          },
+          "hybrid": {
+            "recall@5": 1.0,
+            "recall@10": 1.0,
+            "hit_rate@5": 1.0
+          }
+        }
+      },
+      "text_only": {
+        "count": 3,
+        "by_retriever": {
+          "dense": {
+            "recall@5": 1.0,
+            "recall@10": 1.0,
+            "hit_rate@5": 1.0
+          },
+          "bm25": {
+            "recall@5": 0.6666666666666666,
+            "recall@10": 1.0,
+            "hit_rate@5": 0.6666666666666666
+          },
+          "hybrid": {
+            "recall@5": 1.0,
+            "recall@10": 1.0,
+            "hit_rate@5": 1.0
+          }
+        }
+      },
+      "text_plus_image": {
+        "count": 4,
+        "by_retriever": {
+          "dense": {
+            "recall@5": 1.0,
+            "recall@10": 1.0,
+            "hit_rate@5": 1.0
+          },
+          "bm25": {
+            "recall@5": 1.0,
+            "recall@10": 1.0,
+            "hit_rate@5": 1.0
+          },
+          "hybrid": {
+            "recall@5": 1.0,
+            "recall@10": 1.0,
+            "hit_rate@5": 1.0
+          }
+        }
+      },
+      "unanswerable_visual": {
+        "count": 3,
+        "by_retriever": {
+          "dense": {
+            "recall@5": 0.6666666666666666,
+            "recall@10": 0.6666666666666666,
+            "hit_rate@5": 0.6666666666666666
+          },
+          "bm25": {
+            "recall@5": 0.6666666666666666,
+            "recall@10": 0.6666666666666666,
+            "hit_rate@5": 0.6666666666666666
+          },
+          "hybrid": {
+            "recall@5": 0.6666666666666666,
+            "recall@10": 0.6666666666666666,
+            "hit_rate@5": 0.6666666666666666
+          }
+        }
+      },
+      "uncategorized": {
+        "count": 62,
+        "by_retriever": {
+          "dense": {
+            "recall@5": 0.8951612903225806,
+            "recall@10": 0.9516129032258065,
+            "hit_rate@5": 0.9193548387096774
+          },
+          "bm25": {
+            "recall@5": 0.8467741935483871,
+            "recall@10": 0.9032258064516129,
+            "hit_rate@5": 0.8709677419354839
+          },
+          "hybrid": {
+            "recall@5": 0.9112903225806451,
+            "recall@10": 0.9435483870967742,
+            "hit_rate@5": 0.9354838709677419
+          }
+        }
+      }
+    },
+    "question_type": {
+      "multi_hop": {
+        "count": 14,
+        "by_retriever": {
+          "dense": {
+            "recall@5": 0.8928571428571429,
+            "recall@10": 0.9285714285714286,
+            "hit_rate@5": 1.0
+          },
+          "bm25": {
+            "recall@5": 0.8214285714285714,
+            "recall@10": 0.8571428571428571,
+            "hit_rate@5": 0.9285714285714286
+          },
+          "hybrid": {
+            "recall@5": 0.8928571428571429,
+            "recall@10": 0.9642857142857143,
+            "hit_rate@5": 1.0
+          }
+        }
+      },
+      "single_document": {
+        "count": 70,
+        "by_retriever": {
+          "dense": {
+            "recall@5": 0.9,
+            "recall@10": 0.9571428571428572,
+            "hit_rate@5": 0.9
+          },
+          "bm25": {
+            "recall@5": 0.8428571428571429,
+            "recall@10": 0.9142857142857143,
+            "hit_rate@5": 0.8428571428571429
+          },
+          "hybrid": {
+            "recall@5": 0.9142857142857143,
+            "recall@10": 0.9428571428571428,
+            "hit_rate@5": 0.9142857142857143
+          }
+        }
+      }
+    },
+    "difficulty": {
+      "easy": {
+        "count": 23,
+        "by_retriever": {
+          "dense": {
+            "recall@5": 0.8913043478260869,
+            "recall@10": 0.9782608695652174,
+            "hit_rate@5": 0.9130434782608695
+          },
+          "bm25": {
+            "recall@5": 0.8478260869565217,
+            "recall@10": 0.8913043478260869,
+            "hit_rate@5": 0.8695652173913043
+          },
+          "hybrid": {
+            "recall@5": 0.8695652173913043,
+            "recall@10": 0.9565217391304348,
+            "hit_rate@5": 0.9130434782608695
+          }
+        }
+      },
+      "hard": {
+        "count": 31,
+        "by_retriever": {
+          "dense": {
+            "recall@5": 0.8709677419354839,
+            "recall@10": 0.9193548387096774,
+            "hit_rate@5": 0.9032258064516129
+          },
+          "bm25": {
+            "recall@5": 0.8225806451612904,
+            "recall@10": 0.8709677419354839,
+            "hit_rate@5": 0.8387096774193549
+          },
+          "hybrid": {
+            "recall@5": 0.8870967741935484,
+            "recall@10": 0.9193548387096774,
+            "hit_rate@5": 0.9032258064516129
+          }
+        }
+      },
+      "medium": {
+        "count": 30,
+        "by_retriever": {
+          "dense": {
+            "recall@5": 0.9333333333333333,
+            "recall@10": 0.9666666666666667,
+            "hit_rate@5": 0.9333333333333333
+          },
+          "bm25": {
+            "recall@5": 0.85,
+            "recall@10": 0.95,
+            "hit_rate@5": 0.8666666666666667
+          },
+          "hybrid": {
+            "recall@5": 0.9666666666666667,
+            "recall@10": 0.9666666666666667,
+            "hit_rate@5": 0.9666666666666667
+          }
+        }
+      }
+    },
+    "relationship_aware": {
+      "other": {
+        "count": 77,
+        "by_retriever": {
+          "dense": {
+            "recall@5": 0.8896103896103896,
+            "recall@10": 0.948051948051948,
+            "hit_rate@5": 0.9090909090909091
+          },
+          "bm25": {
+            "recall@5": 0.8246753246753247,
+            "recall@10": 0.8961038961038961,
+            "hit_rate@5": 0.8441558441558441
+          },
+          "hybrid": {
+            "recall@5": 0.9025974025974026,
+            "recall@10": 0.9415584415584416,
+            "hit_rate@5": 0.922077922077922
+          }
+        }
+      },
+      "relationship_aware": {
+        "count": 7,
+        "by_retriever": {
+          "dense": {
+            "recall@5": 1.0,
+            "recall@10": 1.0,
+            "hit_rate@5": 1.0
+          },
+          "bm25": {
+            "recall@5": 1.0,
+            "recall@10": 1.0,
+            "hit_rate@5": 1.0
+          },
+          "hybrid": {
+            "recall@5": 1.0,
+            "recall@10": 1.0,
+            "hit_rate@5": 1.0
+          }
+        }
+      }
+    }
+  },
+  "per_example": [
+    {
+      "question": "What is DocuFlow?",
+      "relevant_documents": [
+        "knowledge_base/architecture/system-overview.md"
+      ],
+      "content_type": null,
+      "question_type": "single_document",
+      "difficulty": "easy",
+      "requires_relationship_expansion": false,
+      "dense_rank": 1,
+      "bm25_rank": 8,
+      "fused_rank": 2,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "degraded",
+      "reference_context_recovered": {
+        "dense": false,
+        "bm25": false,
+        "hybrid": false
+      }
+    },
+    {
+      "question": "Which AWS region hosts production?",
+      "relevant_documents": [
+        "knowledge_base/architecture/system-overview.md"
+      ],
+      "content_type": null,
+      "question_type": "single_document",
+      "difficulty": "easy",
+      "requires_relationship_expansion": false,
+      "dense_rank": 1,
+      "bm25_rank": 1,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": true,
+        "bm25": true,
+        "hybrid": true
+      }
+    },
+    {
+      "question": "What external API version prefix is used?",
+      "relevant_documents": [
+        "knowledge_base/engineering/api-development-guidelines.md"
+      ],
+      "content_type": null,
+      "question_type": "single_document",
+      "difficulty": "easy",
+      "requires_relationship_expansion": false,
+      "dense_rank": 1,
+      "bm25_rank": 1,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": true,
+        "bm25": true,
+        "hybrid": true
+      }
+    },
+    {
+      "question": "How long are idempotency keys retained?",
+      "relevant_documents": [
+        "knowledge_base/engineering/api-development-guidelines.md"
+      ],
+      "content_type": null,
+      "question_type": "single_document",
+      "difficulty": "medium",
+      "requires_relationship_expansion": false,
+      "dense_rank": null,
+      "bm25_rank": null,
+      "fused_rank": null,
+      "contribution_bucket": "neither_success",
+      "rrf_impact": "not_applicable",
+      "reference_context_recovered": {
+        "dense": null,
+        "bm25": null,
+        "hybrid": null
+      }
+    },
+    {
+      "question": "What does HTTP 202 mean in TechFusion APIs?",
+      "relevant_documents": [
+        "knowledge_base/engineering/api-development-guidelines.md"
+      ],
+      "content_type": null,
+      "question_type": "single_document",
+      "difficulty": "easy",
+      "requires_relationship_expansion": false,
+      "dense_rank": 1,
+      "bm25_rank": 1,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": false,
+        "bm25": false,
+        "hybrid": false
+      }
+    },
+    {
+      "question": "Which Python version and tools are standard?",
+      "relevant_documents": [
+        "knowledge_base/engineering/coding-standards.md"
+      ],
+      "content_type": null,
+      "question_type": "single_document",
+      "difficulty": "easy",
+      "requires_relationship_expansion": false,
+      "dense_rank": 1,
+      "bm25_rank": 2,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": false,
+        "bm25": false,
+        "hybrid": false
+      }
+    },
+    {
+      "question": "When are normal production releases allowed?",
+      "relevant_documents": [
+        "knowledge_base/engineering/deployment-process.md"
+      ],
+      "content_type": null,
+      "question_type": "single_document",
+      "difficulty": "medium",
+      "requires_relationship_expansion": false,
+      "dense_rank": 1,
+      "bm25_rank": 1,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": false,
+        "bm25": false,
+        "hybrid": false
+      }
+    },
+    {
+      "question": "What canary stages are used?",
+      "relevant_documents": [
+        "knowledge_base/engineering/deployment-process.md"
+      ],
+      "content_type": null,
+      "question_type": "single_document",
+      "difficulty": "medium",
+      "requires_relationship_expansion": false,
+      "dense_rank": 2,
+      "bm25_rank": 9,
+      "fused_rank": 3,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "degraded",
+      "reference_context_recovered": {
+        "dense": false,
+        "bm25": false,
+        "hybrid": false
+      }
+    },
+    {
+      "question": "When does the canary automatically roll back?",
+      "relevant_documents": [
+        "knowledge_base/engineering/deployment-process.md",
+        "knowledge_base/runbooks/failed-kubernetes-deployment.md"
+      ],
+      "content_type": null,
+      "question_type": "multi_hop",
+      "difficulty": "medium",
+      "requires_relationship_expansion": false,
+      "dense_rank": 1,
+      "bm25_rank": 1,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": true,
+        "bm25": true,
+        "hybrid": true
+      }
+    },
+    {
+      "question": "How should a required database column be introduced?",
+      "relevant_documents": [
+        "knowledge_base/engineering/database-migrations.md"
+      ],
+      "content_type": null,
+      "question_type": "single_document",
+      "difficulty": "medium",
+      "requires_relationship_expansion": false,
+      "dense_rank": 1,
+      "bm25_rank": 1,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": false,
+        "bm25": true,
+        "hybrid": true
+      }
+    },
+    {
+      "question": "When does a migration require Data Platform and SRE review?",
+      "relevant_documents": [
+        "knowledge_base/engineering/database-migrations.md"
+      ],
+      "content_type": null,
+      "question_type": "single_document",
+      "difficulty": "hard",
+      "requires_relationship_expansion": false,
+      "dense_rank": 1,
+      "bm25_rank": 1,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": true,
+        "bm25": true,
+        "hybrid": true
+      }
+    },
+    {
+      "question": "What are the document processing stages?",
+      "relevant_documents": [
+        "knowledge_base/architecture/document-processing-pipeline.md"
+      ],
+      "content_type": null,
+      "question_type": "single_document",
+      "difficulty": "easy",
+      "requires_relationship_expansion": false,
+      "dense_rank": 3,
+      "bm25_rank": 2,
+      "fused_rank": 2,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": false,
+        "bm25": false,
+        "hybrid": false
+      }
+    },
+    {
+      "question": "What are the default human-review thresholds?",
+      "relevant_documents": [
+        "knowledge_base/architecture/document-processing-pipeline.md"
+      ],
+      "content_type": null,
+      "question_type": "single_document",
+      "difficulty": "medium",
+      "requires_relationship_expansion": false,
+      "dense_rank": 1,
+      "bm25_rank": 1,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": true,
+        "bm25": true,
+        "hybrid": true
+      }
+    },
+    {
+      "question": "How many failed event attempts precede the dead-letter topic?",
+      "relevant_documents": [
+        "knowledge_base/architecture/document-processing-pipeline.md",
+        "knowledge_base/architecture/system-overview.md"
+      ],
+      "content_type": null,
+      "question_type": "multi_hop",
+      "difficulty": "easy",
+      "requires_relationship_expansion": false,
+      "dense_rank": 1,
+      "bm25_rank": 2,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": false,
+        "bm25": true,
+        "hybrid": true
+      }
+    },
+    {
+      "question": "Which stores are systems of record and which are rebuildable?",
+      "relevant_documents": [
+        "knowledge_base/architecture/data-storage.md",
+        "knowledge_base/operations/backup-and-recovery.md"
+      ],
+      "content_type": null,
+      "question_type": "multi_hop",
+      "difficulty": "hard",
+      "requires_relationship_expansion": false,
+      "dense_rank": 1,
+      "bm25_rank": 2,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": false,
+        "bm25": false,
+        "hybrid": false
+      }
+    },
+    {
+      "question": "What retrieval pipeline does the RAG service use?",
+      "relevant_documents": [
+        "knowledge_base/architecture/rag-service-architecture.md"
+      ],
+      "content_type": null,
+      "question_type": "single_document",
+      "difficulty": "hard",
+      "requires_relationship_expansion": false,
+      "dense_rank": 2,
+      "bm25_rank": 2,
+      "fused_rank": 2,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": true,
+        "bm25": true,
+        "hybrid": true
+      }
+    },
+    {
+      "question": "What are the RAG release gates?",
+      "relevant_documents": [
+        "knowledge_base/architecture/rag-service-architecture.md"
+      ],
+      "content_type": null,
+      "question_type": "single_document",
+      "difficulty": "hard",
+      "requires_relationship_expansion": false,
+      "dense_rank": 1,
+      "bm25_rank": 3,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": false,
+        "bm25": false,
+        "hybrid": false
+      }
+    },
+    {
+      "question": "How quickly must deleted RAG sources leave the index?",
+      "relevant_documents": [
+        "knowledge_base/architecture/rag-service-architecture.md",
+        "knowledge_base/policies/data-retention-policy.md"
+      ],
+      "content_type": null,
+      "question_type": "multi_hop",
+      "difficulty": "medium",
+      "requires_relationship_expansion": false,
+      "dense_rank": 1,
+      "bm25_rank": 1,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": true,
+        "bm25": false,
+        "hybrid": true
+      }
+    },
+    {
+      "question": "Can access filtering be replaced by output redaction?",
+      "relevant_documents": [
+        "knowledge_base/architecture/rag-service-architecture.md"
+      ],
+      "content_type": null,
+      "question_type": "single_document",
+      "difficulty": "medium",
+      "requires_relationship_expansion": false,
+      "dense_rank": 1,
+      "bm25_rank": 1,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": true,
+        "bm25": true,
+        "hybrid": true
+      }
+    },
+    {
+      "question": "What are the production access durations?",
+      "relevant_documents": [
+        "knowledge_base/security/access-control-policy.md",
+        "knowledge_base/hr/employee-onboarding.md"
+      ],
+      "content_type": null,
+      "question_type": "multi_hop",
+      "difficulty": "medium",
+      "requires_relationship_expansion": false,
+      "dense_rank": 1,
+      "bm25_rank": 1,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": true,
+        "bm25": false,
+        "hybrid": true
+      }
+    },
+    {
+      "question": "How long does break-glass access last?",
+      "relevant_documents": [
+        "knowledge_base/security/access-control-policy.md"
+      ],
+      "content_type": null,
+      "question_type": "single_document",
+      "difficulty": "easy",
+      "requires_relationship_expansion": false,
+      "dense_rank": 1,
+      "bm25_rank": 1,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": true,
+        "bm25": true,
+        "hybrid": true
+      }
+    },
+    {
+      "question": "What TLS versions are required?",
+      "relevant_documents": [
+        "knowledge_base/security/data-encryption.md"
+      ],
+      "content_type": null,
+      "question_type": "single_document",
+      "difficulty": "easy",
+      "requires_relationship_expansion": false,
+      "dense_rank": 2,
+      "bm25_rank": 3,
+      "fused_rank": 2,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": true,
+        "bm25": true,
+        "hybrid": true
+      }
+    },
+    {
+      "question": "Who may approve production recovery cutover?",
+      "relevant_documents": [
+        "knowledge_base/operations/backup-and-recovery.md",
+        "knowledge_base/runbooks/postgres-recovery.md"
+      ],
+      "content_type": null,
+      "question_type": "multi_hop",
+      "difficulty": "hard",
+      "requires_relationship_expansion": false,
+      "dense_rank": 1,
+      "bm25_rank": 1,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": true,
+        "bm25": true,
+        "hybrid": true
+      }
+    },
+    {
+      "question": "What are the SEV-1 response expectations?",
+      "relevant_documents": [
+        "knowledge_base/security/incident-response-policy.md"
+      ],
+      "content_type": null,
+      "question_type": "single_document",
+      "difficulty": "medium",
+      "requires_relationship_expansion": false,
+      "dense_rank": 1,
+      "bm25_rank": 1,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": true,
+        "bm25": true,
+        "hybrid": true
+      }
+    },
+    {
+      "question": "What is the SEV-2 acknowledgment time?",
+      "relevant_documents": [
+        "knowledge_base/security/incident-response-policy.md"
+      ],
+      "content_type": null,
+      "question_type": "single_document",
+      "difficulty": "easy",
+      "requires_relationship_expansion": false,
+      "dense_rank": 5,
+      "bm25_rank": 2,
+      "fused_rank": 3,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "degraded",
+      "reference_context_recovered": {
+        "dense": true,
+        "bm25": true,
+        "hybrid": true
+      }
+    },
+    {
+      "question": "When is a post-incident review due?",
+      "relevant_documents": [
+        "knowledge_base/security/incident-response-policy.md",
+        "knowledge_base/runbooks/document-service-outage.md"
+      ],
+      "content_type": null,
+      "question_type": "multi_hop",
+      "difficulty": "easy",
+      "requires_relationship_expansion": false,
+      "dense_rank": 1,
+      "bm25_rank": 3,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": true,
+        "bm25": false,
+        "hybrid": true
+      }
+    },
+    {
+      "question": "What is the GDPR breach escalation rule?",
+      "relevant_documents": [
+        "knowledge_base/security/gdpr-data-handling.md",
+        "knowledge_base/security/incident-response-policy.md"
+      ],
+      "content_type": null,
+      "question_type": "multi_hop",
+      "difficulty": "hard",
+      "requires_relationship_expansion": false,
+      "dense_rank": 1,
+      "bm25_rank": null,
+      "fused_rank": 1,
+      "contribution_bucket": "dense_only_success",
+      "rrf_impact": "rescued",
+      "reference_context_recovered": {
+        "dense": true,
+        "bm25": null,
+        "hybrid": true
+      }
+    },
+    {
+      "question": "What is the default customer-document retention period?",
+      "relevant_documents": [
+        "knowledge_base/policies/data-retention-policy.md"
+      ],
+      "content_type": null,
+      "question_type": "single_document",
+      "difficulty": "easy",
+      "requires_relationship_expansion": false,
+      "dense_rank": 3,
+      "bm25_rank": 1,
+      "fused_rank": 3,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "degraded",
+      "reference_context_recovered": {
+        "dense": true,
+        "bm25": true,
+        "hybrid": true
+      }
+    },
+    {
+      "question": "How long are security audit logs retained?",
+      "relevant_documents": [
+        "knowledge_base/policies/data-retention-policy.md",
+        "knowledge_base/security/access-control-policy.md"
+      ],
+      "content_type": null,
+      "question_type": "multi_hop",
+      "difficulty": "easy",
+      "requires_relationship_expansion": false,
+      "dense_rank": 3,
+      "bm25_rank": 4,
+      "fused_rank": 3,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": true,
+        "bm25": true,
+        "hybrid": true
+      }
+    },
+    {
+      "question": "How are deleted records handled if a backup is restored?",
+      "relevant_documents": [
+        "knowledge_base/operations/backup-and-recovery.md",
+        "knowledge_base/policies/data-retention-policy.md"
+      ],
+      "content_type": null,
+      "question_type": "multi_hop",
+      "difficulty": "hard",
+      "requires_relationship_expansion": false,
+      "dense_rank": 1,
+      "bm25_rank": 2,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": true,
+        "bm25": true,
+        "hybrid": true
+      }
+    },
+    {
+      "question": "What are the PostgreSQL backup retention periods?",
+      "relevant_documents": [
+        "knowledge_base/operations/backup-and-recovery.md"
+      ],
+      "content_type": null,
+      "question_type": "single_document",
+      "difficulty": "easy",
+      "requires_relationship_expansion": false,
+      "dense_rank": 1,
+      "bm25_rank": 2,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": true,
+        "bm25": true,
+        "hybrid": true
+      }
+    },
+    {
+      "question": "What are the disaster-recovery objectives?",
+      "relevant_documents": [
+        "knowledge_base/operations/backup-and-recovery.md",
+        "knowledge_base/architecture/system-overview.md"
+      ],
+      "content_type": null,
+      "question_type": "multi_hop",
+      "difficulty": "medium",
+      "requires_relationship_expansion": false,
+      "dense_rank": 1,
+      "bm25_rank": 1,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": false,
+        "bm25": true,
+        "hybrid": true
+      }
+    },
+    {
+      "question": "What should be checked during a Document Service outage?",
+      "relevant_documents": [
+        "knowledge_base/runbooks/document-service-outage.md"
+      ],
+      "content_type": null,
+      "question_type": "single_document",
+      "difficulty": "medium",
+      "requires_relationship_expansion": false,
+      "dense_rank": 1,
+      "bm25_rank": 1,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": false,
+        "bm25": false,
+        "hybrid": false
+      }
+    },
+    {
+      "question": "Why should operators not blindly replay document events?",
+      "relevant_documents": [
+        "knowledge_base/architecture/document-processing-pipeline.md",
+        "knowledge_base/runbooks/document-service-outage.md"
+      ],
+      "content_type": null,
+      "question_type": "multi_hop",
+      "difficulty": "hard",
+      "requires_relationship_expansion": false,
+      "dense_rank": 1,
+      "bm25_rank": 1,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": false,
+        "bm25": true,
+        "hybrid": true
+      }
+    },
+    {
+      "question": "What must be validated before PostgreSQL cutover?",
+      "relevant_documents": [
+        "knowledge_base/runbooks/postgres-recovery.md"
+      ],
+      "content_type": null,
+      "question_type": "single_document",
+      "difficulty": "hard",
+      "requires_relationship_expansion": false,
+      "dense_rank": 1,
+      "bm25_rank": 1,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": false,
+        "bm25": false,
+        "hybrid": false
+      }
+    },
+    {
+      "question": "How many remote days per week are normally allowed?",
+      "relevant_documents": [
+        "knowledge_base/policies/remote-work-policy.md"
+      ],
+      "content_type": null,
+      "question_type": "single_document",
+      "difficulty": "easy",
+      "requires_relationship_expansion": false,
+      "dense_rank": 1,
+      "bm25_rank": 1,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": true,
+        "bm25": true,
+        "hybrid": true
+      }
+    },
+    {
+      "question": "How early should temporary work abroad be requested?",
+      "relevant_documents": [
+        "knowledge_base/policies/remote-work-policy.md"
+      ],
+      "content_type": null,
+      "question_type": "single_document",
+      "difficulty": "easy",
+      "requires_relationship_expansion": false,
+      "dense_rank": 1,
+      "bm25_rank": 1,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": true,
+        "bm25": true,
+        "hybrid": true
+      }
+    },
+    {
+      "question": "What production access does a new employee receive automatically?",
+      "relevant_documents": [
+        "knowledge_base/hr/employee-onboarding.md",
+        "knowledge_base/security/access-control-policy.md"
+      ],
+      "content_type": null,
+      "question_type": "multi_hop",
+      "difficulty": "medium",
+      "requires_relationship_expansion": false,
+      "dense_rank": 1,
+      "bm25_rank": 2,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": true,
+        "bm25": false,
+        "hybrid": true
+      }
+    },
+    {
+      "question": "How much annual leave does a full-time employee receive?",
+      "relevant_documents": [
+        "knowledge_base/hr/annual-leave-policy.md"
+      ],
+      "content_type": null,
+      "question_type": "single_document",
+      "difficulty": "easy",
+      "requires_relationship_expansion": false,
+      "dense_rank": 1,
+      "bm25_rank": 1,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": true,
+        "bm25": true,
+        "hybrid": true
+      }
+    },
+    {
+      "question": "How many leave days may normally carry over and by when?",
+      "relevant_documents": [
+        "knowledge_base/hr/annual-leave-policy.md"
+      ],
+      "content_type": null,
+      "question_type": "single_document",
+      "difficulty": "medium",
+      "requires_relationship_expansion": false,
+      "dense_rank": 1,
+      "bm25_rank": 1,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": true,
+        "bm25": true,
+        "hybrid": true
+      }
+    },
+    {
+      "question": "What salary bands does TechFusion use for senior engineers?",
+      "relevant_documents": [
+        "knowledge_base/hr/employee-onboarding.md"
+      ],
+      "content_type": null,
+      "question_type": "single_document",
+      "difficulty": "easy",
+      "requires_relationship_expansion": false,
+      "dense_rank": 8,
+      "bm25_rank": null,
+      "fused_rank": 13,
+      "contribution_bucket": "dense_only_success",
+      "rrf_impact": "rescued",
+      "reference_context_recovered": {
+        "dense": null,
+        "bm25": null,
+        "hybrid": null
+      }
+    },
+    {
+      "question": "Who is the current CEO of TechFusion GmbH?",
+      "relevant_documents": [
+        "knowledge_base/architecture/system-overview.md"
+      ],
+      "content_type": null,
+      "question_type": "single_document",
+      "difficulty": "easy",
+      "requires_relationship_expansion": false,
+      "dense_rank": 7,
+      "bm25_rank": null,
+      "fused_rank": 10,
+      "contribution_bucket": "dense_only_success",
+      "rrf_impact": "rescued",
+      "reference_context_recovered": {
+        "dense": null,
+        "bm25": null,
+        "hybrid": null
+      }
+    },
+    {
+      "question": "What is the production database password?",
+      "relevant_documents": [
+        "knowledge_base/security/data-encryption.md"
+      ],
+      "content_type": null,
+      "question_type": "single_document",
+      "difficulty": "easy",
+      "requires_relationship_expansion": false,
+      "dense_rank": 1,
+      "bm25_rank": 1,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": null,
+        "bm25": null,
+        "hybrid": null
+      }
+    },
+    {
+      "question": "Which customer has the largest document volume?",
+      "relevant_documents": [
+        "knowledge_base/architecture/data-storage.md"
+      ],
+      "content_type": null,
+      "question_type": "single_document",
+      "difficulty": "medium",
+      "requires_relationship_expansion": false,
+      "dense_rank": 5,
+      "bm25_rank": 8,
+      "fused_rank": 3,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "improved",
+      "reference_context_recovered": {
+        "dense": null,
+        "bm25": null,
+        "hybrid": null
+      }
+    },
+    {
+      "question": "What exact amount is the home-office allowance?",
+      "relevant_documents": [
+        "knowledge_base/policies/remote-work-policy.md"
+      ],
+      "content_type": null,
+      "question_type": "single_document",
+      "difficulty": "medium",
+      "requires_relationship_expansion": false,
+      "dense_rank": 1,
+      "bm25_rank": 1,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": null,
+        "bm25": null,
+        "hybrid": null
+      }
+    },
+    {
+      "question": "Which LLM model and parameter count are used in production?",
+      "relevant_documents": [
+        "knowledge_base/architecture/rag-service-architecture.md"
+      ],
+      "content_type": null,
+      "question_type": "single_document",
+      "difficulty": "hard",
+      "requires_relationship_expansion": false,
+      "dense_rank": null,
+      "bm25_rank": null,
+      "fused_rank": null,
+      "contribution_bucket": "neither_success",
+      "rrf_impact": "not_applicable",
+      "reference_context_recovered": {
+        "dense": null,
+        "bm25": null,
+        "hybrid": null
+      }
+    },
+    {
+      "question": "According to the Q2 capacity table, what was the Extraction Worker's peak utilization?",
+      "relevant_documents": [
+        "knowledge_base/operations/platform-capacity-report-q2-2026.md"
+      ],
+      "content_type": null,
+      "question_type": "single_document",
+      "difficulty": "easy",
+      "requires_relationship_expansion": false,
+      "dense_rank": 1,
+      "bm25_rank": 1,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": true,
+        "bm25": true,
+        "hybrid": true
+      }
+    },
+    {
+      "question": "Which service had the highest Q2 peak utilization, and what was its minimum replica count?",
+      "relevant_documents": [
+        "knowledge_base/operations/platform-capacity-report-q2-2026.md"
+      ],
+      "content_type": null,
+      "question_type": "single_document",
+      "difficulty": "medium",
+      "requires_relationship_expansion": false,
+      "dense_rank": 1,
+      "bm25_rank": 1,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": true,
+        "bm25": true,
+        "hybrid": true
+      }
+    },
+    {
+      "question": "How much PostgreSQL storage remained before capacity planning had to begin at the 70% threshold?",
+      "relevant_documents": [
+        "knowledge_base/operations/platform-capacity-report-q2-2026.md"
+      ],
+      "content_type": null,
+      "question_type": "single_document",
+      "difficulty": "hard",
+      "requires_relationship_expansion": false,
+      "dense_rank": 1,
+      "bm25_rank": 1,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": false,
+        "bm25": false,
+        "hybrid": false
+      }
+    },
+    {
+      "question": "What does the retry_transient function do?",
+      "relevant_documents": [
+        "knowledge_base/engineering/retry-library-reference.md"
+      ],
+      "content_type": null,
+      "question_type": "single_document",
+      "difficulty": "medium",
+      "requires_relationship_expansion": false,
+      "dense_rank": 1,
+      "bm25_rank": 2,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": true,
+        "bm25": false,
+        "hybrid": true
+      }
+    },
+    {
+      "question": "With retry_transient's default arguments, how many times can the operation run and how many sleeps can occur?",
+      "relevant_documents": [
+        "knowledge_base/engineering/retry-library-reference.md"
+      ],
+      "content_type": null,
+      "question_type": "single_document",
+      "difficulty": "hard",
+      "requires_relationship_expansion": false,
+      "dense_rank": 1,
+      "bm25_rank": 1,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": true,
+        "bm25": true,
+        "hybrid": true
+      }
+    },
+    {
+      "question": "Does retry_transient retry a ValueError?",
+      "relevant_documents": [
+        "knowledge_base/engineering/retry-library-reference.md"
+      ],
+      "content_type": null,
+      "question_type": "single_document",
+      "difficulty": "medium",
+      "requires_relationship_expansion": false,
+      "dense_rank": 1,
+      "bm25_rank": 1,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": true,
+        "bm25": true,
+        "hybrid": true
+      }
+    },
+    {
+      "question": "What value is configured for maximum_wait_minutes, and what happens when it is reached?",
+      "relevant_documents": [
+        "knowledge_base/architecture/tenant-routing-configuration.md"
+      ],
+      "content_type": null,
+      "question_type": "single_document",
+      "difficulty": "medium",
+      "requires_relationship_expansion": false,
+      "dense_rank": 6,
+      "bm25_rank": 1,
+      "fused_rank": 4,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "degraded",
+      "reference_context_recovered": {
+        "dense": false,
+        "bm25": false,
+        "hybrid": false
+      }
+    },
+    {
+      "question": "Which countries are allowed for automatic routing in the reference JSON configuration?",
+      "relevant_documents": [
+        "knowledge_base/architecture/tenant-routing-configuration.md"
+      ],
+      "content_type": null,
+      "question_type": "single_document",
+      "difficulty": "easy",
+      "requires_relationship_expansion": false,
+      "dense_rank": 1,
+      "bm25_rank": 1,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": true,
+        "bm25": false,
+        "hybrid": true
+      }
+    },
+    {
+      "question": "How many webhook delivery attempts are configured, and how does that compare with Kafka processing failures before dead-lettering?",
+      "relevant_documents": [
+        "knowledge_base/architecture/tenant-routing-configuration.md",
+        "knowledge_base/architecture/async-processing-topology.md"
+      ],
+      "content_type": null,
+      "question_type": "multi_hop",
+      "difficulty": "hard",
+      "requires_relationship_expansion": false,
+      "dense_rank": 1,
+      "bm25_rank": 2,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": false,
+        "bm25": false,
+        "hybrid": false
+      }
+    },
+    {
+      "question": "What trend is described in the capacity chart caption from April to June?",
+      "relevant_documents": [
+        "knowledge_base/operations/platform-capacity-report-q2-2026.md"
+      ],
+      "content_type": null,
+      "question_type": "single_document",
+      "difficulty": "medium",
+      "requires_relationship_expansion": false,
+      "dense_rank": 1,
+      "bm25_rank": 2,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": true,
+        "bm25": true,
+        "hybrid": true
+      }
+    },
+    {
+      "question": "According to the reliability chart caption, did API availability improve or decline during Q2?",
+      "relevant_documents": [
+        "knowledge_base/operations/reliability-scorecard-q2-2026.md"
+      ],
+      "content_type": null,
+      "question_type": "single_document",
+      "difficulty": "easy",
+      "requires_relationship_expansion": false,
+      "dense_rank": 1,
+      "bm25_rank": 1,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": true,
+        "bm25": true,
+        "hybrid": true
+      }
+    },
+    {
+      "question": "By how many milliseconds did API p95 latency fall from April to June?",
+      "relevant_documents": [
+        "knowledge_base/operations/reliability-scorecard-q2-2026.md"
+      ],
+      "content_type": null,
+      "question_type": "single_document",
+      "difficulty": "medium",
+      "requires_relationship_expansion": false,
+      "dense_rank": 2,
+      "bm25_rank": 1,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": true,
+        "bm25": true,
+        "hybrid": true
+      }
+    },
+    {
+      "question": "What event connects Document Service to the asynchronous processing flow, and where do messages go after five failed processing attempts?",
+      "relevant_documents": [
+        "knowledge_base/architecture/async-processing-topology.md"
+      ],
+      "content_type": null,
+      "question_type": "single_document",
+      "difficulty": "medium",
+      "requires_relationship_expansion": false,
+      "dense_rank": 2,
+      "bm25_rank": 3,
+      "fused_rank": 2,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": false,
+        "bm25": true,
+        "hybrid": true
+      }
+    },
+    {
+      "question": "What color is the Zone B container in the processing-topology-zones.svg drawing?",
+      "relevant_documents": [
+        "knowledge_base/architecture/async-processing-topology.md"
+      ],
+      "content_type": null,
+      "question_type": "single_document",
+      "difficulty": "hard",
+      "requires_relationship_expansion": false,
+      "dense_rank": 1,
+      "bm25_rank": 1,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": null,
+        "bm25": null,
+        "hybrid": null
+      }
+    },
+    {
+      "question": "What shape represents Kafka in the uncaptioned deployment-zone drawing?",
+      "relevant_documents": [
+        "knowledge_base/architecture/async-processing-topology.md"
+      ],
+      "content_type": null,
+      "question_type": "single_document",
+      "difficulty": "hard",
+      "requires_relationship_expansion": false,
+      "dense_rank": 1,
+      "bm25_rank": 1,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": null,
+        "bm25": null,
+        "hybrid": null
+      }
+    },
+    {
+      "question": "Which availability zone contains the largest Worker icon in the uncaptioned deployment-zone drawing?",
+      "relevant_documents": [
+        "knowledge_base/architecture/async-processing-topology.md"
+      ],
+      "content_type": null,
+      "question_type": "single_document",
+      "difficulty": "hard",
+      "requires_relationship_expansion": false,
+      "dense_rank": 1,
+      "bm25_rank": 1,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": null,
+        "bm25": null,
+        "hybrid": null
+      }
+    },
+    {
+      "question": "Which team owns the OCR retry processor?",
+      "relevant_documents": [
+        "knowledge_base/architecture/document-processing-sequence.md"
+      ],
+      "content_type": "text_only",
+      "question_type": "single_document",
+      "difficulty": "medium",
+      "requires_relationship_expansion": false,
+      "dense_rank": 1,
+      "bm25_rank": 6,
+      "fused_rank": 3,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "degraded",
+      "reference_context_recovered": {
+        "dense": false,
+        "bm25": false,
+        "hybrid": false
+      }
+    },
+    {
+      "question": "When does queue backlog investigation begin?",
+      "relevant_documents": [
+        "knowledge_base/runbooks/queue-backlog-investigation.md"
+      ],
+      "content_type": "text_only",
+      "question_type": "single_document",
+      "difficulty": "medium",
+      "requires_relationship_expansion": false,
+      "dense_rank": 2,
+      "bm25_rank": 2,
+      "fused_rank": 2,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": true,
+        "bm25": true,
+        "hybrid": true
+      }
+    },
+    {
+      "question": "Which retrieval strategy was selected for controlled rollout?",
+      "relevant_documents": [
+        "knowledge_base/engineering/retrieval-performance-analysis.md"
+      ],
+      "content_type": "text_only",
+      "question_type": "single_document",
+      "difficulty": "medium",
+      "requires_relationship_expansion": false,
+      "dense_rank": 1,
+      "bm25_rank": 1,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": true,
+        "bm25": true,
+        "hybrid": true
+      }
+    },
+    {
+      "question": "What scaling trend does the ingestion chart caption describe?",
+      "relevant_documents": [
+        "knowledge_base/operations/ingestion-capacity-report.md"
+      ],
+      "content_type": "caption_answerable",
+      "question_type": "single_document",
+      "difficulty": "medium",
+      "requires_relationship_expansion": false,
+      "dense_rank": 2,
+      "bm25_rank": 2,
+      "fused_rank": 2,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": true,
+        "bm25": false,
+        "hybrid": true
+      }
+    },
+    {
+      "question": "Which retrieval approach has the strongest overall relevance trend according to the caption?",
+      "relevant_documents": [
+        "knowledge_base/engineering/retrieval-performance-analysis.md"
+      ],
+      "content_type": "caption_answerable",
+      "question_type": "single_document",
+      "difficulty": "medium",
+      "requires_relationship_expansion": false,
+      "dense_rank": 1,
+      "bm25_rank": 1,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": true,
+        "bm25": true,
+        "hybrid": true
+      }
+    },
+    {
+      "question": "What period does the incident dashboard caption cover?",
+      "relevant_documents": [
+        "knowledge_base/operations/incident-dashboard-review.md"
+      ],
+      "content_type": "caption_answerable",
+      "question_type": "single_document",
+      "difficulty": "medium",
+      "requires_relationship_expansion": false,
+      "dense_rank": 1,
+      "bm25_rank": 1,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": true,
+        "bm25": true,
+        "hybrid": true
+      }
+    },
+    {
+      "question": "What path is summarized by the document sequence figure?",
+      "relevant_documents": [
+        "knowledge_base/architecture/document-processing-sequence.md"
+      ],
+      "content_type": "caption_answerable",
+      "question_type": "single_document",
+      "difficulty": "medium",
+      "requires_relationship_expansion": false,
+      "dense_rank": 1,
+      "bm25_rank": 1,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": true,
+        "bm25": true,
+        "hybrid": true
+      }
+    },
+    {
+      "question": "What exact P95 latency is shown at 14:00?",
+      "relevant_documents": [
+        "knowledge_base/operations/api-performance-review.md"
+      ],
+      "content_type": "image_only",
+      "question_type": "single_document",
+      "difficulty": "hard",
+      "requires_relationship_expansion": false,
+      "dense_rank": 2,
+      "bm25_rank": 1,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": null,
+        "bm25": null,
+        "hybrid": null
+      }
+    },
+    {
+      "question": "What queue depth is displayed at 14:05?",
+      "relevant_documents": [
+        "knowledge_base/operations/incident-dashboard-review.md"
+      ],
+      "content_type": "image_only",
+      "question_type": "single_document",
+      "difficulty": "hard",
+      "requires_relationship_expansion": false,
+      "dense_rank": 6,
+      "bm25_rank": 6,
+      "fused_rank": 4,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "improved",
+      "reference_context_recovered": {
+        "dense": null,
+        "bm25": null,
+        "hybrid": null
+      }
+    },
+    {
+      "question": "How many OCR worker replicas are shown in production?",
+      "relevant_documents": [
+        "knowledge_base/architecture/multimodal-system-overview.md"
+      ],
+      "content_type": "architecture_diagram",
+      "question_type": "single_document",
+      "difficulty": "hard",
+      "requires_relationship_expansion": false,
+      "dense_rank": 5,
+      "bm25_rank": null,
+      "fused_rank": 8,
+      "contribution_bucket": "dense_only_success",
+      "rrf_impact": "rescued",
+      "reference_context_recovered": {
+        "dense": null,
+        "bm25": null,
+        "hybrid": null
+      }
+    },
+    {
+      "question": "Which queue partition has the greatest consumer lag?",
+      "relevant_documents": [
+        "knowledge_base/runbooks/queue-backlog-investigation.md"
+      ],
+      "content_type": "table_image",
+      "question_type": "single_document",
+      "difficulty": "hard",
+      "requires_relationship_expansion": false,
+      "dense_rank": 2,
+      "bm25_rank": 1,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": null,
+        "bm25": null,
+        "hybrid": null
+      }
+    },
+    {
+      "question": "What P95 latency contribution is shown for reranking?",
+      "relevant_documents": [
+        "knowledge_base/engineering/retrieval-performance-analysis.md"
+      ],
+      "content_type": "chart",
+      "question_type": "single_document",
+      "difficulty": "hard",
+      "requires_relationship_expansion": false,
+      "dense_rank": 4,
+      "bm25_rank": 1,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": null,
+        "bm25": null,
+        "hybrid": null
+      }
+    },
+    {
+      "question": "Did the afternoon P95 peak violate the review SLO, and by how much?",
+      "relevant_documents": [
+        "knowledge_base/operations/api-performance-review.md"
+      ],
+      "content_type": "text_plus_image",
+      "question_type": "single_document",
+      "difficulty": "hard",
+      "requires_relationship_expansion": true,
+      "dense_rank": 1,
+      "bm25_rank": 1,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": true,
+        "bm25": true,
+        "hybrid": true
+      }
+    },
+    {
+      "question": "Which endpoint should be optimized first under the written prioritization rule?",
+      "relevant_documents": [
+        "knowledge_base/operations/api-performance-review.md"
+      ],
+      "content_type": "text_plus_image",
+      "question_type": "single_document",
+      "difficulty": "hard",
+      "requires_relationship_expansion": true,
+      "dense_rank": 1,
+      "bm25_rank": 1,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": true,
+        "bm25": true,
+        "hybrid": true
+      }
+    },
+    {
+      "question": "What corrective action applies to the visually stalled partition?",
+      "relevant_documents": [
+        "knowledge_base/runbooks/queue-backlog-investigation.md"
+      ],
+      "content_type": "text_plus_image",
+      "question_type": "single_document",
+      "difficulty": "hard",
+      "requires_relationship_expansion": true,
+      "dense_rank": 1,
+      "bm25_rank": 1,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": true,
+        "bm25": true,
+        "hybrid": true
+      }
+    },
+    {
+      "question": "What happens if the visually shown revocation-cache call times out on a privileged route?",
+      "relevant_documents": [
+        "knowledge_base/security/authentication-flow-review.md"
+      ],
+      "content_type": "text_plus_image",
+      "question_type": "single_document",
+      "difficulty": "hard",
+      "requires_relationship_expansion": true,
+      "dense_rank": 1,
+      "bm25_rank": 1,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": true,
+        "bm25": true,
+        "hybrid": true
+      }
+    },
+    {
+      "question": "After an OCR timeout, which configuration controls retry-lock lifetime?",
+      "relevant_documents": [
+        "knowledge_base/architecture/document-processing-sequence.md"
+      ],
+      "content_type": "relationship_aware",
+      "question_type": "single_document",
+      "difficulty": "hard",
+      "requires_relationship_expansion": true,
+      "dense_rank": 1,
+      "bm25_rank": 1,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": true,
+        "bm25": false,
+        "hybrid": true
+      }
+    },
+    {
+      "question": "Which command belongs to the flowchart consumer-lag investigation branch?",
+      "relevant_documents": [
+        "knowledge_base/runbooks/queue-backlog-investigation.md"
+      ],
+      "content_type": "relationship_aware",
+      "question_type": "single_document",
+      "difficulty": "hard",
+      "requires_relationship_expansion": true,
+      "dense_rank": 2,
+      "bm25_rank": 1,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": false,
+        "bm25": false,
+        "hybrid": false
+      }
+    },
+    {
+      "question": "What rollout constraint applies to the stage that dominates the visual latency breakdown?",
+      "relevant_documents": [
+        "knowledge_base/engineering/retrieval-performance-analysis.md"
+      ],
+      "content_type": "relationship_aware",
+      "question_type": "single_document",
+      "difficulty": "hard",
+      "requires_relationship_expansion": true,
+      "dense_rank": 1,
+      "bm25_rank": 1,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": true,
+        "bm25": true,
+        "hybrid": true
+      }
+    },
+    {
+      "question": "What CPU temperature is shown for ingestion workers?",
+      "relevant_documents": [
+        "knowledge_base/operations/ingestion-capacity-report.md"
+      ],
+      "content_type": "unanswerable_visual",
+      "question_type": "single_document",
+      "difficulty": "hard",
+      "requires_relationship_expansion": false,
+      "dense_rank": 2,
+      "bm25_rank": 1,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": null,
+        "bm25": null,
+        "hybrid": null
+      }
+    },
+    {
+      "question": "What IP address is shown for the Identity Gateway?",
+      "relevant_documents": [
+        "knowledge_base/security/authentication-flow-review.md"
+      ],
+      "content_type": "unanswerable_visual",
+      "question_type": "single_document",
+      "difficulty": "hard",
+      "requires_relationship_expansion": false,
+      "dense_rank": 1,
+      "bm25_rank": 1,
+      "fused_rank": 1,
+      "contribution_bucket": "both_success",
+      "rrf_impact": "unchanged",
+      "reference_context_recovered": {
+        "dense": null,
+        "bm25": null,
+        "hybrid": null
+      }
+    },
+    {
+      "question": "How many failed login attempts came from France?",
+      "relevant_documents": [
+        "knowledge_base/security/authentication-flow-review.md"
+      ],
+      "content_type": "unanswerable_visual",
+      "question_type": "single_document",
+      "difficulty": "hard",
+      "requires_relationship_expansion": false,
+      "dense_rank": null,
+      "bm25_rank": null,
+      "fused_rank": null,
+      "contribution_bucket": "neither_success",
+      "rrf_impact": "not_applicable",
+      "reference_context_recovered": {
+        "dense": null,
+        "bm25": null,
+        "hybrid": null
+      }
+    }
+  ]
+}
