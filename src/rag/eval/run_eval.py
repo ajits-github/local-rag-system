@@ -31,6 +31,7 @@ from rag.eval.answer_quality import KeywordOverlapScorer
 from rag.eval.gold_schema import (
     GoldExample,
     load_gold_jsonl,
+    reference_context_bucket,
     reference_context_is_supported,
     source_matches_relevant,
 )
@@ -308,25 +309,14 @@ def evaluate(
         all_retrieved_sources.append(retrieved_sources)
         all_relevant.append(example.relevant_documents)
 
-        reference_context_bucket: str | None = None
-        if example.relevant_documents:
-            doc_retrieved = any(
-                source_matches_relevant(s, rd)
-                for s in retrieved_sources
-                for rd in example.relevant_documents
-            )
-            if not doc_retrieved:
-                reference_context_bucket = "C"
-            elif not example.reference_contexts:
-                reference_context_bucket = "not_applicable"
-            else:
-                all_contents = [r.chunk.content for r in retrieval_results]
-                context_hit = all(
-                    reference_context_is_supported(ref, all_contents)
-                    for ref in example.reference_contexts
-                )
-                reference_context_bucket = "A" if context_hit else "B"
-            reference_context_buckets.append(reference_context_bucket)
+        reference_bucket = reference_context_bucket(
+            retrieved_sources,
+            [r.chunk.content for r in retrieval_results],
+            example.relevant_documents,
+            example.reference_contexts,
+        )
+        if reference_bucket is not None:
+            reference_context_buckets.append(reference_bucket)
 
         if example.requires_relationship_expansion and example.reference_contexts:
             retrieved_only_contents = [
@@ -358,7 +348,7 @@ def evaluate(
             "content_type": example.content_type,
             "requires_vision": example.requires_vision,
             "requires_relationship_expansion": example.requires_relationship_expansion,
-            "reference_context_bucket": reference_context_bucket,
+            "reference_context_bucket": reference_bucket,
             "relevant_image_hit": relevant_image_hit,
         }
 

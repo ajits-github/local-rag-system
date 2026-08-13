@@ -172,3 +172,53 @@ def reference_context_is_supported(reference: str, candidate_texts: Iterable[str
     if not normalized_reference:
         return False
     return any(normalized_reference in normalize_for_match(c) for c in candidate_texts)
+
+
+def reference_context_bucket(
+    retrieved_sources: Iterable[str],
+    retrieved_contents: Iterable[str],
+    relevant_documents: Iterable[str],
+    reference_contexts: Iterable[str],
+) -> str | None:
+    """Classify one retrieval's evidence quality for a gold example.
+
+    Shared by `eval/run_eval.py` (the combined/production ranking) and
+    `eval/retrieval_attribution.py` (each of dense/BM25/hybrid
+    independently) so the A/B/C definition can never quietly diverge
+    between the two call sites.
+
+    Parameters
+    ----------
+    retrieved_sources : Iterable[str]
+        A ranking's retrieved chunk `source` paths, in order.
+    retrieved_contents : Iterable[str]
+        The same ranking's chunk text contents, same order.
+    relevant_documents : Iterable[str]
+        The gold example's `relevant_documents`.
+    reference_contexts : Iterable[str]
+        The gold example's `reference_contexts`.
+
+    Returns
+    -------
+    str | None
+        ``None`` if `relevant_documents` is empty (nothing to classify);
+        else ``"C"`` (relevant document missed entirely), ``"not_applicable"``
+        (document retrieved, but no `reference_contexts` authored to check
+        against), ``"B"`` (document retrieved, supporting context missed),
+        or ``"A"`` (document retrieved AND supporting context found).
+    """
+    relevant_documents = list(relevant_documents)
+    if not relevant_documents:
+        return None
+    retrieved_sources = list(retrieved_sources)
+    doc_retrieved = any(
+        source_matches_relevant(s, rd) for s in retrieved_sources for rd in relevant_documents
+    )
+    if not doc_retrieved:
+        return "C"
+    reference_contexts = list(reference_contexts)
+    if not reference_contexts:
+        return "not_applicable"
+    contents = list(retrieved_contents)
+    context_hit = all(reference_context_is_supported(ref, contents) for ref in reference_contexts)
+    return "A" if context_hit else "B"
