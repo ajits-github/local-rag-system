@@ -278,6 +278,18 @@ scores, judge provider/model and estimated API usage, `prompt_id`/
 `prompt_version`, and the RAG config that produced it — feed it into
 `scripts/record_experiment.py` exactly like a normal `run_eval.py` report.
 
+Judge calls are cached to disk by default (`config.judge.cache_enabled:
+true`, `cache_dir: .cache/ragas` — gitignored, never commit cached judge
+responses), so re-running an unchanged eval doesn't re-pay for identical
+verdicts. The cache key is namespaced by judge provider/model/temperature/
+max_tokens (not just the rendered prompt) so switching judges always
+misses instead of silently replaying another model's cached score — see
+`rag/eval/ragas_cache.py`. The report's `ragas.cache` key shows
+`hits`/`misses`/`total` and an `avoided_cost_estimate` (extrapolated from
+that run's own uncached-call token usage; reports a `reason` instead of a
+number it can't back up, e.g. an unpriced model). Set
+`judge.cache_enabled: false` to disable.
+
 **RAGAS scores are not validated until reviewed against real human
 judgment.** Two scripts help with that:
 ```
@@ -378,10 +390,15 @@ claims are in [`docs/architecture.md`](docs/architecture.md) and
 ### MLflow tracking
 
 Every `scripts/record_experiment.py` call also logs an MLflow run (config
-as params, metrics, and the eval-output/record/config files as artifacts).
-Requires the `mlflow` extra (`pip install .[mlflow]`) — fails loudly rather
-than silently skipping if enabled but not installed. Local by default, no
-server required (`mlflow.tracking_uri: sqlite:///mlflow.db`):
+as params, metrics, and the eval-output/record/config files as artifacts),
+under a readable run name like `experiment_015_qwen2-5-3b_v2_hybrid_rel-exp`
+(display-only — the real MLflow run UUID is unaffected) and tagged with
+`experiment_id`/`label`/`generation_model`/`prompt_version`/
+`retrieval_provider`/`reranker_provider`/`relationship_expansion`/
+`dataset_id` for fast filtering in the MLflow UI. Requires the `mlflow`
+extra (`pip install .[mlflow]`) — fails loudly rather than silently
+skipping if enabled but not installed. Local by default, no server
+required (`mlflow.tracking_uri: sqlite:///mlflow.db`):
 ```
 mlflow ui --backend-store-uri sqlite:///mlflow.db
 ```
