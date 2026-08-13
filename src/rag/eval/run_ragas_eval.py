@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from rag.config import AppConfig, load_config
-from rag.eval import ragas_scorer
+from rag.eval import ragas_cache, ragas_scorer
 from rag.eval.gold_schema import GoldExample, load_gold_jsonl
 from rag.eval.run_eval import _config_summary, evaluate
 from rag.factory import build_embedder, build_judge_llm
@@ -94,6 +94,36 @@ def _judge_summary(config: AppConfig, judge_llm: LLM) -> dict[str, Any]:
     return {"provider": provider, "model_name": model_name, "estimated_api_usage": usage}
 
 
+def _cache_summary(
+    config: AppConfig, judge_llm: LLM, cache: ragas_cache.NamespacedDiskCache | None
+) -> dict[str, Any]:
+    """Build the report's `ragas.cache` object: enabled/hits/misses/avoided-cost.
+
+    `None` cache_stats (caching disabled) reports `{"enabled": False}`
+    rather than zeros, so a report never implies "checked and found no
+    hits" when it never checked at all.
+    """
+    if cache is None:
+        return {"enabled": False}
+    stats = cache.stats.as_dict()
+    avoided_cost = ragas_cache.estimate_avoided_cost(
+        provider=config.judge.provider,
+        model_name={
+            "openai": config.judge.openai.model_name,
+            "anthropic": config.judge.anthropic.model_name,
+            "ollama": config.judge.ollama.model_name,
+        }[config.judge.provider],
+        avoided_calls=stats["hits"],
+        judge_llm=judge_llm,
+    )
+    return {
+        "enabled": True,
+        "cache_dir": config.judge.cache_dir,
+        **stats,
+        "avoided_cost_estimate": avoided_cost,
+    }
+
+
 def run_ragas(
     gold_path: Path,
     config_path: str | None,
@@ -126,13 +156,16 @@ def run_ragas(
 
     judge_llm = build_judge_llm(config)
     embedder = build_embedder(config)
+    cache = ragas_cache.build_judge_cache(config) if config.judge.cache_enabled else None
     rows, num_skipped = _build_rows(examples, base_result["per_example"])
-    ragas_result = ragas_scorer.score(rows, judge_llm, embedder)
+    ragas_result = ragas_scorer.score(rows, judge_llm, embedder, cache=cache)
+    ragas_result.pop("cache_stats", None)  # superseded by the richer "cache" key below
     ragas_result.update(
         {
             "prompt_id": config.generation.prompt.id,
             "prompt_version": config.generation.prompt.version,
             "judge": _judge_summary(config, judge_llm),
+            "cache": _cache_summary(config, judge_llm, cache),
             "sample_size": len(examples),
             "num_scored": len(rows),
             "num_skipped_missing_expected_answer": num_skipped,

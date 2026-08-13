@@ -98,7 +98,12 @@ def build_dataset(rows: list[dict[str, Any]]) -> Any:
     )
 
 
-def score(rows: list[dict[str, Any]], judge_llm: LLM, embedder: Embedder) -> dict[str, Any]:
+def score(
+    rows: list[dict[str, Any]],
+    judge_llm: LLM,
+    embedder: Embedder,
+    cache: Any | None = None,
+) -> dict[str, Any]:
     """Run RAGAS `evaluate()` over `rows` using `judge_llm` and `embedder`.
 
     Parameters
@@ -111,12 +116,20 @@ def score(rows: list[dict[str, Any]], judge_llm: LLM, embedder: Embedder) -> dic
         This project's `LLM` ABC instance used as the RAGAS judge.
     embedder : Embedder
         This project's `Embedder` ABC instance for embedding-based metrics.
+    cache : Any | None, optional
+        A `ragas.cache.CacheInterface` (e.g.
+        `rag.eval.ragas_cache.NamespacedDiskCache`) memoizing judge calls
+        across runs. `None` (the default) disables caching entirely --
+        every call reaches the judge LLM, matching pre-caching behavior.
+        Typed `Any` rather than `ragas.cache.CacheInterface` so importing
+        this module never requires `ragas` to be installed.
 
     Returns
     -------
     dict[str, Any]
         ``{"metrics_used", "metrics_failed", "aggregate", "per_question",
-        "caveat"}``.
+        "caveat", "cache_stats"}``. ``cache_stats`` is ``None`` when
+        `cache` is `None`, otherwise ``{"hits", "misses", "total"}``.
 
     Raises
     ------
@@ -141,10 +154,11 @@ def score(rows: list[dict[str, Any]], judge_llm: LLM, embedder: Embedder) -> dic
             "aggregate": {},
             "per_question": [],
             "caveat": CAVEAT,
+            "cache_stats": cache.stats.as_dict() if cache is not None else None,
         }
 
     dataset = build_dataset(rows)
-    wrapped_llm = LangchainLLMWrapper(LangchainLLMAdapter(rag_llm=judge_llm))
+    wrapped_llm = LangchainLLMWrapper(LangchainLLMAdapter(rag_llm=judge_llm), cache=cache)
     wrapped_embeddings = LangchainEmbeddingsWrapper(LangchainEmbeddingsAdapter(embedder))
     result = ragas_evaluate(
         dataset=dataset, metrics=metrics, llm=wrapped_llm, embeddings=wrapped_embeddings
@@ -173,5 +187,6 @@ def score(rows: list[dict[str, Any]], judge_llm: LLM, embedder: Embedder) -> dic
         "metrics_failed": failed,
         "aggregate": aggregate,
         "per_question": per_question,
+        "cache_stats": cache.stats.as_dict() if cache is not None else None,
         "caveat": CAVEAT,
     }

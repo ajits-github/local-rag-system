@@ -59,6 +59,13 @@ def test_judge_default_provider_is_not_a_generation_model():
     assert config.judge.ollama.model_name != config.generation.model_name
 
 
+def test_judge_cache_enabled_by_default_under_dot_cache_ragas():
+    """Judge-call caching defaults on, storing under the gitignored .cache/ tree."""
+    config = load_config()
+    assert config.judge.cache_enabled is True
+    assert config.judge.cache_dir == ".cache/ragas"
+
+
 def test_openai_api_key_resolves_from_env(monkeypatch):
     """openai_api_key() reads OPENAI_API_KEY from the process environment."""
     config = load_config()

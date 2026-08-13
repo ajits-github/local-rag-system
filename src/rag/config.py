@@ -136,6 +136,8 @@ class JudgeConfig(BaseModel):
     provider: Literal["openai", "anthropic", "ollama"] = "openai"
     temperature: float = 0.0
     max_tokens: int = 1024
+    cache_enabled: bool = True
+    cache_dir: str = ".cache/ragas"
     openai: OpenAIJudgeConfig = Field(default_factory=OpenAIJudgeConfig)
     anthropic: AnthropicJudgeConfig = Field(default_factory=AnthropicJudgeConfig)
     ollama: OllamaJudgeConfig = Field(default_factory=OllamaJudgeConfig)

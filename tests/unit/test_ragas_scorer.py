@@ -96,7 +96,7 @@ class _FakeDataFrame:
 def _install_fake_ragas(monkeypatch, *, metric_names: list[str], per_row_scores: dict[str, float]):
     """Inject fake `ragas`/`ragas.metrics`/`ragas.llms`/`ragas.embeddings`/`datasets` modules."""
     metrics_module = types.SimpleNamespace(**dict.fromkeys(metric_names, object()))
-    llms_module = types.SimpleNamespace(LangchainLLMWrapper=lambda x: x)
+    llms_module = types.SimpleNamespace(LangchainLLMWrapper=lambda x, cache=None: x)
     embeddings_module = types.SimpleNamespace(LangchainEmbeddingsWrapper=lambda x: x)
 
     def fake_evaluate(dataset, metrics, llm, embeddings):

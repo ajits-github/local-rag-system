@@ -79,6 +79,27 @@ class _FakeLLM:
         return True
 
 
+class _FakeCacheStats:
+    """Duck-typed `CacheStats` double: fixed hits/misses."""
+
+    def __init__(self, hits: int, misses: int) -> None:
+        """Store the fixed hit/miss counts this double reports."""
+        self.hits = hits
+        self.misses = misses
+
+    def as_dict(self) -> dict[str, int]:
+        """Mirror `CacheStats.as_dict`."""
+        return {"hits": self.hits, "misses": self.misses, "total": self.hits + self.misses}
+
+
+class _FakeCache:
+    """Duck-typed `NamespacedDiskCache` double: fixed stats, no real disk I/O."""
+
+    def __init__(self, hits: int, misses: int) -> None:
+        """Store fixed hit/miss counts as `.stats`."""
+        self.stats = _FakeCacheStats(hits, misses)
+
+
 def _write_gold(tmp_path: Path) -> Path:
     """Write a 3-question gold file: 2 with expected_answer, 1 without."""
     path = tmp_path / "gold.jsonl"
@@ -95,7 +116,7 @@ def _write_gold(tmp_path: Path) -> Path:
     return path
 
 
-def _fake_ragas_score(rows, judge_llm, embedder) -> dict[str, Any]:
+def _fake_ragas_score(rows, judge_llm, embedder, cache=None) -> dict[str, Any]:
     """Canned ragas_scorer.score() replacement, recording what it was called with."""
     return {
         "metrics_used": ["faithfulness"],
@@ -111,6 +132,7 @@ def _fake_ragas_score(rows, judge_llm, embedder) -> dict[str, Any]:
             for r in rows
         ],
         "caveat": "test caveat",
+        "cache_stats": cache.stats.as_dict() if cache is not None else None,
     }
 
 
@@ -124,11 +146,20 @@ def _patch_pipeline_backends(monkeypatch, results: list[SearchResult]) -> None:
     monkeypatch.setattr("rag.retrieval.pipeline.build_llm", lambda config: _FakeLLM())
 
 
-def _patch_ragas_backends(monkeypatch, judge_llm: _FakeLLM) -> None:
-    """Redirect run_ragas_eval's judge/embedder/scorer calls to fakes."""
+def _patch_ragas_backends(monkeypatch, judge_llm: _FakeLLM, cache: Any = None) -> None:
+    """Redirect run_ragas_eval's judge/embedder/scorer/cache calls to fakes.
+
+    `cache` defaults to `None` (caching disabled) so these tests never
+    touch the real on-disk RAGAS cache -- matching `tests/unit`'s "no real
+    I/O beyond what's mocked" convention. Pass a fake cache double to
+    exercise the cache-enabled reporting path instead.
+    """
     monkeypatch.setattr("rag.eval.run_ragas_eval.build_judge_llm", lambda config: judge_llm)
     monkeypatch.setattr("rag.eval.run_ragas_eval.build_embedder", lambda config: _FakeEmbedder())
     monkeypatch.setattr("rag.eval.run_ragas_eval.ragas_scorer.score", _fake_ragas_score)
+    monkeypatch.setattr(
+        "rag.eval.run_ragas_eval.ragas_cache.build_judge_cache", lambda config: cache
+    )
 
 
 def test_run_ragas_slices_examples_to_sample_size(tmp_path, monkeypatch):
@@ -200,6 +231,49 @@ def test_run_ragas_judge_summary_includes_api_usage_for_hosted_provider(tmp_path
     usage = report["ragas"]["judge"]["estimated_api_usage"]
     assert usage is not None
     assert usage["call_count"] == judge.call_count
+
+
+def test_run_ragas_reports_cache_disabled_when_no_cache_passed(tmp_path, monkeypatch):
+    """report["ragas"]["cache"] is {"enabled": False} when caching is off."""
+    gold_path = _write_gold(tmp_path)
+    results = [_make_result("c1", "content", "a.md", 1.0)]
+    _patch_pipeline_backends(monkeypatch, results)
+    _patch_ragas_backends(monkeypatch, _FakeLLM(), cache=None)
+
+    report = run_ragas_eval.run_ragas(gold_path, None, "test-dataset", sample_size=1)
+
+    assert report["ragas"]["cache"] == {"enabled": False}
+
+
+def test_run_ragas_reports_cache_hits_and_misses_when_enabled(tmp_path, monkeypatch):
+    """report["ragas"]["cache"] surfaces hit/miss counts from an enabled cache."""
+    gold_path = _write_gold(tmp_path)
+    results = [_make_result("c1", "content", "a.md", 1.0)]
+    _patch_pipeline_backends(monkeypatch, results)
+    _patch_ragas_backends(monkeypatch, _FakeLLM(), cache=_FakeCache(hits=3, misses=1))
+
+    report = run_ragas_eval.run_ragas(gold_path, None, "test-dataset", sample_size=1)
+
+    cache_report = report["ragas"]["cache"]
+    assert cache_report["enabled"] is True
+    assert cache_report["hits"] == 3
+    assert cache_report["misses"] == 1
+    assert cache_report["total"] == 4
+
+
+def test_run_ragas_avoided_cost_none_when_judge_never_called(tmp_path, monkeypatch):
+    """avoided_cost_estimate explains itself instead of guessing when every call was a hit."""
+    gold_path = _write_gold(tmp_path)
+    results = [_make_result("c1", "content", "a.md", 1.0)]
+    _patch_pipeline_backends(monkeypatch, results)
+    judge = _FakeLLM()  # call_count stays 0: nothing calls judge.generate() in this test
+    _patch_ragas_backends(monkeypatch, judge, cache=_FakeCache(hits=5, misses=0))
+
+    report = run_ragas_eval.run_ragas(gold_path, None, "test-dataset", sample_size=1)
+
+    avoided = report["ragas"]["cache"]["avoided_cost_estimate"]
+    assert avoided["estimated_cost_usd"] is None
+    assert "reason" in avoided
 
 
 def test_verbose_false_drops_per_example_and_per_question(tmp_path, monkeypatch, capsys):
