@@ -1,0 +1,107 @@
+# classic_rag_baseline_v1: a deterministic snapshot of the best-known
+# "classic" (non-safety/freshness) RAG config, frozen before the
+# safety/freshness milestone starts, so later safety/freshness experiments
+# have a fixed, reproducible reference point to diff against.
+#
+# Identical to multimodal-v2-relationship-qwen3b.yaml (the config behind
+# experiment_015, the last full-84-question RAGAS run and this project's
+# highest recorded faithfulness/answer_correctness to date) except:
+#   - generation.temperature: 0.0 (was 0.2)
+#   - generation.seed: 42 (new -- Ollama's options.seed is supported by the
+#     installed ollama client, confirmed directly; see OllamaLLM/GenerationConfig
+#     docstrings for the determinism caveat -- reproducible per-host, not a
+#     cross-hardware guarantee)
+# No other variable (retrieval, chunking, embedding, reranking, prompt
+# version, relationship expansion) changes. Used with --config for
+# rag.eval.run_ragas_eval; never overwrites config/default.yaml itself.
+#
+# Every component below is a "swap point": change `provider` (and its
+# provider-specific block) to try a different embedding model, vector
+# backend, chunker, reranker, or LLM without touching pipeline code.
+#
+# Secrets and host/port values are never hardcoded here: fields ending in
+# `_env_var` name an environment variable that is resolved at load time by
+# rag.config.Settings.
+
+app:
+  name: local-rag-system
+  log_level: INFO
+
+embedding:
+  provider: sentence_transformers # swap point
+  model_name: sentence-transformers/all-MiniLM-L6-v2
+  device: cpu
+  batch_size: 32
+  normalize: true
+  dimension: 384 # must match model output dim; used to size the pgvector column
+
+vectorstore:
+  provider: pgvector # swap point (future: chroma, faiss, ...)
+  connection_env_var: DATABASE_URL # never hardcode host/port/credentials
+  documents_table: documents
+  chunks_table: chunks
+  distance_metric: cosine
+
+chunking:
+  provider: structured_markdown # swap point: recursive_character | structured_markdown
+  chunk_size: 500
+  chunk_overlap: 50
+  structured_markdown:
+    table_row_group_size: 20
+    max_atomic_block_chars: 2000
+
+reranker:
+  provider: none # swap point: none | cross_encoder | cohere
+  cross_encoder:
+    model_name: cross-encoder/ms-marco-MiniLM-L-6-v2
+  cohere:
+    model_name: rerank-english-v3.0
+    api_key_env_var: COHERE_API_KEY
+
+generation:
+  provider: ollama # swap point
+  model_name: qwen2.5:3b
+  base_url_env_var: OLLAMA_BASE_URL
+  temperature: 0.0 # deterministic baseline (was 0.2 in multimodal-v2-relationship-qwen3b.yaml)
+  max_tokens: 512
+  seed: 42 # deterministic baseline (new -- see OllamaLLM for Ollama seed-support details)
+  prompt:
+    id: rag_answer
+    version: v2 # stricter grounding/refusal prompt
+    path: src/rag/prompts/templates/rag_answer_v2.yaml
+
+judge:
+  provider: openai # swap point: openai | anthropic | ollama (ollama = local, for experimentation only)
+  temperature: 0.0
+  max_tokens: 1024
+  openai:
+    model_name: gpt-4o-mini
+    api_key_env_var: OPENAI_API_KEY
+  anthropic:
+    model_name: claude-haiku-4-5-20251001
+    api_key_env_var: ANTHROPIC_API_KEY
+  ollama:
+    model_name: llama3.1:8b # deliberately distinct from generation.model_name
+
+mlflow:
+  enabled: true
+  tracking_uri: "sqlite:///mlflow.db" # swap point: local sqlite file | a real MLflow tracking server URL
+  experiment_name: local-rag-system
+
+retrieval:
+  provider: hybrid # matches experiment_010/experiment_015 (was dense in config/default.yaml)
+  candidate_k: 5
+  generation_context_top_n: 3
+  hybrid:
+    rrf_k: 60
+  relationship_expansion:
+    enabled: true # matches experiment_015 (relationship expansion ON)
+    include_parent: true
+    include_neighbors: true
+    max_related_elements: 3
+
+ingestion:
+  supported_extensions: [".pdf", ".docx", ".html", ".htm", ".txt", ".md"]
+
+vision:
+  provider: none # hosted vision OFF (not this milestone)
