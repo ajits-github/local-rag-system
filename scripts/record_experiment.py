@@ -81,6 +81,9 @@ def build_experiment_record(
     ragas_judge = ragas.get("judge", {})
     reference_context_analysis = eval_report.get("reference_context_analysis", {})
     relevant_image_hit_rate = eval_report.get("relevant_image_hit_rate", {})
+    token_usage = eval_report.get("token_usage", {})
+    refusal_behavior = eval_report.get("refusal_behavior", {})
+    expansion_utilization = eval_report.get("relationship_expansion_utilization", {})
 
     return {
         "experiment_id": experiment_id,
@@ -103,6 +106,7 @@ def build_experiment_record(
         "retrieval_candidate_k": config.retrieval.candidate_k,
         "reranker_top_n": (config.reranker.top_n if config.reranker.provider != "none" else None),
         "generation_context_top_n": config.retrieval.generation_context_top_n,
+        "generation_max_tokens": config.generation.max_tokens,
         "rrf_k": (config.retrieval.hybrid.rrf_k if config.retrieval.provider == "hybrid" else None),
         # Multimodal/relationship-aware milestone fields -- None for any
         # report predating them (older gold schema has no reference_contexts/
@@ -113,6 +117,14 @@ def build_experiment_record(
             "supporting_context_hit_rate"
         ),
         "relevant_image_hit_rate": relevant_image_hit_rate.get("hit_rate"),
+        # Generation-context/token-budget milestone fields -- None for any
+        # report predating them.
+        "prompt_tokens_mean": token_usage.get("prompt_tokens_mean"),
+        "completion_tokens_mean": token_usage.get("completion_tokens_mean"),
+        "unanswerable_refusal_rate": refusal_behavior.get("correct_refusal_rate"),
+        "expanded_context_utilization_rate": expansion_utilization.get(
+            "answer_appears_to_use_expanded_content_rate"
+        ),
         "dataset_id": eval_report.get("dataset_id"),
         "recall_at_5": retrieval.get("recall@5"),
         "recall_at_10": retrieval.get("recall@10"),
@@ -128,6 +140,8 @@ def build_experiment_record(
         "ragas_context_precision": ragas_aggregate.get("context_precision"),
         "ragas_context_recall": ragas_aggregate.get("context_recall"),
         "ragas_answer_correctness": ragas_aggregate.get("answer_correctness"),
+        "ragas_noise_sensitivity": ragas_aggregate.get("noise_sensitivity"),
+        "ragas_factual_correctness": ragas_aggregate.get("factual_correctness"),
         "ragas_judge_provider": ragas_judge.get("provider"),
         "ragas_judge_model": ragas_judge.get("model_name"),
     }

@@ -17,6 +17,8 @@ def _make_result(
     attachment_name: str | None = None,
     source_anchor: str | None = None,
     content_type: str | None = None,
+    origin: str = "retrieved",
+    expanded_from: str | None = None,
 ) -> SearchResult:
     """Build a SearchResult with minimal-but-valid chunk metadata."""
     now = datetime.now(UTC)
@@ -33,7 +35,12 @@ def _make_result(
         source_anchor=source_anchor,
         content_type=content_type,
     )
-    return SearchResult(chunk=Chunk(id=chunk_id, content=content, metadata=metadata), score=score)
+    return SearchResult(
+        chunk=Chunk(id=chunk_id, content=content, metadata=metadata),
+        score=score,
+        origin=origin,
+        expanded_from=expanded_from,
+    )
 
 
 class FakeVectorStore:
@@ -161,6 +168,18 @@ def test_evaluate_omits_latency_breakdown_ms_when_generation_skipped():
     report = evaluate(pipeline, examples, dataset_id="test-dataset", run_generation=False)
 
     assert "latency_breakdown_ms" not in report
+
+
+class FakeLLMWithTokens(FakeLLM):
+    """LLM double additionally exposing OllamaLLM-style last-call token counts."""
+
+    def __init__(
+        self, response: str = "fake answer", prompt_tokens: int = 100, completion_tokens: int = 30
+    ) -> None:
+        """Store the fixed response and last-call token counts."""
+        super().__init__(response)
+        self.last_prompt_tokens = prompt_tokens
+        self.last_completion_tokens = completion_tokens
 
 
 def _pipeline(results: list[SearchResult], llm=None) -> RetrievalPipeline:
@@ -381,3 +400,116 @@ def test_relationship_expansion_contribution_rate_absent_when_not_applicable():
     report = evaluate(_pipeline(results), examples, dataset_id="test-dataset", run_generation=False)
 
     assert "relationship_expansion_contribution_rate" not in report
+
+
+def test_evaluate_reports_token_usage_when_llm_exposes_token_counts():
+    """token_usage reads prompt/completion token counts off the LLM (e.g. OllamaLLM)."""
+    results = [_make_result("c1", "Alpha content.", source="a.md", score=0.9)]
+    llm = FakeLLMWithTokens(prompt_tokens=100, completion_tokens=30)
+    examples = [GoldExample(question="q1", expected_answer="Alpha.")]
+
+    report = evaluate(
+        _pipeline(results, llm), examples, dataset_id="test-dataset", run_generation=True
+    )
+
+    assert report["token_usage"]["prompt_tokens_mean"] == 100.0
+    assert report["token_usage"]["completion_tokens_mean"] == 30.0
+    assert report["per_example"][0]["prompt_tokens"] == 100
+    assert report["per_example"][0]["completion_tokens"] == 30
+
+
+def test_evaluate_omits_token_usage_when_llm_does_not_expose_token_counts():
+    """token_usage is absent when the LLM double has no last_prompt_tokens attribute."""
+    results = [_make_result("c1", "Alpha content.", source="a.md", score=0.9)]
+    examples = [GoldExample(question="q1", expected_answer="Alpha.")]
+
+    report = evaluate(_pipeline(results), examples, dataset_id="test-dataset", run_generation=True)
+
+    assert "token_usage" not in report
+
+
+def test_refusal_behavior_correct_refusal_rate_for_unanswerable_examples():
+    """refusal_behavior counts phrase-matched refusals among unanswerable=True examples."""
+    results = [_make_result("c1", "content", source="a.md", score=0.9)]
+    examples = [GoldExample(question="q1", relevant_documents=["a.md"], unanswerable=True)]
+    llm = FakeLLM("The documentation does not contain this information.")
+
+    report = evaluate(
+        _pipeline(results, llm), examples, dataset_id="test-dataset", run_generation=True
+    )
+
+    assert report["refusal_behavior"]["correct_refusal_rate"] == 1.0
+    assert report["per_example"][0]["refused"] is True
+
+
+def test_refusal_behavior_absent_when_no_unanswerable_examples():
+    """refusal_behavior is omitted entirely when no example is unanswerable=True."""
+    results = [_make_result("c1", "content", source="a.md", score=0.9)]
+    examples = [GoldExample(question="q1", relevant_documents=["a.md"])]
+
+    report = evaluate(_pipeline(results), examples, dataset_id="test-dataset", run_generation=True)
+
+    assert "refusal_behavior" not in report
+
+
+def test_relationship_expansion_utilization_true_when_answer_echoes_expanded_content():
+    """expansion_utilized is True when the answer reuses expanded-only vocabulary."""
+    primary = _make_result("c1", "Retry lock is 600 seconds by default.", source="a.md", score=0.9)
+    expanded = _make_result(
+        "c2",
+        "Idempotency keys must persist through server restarts and outages.",
+        source="a.md",
+        score=0.9,
+        origin="expanded",
+        expanded_from="c1",
+    )
+    llm = FakeLLM("Idempotency keys persist through restarts and outages.")
+    examples = [GoldExample(question="q1", expected_answer="x")]
+
+    report = evaluate(
+        _pipeline([primary, expanded], llm),
+        examples,
+        dataset_id="test-dataset",
+        run_generation=True,
+    )
+
+    utilization = report["relationship_expansion_utilization"]
+    assert utilization["answer_appears_to_use_expanded_content_rate"] == 1.0
+    assert report["per_example"][0]["expansion_utilized"] is True
+
+
+def test_relationship_expansion_utilization_false_when_answer_ignores_expanded_content():
+    """expansion_utilized is False when the answer never echoes expanded-only vocabulary."""
+    primary = _make_result("c1", "Retry lock is 600 seconds by default.", source="a.md", score=0.9)
+    expanded = _make_result(
+        "c2",
+        "Idempotency keys must persist through server restarts and outages.",
+        source="a.md",
+        score=0.9,
+        origin="expanded",
+        expanded_from="c1",
+    )
+    llm = FakeLLM("The retry lock lasts 600 seconds.")
+    examples = [GoldExample(question="q1", expected_answer="x")]
+
+    report = evaluate(
+        _pipeline([primary, expanded], llm),
+        examples,
+        dataset_id="test-dataset",
+        run_generation=True,
+    )
+
+    utilization = report["relationship_expansion_utilization"]
+    assert utilization["answer_appears_to_use_expanded_content_rate"] == 0.0
+    assert report["per_example"][0]["expansion_utilized"] is False
+
+
+def test_relationship_expansion_utilization_absent_when_no_expansion_fired():
+    """The key is omitted entirely when no generation_sources ever have origin='expanded'."""
+    results = [_make_result("c1", "content", source="a.md", score=0.9)]
+    examples = [GoldExample(question="q1", expected_answer="x")]
+
+    report = evaluate(_pipeline(results), examples, dataset_id="test-dataset", run_generation=True)
+
+    assert "relationship_expansion_utilization" not in report
+    assert report["per_example"][0]["expansion_utilized"] is None

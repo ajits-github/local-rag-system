@@ -32,6 +32,7 @@ _PARAM_FIELDS = [
     "retrieval_candidate_k",
     "reranker_top_n",
     "generation_context_top_n",
+    "generation_max_tokens",
     "rrf_k",
     "dataset_id",
     "ragas_judge_provider",
@@ -100,6 +101,12 @@ _METRIC_FIELDS = [
     "ragas_context_precision",
     "ragas_context_recall",
     "ragas_answer_correctness",
+    "ragas_noise_sensitivity",
+    "ragas_factual_correctness",
+    "prompt_tokens_mean",
+    "completion_tokens_mean",
+    "unanswerable_refusal_rate",
+    "expanded_context_utilization_rate",
 ]
 
 

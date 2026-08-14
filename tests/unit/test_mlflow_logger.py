@@ -271,6 +271,33 @@ def test_log_experiment_attaches_existing_artifact_paths(
     assert len(fake.artifacts) == 1
 
 
+def test_log_experiment_logs_generation_context_latency_milestone_fields(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """generation_max_tokens (param) and the new token/refusal/expansion metrics are logged."""
+    fake = _install_fake_mlflow(monkeypatch)
+    config = MLflowConfig()
+    record = _record(
+        generation_max_tokens=256,
+        prompt_tokens_mean=812.5,
+        completion_tokens_mean=64.0,
+        unanswerable_refusal_rate=0.75,
+        expanded_context_utilization_rate=0.4,
+        ragas_noise_sensitivity=0.12,
+        ragas_factual_correctness=0.66,
+    )
+
+    log_experiment(record, config)
+
+    assert fake.params["generation_max_tokens"] == 256
+    assert fake.metrics["prompt_tokens_mean"] == 812.5
+    assert fake.metrics["completion_tokens_mean"] == 64.0
+    assert fake.metrics["unanswerable_refusal_rate"] == 0.75
+    assert fake.metrics["expanded_context_utilization_rate"] == 0.4
+    assert fake.metrics["ragas_noise_sensitivity"] == 0.12
+    assert fake.metrics["ragas_factual_correctness"] == 0.66
+
+
 def test_log_experiment_returns_run_id(monkeypatch: pytest.MonkeyPatch):
     """log_experiment returns the MLflow run's run_id on success."""
     _install_fake_mlflow(monkeypatch)

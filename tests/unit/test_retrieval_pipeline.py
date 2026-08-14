@@ -184,6 +184,52 @@ def test_answer_sources_include_chunk_content():
     assert result["sources"][0]["content"] == "Alpha content."
 
 
+class FakeLLMWithTokens(FakeLLM):
+    """LLM double additionally exposing OllamaLLM-style last-call token counts."""
+
+    def __init__(
+        self, response: str = "fake answer", prompt_tokens: int = 77, completion_tokens: int = 22
+    ) -> None:
+        """Store the fixed response and last-call token counts."""
+        super().__init__(response)
+        self.last_prompt_tokens = prompt_tokens
+        self.last_completion_tokens = completion_tokens
+
+
+def test_answer_surfaces_prompt_and_completion_tokens_when_llm_exposes_them():
+    """answer()'s prompt_tokens/completion_tokens read the LLM's last-call token counts."""
+    results = [_make_result("c1", "Alpha content.", source="a.md", score=0.9)]
+    pipeline = RetrievalPipeline(
+        load_config(),
+        vectorstore=FakeVectorStore(results),
+        embedder=FakeEmbedder(),
+        reranker=FakeReranker(),
+        llm=FakeLLMWithTokens(prompt_tokens=77, completion_tokens=22),
+    )
+
+    result = pipeline.answer("What is alpha?")
+
+    assert result["prompt_tokens"] == 77
+    assert result["completion_tokens"] == 22
+
+
+def test_answer_prompt_and_completion_tokens_are_none_when_llm_does_not_expose_them():
+    """answer()'s prompt_tokens/completion_tokens are None (not a raise) for a bare LLM double."""
+    results = [_make_result("c1", "Alpha content.", source="a.md", score=0.9)]
+    pipeline = RetrievalPipeline(
+        load_config(),
+        vectorstore=FakeVectorStore(results),
+        embedder=FakeEmbedder(),
+        reranker=FakeReranker(),
+        llm=FakeLLM(),
+    )
+
+    result = pipeline.answer("What is alpha?")
+
+    assert result["prompt_tokens"] is None
+    assert result["completion_tokens"] is None
+
+
 def test_retrieve_dense_provider_never_calls_search_keyword():
     """Default (dense) provider: retrieve() only calls search(), never search_keyword()."""
     results = [_make_result("c1", "Alpha content.", source="a.md", score=0.9)]

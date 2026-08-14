@@ -1,4 +1,4 @@
-"""RAGAS-based generation-quality scoring: faithfulness/relevancy/precision/recall/correctness.
+"""RAGAS-based scoring: faithfulness/relevancy/precision/recall/correctness/noise/factual.
 
 A sibling module to `answer_quality.py`, not an extension of it —
 `AnswerQualityScorer`'s single-scalar `score() -> float` contract doesn't
@@ -25,6 +25,19 @@ METRIC_NAMES = [
     "context_recall",
     "answer_correctness",
 ]
+
+# Metrics ragas exposes only as classes needing instantiation, not as
+# ready-built singletons under `ragas.metrics` (unlike METRIC_NAMES above).
+# Added per the generation-context-latency milestone's "if supported
+# cleanly by the project's pinned RAGAS version" requirement -- both use
+# the same {user_input, response, retrieved_contexts, reference} columns
+# `build_dataset` already produces, so no dataset changes are needed.
+# Loaded best-effort in `_load_metrics`: an unsupported/renamed class in a
+# future ragas version fails into `failed`, not a hard import error.
+_EXTRA_METRIC_CLASSES = {
+    "noise_sensitivity": "NoiseSensitivity",
+    "factual_correctness": "FactualCorrectness",
+}
 
 CAVEAT = (
     "RAGAS scores are produced by an LLM judge and have not been validated "
@@ -58,7 +71,55 @@ def _load_metrics() -> tuple[list[Any], list[str], dict[str, str]]:
             used.append(name)
         except AttributeError as exc:
             failed[name] = f"{type(exc).__name__}: {exc}"
+    for name, class_name in _EXTRA_METRIC_CLASSES.items():
+        try:
+            metric_cls = getattr(ragas.metrics, class_name)
+            metrics.append(metric_cls())
+            used.append(name)
+        except (AttributeError, TypeError) as exc:
+            failed[name] = f"{type(exc).__name__}: {exc}"
     return metrics, used, failed
+
+
+def _resolve_result_columns(used: list[str], df_columns: list[str]) -> dict[str, str | None]:
+    """Map each intended metric name to its actual column in `ragas.evaluate()`'s result frame.
+
+    Most metrics' result column is their bare name (e.g. `"faithfulness"`).
+    But metrics with a `mode` parameter -- `NoiseSensitivity`/
+    `FactualCorrectness`, both added via `_EXTRA_METRIC_CLASSES` -- come
+    back as `"noise_sensitivity(mode=relevant)"`/
+    `"factual_correctness(mode=f1)"` instead (confirmed directly against
+    the pinned `ragas==0.3.9`'s `evaluate()` output, not assumed): ragas
+    disambiguates columns by each metric instance's own config, not just
+    its class name. Matching by prefix (`"<name>("`) tolerates that
+    without hardcoding the exact mode string, which isn't part of this
+    project's `_EXTRA_METRIC_CLASSES` config and could change if a metric
+    class's default `mode` changes in a future ragas version.
+
+    Parameters
+    ----------
+    used : list[str]
+        Metric names this project intended to score (`METRIC_NAMES` plus
+        any `_EXTRA_METRIC_CLASSES` keys that loaded successfully).
+    df_columns : list[str]
+        The actual columns of `result.to_pandas()`.
+
+    Returns
+    -------
+    dict[str, str | None]
+        `{intended_name: actual_column_name}`, or `None` for a name with
+        no matching column at all (should not happen for a name in
+        `used`, but handled defensively rather than raising `KeyError`).
+    """
+    resolved: dict[str, str | None] = {}
+    for name in used:
+        if name in df_columns:
+            resolved[name] = name
+            continue
+        prefix = f"{name}("
+        match = next((col for col in df_columns if col.startswith(prefix)), None)
+        resolved[name] = match
+    return resolved
 
 
 def build_dataset(rows: list[dict[str, Any]]) -> Any:
@@ -164,6 +225,7 @@ def score(
         dataset=dataset, metrics=metrics, llm=wrapped_llm, embeddings=wrapped_embeddings
     )
     df = result.to_pandas()
+    columns = _resolve_result_columns(used, list(df.columns))
 
     per_question = [
         {
@@ -172,8 +234,8 @@ def score(
             "unanswerable": row["unanswerable"],
             "scores": {
                 m: (
-                    float(df.iloc[i][m])
-                    if m in df.columns and df.iloc[i][m] == df.iloc[i][m]
+                    float(df.iloc[i][columns[m]])
+                    if columns[m] is not None and df.iloc[i][columns[m]] == df.iloc[i][columns[m]]
                     else None
                 )
                 for m in used
@@ -181,7 +243,9 @@ def score(
         }
         for i, row in enumerate(rows)
     ]
-    aggregate = {m: (float(df[m].mean()) if m in df.columns else None) for m in used}
+    aggregate = {
+        m: (float(df[columns[m]].mean()) if columns[m] is not None else None) for m in used
+    }
     return {
         "metrics_used": used,
         "metrics_failed": failed,

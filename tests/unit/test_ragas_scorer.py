@@ -93,9 +93,26 @@ class _FakeDataFrame:
         return _FakeColumn(row[column] for row in self._rows)
 
 
-def _install_fake_ragas(monkeypatch, *, metric_names: list[str], per_row_scores: dict[str, float]):
-    """Inject fake `ragas`/`ragas.metrics`/`ragas.llms`/`ragas.embeddings`/`datasets` modules."""
-    metrics_module = types.SimpleNamespace(**dict.fromkeys(metric_names, object()))
+def _install_fake_ragas(
+    monkeypatch,
+    *,
+    metric_names: list[str],
+    per_row_scores: dict[str, float],
+    extra_metric_names: list[str] | None = None,
+):
+    """Inject fake `ragas`/`ragas.metrics`/`ragas.llms`/`ragas.embeddings`/`datasets` modules.
+
+    `extra_metric_names` (keys of `ragas_scorer._EXTRA_METRIC_CLASSES`, e.g.
+    `["noise_sensitivity"]`) installs a fake *class* under the
+    corresponding capitalized attribute (e.g. `NoiseSensitivity`), mirroring
+    real ragas.metrics exposing these only as classes needing
+    instantiation, unlike the ready-built singletons in `metric_names`.
+    """
+    ns_kwargs: dict[str, Any] = dict.fromkeys(metric_names, object())
+    for name in extra_metric_names or []:
+        class_name = ragas_scorer._EXTRA_METRIC_CLASSES[name]
+        ns_kwargs[class_name] = lambda *a, **k: object()
+    metrics_module = types.SimpleNamespace(**ns_kwargs)
     llms_module = types.SimpleNamespace(LangchainLLMWrapper=lambda x, cache=None: x)
     embeddings_module = types.SimpleNamespace(LangchainEmbeddingsWrapper=lambda x: x)
 
@@ -171,6 +188,102 @@ def test_score_builds_aggregate_and_per_question_from_fake_evaluate_result(monke
     _install_fake_ragas(
         monkeypatch,
         metric_names=ragas_scorer.METRIC_NAMES,
+        extra_metric_names=list(ragas_scorer._EXTRA_METRIC_CLASSES),
+        per_row_scores={
+            "faithfulness": 0.9,
+            "answer_relevancy": 0.8,
+            "context_precision": 0.7,
+            "context_recall": 0.6,
+            "answer_correctness": 0.5,
+            "noise_sensitivity": 0.4,
+            "factual_correctness": 0.3,
+        },
+    )
+
+    result = score(_rows(), judge_llm=FakeLLM(), embedder=FakeEmbedder())
+
+    expected_names = set(ragas_scorer.METRIC_NAMES) | set(ragas_scorer._EXTRA_METRIC_CLASSES)
+    assert set(result["metrics_used"]) == expected_names
+    assert result["metrics_failed"] == {}
+    assert result["aggregate"]["faithfulness"] == 0.9
+    assert result["aggregate"]["noise_sensitivity"] == 0.4
+    assert result["aggregate"]["factual_correctness"] == 0.3
+    assert len(result["per_question"]) == 2
+    assert result["per_question"][0]["scores"]["faithfulness"] == 0.9
+    assert result["per_question"][1]["unanswerable"] is True
+    assert result["caveat"] == ragas_scorer.CAVEAT
+
+
+def test_resolve_result_columns_matches_exact_names():
+    """Plain-named metrics (e.g. faithfulness) resolve to their own column, unchanged."""
+    resolved = ragas_scorer._resolve_result_columns(
+        ["faithfulness", "answer_correctness"], ["faithfulness", "answer_correctness", "other"]
+    )
+    assert resolved == {"faithfulness": "faithfulness", "answer_correctness": "answer_correctness"}
+
+
+def test_resolve_result_columns_matches_mode_suffixed_names():
+    """noise_sensitivity/factual_correctness come back as '<name>(mode=...)' in real ragas output.
+
+    Confirmed directly against the pinned ragas==0.3.9: NoiseSensitivity's
+    and FactualCorrectness's result columns include their `mode` config in
+    the column name, unlike the other 5 (mode-less) metrics.
+    """
+    resolved = ragas_scorer._resolve_result_columns(
+        ["noise_sensitivity", "factual_correctness"],
+        ["user_input", "noise_sensitivity(mode=relevant)", "factual_correctness(mode=f1)"],
+    )
+    assert resolved == {
+        "noise_sensitivity": "noise_sensitivity(mode=relevant)",
+        "factual_correctness": "factual_correctness(mode=f1)",
+    }
+
+
+def test_resolve_result_columns_none_when_no_match():
+    """A name with no matching column (exact or prefixed) resolves to None, not a KeyError."""
+    resolved = ragas_scorer._resolve_result_columns(["missing_metric"], ["faithfulness"])
+    assert resolved == {"missing_metric": None}
+
+
+def test_score_resolves_mode_suffixed_columns_for_extra_metrics(monkeypatch):
+    """score() resolves noise_sensitivity/factual_correctness under their real, mode-suffixed names.
+
+    Not just the bare metric name this project tracks them under.
+    """
+    _install_fake_ragas(
+        monkeypatch,
+        metric_names=ragas_scorer.METRIC_NAMES,
+        extra_metric_names=list(ragas_scorer._EXTRA_METRIC_CLASSES),
+        per_row_scores={
+            "faithfulness": 0.9,
+            "answer_relevancy": 0.8,
+            "context_precision": 0.7,
+            "context_recall": 0.6,
+            "answer_correctness": 0.5,
+            "noise_sensitivity(mode=relevant)": 0.4,
+            "factual_correctness(mode=f1)": 0.3,
+        },
+    )
+
+    result = score(_rows(), judge_llm=FakeLLM(), embedder=FakeEmbedder())
+
+    assert result["aggregate"]["noise_sensitivity"] == 0.4
+    assert result["aggregate"]["factual_correctness"] == 0.3
+    assert result["per_question"][0]["scores"]["noise_sensitivity"] == 0.4
+    assert result["per_question"][0]["scores"]["factual_correctness"] == 0.3
+
+
+def test_score_extra_metrics_fail_gracefully_when_unsupported_by_installed_ragas(monkeypatch):
+    """noise_sensitivity/factual_correctness missing from ragas.metrics doesn't block the rest.
+
+    Simulates an older/different ragas version lacking these classes --
+    the "if supported cleanly" requirement: the 5 original metrics still
+    score normally, and the two extras land in metrics_failed rather than
+    raising.
+    """
+    _install_fake_ragas(
+        monkeypatch,
+        metric_names=ragas_scorer.METRIC_NAMES,
         per_row_scores={
             "faithfulness": 0.9,
             "answer_relevancy": 0.8,
@@ -183,12 +296,8 @@ def test_score_builds_aggregate_and_per_question_from_fake_evaluate_result(monke
     result = score(_rows(), judge_llm=FakeLLM(), embedder=FakeEmbedder())
 
     assert set(result["metrics_used"]) == set(ragas_scorer.METRIC_NAMES)
-    assert result["metrics_failed"] == {}
-    assert result["aggregate"]["faithfulness"] == 0.9
-    assert len(result["per_question"]) == 2
-    assert result["per_question"][0]["scores"]["faithfulness"] == 0.9
-    assert result["per_question"][1]["unanswerable"] is True
-    assert result["caveat"] == ragas_scorer.CAVEAT
+    assert "noise_sensitivity" in result["metrics_failed"]
+    assert "factual_correctness" in result["metrics_failed"]
 
 
 def test_score_metrics_failed_when_one_metric_import_raises(monkeypatch):

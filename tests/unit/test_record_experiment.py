@@ -201,3 +201,55 @@ def test_build_experiment_record_captures_hybrid_retrieval_provider_and_rrf_k():
 
     assert record["retrieval_provider"] == "hybrid"
     assert record["rrf_k"] == 30
+
+
+def test_build_experiment_record_includes_generation_max_tokens():
+    """generation_max_tokens is read from config.generation.max_tokens, not the report."""
+    config = load_config().model_copy(deep=True)
+    config.generation.max_tokens = 256
+    record = record_experiment.build_experiment_record(
+        _fake_eval_report(), config, "experiment_999", "unit test"
+    )
+
+    assert record["generation_max_tokens"] == 256
+
+
+def test_build_experiment_record_includes_generation_context_latency_milestone_fields():
+    """token_usage/refusal_behavior/relationship_expansion_utilization flatten into the record."""
+    config = load_config()
+    report = _fake_eval_report()
+    report["token_usage"] = {"prompt_tokens_mean": 812.5, "completion_tokens_mean": 64.0}
+    report["refusal_behavior"] = {"correct_refusal_rate": 0.75}
+    report["relationship_expansion_utilization"] = {
+        "answer_appears_to_use_expanded_content_rate": 0.4
+    }
+    report["ragas"] = {
+        "aggregate": {"noise_sensitivity": 0.12, "factual_correctness": 0.66},
+        "judge": {"provider": "openai", "model_name": "gpt-4o-mini"},
+    }
+
+    record = record_experiment.build_experiment_record(
+        report, config, "experiment_999", "unit test"
+    )
+
+    assert record["prompt_tokens_mean"] == 812.5
+    assert record["completion_tokens_mean"] == 64.0
+    assert record["unanswerable_refusal_rate"] == 0.75
+    assert record["expanded_context_utilization_rate"] == 0.4
+    assert record["ragas_noise_sensitivity"] == 0.12
+    assert record["ragas_factual_correctness"] == 0.66
+
+
+def test_build_experiment_record_generation_context_latency_fields_none_when_absent():
+    """Reports predating this milestone yield None, not a KeyError, for the new fields."""
+    config = load_config()
+    record = record_experiment.build_experiment_record(
+        _fake_eval_report(), config, "experiment_999", "unit test"
+    )
+
+    assert record["prompt_tokens_mean"] is None
+    assert record["completion_tokens_mean"] is None
+    assert record["unanswerable_refusal_rate"] is None
+    assert record["expanded_context_utilization_rate"] is None
+    assert record["ragas_noise_sensitivity"] is None
+    assert record["ragas_factual_correctness"] is None

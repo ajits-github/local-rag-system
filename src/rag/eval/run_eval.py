@@ -52,6 +52,13 @@ _UNCATEGORIZED = "uncategorized"
 # heuristic, not a semantic-correctness judge.
 _VISION_BEHAVIOR_QUALITY_THRESHOLD = 0.15
 
+# Minimum number of expanded-only (len>3) words that must also appear in the
+# generated answer for _expansion_utilization to call it "used" rather than
+# "not used" -- a small deterministic threshold chosen to tolerate 1-2
+# incidental word matches without requiring exact-phrase reuse; see that
+# function's docstring for the full caveat.
+_EXPANSION_UTILIZATION_MIN_OVERLAP = 2
+
 # Deliberately small and literal (not exhaustive NLP) -- a triage aid for
 # hand-inspection (see PROJECT_JOURNAL.md), not a claim of semantic
 # understanding of refusal. Calibrated against techfusion_gold.jsonl's own
@@ -106,6 +113,7 @@ def _config_summary(config: AppConfig) -> dict[str, Any]:
         "chunk_overlap": config.chunking.chunk_overlap,
         "reranker_provider": config.reranker.provider,
         "generation_model": config.generation.model_name,
+        "generation_max_tokens": config.generation.max_tokens,
         "prompt_id": config.generation.prompt.id,
         "prompt_version": config.generation.prompt.version,
         "retrieval_provider": config.retrieval.provider,
@@ -141,6 +149,57 @@ def _image_hit(results: list[SearchResult], relevant_images: list[str]) -> bool:
         if any(source_matches_relevant(resolved, img) for img in relevant_images):
             return True
     return False
+
+
+def _expansion_utilization(sources: list[dict[str, Any]], answer_text: str) -> bool | None:
+    """Whether relationship-expanded sources appear to have contributed to the final answer.
+
+    Heuristic keyword-overlap check (mirrors `KeywordOverlapScorer`'s
+    len>3-word style), not a semantic-attribution claim: computes the
+    words that appear in `origin="expanded"` sources' content but NOT in
+    any `origin="retrieved"` (primary) source's content -- i.e. content
+    only the expansion step supplied -- and checks whether at least
+    `_EXPANSION_UTILIZATION_MIN_OVERLAP` of those words also appear in
+    `answer_text`. A word-overlap hit doesn't prove the model actually
+    reasoned over that chunk (it could be incidental vocabulary overlap),
+    and a miss doesn't prove the expanded chunk was pure noise (the model
+    may have used it without echoing its wording) -- a triage aid for
+    hand-inspection, same documented-limitation style as this module's
+    other deterministic heuristics.
+
+    Parameters
+    ----------
+    sources : list[dict[str, Any]]
+        `RetrievalPipeline.answer()`'s `"sources"` list for one question
+        (each entry has `content`/`origin`).
+    answer_text : str
+        The generated answer.
+
+    Returns
+    -------
+    bool | None
+        `None` if no `origin="expanded"` source was present in `sources`
+        (expansion didn't fire for this question); otherwise whether the
+        overlap threshold was met.
+    """
+    expanded = [s for s in sources if s.get("origin") == "expanded"]
+    if not expanded:
+        return None
+    primary_words = {
+        w.lower()
+        for s in sources
+        if s.get("origin") == "retrieved"
+        for w in s["content"].split()
+        if len(w) > 3
+    }
+    expanded_words: set[str] = set()
+    for s in expanded:
+        expanded_words |= {w.lower() for w in s["content"].split() if len(w) > 3}
+    expanded_unique_words = expanded_words - primary_words
+    if not expanded_unique_words:
+        return False
+    answer_words = {w.lower() for w in answer_text.split() if len(w) > 3}
+    return len(expanded_unique_words & answer_words) >= _EXPANSION_UTILIZATION_MIN_OVERLAP
 
 
 def _looks_like_refusal(answer_text: str) -> bool:
@@ -269,9 +328,11 @@ def evaluate(
         `reference_context_analysis` (the A/B/C supporting-context-hit
         buckets), and (when applicable) `relevant_image_hit_rate`/
         `relationship_expansion_contribution_rate`/(if `run_generation`)
-        `vision_behavior_breakdown`/`latency_ms`/`answer_quality` keys,
-        plus `per_example` detail. See `_content_type_breakdown`,
-        `_classify_vision_behavior`, and `reference_context_is_supported`
+        `vision_behavior_breakdown`/`latency_ms`/`answer_quality`/
+        `token_usage`/`refusal_behavior`/
+        `relationship_expansion_utilization` keys, plus `per_example`
+        detail. See `_content_type_breakdown`, `_classify_vision_behavior`,
+        `_expansion_utilization`, and `reference_context_is_supported`
         for what each new metric means and its documented limitations --
         all are deterministic heuristics, not semantic-correctness judges.
     """
@@ -290,6 +351,10 @@ def evaluate(
     expansion_contribution_records: list[bool] = []
     vision_behavior_records: list[str] = []
     stage_ms_records: list[dict[str, float]] = []
+    prompt_tokens_values: list[int] = []
+    completion_tokens_values: list[int] = []
+    refusal_records: list[bool] = []
+    expansion_utilization_records: list[bool] = []
     per_example: list[dict[str, Any]] = []
 
     for example in examples:
@@ -369,6 +434,13 @@ def evaluate(
             generation_ms_values.append(result["generation_ms"])
             total_ms_values.append(result["total_ms"])
             stage_ms_records.append(result["latency_breakdown_ms"])
+            if result.get("prompt_tokens") is not None:
+                prompt_tokens_values.append(result["prompt_tokens"])
+            if result.get("completion_tokens") is not None:
+                completion_tokens_values.append(result["completion_tokens"])
+            expansion_used = _expansion_utilization(result["sources"], result["answer"])
+            if expansion_used is not None:
+                expansion_utilization_records.append(expansion_used)
             entry.update(
                 answer=result["answer"],
                 # Production-config sources-with-content (this answer()
@@ -381,7 +453,14 @@ def evaluate(
                 retrieval_ms=result["retrieval_ms"],
                 generation_ms=result["generation_ms"],
                 total_ms=result["total_ms"],
+                prompt_tokens=result.get("prompt_tokens"),
+                completion_tokens=result.get("completion_tokens"),
+                expansion_utilized=expansion_used,
             )
+            if example.unanswerable:
+                refused = _looks_like_refusal(result["answer"])
+                entry["refused"] = refused
+                refusal_records.append(refused)
             quality: float | None = None
             if scorer is not None and example.expected_answer:
                 quality = scorer.score(example.question, result["answer"], example.expected_answer)
@@ -487,6 +566,51 @@ def evaluate(
                     key: _mean([r[key] for r in stage_ms_records if key in r])
                     for key in sorted(stage_keys)
                 },
+            }
+        if prompt_tokens_values or completion_tokens_values:
+            report["token_usage"] = {
+                "note": (
+                    "Read from OllamaLLM's per-call prompt_eval_count/eval_count "
+                    "(None -- and excluded from these means -- if the Ollama response "
+                    "omitted either field). prompt_tokens covers the full rendered "
+                    "prompt (system + context + query), not context alone."
+                ),
+                "prompt_tokens_mean": _mean([float(v) for v in prompt_tokens_values]),
+                "completion_tokens_mean": _mean([float(v) for v in completion_tokens_values]),
+                "prompt_tokens_count": len(prompt_tokens_values),
+                "completion_tokens_count": len(completion_tokens_values),
+            }
+        if refusal_records:
+            report["refusal_behavior"] = {
+                "note": (
+                    "Among gold examples with unanswerable=true, the fraction whose "
+                    "generated answer matched run_eval.py's literal refusal-phrase list "
+                    "(_looks_like_refusal) -- a phrase-match heuristic, not a semantic "
+                    "judgment of whether the refusal was well-reasoned. Distinct from "
+                    "vision_behavior_breakdown, which only covers requires_vision=true "
+                    "examples."
+                ),
+                "count": len(refusal_records),
+                "correct_refusal_rate": _mean([1.0 if r else 0.0 for r in refusal_records]),
+            }
+        if expansion_utilization_records:
+            report["relationship_expansion_utilization"] = {
+                "note": (
+                    "Among questions where an origin='expanded' chunk was present in "
+                    "generation_sources (i.e. expansion actually fired for this answer() "
+                    "call), the fraction where expanded-only content also appears "
+                    "(keyword-overlap heuristic, see _expansion_utilization) in the "
+                    "generated answer -- a proxy for 'was the expanded context consumed, "
+                    "or just added as noise'. Distinct from "
+                    "relationship_expansion_contribution_rate, which only covers "
+                    "requires_relationship_expansion=true gold rows against authored "
+                    "reference_contexts; this covers every question where expansion fired, "
+                    "regardless of gold annotation."
+                ),
+                "count": len(expansion_utilization_records),
+                "answer_appears_to_use_expanded_content_rate": _mean(
+                    [1.0 if u else 0.0 for u in expansion_utilization_records]
+                ),
             }
         all_quality = answerable_quality_scores + unanswerable_quality_scores
         report["answer_quality"] = {

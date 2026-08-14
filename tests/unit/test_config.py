@@ -180,6 +180,36 @@ def test_stage_b_cross_encoder_config_only_differs_by_reranker_from_baseline():
     assert baseline_dict == candidate_dict
 
 
+def test_generation_context_latency_configs_isolate_one_variable_at_a_time():
+    """Config A -> B -> C (context/token-budget milestone) each change exactly one field.
+
+    A = multimodal-v2-relationship-qwen3b.yaml (the established best
+    retrieval/generation config). B changes only
+    retrieval.generation_context_top_n (3 -> 2). C changes only
+    generation.max_tokens on top of B (512 -> 256) -- everything else
+    (embeddings, chunking, retrieval strategy, prompt, model) stays fixed
+    across all three, per this milestone's controlled-experiment design.
+    """
+    config_a = load_config("config/experiments/multimodal-v2-relationship-qwen3b.yaml")
+    config_b = load_config("config/experiments/multimodal-v2-relationship-qwen3b_ctx2.yaml")
+    config_c = load_config("config/experiments/multimodal-v2-relationship-qwen3b_ctx2_tok256.yaml")
+
+    assert config_a.retrieval.generation_context_top_n == 3
+    assert config_b.retrieval.generation_context_top_n == 2
+    assert config_c.retrieval.generation_context_top_n == 2
+    assert config_a.generation.max_tokens == 512
+    assert config_b.generation.max_tokens == 512
+    assert config_c.generation.max_tokens == 256
+
+    a_dict = config_a.model_dump(exclude={"retrieval": {"generation_context_top_n"}})
+    b_dict = config_b.model_dump(exclude={"retrieval": {"generation_context_top_n"}})
+    assert a_dict == b_dict
+
+    b_dict_2 = config_b.model_dump(exclude={"generation": {"max_tokens"}})
+    c_dict = config_c.model_dump(exclude={"generation": {"max_tokens"}})
+    assert b_dict_2 == c_dict
+
+
 def test_all_live_config_files_migrated_to_new_cutoff_field_names():
     """Every config file AppConfig ever loads uses the new retrieval/reranker cutoff fields.
 

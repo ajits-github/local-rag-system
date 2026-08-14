@@ -418,8 +418,14 @@ class RetrievalPipeline:
         Returns
         -------
         dict[str, Any]
-            ``{"answer", "sources", "retrieval_ms", "generation_ms",
-            "total_ms", "latency_breakdown_ms"}``. `latency_breakdown_ms`
+            ``{"answer", "prompt_tokens", "completion_tokens", "sources",
+            "retrieval_ms", "generation_ms", "total_ms",
+            "latency_breakdown_ms"}``. `prompt_tokens`/`completion_tokens`
+            are read off the LLM instance's own last-call tracking (e.g.
+            `OllamaLLM.last_prompt_tokens`/`last_completion_tokens`) via
+            `getattr`, so any future `LLM` implementation that doesn't
+            track them just reports `None` rather than raising.
+            `latency_breakdown_ms`
             splits `retrieval_ms` into its component stages (embed, dense/
             BM25 search, fusion, rerank, expansion -- see `_retrieve_timed`)
             plus `generation_ms`, for latency comparisons (e.g. how much a
@@ -443,6 +449,8 @@ class RetrievalPipeline:
         generation_ms = (t2 - t1) * 1000
         return {
             "answer": answer_text,
+            "prompt_tokens": getattr(self._llm, "last_prompt_tokens", None),
+            "completion_tokens": getattr(self._llm, "last_completion_tokens", None),
             "sources": [
                 {
                     "chunk_id": r.chunk.metadata.chunk_id,
