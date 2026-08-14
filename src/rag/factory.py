@@ -142,6 +142,7 @@ def build_llm(config: AppConfig) -> LLM:
             base_url=config.ollama_base_url(),
             temperature=config.generation.temperature,
             max_tokens=config.generation.max_tokens,
+            seed=config.generation.seed,
         )
     raise ValueError(f"Unknown generation provider: {config.generation.provider}")
 

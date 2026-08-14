@@ -10,9 +10,11 @@ class _FakeOllamaClient:
         """Store the fixed `generate()` response this double will return."""
         self._response = response
         self._list_raises = list_raises
+        self.last_options: dict | None = None
 
     def generate(self, model: str, prompt: str, options: dict) -> dict:
-        """Return the fixed response, ignoring inputs."""
+        """Return the fixed response, recording `options` for assertions."""
+        self.last_options = options
         return self._response
 
     def list(self) -> None:
@@ -21,9 +23,9 @@ class _FakeOllamaClient:
             raise ConnectionError("unreachable")
 
 
-def _make_llm(monkeypatch, response: dict) -> OllamaLLM:
+def _make_llm(monkeypatch, response: dict, **kwargs) -> OllamaLLM:
     """Build an OllamaLLM whose internal ollama.Client is replaced with a fake."""
-    llm = OllamaLLM(model_name="qwen2.5:3b")
+    llm = OllamaLLM(model_name="qwen2.5:3b", **kwargs)
     monkeypatch.setattr(llm, "_client", _FakeOllamaClient(response))
     return llm
 
@@ -67,3 +69,31 @@ def test_generate_updates_token_counts_across_successive_calls(monkeypatch):
 
     assert llm.last_prompt_tokens == 20
     assert llm.last_completion_tokens == 8
+
+
+def test_generate_passes_seed_in_options_when_configured(monkeypatch):
+    """A configured seed is forwarded to Ollama's options.seed."""
+    llm = _make_llm(monkeypatch, {"response": "answer"}, seed=42)
+
+    llm.generate("some prompt")
+
+    assert llm._client.last_options["seed"] == 42
+
+
+def test_generate_omits_seed_from_options_when_not_configured(monkeypatch):
+    """No seed key is sent at all when seed is None (default), preserving non-determinism."""
+    llm = _make_llm(monkeypatch, {"response": "answer"})
+
+    llm.generate("some prompt")
+
+    assert "seed" not in llm._client.last_options
+
+
+def test_generate_passes_configured_temperature_and_max_tokens(monkeypatch):
+    """temperature/num_predict are always present in options, independent of seed."""
+    llm = _make_llm(monkeypatch, {"response": "answer"}, temperature=0.0, max_tokens=256)
+
+    llm.generate("some prompt")
+
+    assert llm._client.last_options["temperature"] == 0.0
+    assert llm._client.last_options["num_predict"] == 256

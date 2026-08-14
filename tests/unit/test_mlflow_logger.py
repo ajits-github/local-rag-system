@@ -298,6 +298,29 @@ def test_log_experiment_logs_generation_context_latency_milestone_fields(
     assert fake.metrics["ragas_factual_correctness"] == 0.66
 
 
+def test_log_experiment_logs_generation_temperature_and_seed_params(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """generation_temperature/generation_seed are logged as params (config, not metrics)."""
+    fake = _install_fake_mlflow(monkeypatch)
+    config = MLflowConfig()
+
+    log_experiment(_record(generation_temperature=0.0, generation_seed=42), config)
+
+    assert fake.params["generation_temperature"] == 0.0
+    assert fake.params["generation_seed"] == 42
+
+
+def test_log_experiment_omits_generation_seed_param_when_none(monkeypatch: pytest.MonkeyPatch):
+    """A None generation_seed (non-deterministic run) is never logged as a param."""
+    fake = _install_fake_mlflow(monkeypatch)
+    config = MLflowConfig()
+
+    log_experiment(_record(generation_seed=None), config)
+
+    assert "generation_seed" not in fake.params
+
+
 def test_log_experiment_returns_run_id(monkeypatch: pytest.MonkeyPatch):
     """log_experiment returns the MLflow run's run_id on success."""
     _install_fake_mlflow(monkeypatch)

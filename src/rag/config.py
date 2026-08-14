@@ -107,13 +107,25 @@ class PromptConfig(BaseModel):
 
 
 class GenerationConfig(BaseModel):
-    """LLM provider selection and generation parameters."""
+    """LLM provider selection and generation parameters.
+
+    `seed` is `None` by default (non-deterministic sampling, matching prior
+    behavior). Ollama's `/api/generate` `options.seed` is a real,
+    supported parameter (confirmed against the installed `ollama` Python
+    client's `Options` model) that makes repeated calls with an identical
+    prompt/model/options reproducible -- but only to the extent the
+    underlying llama.cpp runtime guarantees (same model file, same
+    quantization, same thread count); it is not a cross-machine/
+    cross-hardware determinism guarantee. Set alongside `temperature: 0`
+    for a reproducible baseline run.
+    """
 
     provider: Literal["ollama"] = "ollama"
     model_name: str = "qwen2.5:1.5b"
     base_url_env_var: str = "OLLAMA_BASE_URL"
     temperature: float = 0.2
     max_tokens: int = 512
+    seed: int | None = None
     prompt: PromptConfig = Field(default_factory=PromptConfig)
 
 

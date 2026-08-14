@@ -107,6 +107,8 @@ def build_experiment_record(
         "reranker_top_n": (config.reranker.top_n if config.reranker.provider != "none" else None),
         "generation_context_top_n": config.retrieval.generation_context_top_n,
         "generation_max_tokens": config.generation.max_tokens,
+        "generation_temperature": config.generation.temperature,
+        "generation_seed": config.generation.seed,
         "rrf_k": (config.retrieval.hybrid.rrf_k if config.retrieval.provider == "hybrid" else None),
         # Multimodal/relationship-aware milestone fields -- None for any
         # report predating them (older gold schema has no reference_contexts/

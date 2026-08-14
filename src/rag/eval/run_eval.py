@@ -114,6 +114,8 @@ def _config_summary(config: AppConfig) -> dict[str, Any]:
         "reranker_provider": config.reranker.provider,
         "generation_model": config.generation.model_name,
         "generation_max_tokens": config.generation.max_tokens,
+        "generation_temperature": config.generation.temperature,
+        "generation_seed": config.generation.seed,
         "prompt_id": config.generation.prompt.id,
         "prompt_version": config.generation.prompt.version,
         "retrieval_provider": config.retrieval.provider,

@@ -33,6 +33,8 @@ _PARAM_FIELDS = [
     "reranker_top_n",
     "generation_context_top_n",
     "generation_max_tokens",
+    "generation_temperature",
+    "generation_seed",
     "rrf_k",
     "dataset_id",
     "ragas_judge_provider",

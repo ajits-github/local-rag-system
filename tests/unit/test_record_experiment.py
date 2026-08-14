@@ -214,6 +214,30 @@ def test_build_experiment_record_includes_generation_max_tokens():
     assert record["generation_max_tokens"] == 256
 
 
+def test_build_experiment_record_includes_generation_temperature_and_seed():
+    """generation_temperature/generation_seed are read from config, not the report."""
+    config = load_config().model_copy(deep=True)
+    config.generation.temperature = 0.0
+    config.generation.seed = 42
+    record = record_experiment.build_experiment_record(
+        _fake_eval_report(), config, "experiment_999", "unit test"
+    )
+
+    assert record["generation_temperature"] == 0.0
+    assert record["generation_seed"] == 42
+
+
+def test_build_experiment_record_generation_seed_none_by_default():
+    """generation_seed is None when config.generation.seed is unset (non-deterministic)."""
+    config = load_config()
+    assert config.generation.seed is None
+    record = record_experiment.build_experiment_record(
+        _fake_eval_report(), config, "experiment_999", "unit test"
+    )
+
+    assert record["generation_seed"] is None
+
+
 def test_build_experiment_record_includes_generation_context_latency_milestone_fields():
     """token_usage/refusal_behavior/relationship_expansion_utilization flatten into the record."""
     config = load_config()

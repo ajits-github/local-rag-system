@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from rag.config import load_config
-from rag.factory import build_judge_llm, build_reranker, build_vision_provider
+from rag.factory import build_judge_llm, build_llm, build_reranker, build_vision_provider
 from rag.generation.anthropic_llm import AnthropicLLM
 from rag.generation.ollama_llm import OllamaLLM
 from rag.generation.openai_llm import OpenAILLM
@@ -33,6 +33,24 @@ def test_build_judge_llm_ollama_provider_returns_ollama_llm():
     config.judge.provider = "ollama"
     judge = build_judge_llm(config)
     assert isinstance(judge, OllamaLLM)
+
+
+def test_build_llm_passes_configured_seed_through_to_ollama_llm():
+    """build_llm forwards config.generation.seed into the constructed OllamaLLM."""
+    config = load_config().model_copy(deep=True)
+    config.generation.seed = 42
+    llm = build_llm(config)
+    assert isinstance(llm, OllamaLLM)
+    assert llm._seed == 42
+
+
+def test_build_llm_seed_defaults_to_none():
+    """build_llm leaves seed at None (non-deterministic) when config.generation.seed is unset."""
+    config = load_config()
+    assert config.generation.seed is None
+    llm = build_llm(config)
+    assert isinstance(llm, OllamaLLM)
+    assert llm._seed is None
 
 
 def test_build_judge_llm_openai_without_api_key_raises(monkeypatch):

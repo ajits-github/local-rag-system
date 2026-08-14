@@ -1,10 +1,25 @@
-# Default configuration for local-rag-system.
+# classic_rag_baseline_v1: a deterministic snapshot of the best-known
+# "classic" (non-safety/freshness) RAG config, frozen before the
+# safety/freshness milestone starts, so later safety/freshness experiments
+# have a fixed, reproducible reference point to diff against.
+#
+# Identical to multimodal-v2-relationship-qwen3b.yaml (the config behind
+# experiment_015, the last full-84-question RAGAS run and this project's
+# highest recorded faithfulness/answer_correctness to date) except:
+#   - generation.temperature: 0.0 (was 0.2)
+#   - generation.seed: 42 (new -- Ollama's options.seed is supported by the
+#     installed ollama client, confirmed directly; see OllamaLLM/GenerationConfig
+#     docstrings for the determinism caveat -- reproducible per-host, not a
+#     cross-hardware guarantee)
+# No other variable (retrieval, chunking, embedding, reranking, prompt
+# version, relationship expansion) changes. Used with --config for
+# rag.eval.run_ragas_eval; never overwrites config/default.yaml itself.
 #
 # Every component below is a "swap point": change `provider` (and its
 # provider-specific block) to try a different embedding model, vector
 # backend, chunker, reranker, or LLM without touching pipeline code.
 #
-# Secrets and host/port values are never hardcoded here — fields ending in
+# Secrets and host/port values are never hardcoded here: fields ending in
 # `_env_var` name an environment variable that is resolved at load time by
 # rag.config.Settings.
 
@@ -45,15 +60,15 @@ reranker:
 
 generation:
   provider: ollama # swap point
-  model_name: qwen2.5:1.5b
+  model_name: qwen2.5:3b
   base_url_env_var: OLLAMA_BASE_URL
-  temperature: 0.2
+  temperature: 0.0 # deterministic baseline (was 0.2 in multimodal-v2-relationship-qwen3b.yaml)
   max_tokens: 512
-  seed: null # swap point: set an int (e.g. 42) for reproducible Ollama sampling; null = non-deterministic
+  seed: 42 # deterministic baseline (new -- see OllamaLLM for Ollama seed-support details)
   prompt:
     id: rag_answer
-    version: v1
-    path: src/rag/prompts/templates/rag_answer_v1.yaml
+    version: v2 # stricter grounding/refusal prompt
+    path: src/rag/prompts/templates/rag_answer_v2.yaml
 
 judge:
   provider: openai # swap point: openai | anthropic | ollama (ollama = local, for experimentation only)
@@ -74,13 +89,13 @@ mlflow:
   experiment_name: local-rag-system
 
 retrieval:
-  provider: dense # swap point: dense | hybrid (BM25 + dense, fused via RRF)
+  provider: hybrid # matches experiment_010/experiment_015 (was dense in config/default.yaml)
   candidate_k: 5
   generation_context_top_n: 3
   hybrid:
     rrf_k: 60
   relationship_expansion:
-    enabled: false # no-op when false; see docs/architecture.md
+    enabled: true # matches experiment_015 (relationship expansion ON)
     include_parent: true
     include_neighbors: true
     max_related_elements: 3
@@ -89,4 +104,4 @@ ingestion:
   supported_extensions: [".pdf", ".docx", ".html", ".htm", ".txt", ".md"]
 
 vision:
-  provider: none # swap point: none (only provider implemented so far; see docs/architecture.md)
+  provider: none # hosted vision OFF (not this milestone)

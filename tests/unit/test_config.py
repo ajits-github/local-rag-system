@@ -210,6 +210,34 @@ def test_generation_context_latency_configs_isolate_one_variable_at_a_time():
     assert b_dict_2 == c_dict
 
 
+def test_generation_config_seed_defaults_to_none():
+    """GenerationConfig.seed is None (non-deterministic) unless a config file sets it."""
+    config = load_config()
+    assert config.generation.seed is None
+
+
+def test_classic_rag_baseline_v1_changes_only_temperature_and_seed():
+    """classic-rag-baseline-v1.yaml is experiment_015's config, made deterministic.
+
+    Same retrieval/chunking/embedding/reranking/prompt-v2/relationship-
+    expansion/model as multimodal-v2-relationship-qwen3b.yaml -- only
+    generation.temperature (0.2 -> 0.0) and generation.seed (None -> 42)
+    differ, per the classic-RAG-baseline milestone's explicit
+    "don't change any other experiment variable" requirement.
+    """
+    baseline = load_config("config/experiments/multimodal-v2-relationship-qwen3b.yaml")
+    classic = load_config("config/experiments/classic-rag-baseline-v1.yaml")
+
+    assert baseline.generation.temperature == 0.2
+    assert classic.generation.temperature == 0.0
+    assert baseline.generation.seed is None
+    assert classic.generation.seed == 42
+
+    baseline_dict = baseline.model_dump(exclude={"generation": {"temperature", "seed"}})
+    classic_dict = classic.model_dump(exclude={"generation": {"temperature", "seed"}})
+    assert baseline_dict == classic_dict
+
+
 def test_all_live_config_files_migrated_to_new_cutoff_field_names():
     """Every config file AppConfig ever loads uses the new retrieval/reranker cutoff fields.
 

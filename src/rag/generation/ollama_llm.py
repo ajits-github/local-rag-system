@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import ollama
 
 from rag.generation.base import LLM
@@ -26,6 +28,7 @@ class OllamaLLM(LLM):
         base_url: str = "http://localhost:11434",
         temperature: float = 0.2,
         max_tokens: int = 512,
+        seed: int | None = None,
     ) -> None:
         """Construct the Ollama client.
 
@@ -39,21 +42,30 @@ class OllamaLLM(LLM):
             Sampling temperature, by default 0.2.
         max_tokens : int, optional
             Maximum tokens to generate, by default 512.
+        seed : int | None, optional
+            Fixed sampling seed passed through to Ollama's `options.seed`
+            for reproducible generation, by default `None` (omitted from
+            `options` entirely, matching prior non-deterministic
+            behavior -- not passed as a literal `0`, which is itself a
+            valid, distinct seed value).
         """
         self._client = ollama.Client(host=base_url)
         self._model_name = model_name
         self._temperature = temperature
         self._max_tokens = max_tokens
+        self._seed = seed
         self.last_prompt_tokens: int | None = None
         self.last_completion_tokens: int | None = None
 
     def generate(self, prompt: str) -> str:
         """See `LLM.generate`."""
-        response = self._client.generate(
-            model=self._model_name,
-            prompt=prompt,
-            options={"temperature": self._temperature, "num_predict": self._max_tokens},
-        )
+        options: dict[str, Any] = {
+            "temperature": self._temperature,
+            "num_predict": self._max_tokens,
+        }
+        if self._seed is not None:
+            options["seed"] = self._seed
+        response = self._client.generate(model=self._model_name, prompt=prompt, options=options)
         self.last_prompt_tokens = response.get("prompt_eval_count")
         self.last_completion_tokens = response.get("eval_count")
         return response["response"]
