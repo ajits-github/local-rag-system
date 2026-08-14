@@ -72,10 +72,10 @@ def test_hybrid_finds_exact_identifier_at_least_as_well_as_dense_only(
         hybrid_pipeline = RetrievalPipeline(hybrid_config)
 
         dense_results = dense_pipeline.retrieve(
-            _QUERY, filters={"dataset_id": ns}, top_k=2, rerank_top_n=2
+            _QUERY, filters={"dataset_id": ns}, candidate_k=2, generation_context_top_n=2
         )
         hybrid_results = hybrid_pipeline.retrieve(
-            _QUERY, filters={"dataset_id": ns}, top_k=2, rerank_top_n=2
+            _QUERY, filters={"dataset_id": ns}, candidate_k=2, generation_context_top_n=2
         )
 
         dense_rank = _rank_of_target(dense_results)

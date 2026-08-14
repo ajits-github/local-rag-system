@@ -21,10 +21,13 @@ class Reranker(ABC):
         results : list[SearchResult]
             Vector-search results to rerank, in their current order.
         top_n : int
-            Maximum number of results to return.
+            Maximum number of results to return. Honored by real
+            rerankers (`cross_encoder`/`cohere`); `NoOpReranker` ignores
+            it and returns every result unchanged (a true identity).
 
         Returns
         -------
         list[SearchResult]
-            Up to `top_n` results, best-first.
+            Up to `top_n` results, best-first (or all of them, unchanged,
+            for `NoOpReranker`).
         """

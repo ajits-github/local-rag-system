@@ -82,8 +82,8 @@ mlflow:
 
 retrieval:
   provider: hybrid # matches experiment_010 (was dense in config/default.yaml)
-  top_k: 5
-  rerank_top_n: 3
+  candidate_k: 5
+  generation_context_top_n: 3
   hybrid:
     rrf_k: 60
   relationship_expansion:

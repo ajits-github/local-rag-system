@@ -7,8 +7,7 @@ version, or the generation model. `RetrievalPipeline.retrieve_attribution`
 (see that method's docstring) is the one small, additive pipeline change
 this milestone needed -- it fetches dense and BM25 rankings independently
 and fuses them via the same `reciprocal_rank_fusion` production uses,
-without ever calling the reranker (so `NoOpReranker`'s `results[:top_n]`
-truncation never applies here) or relationship expansion.
+without ever calling the reranker or relationship expansion.
 
 Fully deterministic and local: real Postgres/pgvector retrieval, no LLM
 generation, no hosted judge call. Reuses `eval/metrics.py` (Recall/Hit
@@ -255,7 +254,7 @@ def evaluate_attribution(
 
     for example in examples:
         attribution = pipeline.retrieve_attribution(
-            example.question, filters=dataset_filter, top_k=RETRIEVAL_K
+            example.question, filters=dataset_filter, candidate_k=RETRIEVAL_K
         )
         results_by_retriever = {
             "dense": attribution.dense,

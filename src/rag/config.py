@@ -79,9 +79,21 @@ class CohereRerankConfig(BaseModel):
 
 
 class RerankerConfig(BaseModel):
-    """Reranker provider selection, plus each provider's own settings block."""
+    """Reranker provider selection, plus each provider's own settings block.
+
+    `top_n` has reranker semantics only: how many candidates a REAL
+    reranker (`cross_encoder`/`cohere`) retains after rescoring. It is
+    inert when `provider == "none"` -- `NoOpReranker` is a true identity
+    and ignores it entirely (see `rerankers/noop.py`). The final number of
+    chunks that reach generation is controlled independently by
+    `retrieval.generation_context_top_n`, applied uniformly by
+    `RetrievalPipeline.retrieve()` regardless of which reranker (if any)
+    ran -- see that module's docstring for the full cutoff-semantics
+    writeup.
+    """
 
     provider: Literal["none", "cross_encoder", "cohere"] = "none"
+    top_n: int = 5
     cross_encoder: CrossEncoderConfig = Field(default_factory=CrossEncoderConfig)
     cohere: CohereRerankConfig = Field(default_factory=CohereRerankConfig)
 
@@ -182,11 +194,25 @@ class RelationshipExpansionConfig(BaseModel):
 
 
 class RetrievalConfig(BaseModel):
-    """Retrieval provider selection and result-count tuning."""
+    """Retrieval provider selection and result-count tuning.
+
+    Three independent cutoffs, each with a single job (see
+    `retrieval/pipeline.py`'s module docstring for the full flow):
+
+    - `candidate_k`: candidate pool depth fetched from the vector store
+      (per branch, in hybrid mode) before any reranking.
+    - `reranker.top_n` (on `RerankerConfig`, not here): how many a REAL
+      reranker keeps after rescoring; inert when `reranker.provider ==
+      "none"`.
+    - `generation_context_top_n`: how many ranked primary chunks are
+      selected for generation, applied once after the (optional) rerank
+      step and before relationship expansion -- independent of whether a
+      real reranker ran at all.
+    """
 
     provider: Literal["dense", "hybrid"] = "dense"
-    top_k: int = 5
-    rerank_top_n: int = 3
+    candidate_k: int = 5
+    generation_context_top_n: int = 3
     hybrid: HybridRetrievalConfig = Field(default_factory=HybridRetrievalConfig)
     relationship_expansion: RelationshipExpansionConfig = Field(
         default_factory=RelationshipExpansionConfig

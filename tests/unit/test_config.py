@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import pytest
 
-from rag.config import ChunkingConfig, HybridRetrievalConfig, load_config
+from rag.config import (
+    DEFAULT_CONFIG_PATH,
+    REPO_ROOT,
+    ChunkingConfig,
+    HybridRetrievalConfig,
+    load_config,
+)
 
 
 def test_load_default_config_has_expected_defaults():
@@ -144,3 +150,63 @@ def test_multimodal_v2_relationship_experiment_config_only_differs_by_expansion(
     a_dict = config_a.model_dump(exclude={"retrieval": {"relationship_expansion": {"enabled"}}})
     b_dict = config_b.model_dump(exclude={"retrieval": {"relationship_expansion": {"enabled"}}})
     assert a_dict == b_dict
+
+
+def test_stage_b_cross_encoder_config_only_differs_by_reranker_from_baseline():
+    """The Stage B candidate config isolates the reranker: everything else matches the baseline.
+
+    multimodal-v2-relationship-qwen3b.yaml is the Stage B baseline (it's
+    experiment_015's own config, unchanged in value, just migrated to the
+    new candidate_k/generation_context_top_n field names). The candidate
+    config must change reranker.provider/reranker.top_n only.
+    """
+    baseline = load_config("config/experiments/multimodal-v2-relationship-qwen3b.yaml")
+    candidate = load_config(
+        "config/experiments/multimodal-v2-relationship-qwen3b_cross-encoder.yaml"
+    )
+
+    assert baseline.reranker.provider == "none"
+    assert candidate.reranker.provider == "cross_encoder"
+    assert candidate.reranker.top_n == 5
+    assert baseline.retrieval.candidate_k == candidate.retrieval.candidate_k == 5
+    assert (
+        baseline.retrieval.generation_context_top_n
+        == candidate.retrieval.generation_context_top_n
+        == 3
+    )
+
+    baseline_dict = baseline.model_dump(exclude={"reranker": {"provider", "top_n"}})
+    candidate_dict = candidate.model_dump(exclude={"reranker": {"provider", "top_n"}})
+    assert baseline_dict == candidate_dict
+
+
+def test_all_live_config_files_migrated_to_new_cutoff_field_names():
+    """Every config file AppConfig ever loads uses the new retrieval/reranker cutoff fields.
+
+    Documents the migration policy chosen for the retrieval-cutoff refactor
+    (retrieval.top_k -> retrieval.candidate_k, retrieval.rerank_top_n split
+    into reranker.top_n + retrieval.generation_context_top_n): the 9 live
+    config files (config/default.yaml + config/experiments/*.yaml) were
+    migrated explicitly to the new field names rather than supporting the
+    old names alongside the new ones. Historical experiments/configs/*.yaml
+    snapshots are untouched, unmigrated archival copies -- they are never
+    re-parsed by AppConfig (only copied as MLflow artifacts by
+    scripts/record_experiment.py), so they're deliberately excluded here.
+    """
+    config_paths = [
+        DEFAULT_CONFIG_PATH,
+        *sorted((REPO_ROOT / "config" / "experiments").glob("*.yaml")),
+    ]
+    assert len(config_paths) >= 9
+
+    for path in config_paths:
+        raw_text = path.read_text(encoding="utf-8")
+        assert "top_k:" not in raw_text, f"{path} still has the old retrieval.top_k field"
+        assert (
+            "rerank_top_n:" not in raw_text
+        ), f"{path} still has the old retrieval.rerank_top_n field"
+
+        config = load_config(str(path))
+        assert config.retrieval.candidate_k > 0
+        assert config.retrieval.generation_context_top_n > 0
+        assert config.reranker.top_n > 0

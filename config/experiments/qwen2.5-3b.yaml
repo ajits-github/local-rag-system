@@ -51,8 +51,8 @@ generation:
   max_tokens: 512
 
 retrieval:
-  top_k: 5
-  rerank_top_n: 3
+  candidate_k: 5
+  generation_context_top_n: 3
 
 ingestion:
   supported_extensions: [".pdf", ".docx", ".html", ".htm", ".txt", ".md"]

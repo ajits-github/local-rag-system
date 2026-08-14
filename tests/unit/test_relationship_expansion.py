@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from rag.config import load_config
+from rag.eval.metrics import mean_recall_at_k
 from rag.retrieval.pipeline import RetrievalPipeline
 from rag.schemas import Chunk, ChunkMetadata, SearchResult
 
@@ -264,6 +265,53 @@ def test_expansion_never_looks_outside_the_originating_chunks_own_document():
     _pipeline(config, vectorstore).retrieve("q")
 
     assert vectorstore.get_chunks_by_section_calls == [("doc-1", "Setup")]
+
+
+def test_expansion_happens_after_generation_context_cutoff():
+    """A result truncated away by generation_context_top_n is never expanded.
+
+    Two directly-retrieved results each have their own parent; overriding
+    generation_context_top_n=1 keeps only the first for generation, so
+    expansion must only ever see (and add a parent for) that first result
+    -- proving expansion runs on the already-truncated primary list, not
+    the full candidate pool.
+    """
+    first = _chunk("c1", "first", parent_chunk_id="parent-1")
+    second = _chunk("c2", "second", parent_chunk_id="parent-2")
+    vectorstore = FakeVectorStore(
+        results=[_result(first, score=0.9), _result(second, score=0.8)],
+        chunks_by_id={
+            "parent-1": _chunk("parent-1", "parent of first"),
+            "parent-2": _chunk("parent-2", "parent of second"),
+        },
+    )
+    config = _config_with_expansion(enabled=True, include_parent=True, include_neighbors=False)
+
+    results = _pipeline(config, vectorstore).retrieve("q", generation_context_top_n=1)
+
+    assert [r.chunk.id for r in results] == ["c1", "parent-1"]
+    assert vectorstore.get_chunks_by_ids_calls == [["parent-1"]]
+
+
+def test_expanded_chunks_do_not_contaminate_recall_at_k():
+    """An origin='expanded' chunk appended after the primary cutoff never counts toward Recall@k.
+
+    The parent chunk's source would match "relevant", but recall_at_k(k=1)
+    only looks at the first `k` entries -- since the parent is appended
+    after the single primary result, it must not inflate recall@1, only
+    recall@2 (once the cutoff reaches its position).
+    """
+    child = _chunk("c1", "child content", parent_chunk_id="parent-1", source="child.md")
+    parent = _chunk("parent-1", "parent content", source="parent.md")
+    vectorstore = FakeVectorStore(results=[_result(child)], chunks_by_id={"parent-1": parent})
+    config = _config_with_expansion(enabled=True, include_parent=True, include_neighbors=False)
+
+    results = _pipeline(config, vectorstore).retrieve("q", generation_context_top_n=1)
+    sources = [r.chunk.metadata.source for r in results]
+
+    assert sources == ["child.md", "parent.md"]  # the parent IS present, appended after
+    assert mean_recall_at_k([sources], [["parent.md"]], 1) == 0.0  # but doesn't count at k=1
+    assert mean_recall_at_k([sources], [["parent.md"]], 2) == 1.0  # counts once k reaches it
 
 
 def test_expansion_disabled_ignores_relationship_config_fields():

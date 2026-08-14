@@ -124,6 +124,45 @@ def test_evaluate_per_example_includes_generation_sources_with_content():
     assert entry["generation_sources"][0]["source"] == "a.md"
 
 
+def test_evaluate_reports_latency_breakdown_ms_when_generation_runs():
+    """latency_breakdown_ms aggregates per-stage means from answer()'s latency_breakdown_ms."""
+    results = [_make_result("c1", "Alpha content.", source="a.md", score=0.9)]
+    pipeline = RetrievalPipeline(
+        load_config(),
+        vectorstore=FakeVectorStore(results),
+        embedder=FakeEmbedder(),
+        reranker=FakeReranker(),
+        llm=FakeLLM(),
+    )
+    examples = [GoldExample(question="What is alpha?", expected_answer="Alpha.")]
+
+    report = evaluate(pipeline, examples, dataset_id="test-dataset", run_generation=True)
+
+    breakdown = report["latency_breakdown_ms"]
+    assert "embed_ms" in breakdown
+    assert "dense_search_ms" in breakdown
+    assert "rerank_ms" in breakdown
+    assert "generation_ms" in breakdown
+    assert all(isinstance(v, float) for k, v in breakdown.items() if k != "note")
+
+
+def test_evaluate_omits_latency_breakdown_ms_when_generation_skipped():
+    """latency_breakdown_ms is absent when run_generation=False (no answer() calls made)."""
+    results = [_make_result("c1", "Alpha content.", source="a.md", score=0.9)]
+    pipeline = RetrievalPipeline(
+        load_config(),
+        vectorstore=FakeVectorStore(results),
+        embedder=FakeEmbedder(),
+        reranker=FakeReranker(),
+        llm=FakeLLM(),
+    )
+    examples = [GoldExample(question="What is alpha?", expected_answer="Alpha.")]
+
+    report = evaluate(pipeline, examples, dataset_id="test-dataset", run_generation=False)
+
+    assert "latency_breakdown_ms" not in report
+
+
 def _pipeline(results: list[SearchResult], llm=None) -> RetrievalPipeline:
     """Build a RetrievalPipeline wired to fake dependencies, dense retrieval only."""
     return RetrievalPipeline(

@@ -1,4 +1,29 @@
-"""Query pipeline: embed query -> vectorstore.search(filters) -> rerank -> generate."""
+"""Query pipeline: embed query -> vectorstore.search(filters) -> rerank -> generate.
+
+Cutoff semantics (the "retrieval_candidate_k / reranker_top_n /
+generation_context_top_n" split -- see PROJECT_JOURNAL.md for the
+motivating bug):
+
+- `retrieval.candidate_k`: how many raw/fused candidates are fetched from
+  the vector store (per branch, in hybrid mode) before any reranking.
+  Retrieval-depth/candidate-pool-size only.
+- `reranker.top_n`: how many candidates a REAL reranker
+  (`cross_encoder`/`cohere`) retains after rescoring. Inert when
+  `reranker.provider == "none"` -- `NoOpReranker` ignores it and returns
+  every candidate unchanged (a true identity: no reorder, no rescore, no
+  truncation).
+- `retrieval.generation_context_top_n`: how many ranked PRIMARY chunks are
+  selected for generation, applied once, uniformly, after the (optional)
+  rerank step and before relationship expansion -- independent of whether
+  a real reranker ran at all. This is the *only* place `retrieve()`
+  truncates for generation-context size.
+
+Relationship expansion always operates on the already-`generation_context_
+top_n`-truncated primary list, and its output is appended after that list,
+never interleaved into it -- so it can never contaminate Recall@K/MRR
+computed from a broad-enough `candidate_k`/`reranker_top_n`/
+`generation_context_top_n` override (see eval/run_eval.py).
+"""
 
 from __future__ import annotations
 
@@ -93,27 +118,30 @@ class RetrievalPipeline:
         self,
         query: str,
         filters: dict[str, Any] | None = None,
-        top_k: int | None = None,
-        rerank_top_n: int | None = None,
+        candidate_k: int | None = None,
+        reranker_top_n: int | None = None,
+        generation_context_top_n: int | None = None,
     ) -> list[SearchResult]:
         """Retrieve candidates (dense-only or hybrid, per `config.retrieval.provider`), then rerank.
 
         When `config.retrieval.provider == "hybrid"`, dense (embedding)
-        search and keyword (BM25) search are each run at `top_k`, then
-        fused via Reciprocal Rank Fusion
+        search and keyword (BM25) search are each run at `candidate_k`,
+        then fused via Reciprocal Rank Fusion
         (`config.retrieval.hybrid.rrf_k`) before reranking. When
         `"dense"` (the default), behavior is unchanged from plain vector
         search.
 
-        `rerank_top_n` overrides config's default truncation — needed by
-        callers (e.g. eval) that want more than the production-default
-        number of results back, such as computing Recall@10 when the
-        configured reranker normally truncates to top 3.
+        Three independent, explicitly-named overrides (see this module's
+        docstring for what each controls) -- callers that want a broad,
+        evaluation-safe ranking (e.g. eval computing Recall@10) pass all
+        three together rather than relying on the reranker step to
+        under-truncate, so the override never depends on what production's
+        `generation_context_top_n` happens to be configured to.
 
         When `config.retrieval.relationship_expansion.enabled`, parent/
-        neighbor context is appended after reranking (see
-        `_expand_with_relationships`) -- disabled by default, a no-op when
-        left that way.
+        neighbor context is appended after the generation-context cutoff
+        (see `_expand_with_relationships`) -- disabled by default, a no-op
+        when left that way.
 
         Parameters
         ----------
@@ -122,45 +150,111 @@ class RetrievalPipeline:
         filters : dict[str, Any] | None, optional
             Exact-match metadata filters passed through to
             `VectorStore.search`/`search_keyword`.
-        top_k : int | None, optional
+        candidate_k : int | None, optional
             Number of results to fetch from the vector store (from each
-            branch, in hybrid mode); defaults to `config.retrieval.top_k`.
-        rerank_top_n : int | None, optional
-            Number of results to keep after reranking; defaults to
-            `config.retrieval.rerank_top_n`.
+            branch, in hybrid mode); defaults to
+            `config.retrieval.candidate_k`.
+        reranker_top_n : int | None, optional
+            Number of candidates a real reranker retains after rescoring;
+            defaults to `config.reranker.top_n`. Has no effect when
+            `reranker.provider == "none"` (`NoOpReranker` ignores it).
+        generation_context_top_n : int | None, optional
+            Number of ranked primary chunks kept for generation; defaults
+            to `config.retrieval.generation_context_top_n`. Applied
+            regardless of which reranker (if any) ran.
 
         Returns
         -------
         list[SearchResult]
-            Reranked results, best-first, plus any relationship-expanded
-            results appended after them (see `origin`/`expanded_from` on
-            `SearchResult`).
+            The generation-context-truncated primary results, best-first,
+            plus any relationship-expanded results appended after them
+            (see `origin`/`expanded_from` on `SearchResult`).
         """
+        results, _stage_ms = self._retrieve_timed(
+            query,
+            filters=filters,
+            candidate_k=candidate_k,
+            reranker_top_n=reranker_top_n,
+            generation_context_top_n=generation_context_top_n,
+        )
+        return results
+
+    def _retrieve_timed(
+        self,
+        query: str,
+        filters: dict[str, Any] | None = None,
+        candidate_k: int | None = None,
+        reranker_top_n: int | None = None,
+        generation_context_top_n: int | None = None,
+    ) -> tuple[list[SearchResult], dict[str, float]]:
+        """Do `retrieve()`'s work while recording a per-stage latency breakdown.
+
+        Shared by `retrieve()` (which discards the breakdown) and
+        `answer()` (which surfaces it as `latency_breakdown_ms`) so the
+        two never measure retrieval differently. Stage keys present depend
+        on what actually ran: `bm25_search_ms`/`fusion_ms` only appear for
+        `config.retrieval.provider == "hybrid"`, `expansion_ms` only when
+        relationship expansion is enabled.
+
+        Returns
+        -------
+        tuple[list[SearchResult], dict[str, float]]
+            The same result list `retrieve()` returns, plus a
+            ``{stage_ms}`` dict in milliseconds.
+        """
+        stage_ms: dict[str, float] = {}
+
+        t = time.perf_counter()
         query_embedding = self._embedder.embed_query(query)
-        fetch_k = top_k or self._config.retrieval.top_k
+        stage_ms["embed_ms"] = (time.perf_counter() - t) * 1000
+
+        fetch_k = candidate_k or self._config.retrieval.candidate_k
         if self._config.retrieval.provider == "hybrid":
+            t = time.perf_counter()
             dense_results = self._vectorstore.search(
                 query_embedding, top_k=fetch_k, filters=filters
             )
+            stage_ms["dense_search_ms"] = (time.perf_counter() - t) * 1000
+            t = time.perf_counter()
             keyword_results = self._vectorstore.search_keyword(
                 query, top_k=fetch_k, filters=filters
             )
+            stage_ms["bm25_search_ms"] = (time.perf_counter() - t) * 1000
+            t = time.perf_counter()
             candidates = reciprocal_rank_fusion(
                 [dense_results, keyword_results], k=self._config.retrieval.hybrid.rrf_k
             )
+            stage_ms["fusion_ms"] = (time.perf_counter() - t) * 1000
         else:
+            t = time.perf_counter()
             candidates = self._vectorstore.search(query_embedding, top_k=fetch_k, filters=filters)
-        n = rerank_top_n if rerank_top_n is not None else self._config.retrieval.rerank_top_n
-        reranked = self._reranker.rerank(query, candidates, top_n=n)
+            stage_ms["dense_search_ms"] = (time.perf_counter() - t) * 1000
+
+        n_rerank = reranker_top_n if reranker_top_n is not None else self._config.reranker.top_n
+        t = time.perf_counter()
+        reranked = self._reranker.rerank(query, candidates, top_n=n_rerank)
+        stage_ms["rerank_ms"] = (time.perf_counter() - t) * 1000
+
+        n_generation = (
+            generation_context_top_n
+            if generation_context_top_n is not None
+            else self._config.retrieval.generation_context_top_n
+        )
+        primary = reranked[:n_generation]
+
         if self._config.retrieval.relationship_expansion.enabled:
-            return self._expand_with_relationships(reranked)
-        return reranked
+            t = time.perf_counter()
+            results = self._expand_with_relationships(primary)
+            stage_ms["expansion_ms"] = (time.perf_counter() - t) * 1000
+        else:
+            results = primary
+        return results, stage_ms
 
     def retrieve_attribution(
         self,
         query: str,
         filters: dict[str, Any] | None = None,
-        top_k: int | None = None,
+        candidate_k: int | None = None,
     ) -> RetrievalAttribution:
         """Return dense, BM25, and RRF-fused rankings independently, before rerank/expansion.
 
@@ -178,8 +272,8 @@ class RetrievalPipeline:
 
         Never calls `self._reranker` or `_expand_with_relationships` --
         the returned rankings are exactly what dense search, BM25 search,
-        and RRF fusion produced, so a `NoOpReranker`'s `results[:top_n]`
-        truncation and relationship expansion can never influence them.
+        and RRF fusion produced, so neither a real reranker's rescoring
+        nor relationship expansion can ever influence them.
 
         Parameters
         ----------
@@ -188,9 +282,9 @@ class RetrievalPipeline:
         filters : dict[str, Any] | None, optional
             Exact-match metadata filters, passed through to both
             `search`/`search_keyword` identically.
-        top_k : int | None, optional
+        candidate_k : int | None, optional
             Number of results fetched *per retriever* (not a combined
-            total); defaults to `config.retrieval.top_k`.
+            total); defaults to `config.retrieval.candidate_k`.
 
         Returns
         -------
@@ -198,7 +292,7 @@ class RetrievalPipeline:
             `dense`/`bm25`/`fused`, each independently ranked best-first.
         """
         query_embedding = self._embedder.embed_query(query)
-        fetch_k = top_k or self._config.retrieval.top_k
+        fetch_k = candidate_k or self._config.retrieval.candidate_k
         dense_results = self._vectorstore.search(query_embedding, top_k=fetch_k, filters=filters)
         bm25_results = self._vectorstore.search_keyword(query, top_k=fetch_k, filters=filters)
         fused_results = reciprocal_rank_fusion(
@@ -304,12 +398,12 @@ class RetrievalPipeline:
         self,
         query: str,
         filters: dict[str, Any] | None = None,
-        top_k: int | None = None,
+        candidate_k: int | None = None,
     ) -> dict[str, Any]:
         """Retrieve context for `query` and generate an answer from it.
 
-        Always reflects production config (no `rerank_top_n` override —
-        see `retrieve`).
+        Always reflects production config (no `reranker_top_n`/
+        `generation_context_top_n` override — see `retrieve`).
 
         Parameters
         ----------
@@ -317,16 +411,21 @@ class RetrievalPipeline:
             The user's query text.
         filters : dict[str, Any] | None, optional
             Exact-match metadata filters passed through to `retrieve`.
-        top_k : int | None, optional
+        candidate_k : int | None, optional
             Number of results to fetch from the vector store; defaults to
-            `config.retrieval.top_k`.
+            `config.retrieval.candidate_k`.
 
         Returns
         -------
         dict[str, Any]
-            ``{"answer", "sources", "retrieval_ms", "generation_ms", "total_ms"}``.
-            Each `sources` entry includes the chunk's raw `content`
-            alongside its metadata (including `content_type`,
+            ``{"answer", "sources", "retrieval_ms", "generation_ms",
+            "total_ms", "latency_breakdown_ms"}``. `latency_breakdown_ms`
+            splits `retrieval_ms` into its component stages (embed, dense/
+            BM25 search, fusion, rerank, expansion -- see `_retrieve_timed`)
+            plus `generation_ms`, for latency comparisons (e.g. how much a
+            real reranker adds) that `retrieval_ms`/`generation_ms` alone
+            can't answer. Each `sources` entry includes the chunk's raw
+            `content` alongside its metadata (including `content_type`,
             `attachment_name`/`source_anchor` for image hits, and
             `origin`/`expanded_from` for relationship-expansion
             provenance), so callers (e.g. RAGAS scoring, eval's
@@ -334,13 +433,14 @@ class RetrievalPipeline:
             without a redundant call.
         """
         t0 = time.perf_counter()
-        results = self.retrieve(query, filters=filters, top_k=top_k)
+        results, stage_ms = self._retrieve_timed(query, filters=filters, candidate_k=candidate_k)
         t1 = time.perf_counter()
         context = _build_context(results)
         system, user = self._prompt_template.render(context=context, query=query)
         prompt = f"{system}\n\n{user}" if system else user
         answer_text = self._llm.generate(prompt)
         t2 = time.perf_counter()
+        generation_ms = (t2 - t1) * 1000
         return {
             "answer": answer_text,
             "sources": [
@@ -362,6 +462,7 @@ class RetrievalPipeline:
                 for r in results
             ],
             "retrieval_ms": (t1 - t0) * 1000,
-            "generation_ms": (t2 - t1) * 1000,
+            "generation_ms": generation_ms,
+            "latency_breakdown_ms": {**stage_ms, "generation_ms": generation_ms},
             "total_ms": (t2 - t0) * 1000,
         }

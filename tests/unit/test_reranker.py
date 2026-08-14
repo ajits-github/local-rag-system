@@ -23,13 +23,24 @@ def _make_result(chunk_id: str, content: str, score: float) -> SearchResult:
     return SearchResult(chunk=Chunk(id=chunk_id, content=content, metadata=metadata), score=score)
 
 
-def test_noop_reranker_truncates_to_top_n_without_reordering():
-    """NoOpReranker keeps original order and only truncates to top_n."""
+def test_noop_reranker_is_a_true_identity():
+    """NoOpReranker returns every result unchanged, ignoring top_n entirely -- no truncation."""
     results = [_make_result(f"c{i}", f"content {i}", score=1.0 - i * 0.1) for i in range(5)]
 
     reranked = NoOpReranker().rerank("any query", results, top_n=2)
 
-    assert [r.chunk.id for r in reranked] == ["c0", "c1"]
+    assert reranked == results
+    assert [r.chunk.id for r in reranked] == ["c0", "c1", "c2", "c3", "c4"]
+
+
+def test_noop_reranker_does_not_rescore():
+    """NoOpReranker never mutates a result's .score."""
+    results = [_make_result("c0", "content", score=0.42)]
+
+    reranked = NoOpReranker().rerank("any query", results, top_n=1)
+
+    assert reranked[0].score == 0.42
+    assert reranked[0] is results[0]
 
 
 def test_cross_encoder_reranker_reorders_by_predicted_score(monkeypatch):

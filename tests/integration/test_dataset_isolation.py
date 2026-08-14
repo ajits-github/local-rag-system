@@ -51,10 +51,10 @@ def test_dataset_filter_excludes_other_namespace_even_as_strong_distractor(
     query = "What is the secret launch code for the Aurora rocket?"
     try:
         results_a = retrieval.retrieve(
-            query, filters={"dataset_id": ns_a}, top_k=10, rerank_top_n=10
+            query, filters={"dataset_id": ns_a}, candidate_k=10, generation_context_top_n=10
         )
         results_b = retrieval.retrieve(
-            query, filters={"dataset_id": ns_b}, top_k=10, rerank_top_n=10
+            query, filters={"dataset_id": ns_b}, candidate_k=10, generation_context_top_n=10
         )
 
         assert results_a, "expected at least one result from ns_a"

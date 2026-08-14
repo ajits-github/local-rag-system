@@ -51,7 +51,10 @@ def query(
     Parameters
     ----------
     request : QueryRequest
-        The query, plus optional `top_k`/`filters` overrides.
+        The query, plus optional `top_k`/`filters` overrides. `top_k`
+        maps onto `RetrievalPipeline.answer`'s `candidate_k` (the
+        external API field name is kept stable; only the internal
+        parameter name changed -- see `retrieval/pipeline.py`).
     pipeline : RetrievalPipeline
         Injected retrieval pipeline singleton.
 
@@ -60,5 +63,5 @@ def query(
     QueryResponse
         The generated answer, its sources, and stage timings.
     """
-    result = pipeline.answer(request.query, filters=request.filters, top_k=request.top_k)
+    result = pipeline.answer(request.query, filters=request.filters, candidate_k=request.top_k)
     return QueryResponse(**result)

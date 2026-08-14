@@ -109,8 +109,9 @@ def _config_summary(config: AppConfig) -> dict[str, Any]:
         "prompt_id": config.generation.prompt.id,
         "prompt_version": config.generation.prompt.version,
         "retrieval_provider": config.retrieval.provider,
-        "retrieval_top_k": config.retrieval.top_k,
-        "rerank_top_n": config.retrieval.rerank_top_n,
+        "retrieval_candidate_k": config.retrieval.candidate_k,
+        "reranker_top_n": (config.reranker.top_n if config.reranker.provider != "none" else None),
+        "generation_context_top_n": config.retrieval.generation_context_top_n,
         "relationship_expansion_enabled": config.retrieval.relationship_expansion.enabled,
         "vision_provider": config.vision.provider,
     }
@@ -288,22 +289,29 @@ def evaluate(
     image_hit_records: list[bool] = []
     expansion_contribution_records: list[bool] = []
     vision_behavior_records: list[str] = []
+    stage_ms_records: list[dict[str, float]] = []
     per_example: list[dict[str, Any]] = []
 
     for example in examples:
-        # Broad retrieval (top 10, un-truncated by the reranker) purely to
-        # score retrieval quality at multiple cutoffs -- decoupled from the
-        # production-config latency measured via pipeline.answer() below.
-        # dataset_filter is mandatory here: this is the isolation guarantee.
-        # Also the source of the reference-context/image-hit metrics below
-        # (K in the design review) -- no extra retrieval call needed for
-        # those, since `origin`/content on these same results already
-        # distinguish directly-retrieved from relationship-expanded chunks.
+        # Broad retrieval (top 10, un-truncated by candidate pool, reranker,
+        # or generation-context cutoff) purely to score retrieval quality at
+        # multiple cutoffs -- decoupled from the production-config latency
+        # measured via pipeline.answer() below. All three cutoffs are
+        # overridden explicitly and independently (see
+        # retrieval/pipeline.py's module docstring) so this broad call never
+        # depends on what production's own generation_context_top_n/
+        # reranker.top_n happen to be configured to. dataset_filter is
+        # mandatory here: this is the isolation guarantee. Also the source
+        # of the reference-context/image-hit metrics below (K in the design
+        # review) -- no extra retrieval call needed for those, since
+        # `origin`/content on these same results already distinguish
+        # directly-retrieved from relationship-expanded chunks.
         retrieval_results = pipeline.retrieve(
             example.question,
             filters=dataset_filter,
-            top_k=RETRIEVAL_K,
-            rerank_top_n=RETRIEVAL_K,
+            candidate_k=RETRIEVAL_K,
+            reranker_top_n=RETRIEVAL_K,
+            generation_context_top_n=RETRIEVAL_K,
         )
         retrieved_sources = [r.chunk.metadata.source for r in retrieval_results]
         all_retrieved_sources.append(retrieved_sources)
@@ -353,17 +361,19 @@ def evaluate(
         }
 
         if run_generation:
-            # Production-config answer (real rerank_top_n, real prompt and
-            # generation call) for latency + answer-quality measurement --
-            # same mandatory dataset_id filter applied.
+            # Production-config answer (real generation_context_top_n, real
+            # prompt and generation call) for latency + answer-quality
+            # measurement -- same mandatory dataset_id filter applied.
             result = pipeline.answer(example.question, filters=dataset_filter)
             retrieval_ms_values.append(result["retrieval_ms"])
             generation_ms_values.append(result["generation_ms"])
             total_ms_values.append(result["total_ms"])
+            stage_ms_records.append(result["latency_breakdown_ms"])
             entry.update(
                 answer=result["answer"],
                 # Production-config sources-with-content (this answer()
-                # call's own retrieve, at real rerank_top_n) -- distinct
+                # call's own retrieve, at real generation_context_top_n) --
+                # distinct
                 # from `retrieved_sources` above, which comes from the
                 # broader top-10 fetch used for Recall@10. Consumed by
                 # rag.eval.run_ragas_eval for RAGAS's retrieved_contexts.
@@ -460,6 +470,24 @@ def evaluate(
             "generation_mean": _mean(generation_ms_values),
             "total_mean": _mean(total_ms_values),
         }
+        if stage_ms_records:
+            stage_keys = {key for record in stage_ms_records for key in record}
+            report["latency_breakdown_ms"] = {
+                "note": (
+                    "Per-stage mean latency from RetrievalPipeline._retrieve_timed, "
+                    "averaged over questions where that stage ran (bm25_search_ms/"
+                    "fusion_ms only appear for retrieval.provider='hybrid'; "
+                    "expansion_ms only when relationship_expansion.enabled). rerank_ms "
+                    "is NoOpReranker's near-zero identity pass when reranker.provider="
+                    "'none', or a real reranker's rescoring cost otherwise -- compare "
+                    "this field across two reports differing only in reranker.provider "
+                    "to isolate the reranker's added latency."
+                ),
+                **{
+                    key: _mean([r[key] for r in stage_ms_records if key in r])
+                    for key in sorted(stage_keys)
+                },
+            }
         all_quality = answerable_quality_scores + unanswerable_quality_scores
         report["answer_quality"] = {
             "note": (

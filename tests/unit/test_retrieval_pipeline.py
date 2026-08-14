@@ -3,10 +3,19 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from rag.config import load_config
+from rag.eval.metrics import mean_recall_at_k
 from rag.prompts.loader import PromptTemplate
 from rag.retrieval.fusion import reciprocal_rank_fusion
 from rag.retrieval.pipeline import RetrievalPipeline
 from rag.schemas import Chunk, ChunkMetadata, SearchResult
+
+
+def _make_indexed_results(n: int, prefix: str = "d") -> list[SearchResult]:
+    """Build `n` SearchResults ranked best-first, sources f"{prefix}{i}.md"."""
+    return [
+        _make_result(f"{prefix}{i}", f"content {i}", source=f"{prefix}{i}.md", score=1.0 - i * 0.01)
+        for i in range(n)
+    ]
 
 
 def _make_result(chunk_id: str, content: str, source: str, score: float) -> SearchResult:
@@ -191,8 +200,8 @@ def test_retrieve_dense_provider_never_calls_search_keyword():
     assert methods_called == ["search"]
 
 
-def test_retrieve_dense_provider_calls_search_with_configured_top_k():
-    """Dense provider's search() call uses config.retrieval.top_k and passes filters through."""
+def test_retrieve_dense_provider_calls_search_with_configured_candidate_k():
+    """Dense provider's search() uses config.retrieval.candidate_k and passes filters through."""
     results = [_make_result("c1", "Alpha content.", source="a.md", score=0.9)]
     vectorstore = FakeVectorStore(results)
     config = load_config()
@@ -203,7 +212,7 @@ def test_retrieve_dense_provider_calls_search_with_configured_top_k():
     pipeline.retrieve("What is alpha?", filters={"dataset_id": "techfusion"})
 
     assert vectorstore.calls == [
-        ("search", {"top_k": config.retrieval.top_k, "filters": {"dataset_id": "techfusion"}})
+        ("search", {"top_k": config.retrieval.candidate_k, "filters": {"dataset_id": "techfusion"}})
     ]
 
 
@@ -223,7 +232,10 @@ def test_retrieve_hybrid_provider_calls_both_search_methods():
     methods_called = [call[0] for call in vectorstore.calls]
     assert methods_called == ["search", "search_keyword"]
     for _method, kwargs in vectorstore.calls:
-        assert kwargs == {"top_k": config.retrieval.top_k, "filters": {"dataset_id": "techfusion"}}
+        assert kwargs == {
+            "top_k": config.retrieval.candidate_k,
+            "filters": {"dataset_id": "techfusion"},
+        }
 
 
 def test_retrieve_hybrid_provider_fuses_dense_and_keyword_results():
@@ -240,7 +252,9 @@ def test_retrieve_hybrid_provider_fuses_dense_and_keyword_results():
         config, vectorstore=vectorstore, embedder=FakeEmbedder(), reranker=FakeReranker()
     )
 
-    fused = pipeline.retrieve("query", top_k=10, rerank_top_n=10)
+    fused = pipeline.retrieve(
+        "query", candidate_k=10, reranker_top_n=10, generation_context_top_n=10
+    )
 
     ids = [r.chunk.id for r in fused]
     assert set(ids) == {"shared", "dense-only", "keyword-only"}
@@ -260,21 +274,25 @@ def test_retrieve_hybrid_uses_configured_rrf_k():
         config, vectorstore=vectorstore, embedder=FakeEmbedder(), reranker=FakeReranker()
     )
 
-    fused = pipeline.retrieve("query", top_k=5, rerank_top_n=5)
+    fused = pipeline.retrieve("query", candidate_k=5, reranker_top_n=5, generation_context_top_n=5)
 
     assert fused[0].score == 2 * (1.0 / 2)  # k=1, rank=1 in both lists: 2 * 1/(1+1)
 
 
 class _RerankerSpy:
-    """Reranker double recording whether rerank() was ever invoked."""
+    """Reranker double recording how rerank() was invoked, behaving like a real one would."""
 
     def __init__(self) -> None:
         """Start with no recorded calls."""
         self.called = False
+        self.received_pool_size: int | None = None
+        self.received_top_n: int | None = None
 
     def rerank(self, query: str, results: list[SearchResult], top_n: int) -> list[SearchResult]:
-        """Record that rerank() ran, then truncate like a real reranker would."""
+        """Record the candidate pool size and top_n, then truncate like a real reranker would."""
         self.called = True
+        self.received_pool_size = len(results)
+        self.received_top_n = top_n
         return results[:top_n]
 
 
@@ -322,7 +340,7 @@ def test_retrieve_attribution_fused_matches_manual_rrf():
         config, vectorstore=vectorstore, embedder=FakeEmbedder(), reranker=FakeReranker()
     )
 
-    attribution = pipeline.retrieve_attribution("query", top_k=10)
+    attribution = pipeline.retrieve_attribution("query", candidate_k=10)
 
     expected = reciprocal_rank_fusion(
         [dense_results, keyword_results], k=config.retrieval.hybrid.rrf_k
@@ -338,12 +356,12 @@ def test_retrieve_attribution_never_calls_reranker():
     vectorstore = FakeVectorStore(dense_results, dense_results)
     spy = _RerankerSpy()
     config = load_config().model_copy(deep=True)
-    config.retrieval.rerank_top_n = 1  # would aggressively truncate if applied
+    config.reranker.top_n = 1  # would aggressively truncate if applied
     pipeline = RetrievalPipeline(
         config, vectorstore=vectorstore, embedder=FakeEmbedder(), reranker=spy
     )
 
-    attribution = pipeline.retrieve_attribution("query", top_k=5)
+    attribution = pipeline.retrieve_attribution("query", candidate_k=5)
 
     assert spy.called is False
     assert len(attribution.dense) == 5
@@ -369,3 +387,90 @@ def test_retrieve_attribution_never_expands_relationships():
     assert all(r.origin == "retrieved" for r in attribution.dense)
     assert all(r.origin == "retrieved" for r in attribution.bm25)
     assert all(r.origin == "retrieved" for r in attribution.fused)
+
+
+def test_generation_context_top_n_controls_primary_result_count():
+    """generation_context_top_n truncates the primary results, independent of candidate pool."""
+    vectorstore = FakeVectorStore(_make_indexed_results(5))
+    pipeline = RetrievalPipeline(
+        load_config(), vectorstore=vectorstore, embedder=FakeEmbedder(), reranker=FakeReranker()
+    )
+
+    retrieved = pipeline.retrieve("q", candidate_k=5, reranker_top_n=5, generation_context_top_n=2)
+
+    assert len(retrieved) == 2
+
+
+def test_changing_generation_context_top_n_does_not_change_recall_at_k():
+    """An explicit broad retrieve() override ignores config's generation_context_top_n entirely."""
+    results = _make_indexed_results(10)
+    relevant = ["d9.md"]  # ranked last -- only visible past a top-3 cutoff
+    small_config = load_config().model_copy(deep=True)
+    small_config.retrieval.generation_context_top_n = 3
+    large_config = load_config().model_copy(deep=True)
+    large_config.retrieval.generation_context_top_n = 8
+
+    for config in (small_config, large_config):
+        pipeline = RetrievalPipeline(
+            config,
+            vectorstore=FakeVectorStore(results),
+            embedder=FakeEmbedder(),
+            reranker=FakeReranker(),
+        )
+        retrieved = pipeline.retrieve(
+            "q", candidate_k=10, reranker_top_n=10, generation_context_top_n=10
+        )
+        sources = [r.chunk.metadata.source for r in retrieved]
+        assert mean_recall_at_k([sources], [relevant], 10) == 1.0
+
+
+def test_broad_override_computes_recall_at_10_independently_of_production_config():
+    """A broad eval-style override still finds a doc that production's own cutoff would hide.
+
+    This is exactly what eval/run_eval.py relies on to compute Recall@10
+    without needing production's own generation_context_top_n to be large.
+    """
+    results = _make_indexed_results(10)
+    relevant = ["d9.md"]
+    config = load_config()
+    assert config.retrieval.generation_context_top_n == 3
+    pipeline = RetrievalPipeline(
+        config,
+        vectorstore=FakeVectorStore(results),
+        embedder=FakeEmbedder(),
+        reranker=FakeReranker(),
+    )
+
+    production = pipeline.retrieve("q", candidate_k=10)
+    broad = pipeline.retrieve("q", candidate_k=10, reranker_top_n=10, generation_context_top_n=10)
+
+    production_sources = [r.chunk.metadata.source for r in production]
+    broad_sources = [r.chunk.metadata.source for r in broad]
+    assert mean_recall_at_k([production_sources], [relevant], 10) == 0.0
+    assert mean_recall_at_k([broad_sources], [relevant], 10) == 1.0
+
+
+def test_real_reranker_receives_full_candidate_pool():
+    """A configured reranker is handed the entire candidate pool, not a pre-truncated slice."""
+    vectorstore = FakeVectorStore(_make_indexed_results(7))
+    spy = _RerankerSpy()
+    pipeline = RetrievalPipeline(
+        load_config(), vectorstore=vectorstore, embedder=FakeEmbedder(), reranker=spy
+    )
+
+    pipeline.retrieve("q", candidate_k=7)
+
+    assert spy.received_pool_size == 7
+
+
+def test_real_reranker_retains_configured_top_n():
+    """reranker_top_n controls how many candidates a real reranker itself keeps after rescoring."""
+    vectorstore = FakeVectorStore(_make_indexed_results(7))
+    spy = _RerankerSpy()
+    pipeline = RetrievalPipeline(
+        load_config(), vectorstore=vectorstore, embedder=FakeEmbedder(), reranker=spy
+    )
+
+    pipeline.retrieve("q", candidate_k=7, reranker_top_n=4, generation_context_top_n=4)
+
+    assert spy.received_top_n == 4

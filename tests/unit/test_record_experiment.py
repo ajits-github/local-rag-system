@@ -51,8 +51,9 @@ def test_build_experiment_record_reads_config_not_report():
     assert record["chunk_size"] == config.chunking.chunk_size
     assert record["chunk_overlap"] == config.chunking.chunk_overlap
     assert record["reranker_provider"] == config.reranker.provider
-    assert record["retrieval_top_k"] == config.retrieval.top_k
-    assert record["rerank_top_n"] == config.retrieval.rerank_top_n
+    assert record["retrieval_candidate_k"] == config.retrieval.candidate_k
+    assert record["reranker_top_n"] is None  # provider is "none" in default.yaml
+    assert record["generation_context_top_n"] == config.retrieval.generation_context_top_n
 
 
 def test_build_experiment_record_flattens_metrics_from_report():
@@ -164,6 +165,29 @@ def test_build_experiment_record_captures_dense_retrieval_provider():
 
     assert record["retrieval_provider"] == "dense"
     assert record["rrf_k"] is None
+
+
+def test_build_experiment_record_reranker_top_n_null_when_provider_none():
+    """reranker_top_n is None (not a pretend value) when reranker.provider is 'none'."""
+    config = load_config().model_copy(deep=True)
+    config.reranker.provider = "none"
+    record = record_experiment.build_experiment_record(
+        _fake_eval_report(), config, "experiment_999", "unit test"
+    )
+
+    assert record["reranker_top_n"] is None
+
+
+def test_build_experiment_record_reranker_top_n_set_for_real_reranker():
+    """reranker_top_n reflects config.reranker.top_n when a real reranker is configured."""
+    config = load_config().model_copy(deep=True)
+    config.reranker.provider = "cross_encoder"
+    config.reranker.top_n = 7
+    record = record_experiment.build_experiment_record(
+        _fake_eval_report(), config, "experiment_999", "unit test"
+    )
+
+    assert record["reranker_top_n"] == 7
 
 
 def test_build_experiment_record_captures_hybrid_retrieval_provider_and_rrf_k():

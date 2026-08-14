@@ -43,6 +43,7 @@ chunking:
 
 reranker:
   provider: cross_encoder # same as qwen2.5-3b_cross-encoder_bge-small.yaml
+  top_n: 3 # was retrieval.rerank_top_n; a real reranker, so this now genuinely means "keep top 3 after rescoring"
   cross_encoder:
     model_name: cross-encoder/ms-marco-MiniLM-L-6-v2
   cohere:
@@ -57,8 +58,8 @@ generation:
   max_tokens: 512
 
 retrieval:
-  top_k: 5
-  rerank_top_n: 3
+  candidate_k: 5
+  generation_context_top_n: 3
 
 ingestion:
   supported_extensions: [".pdf", ".docx", ".html", ".htm", ".txt", ".md"]

@@ -77,8 +77,8 @@ mlflow:
 
 retrieval:
   provider: hybrid # only change vs config/default.yaml (was dense) -- BM25 + dense, fused via RRF
-  top_k: 5
-  rerank_top_n: 3
+  candidate_k: 5
+  generation_context_top_n: 3
   hybrid:
     rrf_k: 60
 

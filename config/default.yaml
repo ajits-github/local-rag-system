@@ -74,8 +74,8 @@ mlflow:
 
 retrieval:
   provider: dense # swap point: dense | hybrid (BM25 + dense, fused via RRF)
-  top_k: 5
-  rerank_top_n: 3
+  candidate_k: 5
+  generation_context_top_n: 3
   hybrid:
     rrf_k: 60
   relationship_expansion:

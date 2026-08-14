@@ -100,8 +100,9 @@ def build_experiment_record(
             config.prompt_template_path().read_bytes()
         ).hexdigest(),
         "retrieval_provider": config.retrieval.provider,
-        "retrieval_top_k": config.retrieval.top_k,
-        "rerank_top_n": config.retrieval.rerank_top_n,
+        "retrieval_candidate_k": config.retrieval.candidate_k,
+        "reranker_top_n": (config.reranker.top_n if config.reranker.provider != "none" else None),
+        "generation_context_top_n": config.retrieval.generation_context_top_n,
         "rrf_k": (config.retrieval.hybrid.rrf_k if config.retrieval.provider == "hybrid" else None),
         # Multimodal/relationship-aware milestone fields -- None for any
         # report predating them (older gold schema has no reference_contexts/

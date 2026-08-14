@@ -74,8 +74,8 @@ def test_table_row_question_retrieves_table_chunk(require_postgres, config, tmp_
         results = retrieval.retrieve(
             "How many max connections does eu-central-1 allow?",
             filters={"dataset_id": dataset_id},
-            top_k=5,
-            rerank_top_n=5,
+            candidate_k=5,
+            generation_context_top_n=5,
         )
         assert any(r.chunk.metadata.content_type == "table" for r in results)
         table_result = next(r for r in results if r.chunk.metadata.content_type == "table")
@@ -93,8 +93,8 @@ def test_function_question_retrieves_code_chunk(require_postgres, config, tmp_pa
         results = retrieval.retrieve(
             "What does the retry_transient function do?",
             filters={"dataset_id": dataset_id},
-            top_k=5,
-            rerank_top_n=5,
+            candidate_k=5,
+            generation_context_top_n=5,
         )
         assert any(r.chunk.metadata.content_type == "code" for r in results)
         code_result = next(r for r in results if r.chunk.metadata.content_type == "code")
@@ -114,8 +114,8 @@ def test_json_setting_question_retrieves_configuration_chunk(
         results = retrieval.retrieve(
             "Which countries are allowed in the routing configuration?",
             filters={"dataset_id": dataset_id},
-            top_k=5,
-            rerank_top_n=5,
+            candidate_k=5,
+            generation_context_top_n=5,
         )
         assert any(r.chunk.metadata.content_type == "configuration" for r in results)
         config_result = next(r for r in results if r.chunk.metadata.content_type == "configuration")
@@ -135,8 +135,8 @@ def test_chart_value_question_retrieves_chart_caption_chunk(
         results = retrieval.retrieve(
             "What does the usage chart caption say about growth?",
             filters={"dataset_id": dataset_id},
-            top_k=5,
-            rerank_top_n=5,
+            candidate_k=5,
+            generation_context_top_n=5,
         )
         assert any(r.chunk.metadata.content_type == "chart" for r in results)
         chart_result = next(r for r in results if r.chunk.metadata.content_type == "chart")
@@ -153,8 +153,8 @@ def test_mixed_prose_and_table_preserve_section_context(require_postgres, config
         results = retrieval.retrieve(
             "capacity table",
             filters={"dataset_id": dataset_id},
-            top_k=10,
-            rerank_top_n=10,
+            candidate_k=10,
+            generation_context_top_n=10,
         )
         capacity_results = [
             r for r in results if r.chunk.metadata.section_path == "Platform Notes > Capacity Table"
