@@ -264,6 +264,71 @@ def test_build_experiment_record_includes_generation_context_latency_milestone_f
     assert record["ragas_factual_correctness"] == 0.66
 
 
+def test_build_experiment_record_includes_corpus_lineage_and_security_fields():
+    """corpus_lineage/security.authorization.enabled flatten into the record."""
+    config = load_config().model_copy(deep=True)
+    config.security.authorization.enabled = True
+    report = _fake_eval_report()
+    report["corpus_lineage"] = {
+        "corpus_version": "2026-08-14-safety-v1",
+        "document_count": 18,
+        "chunk_count": 210,
+        "image_count": 4,
+        "active_document_count": 12,
+        "superseded_document_count": 6,
+        "tenant_count": 3,
+        "gold_record_count": 126,
+        "gold_file_sha256": "deadbeef",
+        "corpus_digest": "cafef00d",
+    }
+
+    record = record_experiment.build_experiment_record(
+        report, config, "experiment_999", "unit test"
+    )
+
+    assert record["security_authorization_enabled"] is True
+    assert record["corpus_version"] == "2026-08-14-safety-v1"
+    assert record["corpus_document_count"] == 18
+    assert record["corpus_chunk_count"] == 210
+    assert record["corpus_image_count"] == 4
+    assert record["corpus_active_document_count"] == 12
+    assert record["corpus_tenant_count"] == 3
+    assert record["corpus_gold_record_count"] == 126
+    assert record["corpus_digest"] == "cafef00d"
+
+
+def test_build_experiment_record_corpus_lineage_fields_none_when_absent():
+    """A report predating the safety/freshness milestone yields None for corpus_* fields."""
+    config = load_config()
+    record = record_experiment.build_experiment_record(
+        _fake_eval_report(), config, "experiment_999", "unit test"
+    )
+
+    assert record["corpus_version"] is None
+    assert record["corpus_digest"] is None
+    assert record["safety_unauthorized_retrieval_rate"] is None
+
+
+def test_build_experiment_record_includes_safety_fields():
+    """The safety report section's rates/mean flatten into safety_* record fields."""
+    config = load_config()
+    report = _fake_eval_report()
+    report["safety"] = {
+        "unauthorized_retrieval_rate": {"count": 10, "rate": 0.0},
+        "false_refusal_rate": {"count": 20, "rate": 0.05},
+        "current_document_answer_quality": {"count": 12, "mean": 0.62},
+    }
+
+    record = record_experiment.build_experiment_record(
+        report, config, "experiment_999", "unit test"
+    )
+
+    assert record["safety_unauthorized_retrieval_rate"] == 0.0
+    assert record["safety_false_refusal_rate"] == 0.05
+    assert record["safety_current_document_answer_quality"] == 0.62
+    assert record["safety_cross_tenant_leakage_rate"] is None
+
+
 def test_build_experiment_record_generation_context_latency_fields_none_when_absent():
     """Reports predating this milestone yield None, not a KeyError, for the new fields."""
     config = load_config()

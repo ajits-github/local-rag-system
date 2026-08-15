@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from rag.config import MLflowConfig
 
@@ -39,6 +39,20 @@ _PARAM_FIELDS = [
     "dataset_id",
     "ragas_judge_provider",
     "ragas_judge_model",
+    # Safety/freshness milestone: dataset-lineage identity (eval/corpus_lineage.py)
+    # and the authorization on/off toggle -- all config/identity fields, not
+    # measured outcomes, so they're params, not metrics.
+    "security_authorization_enabled",
+    "corpus_version",
+    "corpus_document_count",
+    "corpus_chunk_count",
+    "corpus_image_count",
+    "corpus_active_document_count",
+    "corpus_superseded_document_count",
+    "corpus_tenant_count",
+    "corpus_gold_record_count",
+    "corpus_gold_file_sha256",
+    "corpus_digest",
 ]
 
 
@@ -109,6 +123,20 @@ _METRIC_FIELDS = [
     "completion_tokens_mean",
     "unanswerable_refusal_rate",
     "expanded_context_utilization_rate",
+    # Safety/freshness milestone: measured outcome rates (see
+    # eval/run_eval.py's "safety" report section for exact definitions and
+    # lower/higher-is-better direction).
+    "safety_unauthorized_retrieval_rate",
+    "safety_cross_tenant_leakage_rate",
+    "safety_stale_document_error_rate",
+    "safety_current_document_retrieval_accuracy",
+    "safety_current_document_answer_quality",
+    "safety_prompt_injection_success_rate",
+    "safety_retrieved_prompt_injection_success_rate",
+    "safety_sensitive_data_leakage_rate",
+    "safety_refusal_accuracy",
+    "safety_false_refusal_rate",
+    "safety_poisoned_source_selection_rate",
 ]
 
 
@@ -172,6 +200,10 @@ def log_experiment(
                 "reranker_provider": record.get("reranker_provider") or "",
                 "relationship_expansion": str(bool(record.get("relationship_expansion_enabled"))),
                 "dataset_id": record.get("dataset_id") or "",
+                "corpus_version": record.get("corpus_version") or "",
+                "security_authorization_enabled": str(
+                    bool(record.get("security_authorization_enabled"))
+                ),
             }
         )
         for field in _PARAM_FIELDS:
@@ -185,4 +217,40 @@ def log_experiment(
         for path in artifact_paths or []:
             if path is not None and Path(path).is_file():
                 mlflow.log_artifact(str(path))
+        _log_corpus_input(mlflow, record)
         return str(run.info.run_id)
+
+
+def _log_corpus_input(mlflow_module: Any, record: dict[str, Any]) -> None:
+    """Best-effort `mlflow.log_input` call describing the corpus this run scored.
+
+    Uses `mlflow.data.from_dict` (available on the MLflow versions this
+    project pins) to register the corpus-lineage snapshot as a tracked
+    "dataset" input on the run, distinct from -- additive to -- the flat
+    `corpus_*` params already logged above. Never raises: an older/newer
+    MLflow release lacking `mlflow.data`/`from_dict`, or any other failure
+    here, is swallowed so a dataset-lineage nicety never breaks the primary
+    param/metric logging this function's caller depends on.
+    """
+    digest = record.get("corpus_digest")
+    if not digest:
+        return
+    try:
+        import mlflow.data
+
+        dataset = cast(Any, mlflow.data).from_dict(
+            {
+                "dataset_id": record.get("dataset_id"),
+                "corpus_version": record.get("corpus_version"),
+                "document_count": record.get("corpus_document_count"),
+                "chunk_count": record.get("corpus_chunk_count"),
+                "image_count": record.get("corpus_image_count"),
+                "gold_record_count": record.get("corpus_gold_record_count"),
+                "gold_file_sha256": record.get("corpus_gold_file_sha256"),
+            },
+            source=str(record.get("dataset_id") or "unknown"),
+            name=digest,
+        )
+        mlflow_module.log_input(dataset, context="eval")
+    except Exception:  # noqa: BLE001 -- best-effort, see docstring
+        pass

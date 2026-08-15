@@ -321,6 +321,43 @@ def test_log_experiment_omits_generation_seed_param_when_none(monkeypatch: pytes
     assert "generation_seed" not in fake.params
 
 
+def test_log_experiment_logs_corpus_lineage_and_safety_fields(monkeypatch: pytest.MonkeyPatch):
+    """Corpus-lineage identity fields are params; safety outcome rates are metrics."""
+    fake = _install_fake_mlflow(monkeypatch)
+    config = MLflowConfig()
+    record = _record(
+        security_authorization_enabled=True,
+        corpus_version="2026-08-14-safety-v1",
+        corpus_document_count=18,
+        corpus_chunk_count=210,
+        corpus_image_count=4,
+        corpus_digest="abc123",
+        safety_unauthorized_retrieval_rate=0.0,
+        safety_false_refusal_rate=0.05,
+    )
+
+    log_experiment(record, config)
+
+    assert fake.params["corpus_version"] == "2026-08-14-safety-v1"
+    assert fake.params["corpus_document_count"] == 18
+    assert fake.params["corpus_digest"] == "abc123"
+    assert fake.tags["corpus_version"] == "2026-08-14-safety-v1"
+    assert fake.tags["security_authorization_enabled"] == "True"
+    assert fake.metrics["safety_unauthorized_retrieval_rate"] == 0.0
+    assert fake.metrics["safety_false_refusal_rate"] == 0.05
+
+
+def test_log_experiment_omits_safety_metrics_when_none(monkeypatch: pytest.MonkeyPatch):
+    """A pre-safety-milestone record (no safety_* fields) never logs those metrics."""
+    fake = _install_fake_mlflow(monkeypatch)
+    config = MLflowConfig()
+
+    log_experiment(_record(), config)
+
+    assert "safety_unauthorized_retrieval_rate" not in fake.metrics
+    assert "corpus_digest" not in fake.params
+
+
 def test_log_experiment_returns_run_id(monkeypatch: pytest.MonkeyPatch):
     """log_experiment returns the MLflow run's run_id on success."""
     _install_fake_mlflow(monkeypatch)

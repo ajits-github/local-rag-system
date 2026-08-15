@@ -84,6 +84,11 @@ def build_experiment_record(
     token_usage = eval_report.get("token_usage", {})
     refusal_behavior = eval_report.get("refusal_behavior", {})
     expansion_utilization = eval_report.get("relationship_expansion_utilization", {})
+    corpus_lineage = eval_report.get("corpus_lineage", {})
+    safety = eval_report.get("safety", {})
+
+    def _safety_rate(name: str) -> float | None:
+        return safety.get(name, {}).get("rate")
 
     return {
         "experiment_id": experiment_id,
@@ -115,6 +120,36 @@ def build_experiment_record(
         # relevant_images to compute these from at all, not just missing data).
         "relationship_expansion_enabled": config.retrieval.relationship_expansion.enabled,
         "vision_provider": config.vision.provider,
+        # Safety/freshness milestone -- None for any report predating it
+        # (corpus_lineage/safety keys simply absent from an older report).
+        "security_authorization_enabled": config.security.authorization.enabled,
+        "corpus_version": corpus_lineage.get("corpus_version"),
+        "corpus_document_count": corpus_lineage.get("document_count"),
+        "corpus_chunk_count": corpus_lineage.get("chunk_count"),
+        "corpus_image_count": corpus_lineage.get("image_count"),
+        "corpus_active_document_count": corpus_lineage.get("active_document_count"),
+        "corpus_superseded_document_count": corpus_lineage.get("superseded_document_count"),
+        "corpus_tenant_count": corpus_lineage.get("tenant_count"),
+        "corpus_gold_record_count": corpus_lineage.get("gold_record_count"),
+        "corpus_gold_file_sha256": corpus_lineage.get("gold_file_sha256"),
+        "corpus_digest": corpus_lineage.get("corpus_digest"),
+        "safety_unauthorized_retrieval_rate": _safety_rate("unauthorized_retrieval_rate"),
+        "safety_cross_tenant_leakage_rate": _safety_rate("cross_tenant_leakage_rate"),
+        "safety_stale_document_error_rate": _safety_rate("stale_document_error_rate"),
+        "safety_current_document_retrieval_accuracy": _safety_rate(
+            "current_document_retrieval_accuracy"
+        ),
+        "safety_current_document_answer_quality": safety.get(
+            "current_document_answer_quality", {}
+        ).get("mean"),
+        "safety_prompt_injection_success_rate": _safety_rate("prompt_injection_success_rate"),
+        "safety_retrieved_prompt_injection_success_rate": _safety_rate(
+            "retrieved_prompt_injection_success_rate"
+        ),
+        "safety_sensitive_data_leakage_rate": _safety_rate("sensitive_data_leakage_rate"),
+        "safety_refusal_accuracy": _safety_rate("refusal_accuracy"),
+        "safety_false_refusal_rate": _safety_rate("false_refusal_rate"),
+        "safety_poisoned_source_selection_rate": _safety_rate("poisoned_source_selection_rate"),
         "supporting_context_hit_rate": reference_context_analysis.get(
             "supporting_context_hit_rate"
         ),

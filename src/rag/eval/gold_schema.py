@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 from pydantic import BaseModel, Field
+
+from rag.path_matching import source_matches_relevant as _shared_source_matches_relevant
 
 
 class GoldExample(BaseModel):
@@ -54,6 +56,31 @@ class GoldExample(BaseModel):
     relevant_sections: list[str] = Field(default_factory=list)
     requires_vision: bool = False
     requires_relationship_expansion: bool = False
+    # Safety/freshness milestone fields (all optional/defaulted so
+    # pre-existing gold files without them, e.g. techfusion_gold_without_safety.jsonl,
+    # keep parsing unchanged). safety_category is None for every plain-text
+    # row; user_tenant/user_roles/query_as_of are the caller identity/date
+    # eval/run_eval.py builds an AuthorizationContext from (see
+    # retrieval/authorization.py). allowed_documents/forbidden_documents are
+    # ground truth for the unauthorized_retrieval_rate/cross_tenant_leakage_rate
+    # metrics; expected_behavior drives refusal_accuracy/false_refusal_rate.
+    safety_category: str | None = None
+    user_tenant: str | None = None
+    user_roles: list[str] = Field(default_factory=list)
+    allowed_documents: list[str] = Field(default_factory=list)
+    forbidden_documents: list[str] = Field(default_factory=list)
+    expected_behavior: str | None = None
+    requires_current_document: bool = False
+    expected_document_version: str | None = None
+    expected_effective_date: str | None = None
+    query_as_of: str | None = None
+    injection_present: bool = False
+    injection_source: str | None = None
+    sensitive_data_present: bool = False
+    requires_authorization_filter: bool = False
+    requires_tenant_filter: bool = False
+    requires_trust_filter: bool = False
+    expected_trust_level: str | None = None
 
 
 def load_gold_jsonl(path: str | Path) -> list[GoldExample]:
@@ -79,17 +106,15 @@ def load_gold_jsonl(path: str | Path) -> list[GoldExample]:
     return examples
 
 
-def _path_parts(path: str) -> tuple[str, ...]:
-    """Split a possibly-backslash path into POSIX-style path segments."""
-    return PurePosixPath(path.replace("\\", "/")).parts
-
-
 def source_matches_relevant(retrieved_source: str, relevant_path: str) -> bool:
     """Check whether `relevant_path`'s segments trail `retrieved_source`'s segments.
 
     E.g. gold's "knowledge_base/security/x.md" matches a stored source of
     "data/knowledge_base/security/x.md" regardless of the "data/" root,
-    without either side needing to hardcode that root.
+    without either side needing to hardcode that root. Re-exported from
+    `rag.path_matching` (moved there so `rag.retrieval.freshness` can reuse
+    the identical rule without an eval->retrieval-adjacent import — see that
+    module's docstring).
 
     Parameters
     ----------
@@ -103,11 +128,7 @@ def source_matches_relevant(retrieved_source: str, relevant_path: str) -> bool:
     bool
         True if `relevant_path` is a trailing subsequence of `retrieved_source`.
     """
-    retrieved_parts = _path_parts(retrieved_source)
-    relevant_parts = _path_parts(relevant_path)
-    if not relevant_parts or len(relevant_parts) > len(retrieved_parts):
-        return False
-    return retrieved_parts[-len(relevant_parts) :] == relevant_parts
+    return _shared_source_matches_relevant(retrieved_source, relevant_path)
 
 
 def normalize_for_match(text: str) -> str:
