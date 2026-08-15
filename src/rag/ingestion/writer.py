@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 
 from rag.embedders.base import Embedder
+from rag.retrieval.field_policy import detect_sensitive_field_ids
 from rag.schemas import Chunk, ChunkMetadata, ChunkSpan, RawDocument
 from rag.vectorstore.base import VectorStore
 from rag.vision.base import VisionProvider
@@ -103,6 +104,7 @@ class Writer:
                     parent_chunk_id=parent_chunk_ids[i],
                     vision_generated=span.vision_generated,
                     vision_description=span.vision_description,
+                    sensitive_field_ids=detect_sensitive_field_ids(span.text) or None,
                     tenant_id=document.tenant_id,
                     allowed_roles=document.allowed_roles,
                     classification=document.classification,

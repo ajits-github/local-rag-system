@@ -173,6 +173,15 @@ def build_schema_sql(*, documents_table: str, chunks_table: str, dimension: int)
     CREATE INDEX IF NOT EXISTS {chunks_table}_trust_level_idx
         ON {chunks_table} (trust_level);
 
+    -- Field-level-safety milestone: ingestion-time tagging only (see
+    -- retrieval/field_policy.py's detect_sensitive_field_ids) -- which
+    -- SensitiveFieldPolicy.field_id patterns this chunk's text matches.
+    -- No role decision is stored here; RetrievalPipeline uses this purely
+    -- as a cheap "nothing to redact" skip and re-runs the actual
+    -- role-aware redaction at query time. Not indexed -- never used in a
+    -- WHERE clause, only read back per-row.
+    ALTER TABLE {chunks_table} ADD COLUMN IF NOT EXISTS sensitive_field_ids TEXT[];
+
     -- Caches a VisionProvider's generated description per image, keyed by
     -- the image file's own sha256 checksum, so an unchanged image is never
     -- reprocessed by a (cost-incurring) hosted call across documents or

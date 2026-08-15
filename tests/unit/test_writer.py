@@ -120,6 +120,34 @@ def test_write_persists_chunks_to_vectorstore():
     assert [c.id for c in chunks] == ["doc-1_0", "doc-1_1"]
 
 
+def test_span_matching_sensitive_pattern_is_tagged_with_field_id():
+    """A span containing the synthetic admin-key pattern is tagged at write time.
+
+    Field-level-safety milestone: this ingestion-time tag (see
+    rag.retrieval.field_policy.detect_sensitive_field_ids) is what lets
+    RetrievalPipeline skip the redaction pass entirely for untagged
+    chunks -- it carries no role decision by itself.
+    """
+    vectorstore = FakeVectorStore()
+    writer = Writer(FakeEmbedder(), vectorstore)
+    spans = [ChunkSpan(text="The synthetic test key is SYNTHETIC_ONLY_ALPHA_KEY_7Q4M_DO_NOT_USE.")]
+
+    chunks = writer.write(_raw_document(), "doc-1", spans, dataset_id="ds")
+
+    assert chunks[0].metadata.sensitive_field_ids == ["synthetic_admin_credential"]
+
+
+def test_span_with_no_sensitive_pattern_has_no_tag():
+    """An ordinary span is left with sensitive_field_ids=None, not an empty list."""
+    vectorstore = FakeVectorStore()
+    writer = Writer(FakeEmbedder(), vectorstore)
+    spans = [ChunkSpan(text="The retry delay is 45 seconds.")]
+
+    chunks = writer.write(_raw_document(), "doc-1", spans, dataset_id="ds")
+
+    assert chunks[0].metadata.sensitive_field_ids is None
+
+
 def test_non_prose_span_parent_is_nearest_preceding_prose_in_same_section():
     """A table/code/image span links to the last prose chunk seen in its section_path."""
     writer = Writer(FakeEmbedder(), FakeVectorStore())
