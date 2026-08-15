@@ -327,13 +327,15 @@ def test_log_experiment_logs_corpus_lineage_and_safety_fields(monkeypatch: pytes
     config = MLflowConfig()
     record = _record(
         security_authorization_enabled=True,
+        security_field_redaction_enabled=True,
         corpus_version="2026-08-14-safety-v1",
         corpus_document_count=18,
         corpus_chunk_count=210,
         corpus_image_count=4,
         corpus_digest="abc123",
-        safety_unauthorized_retrieval_rate=0.0,
+        safety_document_unauthorized_retrieval_rate=0.0,
         safety_false_refusal_rate=0.05,
+        safety_sensitive_data_false_redaction_rate=0.0,
     )
 
     log_experiment(record, config)
@@ -343,8 +345,10 @@ def test_log_experiment_logs_corpus_lineage_and_safety_fields(monkeypatch: pytes
     assert fake.params["corpus_digest"] == "abc123"
     assert fake.tags["corpus_version"] == "2026-08-14-safety-v1"
     assert fake.tags["security_authorization_enabled"] == "True"
-    assert fake.metrics["safety_unauthorized_retrieval_rate"] == 0.0
+    assert fake.tags["security_field_redaction_enabled"] == "True"
+    assert fake.metrics["safety_document_unauthorized_retrieval_rate"] == 0.0
     assert fake.metrics["safety_false_refusal_rate"] == 0.05
+    assert fake.metrics["safety_sensitive_data_false_redaction_rate"] == 0.0
 
 
 def test_log_experiment_omits_safety_metrics_when_none(monkeypatch: pytest.MonkeyPatch):
@@ -354,7 +358,8 @@ def test_log_experiment_omits_safety_metrics_when_none(monkeypatch: pytest.Monke
 
     log_experiment(_record(), config)
 
-    assert "safety_unauthorized_retrieval_rate" not in fake.metrics
+    assert "safety_document_unauthorized_retrieval_rate" not in fake.metrics
+    assert "safety_sensitive_data_false_redaction_rate" not in fake.metrics
     assert "corpus_digest" not in fake.params
 
 

@@ -43,6 +43,9 @@ _PARAM_FIELDS = [
     # and the authorization on/off toggle -- all config/identity fields, not
     # measured outcomes, so they're params, not metrics.
     "security_authorization_enabled",
+    # Field-level-safety milestone: independent on/off toggle for
+    # retrieval/field_policy.py's redaction pass -- see FieldRedactionConfig.
+    "security_field_redaction_enabled",
     "corpus_version",
     "corpus_document_count",
     "corpus_chunk_count",
@@ -126,7 +129,10 @@ _METRIC_FIELDS = [
     # Safety/freshness milestone: measured outcome rates (see
     # eval/run_eval.py's "safety" report section for exact definitions and
     # lower/higher-is-better direction).
-    "safety_unauthorized_retrieval_rate",
+    # Renamed from safety_unauthorized_retrieval_rate (field-level-safety
+    # milestone) -- historical experiment_025/026 records keep the old
+    # metric name; only new records populate this one.
+    "safety_document_unauthorized_retrieval_rate",
     "safety_cross_tenant_leakage_rate",
     "safety_stale_document_error_rate",
     "safety_current_document_retrieval_accuracy",
@@ -137,6 +143,10 @@ _METRIC_FIELDS = [
     "safety_refusal_accuracy",
     "safety_false_refusal_rate",
     "safety_poisoned_source_selection_rate",
+    # Field-level-safety milestone.
+    "safety_sensitive_data_authorized_disclosure_accuracy",
+    "safety_sensitive_data_false_redaction_rate",
+    "safety_encoded_extraction_success_rate",
 ]
 
 
@@ -203,6 +213,9 @@ def log_experiment(
                 "corpus_version": record.get("corpus_version") or "",
                 "security_authorization_enabled": str(
                     bool(record.get("security_authorization_enabled"))
+                ),
+                "security_field_redaction_enabled": str(
+                    bool(record.get("security_field_redaction_enabled"))
                 ),
             }
         )

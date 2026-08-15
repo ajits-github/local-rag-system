@@ -123,6 +123,8 @@ def build_experiment_record(
         # Safety/freshness milestone -- None for any report predating it
         # (corpus_lineage/safety keys simply absent from an older report).
         "security_authorization_enabled": config.security.authorization.enabled,
+        # Field-level-safety milestone -- None for any report predating it.
+        "security_field_redaction_enabled": config.security.field_redaction.enabled,
         "corpus_version": corpus_lineage.get("corpus_version"),
         "corpus_document_count": corpus_lineage.get("document_count"),
         "corpus_chunk_count": corpus_lineage.get("chunk_count"),
@@ -133,7 +135,14 @@ def build_experiment_record(
         "corpus_gold_record_count": corpus_lineage.get("gold_record_count"),
         "corpus_gold_file_sha256": corpus_lineage.get("gold_file_sha256"),
         "corpus_digest": corpus_lineage.get("corpus_digest"),
-        "safety_unauthorized_retrieval_rate": _safety_rate("unauthorized_retrieval_rate"),
+        # Renamed from safety_unauthorized_retrieval_rate (field-level-safety
+        # milestone -- see run_eval.py's document_unauthorized_retrieval_rate
+        # note). Historical experiment_025/026 records keep the old field
+        # name untouched; this and every field below it are simply absent
+        # on those pre-existing records rather than rewritten.
+        "safety_document_unauthorized_retrieval_rate": _safety_rate(
+            "document_unauthorized_retrieval_rate"
+        ),
         "safety_cross_tenant_leakage_rate": _safety_rate("cross_tenant_leakage_rate"),
         "safety_stale_document_error_rate": _safety_rate("stale_document_error_rate"),
         "safety_current_document_retrieval_accuracy": _safety_rate(
@@ -150,6 +159,14 @@ def build_experiment_record(
         "safety_refusal_accuracy": _safety_rate("refusal_accuracy"),
         "safety_false_refusal_rate": _safety_rate("false_refusal_rate"),
         "safety_poisoned_source_selection_rate": _safety_rate("poisoned_source_selection_rate"),
+        # Field-level-safety milestone -- None for any report predating it.
+        "safety_sensitive_data_authorized_disclosure_accuracy": _safety_rate(
+            "sensitive_data_authorized_disclosure_accuracy"
+        ),
+        "safety_sensitive_data_false_redaction_rate": _safety_rate(
+            "sensitive_data_false_redaction_rate"
+        ),
+        "safety_encoded_extraction_success_rate": _safety_rate("encoded_extraction_success_rate"),
         "supporting_context_hit_rate": reference_context_analysis.get(
             "supporting_context_hit_rate"
         ),
