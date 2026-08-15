@@ -16,6 +16,18 @@ def test_ollama_generate_returns_nonempty_text(require_ollama, config):
         base_url=config.ollama_base_url(),
         max_tokens=32,
     )
-    response = llm.generate("Reply with a single word: hello.")
+    response = llm.generate("", "Reply with a single word: hello.")
+    assert isinstance(response, str)
+    assert len(response.strip()) > 0
+
+
+def test_ollama_generate_uses_system_turn_when_provided(require_ollama, config):
+    """OllamaLLM.generate() accepts a non-empty system turn against a live Ollama server."""
+    llm = OllamaLLM(
+        model_name=config.generation.model_name,
+        base_url=config.ollama_base_url(),
+        max_tokens=32,
+    )
+    response = llm.generate("You are a terse assistant. Reply with a single word.", "Say hello.")
     assert isinstance(response, str)
     assert len(response.strip()) > 0

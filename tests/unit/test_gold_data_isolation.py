@@ -92,9 +92,9 @@ class RecordingFakeLLM:
         """Start with no recorded prompts."""
         self.prompts: list[str] = []
 
-    def generate(self, prompt: str) -> str:
-        """Record `prompt` and return a fixed, unrelated response."""
-        self.prompts.append(prompt)
+    def generate(self, system: str, user: str) -> str:
+        """Record the combined system+user text and return a fixed, unrelated response."""
+        self.prompts.append(f"{system}\n\n{user}" if system else user)
         return "The knowledge base does not contain that information."
 
     def health_check(self) -> bool:

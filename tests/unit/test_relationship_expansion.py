@@ -141,7 +141,7 @@ class FakeReranker:
 class FakeLLM:
     """LLM double, unused by retrieve()-only tests but required by the pipeline constructor."""
 
-    def generate(self, prompt: str) -> str:
+    def generate(self, system: str, user: str) -> str:
         """Return a fixed placeholder response."""
         return "unused"
 

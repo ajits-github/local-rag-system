@@ -24,7 +24,8 @@ class _FakeMessages:
         self._response_text = response_text
 
     def create(self, **kwargs: Any) -> Any:
-        """Return a fake message response with usage info."""
+        """Return a fake message response with usage info, recording call kwargs."""
+        self.last_kwargs = kwargs
         return types.SimpleNamespace(
             content=[types.SimpleNamespace(text=self._response_text)],
             usage=_FakeUsage(input_tokens=10, output_tokens=5),
@@ -65,17 +66,40 @@ def test_generate_returns_completion_text_and_tracks_usage(monkeypatch):
     _install_fake_anthropic_module(monkeypatch, _FakeAnthropicClient(response_text="hello world"))
 
     llm = AnthropicLLM(api_key="sk-ant-test")
-    result = llm.generate("hi")
+    result = llm.generate("", "hi")
 
     assert result == "hello world"
     assert llm.call_count == 1
     assert llm.input_tokens == 10
     assert llm.output_tokens == 5
 
-    llm.generate("hi again")
+    llm.generate("", "hi again")
     assert llm.call_count == 2
     assert llm.input_tokens == 20
     assert llm.output_tokens == 10
+
+
+def test_generate_passes_system_as_top_level_kwarg_when_non_empty(monkeypatch):
+    """A non-empty system arg is passed as Anthropic's top-level `system` kwarg."""
+    client = _FakeAnthropicClient(response_text="hello world")
+    _install_fake_anthropic_module(monkeypatch, client)
+
+    llm = AnthropicLLM(api_key="sk-ant-test")
+    llm.generate("Be concise.", "hi")
+
+    assert client.messages.last_kwargs["system"] == "Be concise."
+    assert client.messages.last_kwargs["messages"] == [{"role": "user", "content": "hi"}]
+
+
+def test_generate_omits_system_kwarg_when_system_is_empty(monkeypatch):
+    """An empty system string omits the `system` kwarg entirely, not `system=""`."""
+    client = _FakeAnthropicClient(response_text="hello world")
+    _install_fake_anthropic_module(monkeypatch, client)
+
+    llm = AnthropicLLM(api_key="sk-ant-test")
+    llm.generate("", "hi")
+
+    assert "system" not in client.messages.last_kwargs
 
 
 def test_health_check_returns_false_on_exception(monkeypatch):

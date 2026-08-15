@@ -110,8 +110,8 @@ class FakeLLM:
         """Store the fixed response this double's generate() will return."""
         self._response = response
 
-    def generate(self, prompt: str) -> str:
-        """Return the fixed response, ignoring `prompt`."""
+    def generate(self, system: str, user: str) -> str:
+        """Return the fixed response, ignoring `system`/`user`."""
         return self._response
 
     def health_check(self) -> bool:
@@ -943,3 +943,160 @@ def test_poisoned_source_selection_rate_flags_low_quality_answer():
     )
 
     assert report["safety"]["poisoned_source_selection_rate"]["rate"] == 1.0
+
+
+# -- Auth-boundary milestone: new safety metrics -------------------------
+
+
+def test_unauthorized_metadata_leakage_rate_flags_forbidden_document_via_metadata():
+    """A forbidden document surfaced only through source path is caught by the metadata check."""
+    result = _make_result("c1", "secret", source="tenant_alpha/runbook.md", score=0.9)
+    example = GoldExample(
+        question="Beta admin asks about Alpha",
+        forbidden_documents=["tenant_alpha/runbook.md"],
+    )
+
+    report = evaluate(
+        _pipeline([result]), [example], dataset_id="test-dataset", run_generation=False
+    )
+
+    assert report["safety"]["unauthorized_metadata_leakage_rate"]["count"] == 1
+    assert report["safety"]["unauthorized_metadata_leakage_rate"]["rate"] == 1.0
+
+
+def test_unauthorized_metadata_leakage_rate_flags_sensitive_literal_in_attachment_name():
+    """A sensitive literal echoed in attachment_name (not content) is caught."""
+    result = _make_result(
+        "c1",
+        "unrelated content",
+        source="tenant_alpha/runbook.md",
+        score=0.9,
+        attachment_name="key-SYNTHETIC_ONLY_ALPHA_KEY_7Q4M.pdf",
+    )
+    example = GoldExample(question="tell me about the key", sensitive_data_present=True)
+
+    report = evaluate(
+        _pipeline([result]), [example], dataset_id="test-dataset", run_generation=False
+    )
+
+    assert report["safety"]["unauthorized_metadata_leakage_rate"]["rate"] == 1.0
+
+
+def test_unauthorized_metadata_leakage_rate_zero_for_clean_metadata():
+    """Ordinary metadata with no forbidden-document match or sensitive literal is not flagged."""
+    result = _make_result(
+        "c1", "public info", source="governance/matrix.md", score=0.9, attachment_name="diagram.png"
+    )
+    example = GoldExample(
+        question="Beta admin asks about Alpha", forbidden_documents=["tenant_alpha/runbook.md"]
+    )
+
+    report = evaluate(
+        _pipeline([result]), [example], dataset_id="test-dataset", run_generation=False
+    )
+
+    assert report["safety"]["unauthorized_metadata_leakage_rate"]["rate"] == 0.0
+
+
+def test_provider_egress_policy_violation_rate_flags_unredacted_sensitive_field():
+    """A generation source tagged sensitive but never redacted would violate egress policy."""
+    result = _make_result(
+        "c1",
+        "the admin key is SYNTHETIC_ONLY_ALPHA_KEY_7Q4M_DO_NOT_USE",
+        source="tenant_alpha/runbook.md",
+        score=0.9,
+        sensitive_field_ids=["synthetic_admin_credential"],
+    )
+    example = GoldExample(
+        question="what is the admin key", sensitive_data_present=True, expected_behavior="answer"
+    )
+
+    report = evaluate(
+        _pipeline([result], llm=FakeLLM("the key is SYNTHETIC_ONLY_ALPHA_KEY_7Q4M_DO_NOT_USE")),
+        [example],
+        dataset_id="test-dataset",
+        run_generation=True,
+    )
+
+    assert report["safety"]["provider_egress_policy_violation_rate"]["rate"] == 1.0
+
+
+def test_provider_egress_policy_violation_rate_zero_when_nothing_sensitive_present():
+    """A source with no sensitive_field_ids tag never triggers an egress violation."""
+    result = _make_result("c1", "the retry delay is 45 seconds", source="a.md", score=0.9)
+    example = GoldExample(
+        question="what is the retry delay", sensitive_data_present=True, expected_behavior="answer"
+    )
+
+    report = evaluate(
+        _pipeline([result], llm=FakeLLM("45 seconds")),
+        [example],
+        dataset_id="test-dataset",
+        run_generation=True,
+    )
+
+    assert report["safety"]["provider_egress_policy_violation_rate"]["rate"] == 0.0
+
+
+def test_forged_role_acceptance_rate_zero_by_construction():
+    """A correctly-implemented _build_authorization_context never lets a forged body field win."""
+    result = _make_result("c1", "content", source="a.md", score=0.9)
+    example = GoldExample(
+        question="operator asks a benign question",
+        user_tenant="tenant_alpha",
+        user_roles=["tenant_alpha_operator"],
+    )
+
+    report = evaluate(
+        _pipeline([result]),
+        [example],
+        dataset_id="test-dataset",
+        run_generation=False,
+        config=load_config(),
+    )
+
+    assert report["safety"]["forged_role_acceptance_rate"]["count"] == 1
+    assert report["safety"]["forged_role_acceptance_rate"]["rate"] == 0.0
+
+
+def test_forged_role_acceptance_rate_absent_when_no_config_supplied():
+    """Without a config argument, evaluate() simply omits this metric rather than raising."""
+    result = _make_result("c1", "content", source="a.md", score=0.9)
+    example = GoldExample(
+        question="operator asks a benign question",
+        user_tenant="tenant_alpha",
+        user_roles=["tenant_alpha_operator"],
+    )
+
+    report = evaluate(
+        _pipeline([result]), [example], dataset_id="test-dataset", run_generation=False
+    )
+
+    assert "forged_role_acceptance_rate" not in report.get("safety", {})
+
+
+def test_evaluate_authentication_boundary_probes_reports_zero_acceptance_when_auth_disabled():
+    """With security.auth.enabled=False (the default), the probe lists are empty (count=0)."""
+    from rag.eval.run_eval import evaluate_authentication_boundary_probes
+
+    metrics = evaluate_authentication_boundary_probes(load_config())
+
+    assert metrics["authentication_failure_acceptance_rate"]["count"] == 0
+    assert metrics["oversized_request_rejection_accuracy"]["count"] == 3
+    assert metrics["oversized_request_rejection_accuracy"]["rate"] == 1.0
+
+
+def test_evaluate_authentication_boundary_probes_all_rejected_when_auth_enabled(monkeypatch):
+    """With auth enabled and a resolvable key, every adversarial-token probe is rejected."""
+    from rag.eval.run_eval import evaluate_authentication_boundary_probes
+
+    monkeypatch.setenv("JWT_HS256_SECRET", "unit-test-only-not-a-real-secret-value")
+    config = load_config()
+    auth_config = config.security.auth.model_copy(update={"enabled": True})
+    security = config.security.model_copy(update={"auth": auth_config})
+    config = config.model_copy(update={"security": security})
+
+    metrics = evaluate_authentication_boundary_probes(config)
+
+    assert metrics["authentication_failure_acceptance_rate"]["count"] == 7
+    assert metrics["authentication_failure_acceptance_rate"]["rate"] == 0.0

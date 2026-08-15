@@ -112,17 +112,26 @@ class FakeReranker:
 
 
 class FakeLLM:
-    """LLM double that records the last prompt it was called with."""
+    """LLM double that records the last system/user turns it was called with."""
 
     def __init__(self, response: str = "fake answer") -> None:
         """Store the fixed response this double's generate() will return."""
         self._response = response
-        self.last_prompt: str | None = None
+        self.last_system: str | None = None
+        self.last_user: str | None = None
 
-    def generate(self, prompt: str) -> str:
-        """Record `prompt` and return the fixed response."""
-        self.last_prompt = prompt
+    def generate(self, system: str, user: str) -> str:
+        """Record `system`/`user` and return the fixed response."""
+        self.last_system = system
+        self.last_user = user
         return self._response
+
+    @property
+    def last_prompt(self) -> str | None:
+        r"""The old flattened `system\n\nuser` view, for tests asserting on combined text."""
+        if self.last_user is None:
+            return None
+        return f"{self.last_system}\n\n{self.last_user}" if self.last_system else self.last_user
 
     def health_check(self) -> bool:
         """Report healthy, always."""

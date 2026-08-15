@@ -67,7 +67,7 @@ class _FakeLLM:
         self.input_tokens = 0
         self.output_tokens = 0
 
-    def generate(self, prompt: str) -> str:
+    def generate(self, system: str, user: str) -> str:
         """Return the fixed response, tracking call/token counts."""
         self.call_count += 1
         self.input_tokens += 10

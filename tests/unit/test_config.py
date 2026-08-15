@@ -272,6 +272,39 @@ def test_secure_rag_baseline_v1_field_redaction_changes_only_that_flag():
     assert control_dict == candidate_dict
 
 
+def test_secure_rag_baseline_v2_jwt_auth_changes_only_the_auth_toggle():
+    """The jwt-auth candidate isolates exactly the security.auth block from experiment_027's config.
+
+    Auth-boundary milestone (approved adjustment 1): prompt stays v3,
+    matching secure-rag-baseline-v1-field-redaction.yaml exactly, so the
+    JWT-boundary change isn't confounded with a prompt-wording change.
+    """
+    control = load_config("config/experiments/secure-rag-baseline-v1-field-redaction.yaml")
+    candidate = load_config("config/experiments/secure-rag-baseline-v2-jwt-auth.yaml")
+
+    assert control.generation.prompt.version == "v3"
+    assert candidate.generation.prompt.version == "v3"
+    assert control.security.auth.enabled is False
+    assert candidate.security.auth.enabled is True
+
+    control_dict = control.model_dump(exclude={"security": {"auth"}})
+    candidate_dict = candidate.model_dump(exclude={"security": {"auth"}})
+    assert control_dict == candidate_dict
+
+
+def test_secure_rag_baseline_v2_jwt_auth_dev_only_differs_by_insecure_dev_mode():
+    """The -dev overlay differs from the primary jwt-auth candidate only by insecure_dev_mode."""
+    primary = load_config("config/experiments/secure-rag-baseline-v2-jwt-auth.yaml")
+    dev = load_config("config/experiments/secure-rag-baseline-v2-jwt-auth-dev.yaml")
+
+    assert primary.security.auth.insecure_dev_mode is False
+    assert dev.security.auth.insecure_dev_mode is True
+
+    primary_dict = primary.model_dump(exclude={"security": {"auth": {"insecure_dev_mode"}}})
+    dev_dict = dev.model_dump(exclude={"security": {"auth": {"insecure_dev_mode"}}})
+    assert primary_dict == dev_dict
+
+
 def test_secure_rag_baseline_v1_changes_only_prompt_and_authorization():
     """secure-rag-baseline-v1.yaml is classic-rag-baseline-v1.yaml + prompt v3 + auth enabled.
 
@@ -331,9 +364,13 @@ def test_all_live_config_files_migrated_to_new_cutoff_field_names():
 
     for path in config_paths:
         raw_text = path.read_text(encoding="utf-8")
-        assert "top_k:" not in raw_text, f"{path} still has the old retrieval.top_k field"
+        # Exact-line checks (not a bare substring) -- the auth-boundary
+        # milestone's `security.dos_limits.max_top_k` field legitimately
+        # contains the substring "top_k:" without being the old
+        # retrieval.top_k field this test guards against.
+        assert "\n  top_k:" not in raw_text, f"{path} still has the old retrieval.top_k field"
         assert (
-            "rerank_top_n:" not in raw_text
+            "\n  rerank_top_n:" not in raw_text
         ), f"{path} still has the old retrieval.rerank_top_n field"
 
         config = load_config(str(path))

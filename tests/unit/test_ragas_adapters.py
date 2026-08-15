@@ -8,9 +8,10 @@ from rag.generation.base import LLM
 class FakeLLM(LLM):
     """LLM double that echoes the prompt it was called with."""
 
-    def generate(self, prompt: str) -> str:
-        """Return a fixed string derived from `prompt`."""
-        return f"echo:{prompt}"
+    def generate(self, system: str, user: str) -> str:
+        """Return a fixed string derived from `user` (records `system` for assertions)."""
+        self.last_system = system
+        return f"echo:{user}"
 
     def health_check(self) -> bool:
         """Report healthy, always."""
@@ -30,9 +31,11 @@ class FakeEmbedder(Embedder):
 
 
 def test_langchain_llm_adapter_call_delegates_to_rag_llm_generate():
-    """_call() delegates to the wrapped LLM's generate()."""
-    adapter = LangchainLLMAdapter(rag_llm=FakeLLM())
+    """_call() delegates to the wrapped LLM's generate(), passing an empty system turn."""
+    fake_llm = FakeLLM()
+    adapter = LangchainLLMAdapter(rag_llm=fake_llm)
     assert adapter._call("hello") == "echo:hello"
+    assert fake_llm.last_system == ""
 
 
 def test_langchain_llm_adapter_invoke_delegates_to_rag_llm_generate():

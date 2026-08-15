@@ -15,7 +15,7 @@ from rag.generation.base import LLM
 class FakeLLM(LLM):
     """Minimal LLM double satisfying the `LLM` ABC for adapter construction."""
 
-    def generate(self, prompt: str) -> str:
+    def generate(self, system: str, user: str) -> str:
         """Return a fixed placeholder string."""
         return "fake"
 

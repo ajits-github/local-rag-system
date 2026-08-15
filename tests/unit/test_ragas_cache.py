@@ -33,9 +33,9 @@ class _CountingLLM(LLM):
         """Start with no recorded prompts."""
         self.prompts: list[str] = []
 
-    def generate(self, prompt: str) -> str:
-        """Record `prompt` and return a fixed response."""
-        self.prompts.append(prompt)
+    def generate(self, system: str, user: str) -> str:
+        """Record `user` and return a fixed response."""
+        self.prompts.append(user)
         return "ok"
 
     def health_check(self) -> bool:

@@ -32,7 +32,8 @@ class _FakeCompletions:
         self._response_text = response_text
 
     def create(self, **kwargs: Any) -> Any:
-        """Return a fake completion response with usage info."""
+        """Return a fake completion response with usage info, recording `messages`."""
+        self.last_messages = kwargs.get("messages")
         return types.SimpleNamespace(
             choices=[_FakeChoice(self._response_text)],
             usage=_FakeUsage(prompt_tokens=10, completion_tokens=5),
@@ -73,17 +74,42 @@ def test_generate_returns_completion_text_and_tracks_usage(monkeypatch):
     _install_fake_openai_module(monkeypatch, _FakeOpenAIClient(response_text="hello world"))
 
     llm = OpenAILLM(api_key="sk-test")
-    result = llm.generate("hi")
+    result = llm.generate("", "hi")
 
     assert result == "hello world"
     assert llm.call_count == 1
     assert llm.input_tokens == 10
     assert llm.output_tokens == 5
 
-    llm.generate("hi again")
+    llm.generate("", "hi again")
     assert llm.call_count == 2
     assert llm.input_tokens == 20
     assert llm.output_tokens == 10
+
+
+def test_generate_sends_system_and_user_as_separate_chat_messages(monkeypatch):
+    """A non-empty system arg produces a leading role="system" message."""
+    client = _FakeOpenAIClient(response_text="hello world")
+    _install_fake_openai_module(monkeypatch, client)
+
+    llm = OpenAILLM(api_key="sk-test")
+    llm.generate("Be concise.", "hi")
+
+    assert client.chat.completions.last_messages == [
+        {"role": "system", "content": "Be concise."},
+        {"role": "user", "content": "hi"},
+    ]
+
+
+def test_generate_omits_system_message_when_system_is_empty(monkeypatch):
+    """An empty system string produces no system-role message at all."""
+    client = _FakeOpenAIClient(response_text="hello world")
+    _install_fake_openai_module(monkeypatch, client)
+
+    llm = OpenAILLM(api_key="sk-test")
+    llm.generate("", "hi")
+
+    assert client.chat.completions.last_messages == [{"role": "user", "content": "hi"}]
 
 
 def test_health_check_returns_false_on_exception(monkeypatch):
