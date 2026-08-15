@@ -58,11 +58,15 @@ class OpenAILLM(LLM):
         self.input_tokens = 0
         self.output_tokens = 0
 
-    def generate(self, prompt: str) -> str:
+    def generate(self, system: str, user: str) -> str:
         """See `LLM.generate`."""
+        messages: list[dict[str, str]] = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": user})
         response = self._client.chat.completions.create(
             model=self._model_name,
-            messages=[{"role": "user", "content": prompt}],
+            messages=messages,
             temperature=self._temperature,
             max_tokens=self._max_tokens,
         )

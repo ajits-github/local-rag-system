@@ -57,18 +57,27 @@ class OllamaLLM(LLM):
         self.last_prompt_tokens: int | None = None
         self.last_completion_tokens: int | None = None
 
-    def generate(self, prompt: str) -> str:
-        """See `LLM.generate`."""
+    def generate(self, system: str, user: str) -> str:
+        """See `LLM.generate`.
+
+        Uses Ollama's role-aware `chat()` endpoint (not the raw-completion
+        `generate()` endpoint) so `system`/`user` reach the model as
+        genuinely separate messages, not a concatenated string.
+        """
         options: dict[str, Any] = {
             "temperature": self._temperature,
             "num_predict": self._max_tokens,
         }
         if self._seed is not None:
             options["seed"] = self._seed
-        response = self._client.generate(model=self._model_name, prompt=prompt, options=options)
+        messages = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": user})
+        response = self._client.chat(model=self._model_name, messages=messages, options=options)
         self.last_prompt_tokens = response.get("prompt_eval_count")
         self.last_completion_tokens = response.get("eval_count")
-        return response["response"]
+        return response["message"]["content"]
 
     def health_check(self) -> bool:
         """See `LLM.health_check`."""

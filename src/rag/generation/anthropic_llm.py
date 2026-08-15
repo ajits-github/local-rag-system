@@ -58,13 +58,17 @@ class AnthropicLLM(LLM):
         self.input_tokens = 0
         self.output_tokens = 0
 
-    def generate(self, prompt: str) -> str:
+    def generate(self, system: str, user: str) -> str:
         """See `LLM.generate`."""
+        kwargs: dict[str, object] = {}
+        if system:
+            kwargs["system"] = system
         response = self._client.messages.create(
             model=self._model_name,
             max_tokens=self._max_tokens,
             temperature=self._temperature,
-            messages=[{"role": "user", "content": prompt}],
+            messages=[{"role": "user", "content": user}],
+            **kwargs,
         )
         self.call_count += 1
         if response.usage is not None:

@@ -37,10 +37,41 @@ review calls for).
 
 from __future__ import annotations
 
+import hashlib
 import re
-from typing import Literal
+from collections.abc import Sequence
+from typing import Literal, Protocol
 
 from pydantic import BaseModel, Field
+
+
+class _ScannableChunk(Protocol):
+    """Structural type for `find_duplicate_sensitive_occurrences` -- only what it reads.
+
+    Deliberately a `Protocol`, not the concrete `Chunk` schema class:
+    callers scanning chunks read from Postgres directly (see
+    `scripts/detect_duplicate_sensitive_values.py`,
+    `eval/run_eval.py`'s `_fetch_chunks_for_duplicate_scan`) build a
+    lightweight duck-typed stand-in rather than a full `Chunk`, since
+    there is no existing "fetch every chunk" `VectorStore` primitive to
+    populate one from -- `Chunk` still satisfies this Protocol too.
+    """
+
+    @property
+    def id(self) -> str: ...  # noqa: D102
+
+    @property
+    def content(self) -> str: ...  # noqa: D102
+
+    @property
+    def metadata(self) -> _ScannableChunkMetadata: ...  # noqa: D102
+
+
+class _ScannableChunkMetadata(Protocol):
+    """Structural type for the `.metadata.sensitive_field_ids` this module reads."""
+
+    @property
+    def sensitive_field_ids(self) -> list[str] | None: ...  # noqa: D102
 
 
 class SensitiveFieldPolicy(BaseModel):
@@ -187,3 +218,127 @@ def redact_sensitive_fields(
             text = new_text
             redacted_ids.append(policy.field_id)
     return text, redacted_ids
+
+
+def redact_source_metadata(
+    fields: dict[str, str | None],
+    roles: list[str],
+    policies: list[SensitiveFieldPolicy] | None = None,
+) -> tuple[dict[str, str | None], list[str]]:
+    """Apply the same sensitive-field redaction to metadata fields, not just chunk content.
+
+    Auth-boundary milestone: a field-level-redacted value can still leak
+    indirectly through a *permitted* document's own metadata (e.g. an
+    `attachment_name` or `section_path` that echoes the value), even
+    though `content` itself was correctly redacted. Reuses
+    `redact_sensitive_fields` per field so the same fail-closed role check
+    and pattern set apply uniformly.
+
+    Parameters
+    ----------
+    fields : dict[str, str | None]
+        Metadata field name -> value (e.g. `{"attachment_name": ...,
+        "section_path": ...}`). `None` values pass through unchanged.
+    roles : list[str]
+        Caller roles asserted for this query (empty if no identity known).
+    policies : list[SensitiveFieldPolicy] | None, optional
+        Defaults to `DEFAULT_FIELD_POLICIES`.
+
+    Returns
+    -------
+    tuple[dict[str, str | None], list[str]]
+        The (possibly modified) fields dict, and the deduplicated
+        `field_id`s of every policy that redacted at least one field.
+    """
+    redacted_fields: dict[str, str | None] = {}
+    all_redacted_ids: list[str] = []
+    for name, value in fields.items():
+        if value is None:
+            redacted_fields[name] = None
+            continue
+        redacted_text, redacted_ids = redact_sensitive_fields(value, roles, policies)
+        redacted_fields[name] = redacted_text
+        for field_id in redacted_ids:
+            if field_id not in all_redacted_ids:
+                all_redacted_ids.append(field_id)
+    return redacted_fields, all_redacted_ids
+
+
+class DuplicateSensitiveOccurrence(BaseModel):
+    """One sensitive literal value found in more than one chunk, or tagged inconsistently.
+
+    `literal_value_hash` is a sha256 digest of the matched substring --
+    never the raw literal itself, so this diagnostic's own output (a
+    report, a metric, a test assertion) can never leak a secret.
+    """
+
+    literal_value_hash: str
+    field_id: str
+    chunk_ids: list[str]
+    untagged_chunk_ids: list[str]
+
+
+def find_duplicate_sensitive_occurrences(
+    chunks: Sequence[_ScannableChunk], policies: list[SensitiveFieldPolicy] | None = None
+) -> list[DuplicateSensitiveOccurrence]:
+    """Find sensitive literals present in multiple chunks, or missing their ingestion-time tag.
+
+    Diagnostic/validation only -- run against a corpus's chunks (e.g. by
+    `scripts/detect_duplicate_sensitive_values.py`), not part of the
+    query-time enforcement path. Catches two related gaps: (1) the same
+    protected literal value copy-pasted into a second document/chunk that
+    never got scanned together with the first (a true duplicate), and (2)
+    a chunk whose content matches a policy pattern but whose
+    `ChunkMetadata.sensitive_field_ids` doesn't include that `field_id` --
+    an ingestion-time tagging miss, which would let query-time redaction
+    (`redact_sensitive_fields`, gated on the tag as a cheap pre-check --
+    see `retrieval/pipeline.py`) skip that chunk's redaction pass
+    entirely.
+
+    Parameters
+    ----------
+    chunks : Sequence[_ScannableChunk]
+        Chunks to scan (their own `.content` and `.metadata.sensitive_field_ids`)
+        -- any object structurally matching this shape, including a real
+        `Chunk` or a lightweight duck-typed stand-in.
+    policies : list[SensitiveFieldPolicy] | None, optional
+        Defaults to `DEFAULT_FIELD_POLICIES`.
+
+    Returns
+    -------
+    list[DuplicateSensitiveOccurrence]
+        One entry per `(field_id, literal_value_hash)` pair that either
+        appears in more than one chunk, or has at least one untagged
+        occurrence. Empty when the corpus is fully and uniquely tagged.
+    """
+    active = policies if policies is not None else DEFAULT_FIELD_POLICIES
+    chunk_ids_by_key: dict[tuple[str, str], list[str]] = {}
+    untagged_ids_by_key: dict[tuple[str, str], list[str]] = {}
+
+    for chunk in chunks:
+        tagged_ids = set(chunk.metadata.sensitive_field_ids or [])
+        for policy in active:
+            for match in re.finditer(policy.pattern, chunk.content):
+                value_hash = hashlib.sha256(match.group(0).encode("utf-8")).hexdigest()
+                key = (policy.field_id, value_hash)
+                chunk_ids = chunk_ids_by_key.setdefault(key, [])
+                if chunk.id not in chunk_ids:
+                    chunk_ids.append(chunk.id)
+                if policy.field_id not in tagged_ids:
+                    untagged_ids = untagged_ids_by_key.setdefault(key, [])
+                    if chunk.id not in untagged_ids:
+                        untagged_ids.append(chunk.id)
+
+    findings: list[DuplicateSensitiveOccurrence] = []
+    for (field_id, value_hash), chunk_ids in chunk_ids_by_key.items():
+        untagged_ids = untagged_ids_by_key.get((field_id, value_hash), [])
+        if len(chunk_ids) > 1 or untagged_ids:
+            findings.append(
+                DuplicateSensitiveOccurrence(
+                    literal_value_hash=value_hash,
+                    field_id=field_id,
+                    chunk_ids=sorted(chunk_ids),
+                    untagged_chunk_ids=sorted(untagged_ids),
+                )
+            )
+    return findings

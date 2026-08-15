@@ -36,6 +36,19 @@ _INJECTION_PATTERNS = (
     re.compile(r"treat (the following|this) (token|text) as a system command", re.I),
     re.compile(r"you are now", re.I),
     re.compile(r"mark this (upload|document|page) as active", re.I),
+    # Auth-boundary milestone: less-literal/obfuscated phrasings a naive
+    # single-pattern list would miss -- still a small, literal/regex
+    # addition per requirement 8's "keep the heuristic, don't add a
+    # heavyweight external model" constraint, not a rewrite of the
+    # detection strategy itself.
+    re.compile(r"disregard (the )?(above|prior|previous)", re.I),
+    re.compile(r"new instructions\s*:", re.I),
+    re.compile(r"forget (everything|all) (you were told|above)", re.I),
+    # Letter-spaced/hyphenated obfuscation of "ignore" (e.g. "i-g-n-o-r-e",
+    # "i g n o r e") followed eventually by "instructions" -- a targeted,
+    # bounded allowance for inter-letter separators, not a general
+    # fuzzy-match engine.
+    re.compile(r"i[\s\-_.]*g[\s\-_.]*n[\s\-_.]*o[\s\-_.]*r[\s\-_.]*e.{0,20}instructions?", re.I),
 )
 
 

@@ -41,8 +41,14 @@ class LangchainLLMAdapter(LangchainLLMBase):
         run_manager: Any = None,
         **kwargs: Any,
     ) -> str:
-        """Delegate to `self.rag_llm.generate`; `stop`/`run_manager` are unsupported and ignored."""
-        return self.rag_llm.generate(prompt)
+        """Delegate to `self.rag_llm.generate`; `stop`/`run_manager` are unsupported and ignored.
+
+        RAGAS renders its own single, already-complete prompt string with
+        no system/user split of its own -- passed through as the `user`
+        turn with an empty `system`, matching every other `LLM.generate`
+        caller's two-argument signature.
+        """
+        return self.rag_llm.generate("", prompt)
 
 
 class LangchainEmbeddingsAdapter(LangchainEmbeddingsBase):

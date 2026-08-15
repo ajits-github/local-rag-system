@@ -30,6 +30,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
+from rag.audit import log_audit_event
 from rag.config import AppConfig
 from rag.embedders.base import Embedder
 from rag.factory import build_embedder, build_llm, build_reranker, build_vectorstore
@@ -37,7 +38,7 @@ from rag.generation.base import LLM
 from rag.prompts.loader import PromptTemplate, load_prompt_template_from_config
 from rag.rerankers.base import Reranker
 from rag.retrieval.authorization import AuthorizationContext
-from rag.retrieval.field_policy import redact_sensitive_fields
+from rag.retrieval.field_policy import redact_sensitive_fields, redact_source_metadata
 from rag.retrieval.freshness import resolve_excluded_document_ids
 from rag.retrieval.fusion import reciprocal_rank_fusion
 from rag.retrieval.injection_detection import detect_injection
@@ -166,6 +167,13 @@ class RetrievalPipeline:
             return auth
         versions = self._vectorstore.list_document_versions(dataset_id)
         excluded = resolve_excluded_document_ids(versions, auth.as_of, auth.include_superseded)
+        if excluded:
+            log_audit_event(
+                "freshness_version_selected",
+                dataset_id=dataset_id,
+                excluded_document_count=len(excluded),
+                as_of=auth.as_of.isoformat() if auth.as_of else None,
+            )
         return auth.model_copy(update={"resolved_excluded_document_ids": sorted(excluded)})
 
     @staticmethod
@@ -176,8 +184,15 @@ class RetrievalPipeline:
         drops a result (see `injection_detection.detect_injection`'s
         docstring for why detection never gates retrieval).
         """
+        flagged = 0
         for result in results:
             result.injection_suspected = detect_injection(result.chunk.content)
+            if result.injection_suspected:
+                flagged += 1
+        if flagged:
+            log_audit_event(
+                "injection_flagged", flagged_chunk_count=flagged, total_chunk_count=len(results)
+            )
         return results
 
     @staticmethod
@@ -197,7 +212,15 @@ class RetrievalPipeline:
         `model_copy(update=...)` rather than mutating in place, since
         relationship-expansion's `parents_by_id`/`section_cache` can hold
         the same `Chunk` instance referenced by more than one `SearchResult`
-        within a single query.
+        within a single query. Auth-boundary milestone: also redacts
+        `attachment_name`/`section_path` on the chunk's own metadata
+        (`field_policy.redact_source_metadata`) -- a redacted-field value
+        can otherwise leak indirectly through those fields even when
+        `content` itself is clean (e.g. `attachment_name="admin-key-
+        2024.pdf"`). Every downstream consumer of this pipeline's richer
+        `answer()['sources']` dict (eval reports, MLflow artifacts)
+        inherits the same redacted metadata, not just `POST /query`'s
+        narrower response.
 
         Parameters
         ----------
@@ -211,13 +234,44 @@ class RetrievalPipeline:
         list[SearchResult]
             The same list, for chaining.
         """
+        all_field_ids: list[str] = []
+        redacted_chunk_count = 0
         for result in results:
             if not result.chunk.metadata.sensitive_field_ids:
                 continue
             redacted_text, redacted_ids = redact_sensitive_fields(result.chunk.content, roles)
+            metadata_fields, metadata_redacted_ids = redact_source_metadata(
+                {
+                    "attachment_name": result.chunk.metadata.attachment_name,
+                    "section_path": result.chunk.metadata.section_path,
+                },
+                roles,
+            )
+            combined_ids = list(redacted_ids)
+            for field_id in metadata_redacted_ids:
+                if field_id not in combined_ids:
+                    combined_ids.append(field_id)
+            if not combined_ids:
+                continue
+            chunk = result.chunk
             if redacted_ids:
-                result.chunk = result.chunk.model_copy(update={"content": redacted_text})
-                result.redacted_field_ids = redacted_ids
+                chunk = chunk.model_copy(update={"content": redacted_text})
+            if metadata_redacted_ids:
+                chunk = chunk.model_copy(
+                    update={"metadata": chunk.metadata.model_copy(update=metadata_fields)}
+                )
+            result.chunk = chunk
+            result.redacted_field_ids = combined_ids
+            redacted_chunk_count += 1
+            for field_id in combined_ids:
+                if field_id not in all_field_ids:
+                    all_field_ids.append(field_id)
+        if all_field_ids:
+            log_audit_event(
+                "field_redaction_applied",
+                field_ids=all_field_ids,
+                redacted_chunk_count=redacted_chunk_count,
+            )
         return results
 
     def retrieve(
@@ -609,8 +663,7 @@ class RetrievalPipeline:
         t1 = time.perf_counter()
         context = _build_context(results)
         system, user = self._prompt_template.render(context=context, query=query)
-        prompt = f"{system}\n\n{user}" if system else user
-        answer_text = self._llm.generate(prompt)
+        answer_text = self._llm.generate(system, user)
         t2 = time.perf_counter()
         generation_ms = (t2 - t1) * 1000
         return {
@@ -635,6 +688,7 @@ class RetrievalPipeline:
                     "expanded_from": r.expanded_from,
                     "tenant_id": r.chunk.metadata.tenant_id,
                     "trust_level": r.chunk.metadata.trust_level,
+                    "classification": r.chunk.metadata.classification,
                     "status": r.chunk.metadata.status,
                     "document_version": r.chunk.metadata.document_version,
                     "injection_suspected": r.injection_suspected,
