@@ -1012,3 +1012,425 @@ safety entry for the full result table.
   deterministic heuristics (same documented-limitation style as this
   project's other triage metrics) — they prove a *specific* transform
   didn't leak the value, not that no transform could.
+
+## Authenticated API Boundary and Security Hardening (auth-boundary milestone)
+
+`secure_rag_baseline_v1_field_redaction` (experiment_027, above) closed
+the field-level disclosure gap, but every one of these milestones still
+started from an **asserted, unverified identity**:
+`retrieval/authorization.py`'s own docstring said so directly — "no
+authentication/session layer exists in this codebase ... a real
+deployment would populate `AuthorizationContext` from a verified JWT/
+session claim at the API boundary instead of a raw request field."
+`POST /query`'s `tenant_id`/`roles` were read straight off the HTTP
+request body with zero verification. Anyone who could reach the API
+could claim to be `tenant_alpha_admin`, and nothing stopped them. This
+milestone closes that gap and, along the way, a handful of adjacent
+hardening gaps the design review identified: metadata-level leakage,
+duplicate untagged secrets, a structurally weak instruction/evidence
+boundary in generation, unrestricted hosted-provider egress, and
+unbounded request size/rate.
+
+### Identity model: authentication vs. authorization, structurally separate
+
+```
+HTTP request
+  -> JWT verification (api/auth.py:verify_jwt)
+  -> VerifiedIdentity
+  -> AuthorizationContext (api/routers/query.py:_build_authorization_context)
+  -> retrieval ACL / freshness / trust (RetrievalPipeline, pgvector.py -- UNCHANGED)
+  -> field-level redaction (field_policy.py -- UNCHANGED)
+  -> prompt construction (structurally separated system/evidence/query, see below)
+```
+
+The key architectural finding that shaped this design: `RetrievalPipeline`
+never constructed an `AuthorizationContext` itself — it only ever accepted
+one as a parameter, built entirely at the caller boundary
+(`api/routers/query.py`, or `eval/run_eval.py`'s gold-driven harness,
+which has no HTTP boundary and stays untouched). This meant the JWT layer
+could be inserted almost entirely by adding a new module plus touching
+`query.py`/`deps.py`, with **zero changes** to `RetrievalPipeline`,
+`pgvector.py`, or `AuthorizationContext` itself — "keep authentication and
+authorization structurally separate" came nearly for free from the
+existing design, rather than requiring a refactor.
+
+### JWT verification design
+
+Algorithm: **HS256 by default, RS256/ES256 selectable in config.** This
+is a single-instance, offline-first system with no existing IdP or
+key-distribution infrastructure — token issuance and verification are the
+same trust domain today (a local dev token-issuing script,
+`scripts/issue_dev_token.py`, for testing). Asymmetric verification earns
+its complexity when a separate, less-trusted issuer exists, which isn't
+yet true here; the config (`JWTConfig.algorithm: Literal["HS256",
+"RS256", "ES256"]`) is written so switching to a real IdP later is a
+one-line YAML change, not a code change. Library: `pyjwt` — preferred
+over `python-jose` for its narrower scope and explicit `algorithms=[...]`
+allow-listing, which is exactly what prevents the classic "`alg: none`"/
+algorithm-confusion attack (a real, well-known JWT library
+vulnerability class, not a theoretical concern).
+
+`api/auth.py:verify_jwt(token, config)` verifies, via `pyjwt.decode(...)`:
+signature; expiration (`exp`, with `leeway_seconds` clock-skew tolerance);
+issuer (only when `JWTConfig.issuer` is configured); audience (only when
+`JWTConfig.audience` is configured); and presence of every claim in
+`required_claims` (default `["sub", "tenant_id", "roles"]`) via pyjwt's
+own `options={"require": [...]}`. Every failure mode raises
+`AuthenticationError(reason=...)` where `reason` is one of a fixed
+`Literal` set — never the token itself, never a raw library exception
+message that might embed claim values.
+
+### Fail-closed, not fail-open
+
+`config.security.auth.enabled: false` (the shipped default) is a true
+no-op: `POST /query`/`POST /ingest` behave byte-identically to every
+prior milestone. When `true`:
+
+- A request with **no** `Authorization` header is rejected 401, unless
+  `insecure_dev_mode: true` (default `false`) — a second, independent
+  flag that only ever relaxes "is a token required at all" for the
+  *no-header* case.
+- A request with an **invalid** token — bad signature, expired,
+  malformed, missing a required claim, wrong issuer/audience — is
+  **always** rejected 401, regardless of `insecure_dev_mode`. There is no
+  code path where a failed verification proceeds with `auth=None`; this
+  was verified directly, not just documented, by
+  `tests/unit/test_api_query_auth_boundary.py::test_insecure_dev_mode_
+  still_rejects_an_invalid_present_token` and
+  `test_invalid_jwt_never_falls_back_to_unrestricted_retrieval`.
+- When a verified identity **is** present, `api/routers/query.py`'s
+  `_build_authorization_context` builds `AuthorizationContext` strictly
+  from `identity.tenant_id`/`identity.roles` — the request body's
+  `tenant_id`/`roles` fields are read but never consulted for
+  authorization. If the body's values disagree with the verified
+  identity's, a `forged_claim_attempt` audit event is logged (the forged
+  value is harmless since it's never used, but disagreement itself is a
+  signal worth recording — e.g. a compromised or misbehaving client).
+  Proven directly by `test_forged_body_tenant_id_is_ignored_when_jwt_
+  present`/`test_forged_body_roles_is_ignored_when_jwt_present`, which
+  mint a valid JWT for one identity and send a request body claiming a
+  different, more-privileged tenant/roles, asserting the pipeline only
+  ever saw the JWT's own claims.
+
+### Audit logging
+
+New top-level `src/rag/audit.py` (deliberately *not* under `api/` —
+`retrieval/pipeline.py` needs to call it too, for `field_redaction_
+applied`/`freshness_version_selected`/`injection_flagged` events, and
+`retrieval/` must never import from `api/`, the same layering rule that
+already governed every prior milestone). Reuses `logging_config.py`'s
+existing `JSONFormatter` + request-id contextvar wholesale — no new
+formatter, handler, or sink; `log_audit_event(event, **fields)` is a thin
+wrapper over `logging.getLogger("rag.audit").info(event, extra=fields)`.
+
+Event vocabulary (`AuthEventType`): `auth_success`, `auth_failure`,
+`authorization_denied`, `cross_tenant_attempt`, `field_redaction_applied`,
+`trust_policy_rejection`, `freshness_version_selected`,
+`injection_flagged`, `forged_claim_attempt`, `rate_limit_exceeded`,
+`oversized_request_rejected`, `egress_policy_blocked`. Every call site
+logs only IDs/categories/counts already available on existing objects —
+never JWT contents, raw secrets, sensitive chunk text, or API keys.
+`pseudonymous_subject(subject)` hashes the JWT `sub` claim to a stable,
+non-reversible 16-character id before it's ever logged, since this
+milestone's tokens carry no guarantee that `sub` is itself opaque/
+non-PII — `tests/unit/test_audit_logging.py::test_auth_failure_event_
+never_contains_raw_token`/`test_field_redaction_event_never_contains_
+raw_chunk_content` assert this directly against emitted `LogRecord`s.
+
+**Documented limitation**: true per-document `authorization_denied`/
+`trust_policy_rejection` auditing (naming exactly which document was
+excluded and why) would require `pgvector.py` to report *excluded* row
+counts back to the caller — today the SQL predicate silently filters
+before any row leaves Postgres, so `RetrievalPipeline` structurally never
+learns what was excluded, only what was returned. `cross_tenant_attempt`
+is approximated today via `forged_claim_attempt` (a caller's body
+disagreeing with their verified identity); true SQL-level denial
+telemetry is a real, acknowledged gap, not implemented in this pass.
+
+### Metadata and citation protection
+
+Audited every field in `pipeline.answer()`'s `sources` list against "can
+an unauthorized caller learn something through metadata even when
+content is blocked or redacted." Two findings:
+
+1. Citation leakage for a **forbidden document** was already structurally
+   impossible: `build_authorization_where_clause` runs before any row
+   leaves Postgres, so a forbidden document's `chunk_id`/`source`/
+   metadata never enters `results` in the first place. Confirmed, not
+   assumed — `tests/integration/test_metadata_leakage.py::test_forbidden_
+   document_metadata_never_appears_in_response` asserts `results == []`
+   for a cross-tenant caller, not just that specific fields are absent.
+2. The real residual risk: a field-level-redacted value leaking
+   *indirectly* through a **permitted** document's own metadata (e.g.
+   `attachment_name="admin-key-2024.pdf"`, `section_path="Admin
+   Credentials > Alpha Key"`) even though `content` itself was correctly
+   redacted. New `field_policy.redact_source_metadata(fields, roles,
+   policies)` reuses the exact same `SensitiveFieldPolicy` regex/role
+   logic as content redaction, applied to `attachment_name`/
+   `section_path`. Wired into `RetrievalPipeline._redact_sensitive_
+   fields` — the same single choke point content redaction already runs
+   through — so every downstream consumer (`answer()`'s sources, eval
+   reports, MLflow artifacts, `run_ragas_eval.py`'s judge payload)
+   inherits clean metadata automatically, not just `POST /query`'s
+   already-narrow public response contract (`SourceItem` only ever
+   exposed `chunk_id`/`document_id`/`source`/`category`/`score` to begin
+   with — confirmed by reading `query.py` directly, not assumed).
+
+### Duplicate-secret / alternate-copy protection
+
+The pre-existing field-level redaction is chunk-based: it redacts a
+matched pattern within whatever chunk it's scanning, but had no mechanism
+to notice if the *same* secret value had been copy-pasted into a second
+document/chunk that, for whatever reason, never got ingestion-time-tagged
+consistently. New `field_policy.find_duplicate_sensitive_occurrences(chunks,
+policies)` groups every regex match across a chunk set by a sha256 hash
+of the *matched substring* (never the raw literal — this diagnostic's own
+output, including its test assertions, can never leak a secret), and
+flags any `(field_id, literal_hash)` group that either spans more than
+one chunk (a true duplicate) or has at least one chunk missing the
+`field_id` in its own `ChunkMetadata.sensitive_field_ids` tag (an
+ingestion-time tagging miss — the exact gap that would let query-time
+redaction, which pre-checks that tag as a cheap skip, silently pass an
+untagged chunk through unredacted).
+
+Deliberately a diagnostic, not a query-time control — run via new
+`scripts/detect_duplicate_sensitive_values.py` (a direct `psycopg2` read
+of the `chunks` table; there is no "fetch every chunk" `VectorStore`
+primitive, and adding one solely for this one-off diagnostic would be
+exactly the kind of speculative abstraction this codebase avoids) and via
+`eval/run_eval.py`'s new `duplicate_sensitive_field_miss_rate` metric,
+which runs the same scan corpus-wide once per eval run and is always
+reported (even at `count=0`/`rate=0.0`, a meaningful "corpus is clean"
+result) rather than gated behind a nonempty-records check like the
+gold-row-driven metrics.
+
+Per the approved design review, no synthetic duplicate-secret document
+was added to the canonical `data/knowledge_base` corpus — that would
+change the benchmark corpus for an implementation-specific test case. The
+concrete "secret in a neighboring/duplicate chunk" scenario instead lives
+entirely as an in-test fixture
+(`tests/unit/test_field_policy.py::test_duplicate_secret_in_neighboring_
+chunk_is_also_tagged`, `test_untagged_duplicate_is_flagged_by_detector`)
+— constructed `Chunk`/`ChunkMetadata` objects, never a committed corpus
+file.
+
+### Prompt-injection handling: architecture, not just more regexes
+
+The design review's key finding here: the existing `system`/`user`
+prompt split (`PromptTemplate.render()` already returned two separate
+strings, and `rag_answer_v3.yaml`'s system template already stated an
+"evidence, not instructions" rule) was being **flattened back into one
+string** immediately before generation —
+`RetrievalPipeline.answer()` used to do `prompt = f"{system}\n\n{user}"
+if system else user` and hand that single blob to `LLM.generate(prompt:
+str)`. `OllamaLLM.generate` called Ollama's raw-completion `client.
+generate(prompt=...)` endpoint, not the role-aware `client.chat
+(messages=[...])` endpoint Ollama actually supports. So the "separation"
+that existed on paper was, by the time a model actually saw it, two
+labeled sections of one undifferentiated text block — a much weaker
+boundary than it looked.
+
+The structural fix: `LLM.generate(prompt: str) -> str` became
+`LLM.generate(system: str, user: str) -> str` across the base ABC and all
+three concrete implementations. `OllamaLLM.generate` now builds a
+`messages=[{"role": "system", ...}, {"role": "user", ...}]` list and
+calls Ollama's chat endpoint — system instructions and retrieved-
+evidence-plus-query now reach the model as genuinely separate turns, not
+string-concatenated text the model has to infer a boundary within from
+formatting alone. `OpenAILLM`/`AnthropicLLM` (judge-only, never used for
+production generation since `config.generation.provider` is
+`Literal["ollama"]`) already spoke chat/messages APIs, so this was a
+simplification for them, not new complexity.
+`eval/ragas_adapters.py`'s `LangchainLLMAdapter` passes RAGAS's own
+already-rendered single prompt string through as `user` with `system=""`,
+since RAGAS has no system/user split of its own to preserve.
+
+`_INJECTION_PATTERNS` also gained a handful of less-literal/obfuscated
+phrasings — "disregard the above/prior/previous", "new instructions:",
+"forget everything you were told", and a letter-separated-obfuscation
+pattern for "ignore ... instructions" (`i-g-n-o-r-e`, `i g n o r e`) —
+still a small, literal/regex heuristic, still observability/
+reinforcement only, never a gate; this was **not** claimed to be
+sufficient injection defense on its own, per the milestone's explicit
+constraint, and the design review's finding above (the structural
+role-separation fix) is the actual hardening, not the pattern-list
+addition.
+
+New `rag_answer_v4.yaml` tightens the system turn's wording to describe
+this two-turn separation explicitly and adds a rule for the
+`[REDACTED:SENSITIVE_FIELD]` marker (never guess/reconstruct/narrate
+around it). **Written but not activated** — `config.generation.prompt`
+stays `v3` in every config including the new experiment configs below,
+per the approved design adjustment: the architectural role-separation
+change and a prompt-wording change should not be evaluated in the same
+A/B, so their individual effects stay attributable. A v4 evaluation is a
+deliberate, optional follow-up, not part of this milestone's comparison.
+
+### Provider-egress policy
+
+Gates the **one** confirmed hosted-egress point in this entire codebase:
+`run_ragas_eval.py`'s context-building step, reached only when
+`config.judge.provider` is `openai`/`anthropic`. Production `answer()`
+never calls a hosted LLM at all — `config.generation.provider` is
+`Literal["ollama"]` only, confirmed directly from `config.py`, not
+assumed — so no other call site needs this gate, and none was added
+speculatively.
+
+New `src/rag/eval/egress_policy.py`: `apply_egress_policy(source, config)`
+returns an `EgressDecision(allowed, redacted_context, blocked_reason)`,
+checking in order: `blocked_tenant_ids` (an explicit tenant deny-list);
+`classification_policy` (a `dict[str, bool]` mapping a document's
+`classification` to whether it may leave the local environment —
+**fails closed**: `.get(classification, False)` means a classification
+with no entry at all is blocked, not silently allowed; `confidential`/
+`restricted` are `False` in the shipped default, `None`/missing
+classification — most of the pre-governance-metadata corpus — is treated
+as allowed, matching `"internal"`'s default, to preserve existing
+behavior for content that predates the tenant/classification governance
+milestone); `require_authoritative_trust` (when `true`, only
+`trust_level == "authoritative"` sources pass); and
+`block_unredacted_sensitive_fields` (a source whose `sensitive_field_ids`
+isn't fully covered by its `redacted_field_ids` is blocked outright,
+regardless of *why* it wasn't redacted for this particular retrieval —
+whether `field_redaction.enabled` was off, or the caller happened to be
+authorized). `enabled: false` by default — a true no-op, matching every
+other security toggle in this codebase.
+
+`run_ragas_eval.py`'s `_build_rows` filters `entry["generation_sources"]`
+through this check before anything enters `retrieved_contexts`; a blocked
+source is dropped from that question's contexts entirely (never replaced
+with a placeholder derived from the blocked content), and a summary count
+of blocked sources — never per-row content — is audit-logged once per
+run via `egress_policy_blocked`.
+
+### Input size / DoS limits and rate limiting
+
+`DoSLimitsConfig` (`max_query_length: 2000`, `max_top_k: 20`,
+`max_filters_bytes: 4096`, `max_upload_bytes: 25 MiB`) is enforced as
+explicit router-level checks in `query.py`/`ingest.py` rather than baked
+into Pydantic field constraints on `QueryRequest`, since the bounds must
+read from *runtime* config (a value chosen at class-definition time can't
+do that). `POST /ingest`'s upload check is streamed
+(`_save_upload_bounded`) — it rejects (413) once the running byte count
+crosses the limit, deleting the partial file, rather than buffering an
+arbitrarily large upload into memory first and rejecting only after the
+fact.
+
+Rate limiting uses `slowapi` (new core dependency) with its default
+in-memory backend — no Redis. `RateLimitConfig.enabled: false` by
+default. The `Limiter` is keyed by `identity.tenant_id` when a verified
+identity is present, else client IP, so an unauthenticated demo
+deployment still gets basic per-IP protection. **A real architectural
+constraint discovered while testing this**: `api/deps.py:
+get_rate_limiter()` builds one process-wide `Limiter` whose `enabled`
+flag is read from config once, at process start — the same "no
+hot-reload" pattern every other `AppConfig`-derived singleton in
+`deps.py` already follows. `query.py`'s `@_limiter.limit(...)` decorator
+binds to that specific `Limiter` object instance at `query.py` *import*
+time, which means neither a later config change nor a test-time
+`app.dependency_overrides` swap can retarget which limiter the decorated
+route actually consults — Python decorators bind to the object reference
+they close over at decoration time, not to whatever a module-level name
+happens to point at later. `tests/unit/test_rate_limiting.py` works
+around this correctly: it proves the *mechanism* (Limiter + decorator +
+`SlowAPIMiddleware` + exception handler) against a small, isolated
+FastAPI app built the same way, rather than attempting to reconfigure
+`rag.api.main.app`'s already-bound production route.
+
+**Documented limitation**: in-memory `Limiter` state is process-local.
+With more than one API replica or worker process, each enforces its own
+independent counter, so the *effective* aggregate rate limit scales
+roughly linearly with replica count rather than staying fixed. Acceptable
+for this project's current single-instance/local-demo architecture;
+Redis-backed `slowapi` storage becomes a real requirement only if/when
+this system is deployed with more than one replica — documented here as
+a future item, not built speculatively ahead of that need.
+
+### New safety metrics
+
+All follow the existing `{"direction", "note", "count", "rate"}` shape
+(`eval/run_eval.py`'s shared `_rate()` helper, now hoisted to module
+level so the new corpus-level/opt-in metrics can reuse it too, not just
+the per-example gold-driven loop).
+
+- **`unauthorized_metadata_leakage_rate`**: reuses the same
+  forbidden-document/`sensitive_data_present` population as
+  `document_unauthorized_retrieval_rate`, but checks `attachment_name`/
+  `section_path` in addition to `content` (`_metadata_leak_hit`).
+- **`provider_egress_policy_violation_rate`**: a self-contained "would
+  this source violate the egress policy's strongest rule" check
+  (`_egress_violation` — `sensitive_field_ids` not fully covered by
+  `redacted_field_ids`), independent of whether `egress_policy.enabled`
+  happened to be set for the run that produced the source being checked.
+- **`forged_role_acceptance_rate`**: calls `api.routers.query.
+  _build_authorization_context` directly (a pure function, no HTTP
+  server, no network call needed) with a forged request body plus a
+  `VerifiedIdentity` built from gold `user_tenant`/`user_roles`. Correct
+  enforcement code makes this 0/N by construction — the same
+  identity-wins-over-body logic drives both the real request path and
+  this check — the same regression-guard pattern as `sensitive_data_
+  false_redaction_rate` from the previous milestone. Only populated when
+  `evaluate()`/`run()` receives a `config` argument — a new, additive,
+  default-`None` parameter every pre-existing caller (all of
+  `tests/unit/test_run_eval.py`'s ~40 existing call sites,
+  `run_ragas_eval.py`) omits and is unaffected by.
+- **`duplicate_sensitive_field_miss_rate`**: corpus-level, not gold-row-
+  driven — computed inside `run()` (which already has `config`/DB access
+  for `corpus_lineage`), not `evaluate()`. Always included, even at
+  `count=0`.
+- **`authentication_failure_acceptance_rate`** /
+  **`oversized_request_rejection_accuracy`**: live in a separate, opt-in
+  function, `evaluate_authentication_boundary_probes(config)`, which
+  exercises the live FastAPI app via `httpx`'s `TestClient` (lazily
+  imported, matching this module's existing lazy-optional-dependency
+  style for `ragas`/`datasets`) with `get_config`/`get_retrieval_pipeline`
+  overridden so it never needs a real Postgres/Ollama connection even if
+  a probe is incorrectly accepted past the auth boundary. **Not** called
+  from `evaluate()`/`run()` by default — every probe trivially "succeeds"
+  when `auth.enabled=false` (the shipped default), so folding it into
+  every experiment's report would just be noise on every non-auth-focused
+  run. Wired into `run_eval.py`'s CLI behind `--include-api-probes`.
+
+### Experiment design
+
+`config/experiments/secure-rag-baseline-v2-jwt-auth.yaml` /
+`secure-rag-baseline-v2-jwt-auth-dev.yaml`: both are
+`secure-rag-baseline-v1-field-redaction.yaml` (experiment_027's config)
+plus `security.auth.enabled: true` — the *only* field that differs from
+the control between the primary candidate and its `-dev` sibling is
+`insecure_dev_mode` (`false`/`true` respectively; see
+`tests/unit/test_config.py`'s isolation tests for both pairs).
+`generation.prompt` stays `v3` in both, matching the control exactly, so
+this A/B isolates the authentication-boundary change from any prompt or
+retrieval-side variable — see "Prompt-injection handling" above for why
+the structural LLM role-separation change (always active regardless of
+prompt version) is likewise not confounded with the prompt version
+itself. Because `eval/run_eval.py`'s gold-driven harness calls
+`RetrievalPipeline` directly and never goes through `POST /query`,
+`security.auth.enabled` has no effect on the deterministic report's
+core metrics — it only matters for `evaluate_authentication_boundary_
+probes` (opt-in) and genuine HTTP-layer testing (see
+`tests/integration/test_api_field_redaction.py`).
+
+### Known limitations (deliberate, not hidden)
+
+- No true per-document `authorization_denied` audit trail — see "Audit
+  logging" above; `pgvector.py` doesn't (and currently can't cheaply)
+  report which specific rows a SQL predicate excluded.
+- Rate limiting is in-process/single-instance only; no Redis-backed
+  shared state, since nothing in this project's current deployment shape
+  needs one yet (see "Input size / DoS limits and rate limiting" above).
+- `find_duplicate_sensitive_occurrences` is a diagnostic, not a query-time
+  gate — an untagged duplicate it finds is *reported*, not automatically
+  redacted; closing a finding still requires either fixing the ingestion-
+  time tagging or manually re-ingesting.
+- `_INJECTION_PATTERNS`'s obfuscation coverage is still a small, literal
+  list, not a general adversarial-robustness guarantee — the milestone's
+  own explicit position is that structural role-separation (see above),
+  not pattern-matching sophistication, is the real defense.
+- No authentication *issuance* (login, token minting, refresh, revocation)
+  exists — this milestone is enforcement of an already-issued, externally
+  minted JWT, exactly like the prior milestone's authorization work was
+  enforcement of an already-asserted identity. `scripts/issue_dev_
+  token.py` exists only for local manual testing, not as a real token
+  service.

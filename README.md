@@ -346,6 +346,7 @@ regenerate it instead (see "Recording a new experiment").
 | 25 | secure_rag_baseline_v1_auth_disabled | hybrid | qwen2.5:3b | all-MiniLM-L6-v2 | none | v3 | on | 0.861 | 0.929 | 0.937 | 0.768 | 0.370 | 0.733 | 0.842 | - | - | 28.2s | techfusion | 2026-08-14 |
 | 26 | secure_rag_baseline_v1 | hybrid | qwen2.5:3b | all-MiniLM-L6-v2 | none | v3 | on | 0.788 | 0.832 | 0.865 | 0.753 | 0.390 | 0.781 | 0.842 | - | - | 28.5s | techfusion | 2026-08-14 |
 | 27 | secure_rag_baseline_v1_field_redaction | hybrid | qwen2.5:3b | all-MiniLM-L6-v2 | none | v3 | on | 0.788 | 0.832 | 0.865 | 0.753 | 0.405 | 0.781 | 0.842 | - | - | 21.7s | techfusion | 2026-08-15 |
+| 28 | secure_rag_baseline_v2_jwt_auth | hybrid | qwen2.5:3b | all-MiniLM-L6-v2 | none | v3 | on | 0.788 | 0.832 | 0.865 | 0.753 | 0.420 | 0.781 | 0.842 | - | - | 20.6s | techfusion | 2026-08-15 |
 <!-- EXPERIMENTS_TABLE_END -->
 
 *Total latency is the mean of retrieval+generation per question, at the
@@ -399,6 +400,34 @@ run caught (a second tenant's credential using a different literal shape;
 an operational customer-id pattern producing a false-positive "leak") and
 the full metric table are in
 [`experiments/reports/secure_rag_baseline_v1_field_redaction.md`](experiments/reports/secure_rag_baseline_v1_field_redaction.md).
+
+**Experiment 28** is the auth-boundary milestone:
+`secure_rag_baseline_v1`/`v1_field_redaction` still trusted whatever
+`tenant_id`/`roles` a caller's request body claimed — nothing verified
+identity at the API boundary. `secure_rag_baseline_v2_jwt_auth` adds
+`security.auth.enabled: true` (JWT verification required at `POST
+/query`, prompt unchanged at `v3`) on top of experiment 27's config —
+retrieval-side metrics are byte-identical to 26/27 by construction (JWT
+verification happens before retrieval, never changes which chunks are
+retrieved). Two new regression-guard metrics both read exactly as
+correct code should: `forged_role_acceptance_rate` **0.0 (0/42)** — a
+request body claiming a different, more-privileged tenant/roles never
+overrides a verified JWT's own claims — and `duplicate_sensitive_field_miss_rate`
+**0.0 (0/0)** — no duplicated or inconsistently-tagged secret literal
+found anywhere in the corpus. Two new metrics,
+`unauthorized_metadata_leakage_rate` and `provider_egress_policy_
+violation_rate`, both read 0.095 (2/21) — inspecting the two flagged
+rows directly showed both are the *same* two cases: a tenant admin
+correctly, legitimately seeing their own tenant's credential (matching
+the existing `sensitive_data_authorized_disclosure_accuracy` 1/1 case),
+which the field-level policy correctly leaves unredacted for that caller
+but the *egress* policy correctly still flags as unsafe to hand to a
+hosted third-party judge without separate authorization — the metric
+distinguishing "authorized for this caller" from "authorized to leave
+the local environment" exactly as designed, not a false positive. Full
+design writeup in [`docs/architecture.md`](docs/architecture.md)'s
+"Authenticated API Boundary and Security Hardening" section and
+`PROJECT_JOURNAL.md`.
 
 ### Recording a new experiment
 
