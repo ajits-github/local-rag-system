@@ -80,6 +80,13 @@ class ChunkSpan(BaseModel):
     # caption/alt-text-derived `text`.
     vision_generated: bool = False
     vision_description: str | None = None
+    # Field-level safety milestone: ingestion-time tagging only (see
+    # retrieval/field_policy.py's detect_sensitive_field_ids) -- which
+    # SensitiveFieldPolicy.field_id patterns this span's text matches.
+    # None/empty for the overwhelming majority of spans; carries no role
+    # decision by itself, just lets RetrievalPipeline skip the redaction
+    # pass entirely for spans that were never tagged.
+    sensitive_field_ids: list[str] | None = None
 
 
 class ChunkMetadata(BaseModel):
@@ -120,6 +127,9 @@ class ChunkMetadata(BaseModel):
     parent_chunk_id: str | None = None
     vision_generated: bool = False
     vision_description: str | None = None
+    # See ChunkSpan.sensitive_field_ids -- carried through per-chunk the
+    # same way the structured-content hints above are.
+    sensitive_field_ids: list[str] | None = None
     # Safety/freshness milestone: document-level governance fields, copied
     # onto every chunk of a document exactly like category/title (see
     # RawDocument for what each means and why doc_source_type isn't named
@@ -165,6 +175,13 @@ class SearchResult(BaseModel):
     # observability/prompt-reinforcement only (see that module's docstring
     # for why this never blocks a result; authorization is the actual gate).
     injection_suspected: bool = False
+    # Field-level safety milestone: field_id(s) whose matched value in this
+    # result's chunk.content was replaced with a redaction marker (see
+    # retrieval/field_policy.py). Empty unless config.security.
+    # field_redaction.enabled is True and a policy actually fired for this
+    # caller. Observability/diagnosability -- the redaction itself already
+    # happened to chunk.content by the time this is set.
+    redacted_field_ids: list[str] = Field(default_factory=list)
 
 
 class DocumentVersionInfo(BaseModel):
