@@ -21,8 +21,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from rag.audit import log_audit_event
 from rag.config import AppConfig, load_config
 from rag.eval import ragas_cache, ragas_scorer
+from rag.eval.egress_policy import apply_egress_policy
 from rag.eval.gold_schema import GoldExample, load_gold_jsonl
 from rag.eval.run_eval import _config_summary, evaluate
 from rag.factory import build_embedder, build_judge_llm
@@ -33,12 +35,17 @@ DEFAULT_SAMPLE_SIZE = 15
 
 
 def _build_rows(
-    examples: list[GoldExample], per_example: list[dict[str, Any]]
+    examples: list[GoldExample], per_example: list[dict[str, Any]], config: AppConfig
 ) -> tuple[list[dict[str, Any]], int]:
     """Zip sliced `GoldExample`s with `evaluate()`'s per_example entries into scoring rows.
 
     Skips examples with no `expected_answer` — RAGAS's `reference`-requiring
-    metrics can't function without one.
+    metrics can't function without one. Each source's `content` is passed
+    through `egress_policy.apply_egress_policy` before entering `contexts`
+    -- a no-op when `config.security.egress_policy.enabled` is `False`
+    (the default); when enabled, a blocked source is dropped from
+    `contexts` entirely rather than sent to the hosted judge, and a
+    summary count (never per-row content) is audit-logged.
 
     Parameters
     ----------
@@ -46,6 +53,8 @@ def _build_rows(
         The (already-sliced) gold examples run through `evaluate()`.
     per_example : list[dict[str, Any]]
         `evaluate()`'s `per_example` output, same order/length as `examples`.
+    config : AppConfig
+        Application configuration; reads `security.egress_policy`.
 
     Returns
     -------
@@ -54,20 +63,30 @@ def _build_rows(
     """
     rows: list[dict[str, Any]] = []
     skipped = 0
+    blocked_count = 0
     for i, (example, entry) in enumerate(zip(examples, per_example, strict=True)):
         if not example.expected_answer:
             skipped += 1
             continue
+        contexts = []
+        for source in entry["generation_sources"]:
+            decision = apply_egress_policy(source, config)
+            if decision.allowed:
+                contexts.append(decision.redacted_context)
+            else:
+                blocked_count += 1
         rows.append(
             {
                 "question_index": i,
                 "question": example.question,
                 "unanswerable": example.unanswerable,
                 "answer": entry["answer"],
-                "contexts": [s["content"] for s in entry["generation_sources"]],
+                "contexts": contexts,
                 "expected_answer": example.expected_answer,
             }
         )
+    if blocked_count:
+        log_audit_event("egress_policy_blocked", blocked_source_count=blocked_count)
     return rows, skipped
 
 
@@ -152,12 +171,12 @@ def run_ragas(
     config = load_config(config_path) if config_path else load_config()
     pipeline = RetrievalPipeline(config)
     examples = load_gold_jsonl(gold_path)[:sample_size]
-    base_result = evaluate(pipeline, examples, dataset_id, run_generation=True)
+    base_result = evaluate(pipeline, examples, dataset_id, run_generation=True, config=config)
 
     judge_llm = build_judge_llm(config)
     embedder = build_embedder(config)
     cache = ragas_cache.build_judge_cache(config) if config.judge.cache_enabled else None
-    rows, num_skipped = _build_rows(examples, base_result["per_example"])
+    rows, num_skipped = _build_rows(examples, base_result["per_example"], config)
     ragas_result = ragas_scorer.score(rows, judge_llm, embedder, cache=cache)
     ragas_result.pop("cache_stats", None)  # superseded by the richer "cache" key below
     ragas_result.update(

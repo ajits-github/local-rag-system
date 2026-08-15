@@ -24,10 +24,14 @@ import base64
 import binascii
 import json
 import re
+import time
 from collections import Counter
+from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
+
+import psycopg2
 
 from rag.config import AppConfig, load_config
 from rag.eval.answer_quality import KeywordOverlapScorer
@@ -42,7 +46,10 @@ from rag.eval.gold_schema import (
 from rag.eval.metrics import mean_hit_rate_at_k, mean_recall_at_k, mean_reciprocal_rank
 from rag.factory import build_vectorstore
 from rag.retrieval.authorization import AuthorizationContext
-from rag.retrieval.field_policy import is_role_authorized_for_field
+from rag.retrieval.field_policy import (
+    find_duplicate_sensitive_occurrences,
+    is_role_authorized_for_field,
+)
 from rag.retrieval.injection_detection import detect_injection
 from rag.retrieval.pipeline import RetrievalPipeline
 from rag.schemas import SearchResult
@@ -168,6 +175,11 @@ _ENCODING_ATTEMPT_PATTERNS = (
 def _mean(values: list[float]) -> float:
     """Arithmetic mean of `values`, or 0.0 if empty."""
     return sum(values) / len(values) if values else 0.0
+
+
+def _rate(records: list[bool]) -> dict[str, Any]:
+    """`{"count", "rate"}` for a list of pass/fail booleans -- the shared safety-metric shape."""
+    return {"count": len(records), "rate": _mean([1.0 if r else 0.0 for r in records])}
 
 
 def _config_summary(config: AppConfig) -> dict[str, Any]:
@@ -574,11 +586,336 @@ def _field_access_authorized_for_sources(
     return all(is_role_authorized_for_field(fid, roles) for fid in field_ids)
 
 
+def _metadata_leak_hit(
+    retrieval_results: list[SearchResult], forbidden_documents: list[str]
+) -> bool:
+    """Whether any result's own metadata (not just `content`) leaks something restricted.
+
+    Auth-boundary milestone (requirement 6: metadata/citation protection).
+    Two checks per result: (1) its `source` path-suffix-matches a
+    `forbidden_documents` entry (mirrors `_unauthorized_hit`, but reading
+    straight off `SearchResult`/`ChunkMetadata` rather than a plain source
+    list, so it can be combined with check 2 in one pass); (2)
+    `attachment_name`/`section_path` contains a sensitive-literal pattern
+    -- catches a redacted-field value leaking indirectly through metadata
+    that echoes it (e.g. `attachment_name="admin-key-2024.pdf"`) even when
+    `content` itself was correctly redacted.
+    """
+    for result in retrieval_results:
+        meta = result.chunk.metadata
+        if forbidden_documents and _matches_any(meta.source, forbidden_documents):
+            return True
+        for value in (meta.attachment_name, meta.section_path):
+            if value and _sensitive_pattern_found(value):
+                return True
+    return False
+
+
+def _egress_violation(source: dict[str, Any]) -> bool:
+    """Whether `source`, if sent to a hosted provider, would violate the egress policy.
+
+    A self-contained check (independent of whatever `config.security.
+    egress_policy` happens to be for the eval run that produced `source`)
+    of `egress_policy.py`'s strongest rule: a tagged sensitive field that
+    wasn't actually redacted in this retrieval must never leave the local
+    environment. True when `sensitive_field_ids` isn't a subset of
+    `redacted_field_ids`.
+    """
+    sensitive_ids = set(source.get("sensitive_field_ids") or [])
+    redacted_ids = set(source.get("redacted_field_ids") or [])
+    return bool(sensitive_ids - redacted_ids)
+
+
+def _forged_role_accepted(example: GoldExample, config: AppConfig) -> bool | None:
+    """Whether a forged request-body tenant/role would win over a verified JWT identity.
+
+    Exercises `api.routers.query._build_authorization_context` directly
+    (a pure function of body/identity/config -- no HTTP server, no
+    network call needed) rather than the live API boundary, since that is
+    the exact function responsible for the "the API must no longer trust
+    caller-supplied tenant_id or roles when authentication is enabled"
+    requirement. `None` when the example has no `user_tenant`/`user_roles`
+    to build a verified identity from (nothing to check).
+
+    Correct enforcement code makes this 0/N by construction (the same
+    identity-wins-over-body logic drives both the real request handling
+    and this check) -- a regression guard, same pattern as
+    `sensitive_data_false_redaction_rate`.
+    """
+    if example.user_tenant is None and not example.user_roles:
+        return None
+    from rag.api.auth import VerifiedIdentity
+    from rag.api.routers.query import QueryRequest, _build_authorization_context
+
+    identity = VerifiedIdentity(
+        subject="eval-probe", tenant_id=example.user_tenant, roles=example.user_roles
+    )
+    forged_body = QueryRequest(
+        query=example.question,
+        tenant_id="__forged_tenant_should_be_ignored__",
+        roles=["__forged_admin_role_should_be_ignored__"],
+    )
+    auth = _build_authorization_context(forged_body, identity, config)
+    if auth is None:
+        return True  # a forged request winning "no restriction at all" is the worst case
+    return auth.tenant_id != identity.tenant_id or set(auth.roles) != set(identity.roles)
+
+
+@dataclass
+class _DuplicateScanChunkMetadata:
+    """Minimal duck-typed stand-in for `ChunkMetadata` -- only what the detector reads."""
+
+    sensitive_field_ids: list[str] | None
+
+
+@dataclass
+class _DuplicateScanChunk:
+    """Minimal duck-typed stand-in for `Chunk` -- only what the detector reads."""
+
+    id: str
+    content: str
+    metadata: _DuplicateScanChunkMetadata
+
+
+def _fetch_chunks_for_duplicate_scan(config: AppConfig) -> list[_DuplicateScanChunk]:
+    """Read every chunk's id/content/sensitive_field_ids directly from Postgres.
+
+    A direct SQL read rather than going through `VectorStore` -- there is
+    no existing "fetch every chunk" primitive on that interface, and
+    adding one solely for this corpus-level diagnostic would be exactly
+    the kind of speculative abstraction this codebase avoids. Mirrors
+    `scripts/detect_duplicate_sensitive_values.py`'s identical helper
+    (small, deliberate duplication rather than a shared cross-package
+    dependency between `scripts/` and `src/rag`).
+    """
+    table = config.vectorstore.chunks_table
+    conn = psycopg2.connect(config.database_url())
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"SELECT chunk_id, content, sensitive_field_ids FROM {table}")  # noqa: S608
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+    return [
+        _DuplicateScanChunk(
+            id=chunk_id, content=content, metadata=_DuplicateScanChunkMetadata(sensitive_field_ids)
+        )
+        for chunk_id, content, sensitive_field_ids in rows
+    ]
+
+
+def _duplicate_sensitive_field_miss_metric(config: AppConfig) -> dict[str, Any]:
+    """Corpus-level scan for sensitive literals duplicated across chunks or inconsistently tagged.
+
+    Unlike every other safety metric in this module, not gold-row-driven
+    -- computed once per eval run directly against the ingested corpus
+    (see `field_policy.find_duplicate_sensitive_occurrences`). Always
+    included (never gated behind `if records:`), since `count=0`/`rate=0.0`
+    is itself a meaningful "corpus is clean" result, not a "nothing to
+    check" case.
+    """
+    chunks = _fetch_chunks_for_duplicate_scan(config)
+    findings = find_duplicate_sensitive_occurrences(chunks)
+    miss_records = [bool(f.untagged_chunk_ids) for f in findings]
+    return {
+        "direction": "lower_is_better",
+        "note": (
+            "Among every distinct sensitive-literal occurrence group found across the "
+            "ingested corpus that is either duplicated across chunks or inconsistently "
+            "tagged (see field_policy.find_duplicate_sensitive_occurrences), fraction "
+            "that includes at least one chunk missing its ingestion-time "
+            "sensitive_field_ids tag -- the gap that would let query-time redaction "
+            "skip that occurrence entirely. count=0 means no duplicate/inconsistent "
+            "occurrence was found in the corpus at all."
+        ),
+        **_rate(miss_records),
+    }
+
+
+def _mint_valid_probe_token(config: AppConfig) -> str | None:
+    """Mint a short-lived, valid JWT for API-boundary probe requests.
+
+    `None` when `security.auth.enabled` is `False`, or the signing key
+    isn't resolvable (e.g. `JWT_HS256_SECRET` unset) -- callers treat
+    `None` as "auth probing isn't meaningfully configured for this run".
+    """
+    if not config.security.auth.enabled:
+        return None
+    import jwt as pyjwt
+
+    try:
+        key = config.jwt_signing_key()
+    except RuntimeError:
+        return None
+    jwt_config = config.security.auth.jwt
+    now = int(time.time())
+    claims: dict[str, Any] = {
+        "sub": "eval-probe",
+        "tenant_id": None,
+        "roles": [],
+        "iat": now,
+        "exp": now + 3600,
+    }
+    if jwt_config.issuer:
+        claims["iss"] = jwt_config.issuer
+    if jwt_config.audience:
+        claims["aud"] = jwt_config.audience
+    return pyjwt.encode(claims, key, algorithm=jwt_config.algorithm)
+
+
+def _run_auth_failure_probes(client: Any, config: AppConfig) -> list[bool]:
+    """POST /query with a fixed set of adversarial tokens; each entry is True if wrongly accepted.
+
+    `[]` when `security.auth.enabled` is `False` or no signing key is
+    resolvable -- there is nothing meaningful to probe (every request
+    trivially "succeeds" by design, matching pre-milestone behavior).
+    """
+    if not config.security.auth.enabled:
+        return []
+    import jwt as pyjwt
+
+    try:
+        key = config.jwt_signing_key()
+    except RuntimeError:
+        return []
+    jwt_config = config.security.auth.jwt
+    now = int(time.time())
+    base_claims: dict[str, Any] = {"sub": "eval-probe", "tenant_id": None, "roles": []}
+
+    def _encode(**overrides: Any) -> str:
+        claims = {**base_claims, "iat": now, "exp": now + 3600, **overrides}
+        return pyjwt.encode(claims, key, algorithm=jwt_config.algorithm)
+
+    tokens: dict[str, str | None] = {
+        "missing_token": None,
+        "expired": _encode(exp=now - 3600),
+        "invalid_signature": pyjwt.encode(
+            {**base_claims, "iat": now, "exp": now + 3600},
+            "definitely-the-wrong-secret",
+            algorithm="HS256",
+        ),
+        "malformed": "not-a-jwt-at-all",
+        "missing_claim": pyjwt.encode(
+            {"iat": now, "exp": now + 3600}, key, algorithm=jwt_config.algorithm
+        ),
+        "wrong_issuer": _encode(iss="untrusted-issuer"),
+        "wrong_audience": _encode(aud="untrusted-audience"),
+    }
+    records = []
+    for token in tokens.values():
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+        response = client.post("/query", json={"query": "probe"}, headers=headers)
+        records.append(response.status_code != 401)
+    return records
+
+
+def _run_oversized_request_probes(client: Any, config: AppConfig) -> list[bool]:
+    """POST /query with a fixed set of oversized payloads; each entry is True if correctly rejected.
+
+    Attaches a valid probe token (see `_mint_valid_probe_token`) when
+    `security.auth.enabled` is `True`, so these probes reach the DoS-limit
+    check inside the handler rather than being short-circuited by a 401
+    from the auth dependency first -- the two concerns are independently
+    probed, never conflated.
+    """
+    limits = config.security.dos_limits
+    payloads = [
+        {"query": "x" * (limits.max_query_length + 1)},
+        {"query": "probe", "top_k": limits.max_top_k + 1},
+        {"query": "probe", "filters": {"k": "v" * limits.max_filters_bytes}},
+    ]
+    token = _mint_valid_probe_token(config)
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    records = []
+    for payload in payloads:
+        response = client.post("/query", json=payload, headers=headers)
+        records.append(response.status_code in (413, 422))
+    return records
+
+
+def evaluate_authentication_boundary_probes(config: AppConfig) -> dict[str, Any]:
+    """Probe `POST /query`'s JWT/DoS-limit enforcement with a small fixed adversarial request set.
+
+    Opt-in only (see `main()`'s `--include-api-probes` flag) -- not called
+    from `evaluate()`/`run()`, unlike every other metric in this module.
+    Unlike everything else here, what's under test (JWT verification,
+    request-size rejection) lives entirely at the API boundary
+    (`api/deps.py`/`api/routers/query.py`), not in `RetrievalPipeline`, so
+    this exercises the live FastAPI app via `httpx`'s `TestClient` (a
+    `dev`-extra dependency, lazily imported here, matching this module's
+    existing lazy-optional-dependency style) instead. `get_retrieval_
+    pipeline`/`get_config` are overridden so this never needs a real
+    Postgres/Ollama connection -- if a probe is (incorrectly) accepted
+    past the auth boundary, it hits a stub pipeline, not a live one.
+
+    Parameters
+    ----------
+    config : AppConfig
+        Application configuration (read for `security.auth`/`security.dos_limits`).
+
+    Returns
+    -------
+    dict[str, Any]
+        `{"authentication_failure_acceptance_rate": {...},
+        "oversized_request_rejection_accuracy": {...}}`, each following
+        the same `{"direction", "note", "count", "rate"}` shape as every
+        other safety metric.
+    """
+    from fastapi.testclient import TestClient
+
+    from rag.api.deps import get_config, get_retrieval_pipeline
+    from rag.api.main import app
+
+    class _StubPipeline:
+        def answer(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+            return {
+                "answer": "stub",
+                "sources": [],
+                "retrieval_ms": 0.0,
+                "generation_ms": 0.0,
+                "total_ms": 0.0,
+            }
+
+    app.dependency_overrides[get_config] = lambda: config
+    app.dependency_overrides[get_retrieval_pipeline] = lambda: _StubPipeline()
+    try:
+        client = TestClient(app)
+        auth_records = _run_auth_failure_probes(client, config)
+        oversized_records = _run_oversized_request_probes(client, config)
+    finally:
+        app.dependency_overrides.pop(get_config, None)
+        app.dependency_overrides.pop(get_retrieval_pipeline, None)
+
+    return {
+        "authentication_failure_acceptance_rate": {
+            "direction": "lower_is_better",
+            "note": (
+                "Fraction of a fixed adversarial-token probe set (missing/expired/"
+                "invalid-signature/malformed/missing-claim/wrong-issuer/wrong-audience) "
+                "that POST /query incorrectly accepted (did not return 401). [] when "
+                "security.auth.enabled is False or no signing key is resolvable -- "
+                "nothing meaningful to probe."
+            ),
+            **_rate(auth_records),
+        },
+        "oversized_request_rejection_accuracy": {
+            "direction": "higher_is_better",
+            "note": (
+                "Fraction of a fixed oversized-request probe set (query length, top_k, "
+                "filters size) that POST /query correctly rejected with a 4xx, per "
+                "security.dos_limits."
+            ),
+            **_rate(oversized_records),
+        },
+    }
+
+
 def evaluate(
     pipeline: RetrievalPipeline,
     examples: list[GoldExample],
     dataset_id: str,
     run_generation: bool = True,
+    config: AppConfig | None = None,
 ) -> dict[str, Any]:
     """Run retrieval (and optionally generation) over `examples` and score the results.
 
@@ -598,6 +935,13 @@ def evaluate(
         If True (default), also runs `pipeline.answer` for latency and
         answer-quality metrics; if False, only retrieval metrics are
         computed.
+    config : AppConfig | None, optional
+        Auth-boundary milestone: when supplied, enables
+        `forged_role_acceptance_rate` (needs `AppConfig` to call
+        `api.routers.query._build_authorization_context`). `None` (the
+        default -- every pre-existing caller, including every unit test
+        in `tests/unit/test_run_eval.py`, omits it) simply skips that one
+        metric rather than raising, so this parameter is purely additive.
 
     Returns
     -------
@@ -661,9 +1005,20 @@ def evaluate(
     authorized_disclosure_records: list[bool] = []
     false_redaction_records: list[bool] = []
     encoded_extraction_records: list[bool] = []
+    # Auth-boundary milestone: metadata_leak_records/egress_violation_records
+    # are retrieval-side (computed alongside document_unauthorized_hit_records
+    # below); forged_role_records is a pure function-level check, independent
+    # of retrieval, run once per example that has an identity to test.
+    metadata_leak_records: list[bool] = []
+    egress_violation_records: list[bool] = []
+    forged_role_records: list[bool] = []
 
     for example in examples:
         auth_context = _build_authorization_context(example)
+        if config is not None:
+            forged_role_accepted = _forged_role_accepted(example, config)
+            if forged_role_accepted is not None:
+                forged_role_records.append(forged_role_accepted)
         # Broad retrieval (top 10, un-truncated by candidate pool, reranker,
         # or generation-context cutoff) purely to score retrieval quality at
         # multiple cutoffs -- decoupled from the production-config latency
@@ -689,13 +1044,19 @@ def evaluate(
         all_retrieved_sources.append(retrieved_sources)
         all_relevant.append(example.relevant_documents)
 
-        document_unauthorized_hit = _unauthorized_hit(
-            retrieved_sources, _document_only_forbidden(example)
-        )
+        forbidden_only = _document_only_forbidden(example)
+        document_unauthorized_hit = _unauthorized_hit(retrieved_sources, forbidden_only)
         if document_unauthorized_hit is not None:
             document_unauthorized_hit_records.append(document_unauthorized_hit)
             if example.safety_category == "cross_tenant_access":
                 cross_tenant_hit_records.append(document_unauthorized_hit)
+
+        # Auth-boundary milestone: metadata_leak_records reuses the same
+        # population as document_unauthorized_hit_records (forbidden-document
+        # cases) plus sensitive_data_present examples, since both are cases
+        # where a leak through metadata (not just content) would matter.
+        if forbidden_only or example.sensitive_data_present:
+            metadata_leak_records.append(_metadata_leak_hit(retrieval_results, forbidden_only))
 
         current_document_hit = _current_document_retrieval_hit(retrieval_results, example)
         if current_document_hit is not None:
@@ -836,6 +1197,11 @@ def evaluate(
                         is_role_authorized_for_field(field_id, example.user_roles)
                     )
 
+            if example.sensitive_data_present or forbidden_only:
+                egress_violation_records.append(
+                    any(_egress_violation(source) for source in result["sources"])
+                )
+
             if example.sensitive_data_present:
                 target_docs = example.allowed_documents or example.relevant_documents
                 entry["field_level_evidence"] = {
@@ -910,9 +1276,6 @@ def evaluate(
             (a_count / (a_count + b_count)) if (a_count + b_count) else None
         ),
     }
-
-    def _rate(records: list[bool]) -> dict[str, Any]:
-        return {"count": len(records), "rate": _mean([1.0 if r else 0.0 for r in records])}
 
     safety: dict[str, Any] = {}
     if document_unauthorized_hit_records:
@@ -1088,6 +1451,56 @@ def evaluate(
             ),
             **_rate(encoded_extraction_records),
         }
+    if metadata_leak_records:
+        safety["unauthorized_metadata_leakage_rate"] = {
+            "direction": "lower_is_better",
+            "note": (
+                "Auth-boundary milestone. Among examples with a purely-forbidden "
+                "document (see document_unauthorized_retrieval_rate's "
+                "_document_only_forbidden) or sensitive_data_present=true, fraction "
+                "where any retrieved result's own metadata -- not just content -- leaked "
+                "something restricted: its source path-suffix-matched a forbidden "
+                "document, or its attachment_name/section_path contained a sensitive-"
+                "literal pattern (see _metadata_leak_hit). Citation leakage for a truly "
+                "forbidden document is already structurally impossible today (SQL-level "
+                "ACL excludes it before Python ever sees it) -- this metric's real "
+                "purpose is catching the narrower residual risk: a redacted-field value "
+                "echoed indirectly through a permitted document's own metadata."
+            ),
+            **_rate(metadata_leak_records),
+        }
+    if egress_violation_records:
+        safety["provider_egress_policy_violation_rate"] = {
+            "direction": "lower_is_better",
+            "note": (
+                "Auth-boundary milestone. Among sensitive_data_present=true or "
+                "purely-forbidden-document examples, fraction where at least one "
+                "generation_sources entry has a sensitive_field_ids tag not fully "
+                "covered by redacted_field_ids (see _egress_violation) -- i.e. would "
+                "violate egress_policy.py's core rule ('unredacted restricted sensitive "
+                "fields must never be sent') if this retrieval's sources were handed to "
+                "a hosted judge/provider. Independent of whether "
+                "config.security.egress_policy.enabled actually was for this run -- a "
+                "self-contained check of the underlying condition, not the toggle."
+            ),
+            **_rate(egress_violation_records),
+        }
+    if forged_role_records:
+        safety["forged_role_acceptance_rate"] = {
+            "direction": "lower_is_better",
+            "note": (
+                "Auth-boundary milestone. Among examples with a user_tenant/user_roles "
+                "identity, fraction where a request body forging a different, more-"
+                "privileged tenant_id/roles would have won over that verified identity "
+                "(see _forged_role_accepted, which calls api.routers.query."
+                "_build_authorization_context directly). Correct enforcement code makes "
+                "this 0/N by construction -- a regression guard on the API boundary's "
+                "'verified JWT claims always win over request-body fields' rule, same "
+                "pattern as sensitive_data_false_redaction_rate. Only populated when "
+                "evaluate()/run() is given a config (see that parameter's docstring)."
+            ),
+            **_rate(forged_role_records),
+        }
     if safety:
         report["safety"] = safety
 
@@ -1254,7 +1667,10 @@ def run(
     vectorstore = build_vectorstore(config)
     pipeline = RetrievalPipeline(config, vectorstore=vectorstore)
     examples = load_gold_jsonl(gold_path)
-    result = evaluate(pipeline, examples, dataset_id, run_generation=run_generation)
+    result = evaluate(pipeline, examples, dataset_id, run_generation=run_generation, config=config)
+    result.setdefault("safety", {})["duplicate_sensitive_field_miss_rate"] = (
+        _duplicate_sensitive_field_miss_metric(config)
+    )
     lineage = compute_corpus_lineage(
         vectorstore, dataset_id, corpus_version or "unspecified", gold_path
     )
@@ -1291,6 +1707,14 @@ def main() -> None:
         help="Free-form corpus version label recorded in corpus_lineage (e.g. a date or "
         "milestone slug). Not auto-generated -- defaults to 'unspecified' if omitted.",
     )
+    parser.add_argument(
+        "--include-api-probes",
+        action="store_true",
+        help="Also run evaluate_authentication_boundary_probes (authentication_failure_"
+        "acceptance_rate/oversized_request_rejection_accuracy) against the live FastAPI "
+        "app via a TestClient -- opt-in since it needs security.auth.enabled/a resolvable "
+        "signing key to be meaningful, unlike every other metric in this report.",
+    )
     args = parser.parse_args()
 
     report = run(
@@ -1300,6 +1724,10 @@ def main() -> None:
         run_generation=not args.skip_generation,
         corpus_version=args.corpus_version,
     )
+    if args.include_api_probes:
+        probe_config = load_config(args.config) if args.config else load_config()
+        probe_metrics = evaluate_authentication_boundary_probes(probe_config)
+        report.setdefault("safety", {}).update(probe_metrics)
     if not args.verbose:
         report = {k: v for k, v in report.items() if k != "per_example"}
     print(json.dumps(report, indent=2))
