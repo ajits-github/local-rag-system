@@ -10,11 +10,16 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any
 
-from rag.schemas import Chunk, SearchResult
+from rag.retrieval.authorization import AuthorizationContext
+from rag.schemas import Chunk, DocumentVersionInfo, SearchResult
 
 # Metadata fields that retrieval filters are allowed to touch. An explicit
 # whitelist so a filters dict can never be used to inject arbitrary SQL
-# identifiers/columns.
+# identifiers/columns. Distinct from AuthorizationContext (see
+# retrieval/authorization.py): these are exact-match, caller-suppliable
+# convenience filters; tenant_id/allowed_roles/status enforcement never
+# flows through this dict -- see _build_authorization_where_clause in
+# pgvector.py, which is never constructed from caller input.
 ALLOWED_FILTER_FIELDS = {
     "document_id",
     "source",
@@ -26,6 +31,11 @@ ALLOWED_FILTER_FIELDS = {
     "category",
     "dataset_id",
     "content_type",
+    "tenant_id",
+    "classification",
+    "status",
+    "trust_level",
+    "doc_source_type",
 }
 
 
@@ -115,6 +125,125 @@ class VectorStore(ABC):
         """
 
     @abstractmethod
+    def list_document_sources(self, dataset_id: str) -> list[str]:
+        """List every currently-persisted document's `source` within a dataset.
+
+        Used by `IngestionPipeline.ingest_path` to detect deleted documents
+        (a `source` persisted here but no longer discovered on disk) --
+        `ingest_path` only ever walks files that currently exist, so this is
+        the other half of "new/changed/unchanged/**deleted**" incremental
+        ingestion.
+
+        Parameters
+        ----------
+        dataset_id : str
+            The dataset namespace to list.
+
+        Returns
+        -------
+        list[str]
+            Every persisted `source` value for this dataset.
+        """
+
+    @abstractmethod
+    def delete_documents_by_source(self, dataset_id: str, sources: list[str]) -> int:
+        """Delete documents (and cascade their chunks) by exact `source` match, within one dataset.
+
+        Parameters
+        ----------
+        dataset_id : str
+            The dataset namespace to delete from.
+        sources : list[str]
+            Exact `source` values to delete.
+
+        Returns
+        -------
+        int
+            Number of documents deleted.
+        """
+
+    @abstractmethod
+    def count_chunks_by_document(self, dataset_id: str) -> dict[str, int]:
+        """Count persisted chunks per `document_id`, within one dataset.
+
+        Used by `IngestionPipeline.ingest_path` to report `chunks_reused`
+        (the chunk count of every document skipped this run because its
+        checksum was unchanged) without a per-document query.
+
+        Parameters
+        ----------
+        dataset_id : str
+            The dataset namespace to count within.
+
+        Returns
+        -------
+        dict[str, int]
+            `{document_id: chunk_count}`, one entry per document that has
+            at least one chunk.
+        """
+
+    @abstractmethod
+    def list_document_versions(self, dataset_id: str) -> list[DocumentVersionInfo]:
+        """List one governance-metadata row per document within a dataset.
+
+        Used by `retrieval/freshness.py` to resolve document-version
+        families. Governance fields (`status`/`document_version`/
+        `effective_from`/`supersedes_source`) are uniform across every
+        chunk of a document (see `ingestion/writer.py`), so this is a
+        `SELECT DISTINCT` over the chunks table, not a new document-level
+        table.
+
+        Parameters
+        ----------
+        dataset_id : str
+            The dataset namespace to list.
+
+        Returns
+        -------
+        list[DocumentVersionInfo]
+            One entry per document_id that has at least one chunk in this
+            dataset.
+        """
+
+    @abstractmethod
+    def count_chunks_by_content_type(self, dataset_id: str) -> dict[str, int]:
+        """Count persisted chunks per `content_type`, within one dataset.
+
+        Used by `eval/corpus_lineage.py` for the recorded "image count"
+        (`counts.get("image", 0)`) and general corpus-composition reporting.
+
+        Parameters
+        ----------
+        dataset_id : str
+            The dataset namespace to count within.
+
+        Returns
+        -------
+        dict[str, int]
+            `{content_type: chunk_count}`.
+        """
+
+    @abstractmethod
+    def get_document_checksums(self, dataset_id: str) -> dict[str, str]:
+        """Return every document's `(source, checksum)` pair within a dataset.
+
+        Used by `eval/corpus_lineage.py` to compute a deterministic corpus
+        digest (sha256 over sorted `"{source}:{checksum}"` lines) --
+        `checksum` lives on the `documents` table (see
+        `get_or_create_document_id`), not on `chunks`.
+
+        Parameters
+        ----------
+        dataset_id : str
+            The dataset namespace to read.
+
+        Returns
+        -------
+        dict[str, str]
+            `{source: checksum}`, one entry per document.
+        """
+
+    @abstractmethod
     def add_chunks(self, chunks: list[Chunk]) -> None:
         """Persist chunks; each chunk must already have its embedding set.
 
@@ -130,8 +259,9 @@ class VectorStore(ABC):
         query_embedding: list[float],
         top_k: int,
         filters: dict[str, Any] | None = None,
+        auth: AuthorizationContext | None = None,
     ) -> list[SearchResult]:
-        """Similarity search, optionally restricted by metadata filters.
+        """Similarity search, optionally restricted by metadata filters and authorization.
 
         Parameters
         ----------
@@ -142,6 +272,11 @@ class VectorStore(ABC):
         filters : dict[str, Any] | None, optional
             Exact-match metadata filters; keys must be in
             `ALLOWED_FILTER_FIELDS`.
+        auth : AuthorizationContext | None, optional
+            Caller identity/date context (see `retrieval/authorization.py`).
+            `None` means fully unrestricted -- passing a context can only
+            ever narrow results (ANDed with `filters`), never broaden them.
+            Applied in SQL, before any row leaves the database.
 
         Returns
         -------
@@ -160,8 +295,9 @@ class VectorStore(ABC):
         query: str,
         top_k: int,
         filters: dict[str, Any] | None = None,
+        auth: AuthorizationContext | None = None,
     ) -> list[SearchResult]:
-        """Lexical (BM25) search over chunk content, optionally restricted by metadata filters.
+        """Lexical (BM25) search over chunk content, optionally restricted by filters/authorization.
 
         Parameters
         ----------
@@ -172,6 +308,9 @@ class VectorStore(ABC):
         filters : dict[str, Any] | None, optional
             Exact-match metadata filters; keys must be in
             `ALLOWED_FILTER_FIELDS`.
+        auth : AuthorizationContext | None, optional
+            See `search`'s `auth` parameter -- identical semantics, applied
+            to the same underlying SQL fetch before BM25 ranking runs.
 
         Returns
         -------
@@ -190,7 +329,9 @@ class VectorStore(ABC):
         """
 
     @abstractmethod
-    def get_chunks_by_ids(self, chunk_ids: list[str]) -> list[Chunk]:
+    def get_chunks_by_ids(
+        self, chunk_ids: list[str], auth: AuthorizationContext | None = None
+    ) -> list[Chunk]:
         """Fetch chunks by primary key, e.g. to resolve a `parent_chunk_id` reference.
 
         Used by relationship expansion (retrieval/pipeline.py) -- callers
@@ -198,29 +339,41 @@ class VectorStore(ABC):
         filtered `SearchResult` (a `parent_chunk_id` on a chunk's own
         metadata), so this never needs its own `dataset_id` check to stay
         isolated: a `chunk_id`/`document_id` is never shared across
-        datasets (see CLAUDE.md's "Document identity" section).
+        datasets (see CLAUDE.md's "Document identity" section). `auth` is
+        applied defensively here too (belt-and-suspenders): a parent chunk
+        shares its document's tenant_id/allowed_roles by construction, so
+        this should never actually exclude anything a caller wasn't already
+        authorized to see the sibling of -- see
+        `tests/integration/test_authorization_isolation.py`.
 
         Parameters
         ----------
         chunk_ids : list[str]
             Chunk ids to fetch.
+        auth : AuthorizationContext | None, optional
+            See `search`'s `auth` parameter.
 
         Returns
         -------
         list[Chunk]
             Matching chunks, in no particular order; ids with no matching
-            row are silently omitted (e.g. a stale `parent_chunk_id` from a
-            deleted chunk).
+            row (or excluded by `auth`) are silently omitted.
         """
 
     @abstractmethod
-    def get_chunks_by_section(self, document_id: str, section_path: str | None) -> list[Chunk]:
+    def get_chunks_by_section(
+        self,
+        document_id: str,
+        section_path: str | None,
+        auth: AuthorizationContext | None = None,
+    ) -> list[Chunk]:
         """Fetch every chunk of one document's section, ordered by `chunk_index`.
 
         Used by relationship expansion to compute a retrieved chunk's
         immediate neighbors (previous/next by `chunk_index`) within the
         same section. `document_id` already uniquely scopes to one
-        dataset, so this cannot cross a `dataset_id` boundary.
+        dataset, so this cannot cross a `dataset_id` boundary. `auth` is
+        applied defensively (see `get_chunks_by_ids`).
 
         Parameters
         ----------
@@ -229,6 +382,8 @@ class VectorStore(ABC):
         section_path : str | None
             The `section_path` value to match exactly (including `None`,
             for chunks with no section context).
+        auth : AuthorizationContext | None, optional
+            See `search`'s `auth` parameter.
 
         Returns
         -------

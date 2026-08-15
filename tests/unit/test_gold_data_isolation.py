@@ -60,7 +60,7 @@ class FakeVectorStore:
     def add_chunks(self, chunks: list[Chunk]) -> None:
         """Unused by evaluate(); not exercised by these tests."""
 
-    def search(self, query_embedding, top_k, filters=None) -> list[SearchResult]:
+    def search(self, query_embedding, top_k, filters=None, auth=None) -> list[SearchResult]:
         """Return the fixed results, ignoring the query embedding/filters."""
         return self._results[:top_k]
 

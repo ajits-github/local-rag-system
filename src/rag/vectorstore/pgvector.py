@@ -16,7 +16,8 @@ from psycopg2.extensions import connection as PgConnection
 from psycopg2.pool import ThreadedConnectionPool
 from rank_bm25 import BM25Okapi
 
-from rag.schemas import Chunk, ChunkMetadata, SearchResult
+from rag.retrieval.authorization import AuthorizationContext
+from rag.schemas import Chunk, ChunkMetadata, DocumentVersionInfo, SearchResult
 from rag.vectorstore.base import ALLOWED_FILTER_FIELDS, VectorStore
 
 _DISTANCE_OPERATORS = {"cosine": "<=>", "l2": "<->", "inner_product": "<#>"}
@@ -29,7 +30,9 @@ _METADATA_COLUMNS = """chunk_id, document_id, chunk_index, content,
     created_at, last_modified, language, category, dataset_id,
     content_type, section_path, code_language, table_headers,
     attachment_name, source_anchor, parent_chunk_id,
-    vision_generated, vision_description"""
+    vision_generated, vision_description,
+    tenant_id, allowed_roles, classification, status, document_version,
+    effective_from, trust_level, doc_source_type, supersedes_source"""
 
 
 def _build_where_clause(filters: dict[str, Any] | None) -> tuple[str, list[Any]]:
@@ -72,6 +75,101 @@ def _build_where_clause(filters: dict[str, Any] | None) -> tuple[str, list[Any]]
     return where_sql, params
 
 
+def build_authorization_where_clause(
+    auth: AuthorizationContext | None, cross_tenant_support_roles: list[str]
+) -> tuple[str, list[Any]]:
+    """Build the authorization/freshness `AND (...)` SQL fragment for one query.
+
+    Module-level (unit-testable without a DB connection), structurally
+    separate from `_build_where_clause`: this predicate is never built from
+    caller-suppliable input (see `retrieval/authorization.py`'s docstring),
+    only from an `AuthorizationContext` a pipeline constructs itself, and it
+    is always ANDed on top of whatever `_build_where_clause` produces so it
+    can only narrow results, never broaden them.
+
+    Enforcement rule (matches the TechFusion authorization matrix):
+    a chunk is visible when its `tenant_id IS NULL` (untenanted legacy
+    content -- never gated), OR the caller's tenant matches, OR the caller
+    holds a configured cross-tenant support role that is *also* listed in
+    this specific chunk's own `allowed_roles` (a document-specific grant,
+    not a blanket one) -- AND, independently, when `allowed_roles` is set
+    at all, the caller must hold at least one of them (this is what makes a
+    same-tenant request still subject to role checks, e.g. a plain
+    `employee` role denied a `restricted` document within their own
+    tenant). `resolved_excluded_document_ids` (populated by
+    `RetrievalPipeline.retrieve()` from `retrieval/freshness.py`) is ANDed
+    in as a further, independent exclusion, and so is
+    `require_trust_level` when set (section 7: a query that requires an
+    authoritative source excludes chunks whose `trust_level` doesn't
+    match, while leaving untenanted/untagged content -- `trust_level IS
+    NULL` -- unaffected).
+
+    Parameters
+    ----------
+    auth : AuthorizationContext | None
+        `None` produces an empty (unrestricted) fragment.
+    cross_tenant_support_roles : list[str]
+        `config.security.authorization.cross_tenant_support_roles` --
+        server policy, never caller-supplied.
+
+    Returns
+    -------
+    tuple[str, list[Any]]
+        ``(sql_fragment, params)`` -- `sql_fragment` is `""` (unrestricted)
+        or a bare, unprefixed boolean expression (no leading `WHERE`/`AND`);
+        see `_combine_where_clauses` for how it's joined with
+        `_build_where_clause`'s own fragment. Params are in placeholder order.
+    """
+    if auth is None:
+        return "", []
+
+    caller_support_roles = [role for role in auth.roles if role in cross_tenant_support_roles]
+    clauses = [
+        """(
+            tenant_id IS NULL
+            OR tenant_id = %s
+            OR (allowed_roles IS NOT NULL AND allowed_roles && %s::text[])
+        )
+        AND (
+            allowed_roles IS NULL
+            OR allowed_roles && %s::text[]
+        )"""
+    ]
+    params: list[Any] = [auth.tenant_id, caller_support_roles, auth.roles]
+
+    if auth.resolved_excluded_document_ids:
+        clauses.append("NOT (document_id::text = ANY(%s))")
+        params.append(auth.resolved_excluded_document_ids)
+
+    if auth.require_trust_level:
+        clauses.append("(trust_level IS NULL OR trust_level = %s)")
+        params.append(auth.require_trust_level)
+
+    return " AND ".join(clauses), params
+
+
+def _combine_where_clauses(where_sql: str, auth_sql: str) -> str:
+    """Join `_build_where_clause`'s and `build_authorization_where_clause`'s fragments.
+
+    Parameters
+    ----------
+    where_sql : str
+        `""` or a `"WHERE ..."`-prefixed fragment (caller-suppliable filters).
+    auth_sql : str
+        `""` or a bare boolean expression (authorization/freshness).
+
+    Returns
+    -------
+    str
+        `""`, `"WHERE ..."`, or `"WHERE (...) AND (...)"`.
+    """
+    if where_sql and auth_sql:
+        return f"{where_sql} AND ({auth_sql})"
+    if auth_sql:
+        return f"WHERE ({auth_sql})"
+    return where_sql
+
+
 def _row_to_metadata(row: tuple[Any, ...]) -> tuple[str, str, ChunkMetadata]:
     """Unpack one `_METADATA_COLUMNS`-shaped row into (chunk_id, content, ChunkMetadata)."""
     (
@@ -98,6 +196,15 @@ def _row_to_metadata(row: tuple[Any, ...]) -> tuple[str, str, ChunkMetadata]:
         parent_chunk_id,
         vision_generated,
         vision_description,
+        tenant_id,
+        allowed_roles,
+        classification,
+        status,
+        document_version,
+        effective_from,
+        trust_level,
+        doc_source_type,
+        supersedes_source,
     ) = row
     metadata = ChunkMetadata(
         document_id=str(document_id),
@@ -122,6 +229,15 @@ def _row_to_metadata(row: tuple[Any, ...]) -> tuple[str, str, ChunkMetadata]:
         parent_chunk_id=parent_chunk_id,
         vision_generated=bool(vision_generated),
         vision_description=vision_description,
+        tenant_id=tenant_id,
+        allowed_roles=list(allowed_roles) if allowed_roles is not None else None,
+        classification=classification,
+        status=status,
+        document_version=document_version,
+        effective_from=effective_from,
+        trust_level=trust_level,
+        doc_source_type=doc_source_type,
+        supersedes_source=supersedes_source,
     )
     return chunk_id, content, metadata
 
@@ -160,6 +276,7 @@ class PgVectorStore(VectorStore):
         distance_metric: str = "cosine",
         minconn: int = 1,
         maxconn: int = 5,
+        cross_tenant_support_roles: list[str] | None = None,
     ) -> None:
         """Open a threaded connection pool against `dsn`.
 
@@ -178,11 +295,21 @@ class PgVectorStore(VectorStore):
             Minimum pooled connections, by default 1.
         maxconn : int, optional
             Maximum pooled connections, by default 5.
+        cross_tenant_support_roles : list[str] | None, optional
+            `config.security.authorization.cross_tenant_support_roles` --
+            server policy for `build_authorization_where_clause`, by default
+            `["techfusion_support"]` (matching `AuthorizationConfig`'s
+            default) when omitted.
         """
         self._documents_table = documents_table
         self._chunks_table = chunks_table
         self._distance_op = _DISTANCE_OPERATORS[distance_metric]
         self._pool = ThreadedConnectionPool(minconn, maxconn, dsn)
+        self._cross_tenant_support_roles = (
+            cross_tenant_support_roles
+            if cross_tenant_support_roles is not None
+            else ["techfusion_support"]
+        )
 
     @contextmanager
     def _connection(self) -> Iterator[PgConnection]:
@@ -287,6 +414,89 @@ class PgVectorStore(VectorStore):
                     (dataset_id,),
                 )
 
+    def list_document_sources(self, dataset_id: str) -> list[str]:
+        """See `VectorStore.list_document_sources`."""
+        with self._connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                f"SELECT source FROM {self._documents_table} WHERE dataset_id = %s",
+                (dataset_id,),
+            )
+            return [row[0] for row in cur.fetchall()]
+
+    def delete_documents_by_source(self, dataset_id: str, sources: list[str]) -> int:
+        """See `VectorStore.delete_documents_by_source`."""
+        if not sources:
+            return 0
+        with self._connection() as conn:
+            with conn, conn.cursor() as cur:
+                cur.execute(
+                    f"""DELETE FROM {self._documents_table}
+                        WHERE dataset_id = %s AND source = ANY(%s)""",
+                    (dataset_id, sources),
+                )
+                return cur.rowcount
+
+    def count_chunks_by_document(self, dataset_id: str) -> dict[str, int]:
+        """See `VectorStore.count_chunks_by_document`."""
+        with self._connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                f"""SELECT document_id, COUNT(*) FROM {self._chunks_table}
+                    WHERE dataset_id = %s GROUP BY document_id""",
+                (dataset_id,),
+            )
+            return {str(document_id): count for document_id, count in cur.fetchall()}
+
+    def list_document_versions(self, dataset_id: str) -> list[DocumentVersionInfo]:
+        """See `VectorStore.list_document_versions`."""
+        with self._connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                f"""SELECT DISTINCT document_id, source, status, document_version,
+                        effective_from, supersedes_source, tenant_id
+                    FROM {self._chunks_table}
+                    WHERE dataset_id = %s""",
+                (dataset_id,),
+            )
+            rows = cur.fetchall()
+        return [
+            DocumentVersionInfo(
+                document_id=str(document_id),
+                source=source,
+                status=status,
+                document_version=document_version,
+                effective_from=effective_from,
+                supersedes_source=supersedes_source,
+                tenant_id=tenant_id,
+            )
+            for (
+                document_id,
+                source,
+                status,
+                document_version,
+                effective_from,
+                supersedes_source,
+                tenant_id,
+            ) in rows
+        ]
+
+    def count_chunks_by_content_type(self, dataset_id: str) -> dict[str, int]:
+        """See `VectorStore.count_chunks_by_content_type`."""
+        with self._connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                f"""SELECT content_type, COUNT(*) FROM {self._chunks_table}
+                    WHERE dataset_id = %s GROUP BY content_type""",
+                (dataset_id,),
+            )
+            return {(content_type or "prose"): count for content_type, count in cur.fetchall()}
+
+    def get_document_checksums(self, dataset_id: str) -> dict[str, str]:
+        """See `VectorStore.get_document_checksums`."""
+        with self._connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                f"SELECT source, checksum FROM {self._documents_table} WHERE dataset_id = %s",
+                (dataset_id,),
+            )
+            return dict(cur.fetchall())
+
     def add_chunks(self, chunks: list[Chunk]) -> None:
         """See `VectorStore.add_chunks`."""
         if not chunks:
@@ -319,6 +529,15 @@ class PgVectorStore(VectorStore):
                         c.metadata.parent_chunk_id,
                         c.metadata.vision_generated,
                         c.metadata.vision_description,
+                        c.metadata.tenant_id,
+                        c.metadata.allowed_roles,
+                        c.metadata.classification,
+                        c.metadata.status,
+                        c.metadata.document_version,
+                        c.metadata.effective_from,
+                        c.metadata.trust_level,
+                        c.metadata.doc_source_type,
+                        c.metadata.supersedes_source,
                     )
                     for c in chunks
                 ]
@@ -330,7 +549,10 @@ class PgVectorStore(VectorStore):
                          created_at, last_modified, language, category, dataset_id,
                          content_type, section_path, code_language, table_headers,
                          attachment_name, source_anchor, parent_chunk_id,
-                         vision_generated, vision_description)
+                         vision_generated, vision_description,
+                         tenant_id, allowed_roles, classification, status,
+                         document_version, effective_from, trust_level,
+                         doc_source_type, supersedes_source)
                         VALUES %s
                         ON CONFLICT (chunk_id) DO UPDATE SET
                             content = EXCLUDED.content,
@@ -346,7 +568,16 @@ class PgVectorStore(VectorStore):
                             source_anchor = EXCLUDED.source_anchor,
                             parent_chunk_id = EXCLUDED.parent_chunk_id,
                             vision_generated = EXCLUDED.vision_generated,
-                            vision_description = EXCLUDED.vision_description""",
+                            vision_description = EXCLUDED.vision_description,
+                            tenant_id = EXCLUDED.tenant_id,
+                            allowed_roles = EXCLUDED.allowed_roles,
+                            classification = EXCLUDED.classification,
+                            status = EXCLUDED.status,
+                            document_version = EXCLUDED.document_version,
+                            effective_from = EXCLUDED.effective_from,
+                            trust_level = EXCLUDED.trust_level,
+                            doc_source_type = EXCLUDED.doc_source_type,
+                            supersedes_source = EXCLUDED.supersedes_source""",
                     rows,
                 )
 
@@ -355,10 +586,21 @@ class PgVectorStore(VectorStore):
         query_embedding: list[float],
         top_k: int,
         filters: dict[str, Any] | None = None,
+        auth: AuthorizationContext | None = None,
     ) -> list[SearchResult]:
         """See `VectorStore.search`."""
         where_sql, filter_params = _build_where_clause(filters)
-        params: list[Any] = [query_embedding, *filter_params, query_embedding, top_k]
+        auth_sql, auth_params = build_authorization_where_clause(
+            auth, self._cross_tenant_support_roles
+        )
+        where_sql = _combine_where_clauses(where_sql, auth_sql)
+        params: list[Any] = [
+            query_embedding,
+            *filter_params,
+            *auth_params,
+            query_embedding,
+            top_k,
+        ]
 
         sql = f"""
             SELECT {_METADATA_COLUMNS},
@@ -387,6 +629,7 @@ class PgVectorStore(VectorStore):
         query: str,
         top_k: int,
         filters: dict[str, Any] | None = None,
+        auth: AuthorizationContext | None = None,
     ) -> list[SearchResult]:
         r"""See `VectorStore.search_keyword`.
 
@@ -405,10 +648,14 @@ class PgVectorStore(VectorStore):
         only finds exact (post-punctuation-stripping) token matches.
         """
         where_sql, filter_params = _build_where_clause(filters)
+        auth_sql, auth_params = build_authorization_where_clause(
+            auth, self._cross_tenant_support_roles
+        )
+        where_sql = _combine_where_clauses(where_sql, auth_sql)
         sql = f"SELECT {_METADATA_COLUMNS} FROM {self._chunks_table} {where_sql}"
 
         with self._connection() as conn, conn.cursor() as cur:
-            cur.execute(sql, filter_params)
+            cur.execute(sql, [*filter_params, *auth_params])
             rows = cur.fetchall()
 
         if not rows:
@@ -427,28 +674,45 @@ class PgVectorStore(VectorStore):
             results.append(SearchResult(chunk=chunk, score=float(scores[i])))
         return results
 
-    def get_chunks_by_ids(self, chunk_ids: list[str]) -> list[Chunk]:
+    def get_chunks_by_ids(
+        self, chunk_ids: list[str], auth: AuthorizationContext | None = None
+    ) -> list[Chunk]:
         """See `VectorStore.get_chunks_by_ids`."""
         if not chunk_ids:
             return []
-        sql = f"SELECT {_METADATA_COLUMNS} FROM {self._chunks_table} WHERE chunk_id = ANY(%s)"
+        auth_sql, auth_params = build_authorization_where_clause(
+            auth, self._cross_tenant_support_roles
+        )
+        where_sql = _combine_where_clauses("WHERE chunk_id = ANY(%s)", auth_sql)
+        sql = f"SELECT {_METADATA_COLUMNS} FROM {self._chunks_table} {where_sql}"
         with self._connection() as conn, conn.cursor() as cur:
-            cur.execute(sql, (chunk_ids,))
+            cur.execute(sql, [chunk_ids, *auth_params])
             rows = cur.fetchall()
         return [
             Chunk(id=chunk_id, content=content, metadata=metadata)
             for chunk_id, content, metadata in (_row_to_metadata(row) for row in rows)
         ]
 
-    def get_chunks_by_section(self, document_id: str, section_path: str | None) -> list[Chunk]:
+    def get_chunks_by_section(
+        self,
+        document_id: str,
+        section_path: str | None,
+        auth: AuthorizationContext | None = None,
+    ) -> list[Chunk]:
         """See `VectorStore.get_chunks_by_section`."""
         section_clause = "section_path = %s" if section_path is not None else "section_path IS NULL"
-        sql = f"""SELECT {_METADATA_COLUMNS} FROM {self._chunks_table}
-            WHERE document_id = %s AND {section_clause}
-            ORDER BY chunk_index"""
-        params: tuple[Any, ...] = (
-            (document_id, section_path) if section_path is not None else (document_id,)
+        base_sql = f"document_id = %s AND {section_clause}"
+        auth_sql, auth_params = build_authorization_where_clause(
+            auth, self._cross_tenant_support_roles
         )
+        where_sql = _combine_where_clauses(f"WHERE {base_sql}", auth_sql)
+        sql = f"""SELECT {_METADATA_COLUMNS} FROM {self._chunks_table}
+            {where_sql}
+            ORDER BY chunk_index"""
+        params: list[Any] = (
+            [document_id, section_path] if section_path is not None else [document_id]
+        )
+        params.extend(auth_params)
         with self._connection() as conn, conn.cursor() as cur:
             cur.execute(sql, params)
             rows = cur.fetchall()

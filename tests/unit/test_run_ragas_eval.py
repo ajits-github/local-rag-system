@@ -32,7 +32,7 @@ class _FakeVectorStore:
         """Store the fixed results this double's search() will return."""
         self._results = results
 
-    def search(self, query_embedding, top_k, filters=None) -> list[SearchResult]:
+    def search(self, query_embedding, top_k, filters=None, auth=None) -> list[SearchResult]:
         """Return the fixed results, ignoring the query embedding/filters."""
         return self._results[:top_k]
 

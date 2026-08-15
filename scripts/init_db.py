@@ -143,6 +143,36 @@ def build_schema_sql(*, documents_table: str, chunks_table: str, dimension: int)
     CREATE INDEX IF NOT EXISTS {chunks_table}_parent_chunk_id_idx
         ON {chunks_table} (parent_chunk_id);
 
+    -- Migrations for the safety/freshness milestone: tenant/role/
+    -- classification/status/version/trust governance fields, copied onto
+    -- every chunk of a document exactly like category/dataset_id (see
+    -- ingestion/writer.py). doc_source_type is deliberately not named
+    -- source_type a second time -- that column already means
+    -- "markdown"/"text" (the loader's file-type tag), a different concept
+    -- from front matter's source_type (a trust-provenance label). No FK on
+    -- tenant/allowed_roles -- these are plain metadata columns, not
+    -- references. supersedes_source is a raw filename string, matched by
+    -- path suffix at query time (see retrieval/freshness.py), not resolved
+    -- to a document_id at ingestion time.
+    ALTER TABLE {chunks_table} ADD COLUMN IF NOT EXISTS tenant_id TEXT;
+    ALTER TABLE {chunks_table} ADD COLUMN IF NOT EXISTS allowed_roles TEXT[];
+    ALTER TABLE {chunks_table} ADD COLUMN IF NOT EXISTS classification TEXT;
+    ALTER TABLE {chunks_table} ADD COLUMN IF NOT EXISTS status TEXT;
+    ALTER TABLE {chunks_table} ADD COLUMN IF NOT EXISTS document_version TEXT;
+    ALTER TABLE {chunks_table} ADD COLUMN IF NOT EXISTS effective_from DATE;
+    ALTER TABLE {chunks_table} ADD COLUMN IF NOT EXISTS trust_level TEXT;
+    ALTER TABLE {chunks_table} ADD COLUMN IF NOT EXISTS doc_source_type TEXT;
+    ALTER TABLE {chunks_table} ADD COLUMN IF NOT EXISTS supersedes_source TEXT;
+
+    CREATE INDEX IF NOT EXISTS {chunks_table}_tenant_id_idx
+        ON {chunks_table} (tenant_id);
+
+    CREATE INDEX IF NOT EXISTS {chunks_table}_status_idx
+        ON {chunks_table} (status);
+
+    CREATE INDEX IF NOT EXISTS {chunks_table}_trust_level_idx
+        ON {chunks_table} (trust_level);
+
     -- Caches a VisionProvider's generated description per image, keyed by
     -- the image file's own sha256 checksum, so an unchanged image is never
     -- reprocessed by a (cost-incurring) hosted call across documents or

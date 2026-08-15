@@ -184,12 +184,12 @@ class _ScriptedVectorStore:
         """Store the {question: (dense_results, bm25_results)} script."""
         self._by_query = by_query
 
-    def search(self, query_embedding, top_k, filters=None) -> list[SearchResult]:
+    def search(self, query_embedding, top_k, filters=None, auth=None) -> list[SearchResult]:
         """Look up dense results by the "embedding" (really the raw query text)."""
         dense, _bm25 = self._by_query[query_embedding]
         return dense[:top_k]
 
-    def search_keyword(self, query, top_k, filters=None) -> list[SearchResult]:
+    def search_keyword(self, query, top_k, filters=None, auth=None) -> list[SearchResult]:
         """Look up BM25 results by the raw query text."""
         _dense, bm25 = self._by_query[query]
         return bm25[:top_k]

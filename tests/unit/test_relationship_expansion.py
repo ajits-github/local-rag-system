@@ -60,6 +60,7 @@ class FakeVectorStore:
         self._chunks_by_id = chunks_by_id or {}
         self._sections = sections or {}
         self.get_chunks_by_ids_calls: list[list[str]] = []
+        self.get_chunks_by_ids_auth_calls: list[object] = []
         self.get_chunks_by_section_calls: list[tuple[str, str | None]] = []
 
     def health_check(self) -> bool:
@@ -82,23 +83,30 @@ class FakeVectorStore:
     def add_chunks(self, chunks: list[Chunk]) -> None:
         """Unused by RetrievalPipeline; not exercised by these tests."""
 
-    def search(self, query_embedding, top_k, filters=None) -> list[SearchResult]:
+    def search(self, query_embedding, top_k, filters=None, auth=None) -> list[SearchResult]:
         """Return the fixed dense results, ignoring the embedding/filters."""
         return self._results[:top_k]
 
-    def search_keyword(self, query, top_k, filters=None) -> list[SearchResult]:
+    def search_keyword(self, query, top_k, filters=None, auth=None) -> list[SearchResult]:
         """Return no keyword results -- these tests only exercise dense retrieval."""
         return []
 
-    def get_chunks_by_ids(self, chunk_ids: list[str]) -> list[Chunk]:
+    def get_chunks_by_ids(self, chunk_ids: list[str], auth=None) -> list[Chunk]:
         """Record the call and return whichever scripted chunks match."""
         self.get_chunks_by_ids_calls.append(list(chunk_ids))
+        self.get_chunks_by_ids_auth_calls.append(auth)
         return [self._chunks_by_id[cid] for cid in chunk_ids if cid in self._chunks_by_id]
 
-    def get_chunks_by_section(self, document_id: str, section_path: str | None) -> list[Chunk]:
+    def get_chunks_by_section(
+        self, document_id: str, section_path: str | None, auth=None
+    ) -> list[Chunk]:
         """Record the call and return the scripted, chunk_index-ordered section."""
         self.get_chunks_by_section_calls.append((document_id, section_path))
         return self._sections.get((document_id, section_path), [])
+
+    def list_document_versions(self, dataset_id: str):
+        """Unused by RetrievalPipeline unless a test exercises authorization/freshness."""
+        return []
 
     def get_cached_image_description(self, image_checksum: str) -> str | None:
         """Unused by RetrievalPipeline; not exercised by these tests."""
@@ -326,3 +334,33 @@ def test_expansion_disabled_ignores_relationship_config_fields():
 
     assert len(results) == 1
     assert vectorstore.get_chunks_by_ids_calls == []
+
+
+def test_expansion_threads_authorization_context_into_relationship_lookups():
+    """When authorization is enabled, get_chunks_by_ids/get_chunks_by_section receive auth too.
+
+    Defense-in-depth (see vectorstore.base.VectorStore.get_chunks_by_ids's
+    docstring): a parent/neighbor lookup shares its originating chunk's own
+    document_id, so this should never actually exclude anything -- but the
+    same AuthorizationContext must still reach these calls, not just
+    search()/search_keyword().
+    """
+    from rag.retrieval.authorization import AuthorizationContext
+
+    child = _chunk("c1", "child content", parent_chunk_id="parent-1")
+    parent = _chunk("parent-1", "parent content")
+    vectorstore = FakeVectorStore(
+        results=[_result(child, score=0.7)], chunks_by_id={"parent-1": parent}
+    )
+    vectorstore.list_document_versions = lambda dataset_id: []
+    config = _config_with_expansion(enabled=True, include_parent=True, include_neighbors=False)
+    config = config.model_copy(deep=True)
+    config.security.authorization.enabled = True
+    auth = AuthorizationContext(tenant_id="tenant_alpha", roles=["operator"])
+
+    _pipeline(config, vectorstore).retrieve("q", filters={"dataset_id": "techfusion"}, auth=auth)
+
+    assert len(vectorstore.get_chunks_by_ids_calls) == 1
+    passed_auth = vectorstore.get_chunks_by_ids_auth_calls[0]
+    assert passed_auth is not None
+    assert passed_auth.tenant_id == "tenant_alpha"
