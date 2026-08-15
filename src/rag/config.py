@@ -261,10 +261,31 @@ class AuthorizationConfig(BaseModel):
     cross_tenant_support_roles: list[str] = Field(default_factory=lambda: ["techfusion_support"])
 
 
+class FieldRedactionConfig(BaseModel):
+    """Field-level sensitive-value redaction tunable (field-level-safety milestone).
+
+    `enabled: false` (the default) is a true no-op: `RetrievalPipeline`
+    never calls `retrieval/field_policy.py`'s redaction helpers at all, so
+    every existing config/experiment/test is byte-identical regardless of
+    what an `AuthorizationContext` a caller constructs. Deliberately
+    independent of `AuthorizationConfig.enabled` -- document ACL and field
+    disclosure are conceptually separate controls (see
+    `retrieval/field_policy.py`'s module docstring) and can be toggled on
+    their own. When enabled, a missing caller identity (`auth=None`, e.g.
+    because a caller supplied none, or because `authorization.enabled` is
+    itself `False`) is treated as zero roles -- fail-closed, never
+    "unrestricted" -- so turning this flag on can only narrow what a
+    caller sees, never broaden it.
+    """
+
+    enabled: bool = False
+
+
 class SecurityConfig(BaseModel):
     """Root config block for the safety/freshness milestone's retrieval controls."""
 
     authorization: AuthorizationConfig = Field(default_factory=AuthorizationConfig)
+    field_redaction: FieldRedactionConfig = Field(default_factory=FieldRedactionConfig)
 
 
 class VisionConfig(BaseModel):

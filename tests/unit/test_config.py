@@ -245,6 +245,33 @@ def test_default_config_authorization_disabled_by_default():
     assert config.security.authorization.cross_tenant_support_roles == ["techfusion_support"]
 
 
+def test_default_config_field_redaction_disabled_by_default():
+    """config/default.yaml's security.field_redaction is off -- a no-op unless enabled."""
+    config = load_config()
+    assert config.security.field_redaction.enabled is False
+
+
+def test_secure_rag_baseline_v1_field_redaction_changes_only_that_flag():
+    """The field-redaction candidate isolates exactly one variable from experiment_026's config.
+
+    Per the field-level-safety milestone's design review (adjustment 2):
+    prompt stays v3, matching secure-rag-baseline-v1.yaml exactly, so
+    field redaction is the only meaningful changed safety mechanism in
+    this A/B.
+    """
+    control = load_config("config/experiments/secure-rag-baseline-v1.yaml")
+    candidate = load_config("config/experiments/secure-rag-baseline-v1-field-redaction.yaml")
+
+    assert control.generation.prompt.version == "v3"
+    assert candidate.generation.prompt.version == "v3"
+    assert control.security.field_redaction.enabled is False
+    assert candidate.security.field_redaction.enabled is True
+
+    control_dict = control.model_dump(exclude={"security": {"field_redaction": {"enabled"}}})
+    candidate_dict = candidate.model_dump(exclude={"security": {"field_redaction": {"enabled"}}})
+    assert control_dict == candidate_dict
+
+
 def test_secure_rag_baseline_v1_changes_only_prompt_and_authorization():
     """secure-rag-baseline-v1.yaml is classic-rag-baseline-v1.yaml + prompt v3 + auth enabled.
 
