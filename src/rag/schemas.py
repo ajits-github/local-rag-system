@@ -2,14 +2,33 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 
 class RawDocument(BaseModel):
-    """Common output shape produced by every loader, before cleaning/chunking."""
+    """Common output shape produced by every loader, before cleaning/chunking.
+
+    `tenant_id`/`allowed_roles`/`classification`/`status`/`document_version`/
+    `effective_from`/`trust_level`/`doc_source_type`/`supersedes_source` are
+    the safety/freshness milestone's governance fields, parsed from a
+    document's YAML front matter by `loaders/text_loader.py` (see that
+    module) -- all `None`/empty for documents with no such front matter
+    (every pre-existing knowledge-base file), so this is purely additive.
+    `doc_source_type` is deliberately not named `source_type` a second time:
+    that field already means "markdown"/"text" (the loader's file-type tag)
+    here, a different concept from front matter's `source_type`
+    (`controlled_internal`/`user_uploaded`, a trust-provenance label) --
+    reusing the name would silently overload one column with two meanings.
+    `supersedes_source` is the raw `supersedes` filename string as authored
+    (e.g. "incident-response-v1.md"), not a resolved document_id -- resolving
+    a cross-file reference during single-file ingestion is an
+    ordering-fragile chicken/egg problem, so it's matched by path suffix at
+    query time instead (see `retrieval/freshness.py`), the same pattern
+    already used for gold `relevant_documents`.
+    """
 
     content: str
     source: str
@@ -20,6 +39,15 @@ class RawDocument(BaseModel):
     created_at: datetime
     last_modified: datetime
     language: str | None = None
+    tenant_id: str | None = None
+    allowed_roles: list[str] | None = None
+    classification: str | None = None
+    status: str | None = None
+    document_version: str | None = None
+    effective_from: date | None = None
+    trust_level: str | None = None
+    doc_source_type: str | None = None
+    supersedes_source: str | None = None
     extra: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -92,6 +120,20 @@ class ChunkMetadata(BaseModel):
     parent_chunk_id: str | None = None
     vision_generated: bool = False
     vision_description: str | None = None
+    # Safety/freshness milestone: document-level governance fields, copied
+    # onto every chunk of a document exactly like category/title (see
+    # RawDocument for what each means and why doc_source_type isn't named
+    # source_type). All None for documents with no governance front matter
+    # -- the entire pre-existing corpus is unaffected.
+    tenant_id: str | None = None
+    allowed_roles: list[str] | None = None
+    classification: str | None = None
+    status: str | None = None
+    document_version: str | None = None
+    effective_from: date | None = None
+    trust_level: str | None = None
+    doc_source_type: str | None = None
+    supersedes_source: str | None = None
 
 
 class Chunk(BaseModel):
@@ -118,6 +160,55 @@ class SearchResult(BaseModel):
     score: float
     origin: Literal["retrieved", "expanded"] = "retrieved"
     expanded_from: str | None = None
+    # Safety milestone: set by RetrievalPipeline from
+    # retrieval.injection_detection.detect_injection(chunk.content) --
+    # observability/prompt-reinforcement only (see that module's docstring
+    # for why this never blocks a result; authorization is the actual gate).
+    injection_suspected: bool = False
+
+
+class DocumentVersionInfo(BaseModel):
+    """One document's governance/versioning metadata, for freshness resolution.
+
+    Produced by `VectorStore.list_document_versions` -- one row per
+    `document_id` within a dataset (the same governance fields are uniform
+    across every chunk of a document, so a plain `SELECT DISTINCT` is
+    enough; see `ingestion/writer.py`). Consumed by
+    `retrieval/freshness.py` to resolve, per document-version family, which
+    version was effective as of a given date -- never persisted itself.
+    """
+
+    document_id: str
+    source: str
+    status: str | None = None
+    document_version: str | None = None
+    effective_from: date | None = None
+    supersedes_source: str | None = None
+    tenant_id: str | None = None
+
+
+class IngestionStats(BaseModel):
+    """Aggregate + per-file report from `IngestionPipeline.ingest_path`.
+
+    `results` preserves the pre-existing per-file `{"document_id",
+    "chunks_written", "changed"}` shape (plus a new `"status"` key: `"new"`/
+    `"changed"`/`"unchanged"`), so existing callers reading individual
+    entries are unaffected; the aggregate counts are what's new for the
+    safety/freshness milestone's ingestion-observability requirement.
+    `chunks_reused` is the total chunk count of every `"unchanged"`
+    document (never re-embedded this run, but still real, queryable
+    chunks) -- distinct from `chunks_embedded`, which only counts
+    newly-written chunks from `"new"`/`"changed"` documents.
+    """
+
+    discovered: int = 0
+    new: int = 0
+    changed: int = 0
+    unchanged: int = 0
+    deleted: int = 0
+    chunks_embedded: int = 0
+    chunks_reused: int = 0
+    results: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class RetrievalAttribution(BaseModel):

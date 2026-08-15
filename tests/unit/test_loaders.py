@@ -48,6 +48,58 @@ def test_text_loader_parses_yaml_frontmatter(tmp_path: Path):
     assert "Body text here." in doc.content
 
 
+def test_text_loader_parses_governance_frontmatter(tmp_path: Path):
+    """Safety/freshness front-matter fields populate RawDocument's new governance fields."""
+    path = tmp_path / "retention-policy-v2.md"
+    path.write_text(
+        "---\n"
+        'title: "Tenant Alpha Retention Policy v2"\n'
+        'tenant_id: "tenant_alpha"\n'
+        "allowed_roles:\n"
+        '  - "tenant_alpha_operator"\n'
+        '  - "tenant_alpha_admin"\n'
+        'classification: "internal"\n'
+        'status: "active"\n'
+        'updated_at: "2026-06-01T10:00:00+02:00"\n'
+        'effective_from: "2026-06-01"\n'
+        'document_version: "2.0"\n'
+        "supersedes: retention-policy-v1.md\n"
+        'trust_level: "authoritative"\n'
+        'source_type: "controlled_internal"\n'
+        "---\n\n"
+        "# Retention\n\nBody text here.",
+        encoding="utf-8",
+    )
+
+    doc = TextLoader().load(path)
+
+    assert doc.tenant_id == "tenant_alpha"
+    assert doc.allowed_roles == ["tenant_alpha_operator", "tenant_alpha_admin"]
+    assert doc.classification == "internal"
+    assert doc.status == "active"
+    assert doc.effective_from.isoformat() == "2026-06-01"
+    assert doc.document_version == "2.0"
+    assert doc.supersedes_source == "retention-policy-v1.md"
+    assert doc.trust_level == "authoritative"
+    assert doc.doc_source_type == "controlled_internal"
+    assert doc.source_type == "markdown"  # unaffected: the loader-type field, not doc_source_type
+    assert doc.last_modified.isoformat() == "2026-06-01T10:00:00+02:00"
+
+
+def test_text_loader_governance_fields_none_without_frontmatter(tmp_path: Path):
+    """A document with no governance front matter leaves every new field unset."""
+    path = tmp_path / "plain.md"
+    path.write_text("# Title\n\nbody, no frontmatter here", encoding="utf-8")
+
+    doc = TextLoader().load(path)
+
+    assert doc.tenant_id is None
+    assert doc.allowed_roles is None
+    assert doc.trust_level is None
+    assert doc.doc_source_type is None
+    assert doc.supersedes_source is None
+
+
 def test_text_loader_handles_markdown_without_frontmatter(tmp_path: Path):
     """Markdown without a front-matter block falls back to filename/raw content."""
     path = tmp_path / "plain.md"
