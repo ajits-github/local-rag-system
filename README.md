@@ -345,6 +345,7 @@ regenerate it instead (see "Recording a new experiment").
 | 24 | classic_rag_baseline_v1 | hybrid | qwen2.5:3b | all-MiniLM-L6-v2 | none | v2 | on | 0.911 | 0.946 | 0.952 | 0.824 | 0.448 | 0.788 | 0.842 | 0.902 | 0.503 | 24.9s | techfusion | 2026-08-14 |
 | 25 | secure_rag_baseline_v1_auth_disabled | hybrid | qwen2.5:3b | all-MiniLM-L6-v2 | none | v3 | on | 0.861 | 0.929 | 0.937 | 0.768 | 0.370 | 0.733 | 0.842 | - | - | 28.2s | techfusion | 2026-08-14 |
 | 26 | secure_rag_baseline_v1 | hybrid | qwen2.5:3b | all-MiniLM-L6-v2 | none | v3 | on | 0.788 | 0.832 | 0.865 | 0.753 | 0.390 | 0.781 | 0.842 | - | - | 28.5s | techfusion | 2026-08-14 |
+| 27 | secure_rag_baseline_v1_field_redaction | hybrid | qwen2.5:3b | all-MiniLM-L6-v2 | none | v3 | on | 0.788 | 0.832 | 0.865 | 0.753 | 0.405 | 0.781 | 0.842 | - | - | 21.7s | techfusion | 2026-08-15 |
 <!-- EXPERIMENTS_TABLE_END -->
 
 *Total latency is the mean of retrieval+generation per question, at the
@@ -381,6 +382,23 @@ Safety metrics move cleanly toward correct with authorization on:
 0.077 → **0.0**. Full metric table (all 11 safety metrics), corpus
 lineage, and a real directory-layout bug this run caught are in
 [`experiments/reports/secure_rag_baseline_v1.md`](experiments/reports/secure_rag_baseline_v1.md).
+
+**Experiment 27** is the field-level-safety milestone: a caller
+tenant/role-authorized for a *document* could still extract one specific
+*field* inside it (e.g. an admin credential) via prompt injection —
+`secure_rag_baseline_v1`'s own report flagged this gap
+(`sensitive_data_leakage_rate` 2/7). `secure_rag_baseline_v1_field_redaction`
+adds `security.field_redaction.enabled: true` on top of experiment 26's
+config (prompt unchanged at `v3`, the only variable that differs) —
+retrieval-side metrics are byte-identical to 26 by construction (redaction
+never changes which chunks are retrieved), and `sensitive_data_leakage_rate`
+drops from 0.286 (2/7) to **0.000 (0/7)** with no over-redaction
+(`sensitive_data_false_redaction_rate` 0/8,
+`sensitive_data_authorized_disclosure_accuracy` 1/1). Two real bugs this
+run caught (a second tenant's credential using a different literal shape;
+an operational customer-id pattern producing a false-positive "leak") and
+the full metric table are in
+[`experiments/reports/secure_rag_baseline_v1_field_redaction.md`](experiments/reports/secure_rag_baseline_v1_field_redaction.md).
 
 ### Recording a new experiment
 

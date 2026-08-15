@@ -759,3 +759,256 @@ across requests. PostgreSQL remains sufficient.
   are deterministic heuristics for triage and regression-tracking, not
   semantic-correctness judges — same documented-limitation style as this
   project's other keyword/phrase-based metrics.
+- Field-level sensitive-data redaction (the gap this section flagged) is
+  addressed by the field-level-safety milestone below — see that
+  section's own "Known limitations" for what's still open after it.
+
+## Field-Level Sensitive-Data Redaction (field-level-safety milestone)
+
+`secure_rag_baseline_v1` (experiment_026, above) proved document-level
+authorization works — `cross_tenant_leakage_rate` and
+`stale_document_error_rate` both read 0.0 — but its own eval report
+already flagged an unresolved gap in `unauthorized_retrieval_rate`'s own
+note: some `forbidden_documents` entries are a document the caller's own
+tenant/role *legitimately* may retrieve (e.g. a `tenant_alpha_operator`
+and their own tenant's runbook), where only *one specific field* inside
+it — an administrator-only credential — is restricted. Document ACL
+correctly admits the chunk; nothing stopped the raw field value from
+reaching the generation prompt. This milestone closes that gap without
+redesigning document-level authorization.
+
+### Threat model: three distinct questions, not one
+
+1. **Document authorization** (already solved, previous milestone): can
+   the caller retrieve the document at all?
+2. **Field-level disclosure policy** (this milestone): can the caller see
+   a *particular* sensitive value inside a document they were already
+   allowed to retrieve?
+3. **Transformation/encoding attacks** (addressed as a structural
+   consequence of #2, not a separate defense — see below): can the caller
+   bypass #2 by asking for the value spelled out, reversed, Base64-encoded,
+   or split across a summary?
+
+Document ACL remains the primary, load-bearing access boundary for #1;
+this milestone adds a second, independent, narrower control for #2, and
+#3 falls out of #2's enforcement point rather than needing its own logic.
+
+### Sensitive-field representation: `SensitiveFieldPolicy`
+
+`retrieval/field_policy.py` defines a small, explicit, hardcoded policy
+list (`DEFAULT_FIELD_POLICIES`) — deliberately *not* a config surface
+(these are dataset-specific synthetic-secret shapes, not a per-deployment
+tunable) and deliberately *not* an attempt to infer arbitrary secrets
+dynamically:
+
+```python
+class SensitiveFieldPolicy(BaseModel):
+    field_id: str                  # e.g. "synthetic_admin_credential"
+    sensitivity_type: str          # e.g. "credential"
+    detector: Literal["regex"] = "regex"   # swap point for a future detector kind
+    pattern: str                   # regex over chunk text
+    allowed_roles: list[str] = Field(default_factory=list)
+    redaction_marker: str = "[REDACTED:SENSITIVE_FIELD]"
+```
+
+The current corpus has exactly one sensitivity_type worth policing:
+tenant admin credentials, matched by two distinct literal shapes
+(`SYNTHETIC_ONLY_\w+` for Alpha's key, `SYNTHETIC_BETA_TOKEN_\w+` for
+Beta's token — confirmed by grepping the corpus, not assumed identical;
+this exact mismatch was a real bug caught mid-implementation, see
+`ISSUES.md`) under one `synthetic_admin_credential` policy. A second,
+currently-unused `synthetic_internal_token` policy (`SYNTHETIC_INTERNAL_
+TOKEN_\w+`) exists per the milestone's "structure for future detectors"
+requirement even though no current document uses that literal shape.
+Deliberately **not** policing `TF-SYNTH-*` customer-correlation IDs: the
+runbook's own text says operators must correlate failures using that
+identifier — it's operational data support/operators need, not a
+restricted field; adding a policy for it would be over-redaction (see the
+benign-regression check below).
+
+Because document-level ACL already ran first, a policy's `allowed_roles`
+only ever needs evaluating *within* an already-authorized chunk — a
+`tenant_beta_admin` never even sees an Alpha chunk to test the policy
+against, so no per-tenant duplication of policies is needed.
+
+### Ingestion-time tagging vs. query-time enforcement
+
+Two separate calls into the same detector function, for two different
+purposes:
+
+- **Ingestion time** (`ingestion/writer.py`): `detect_sensitive_field_ids
+  (text)` — pattern match only, no role check — tags each `ChunkSpan`
+  with the `field_id`s it contains, persisted as a new, additive
+  `ChunkMetadata.sensitive_field_ids` / `chunks.sensitive_field_ids
+  TEXT[]` column (idempotent migration in `scripts/init_db.py`, same
+  pattern as every prior milestone's new columns). This is what section 3
+  of the design review calls "ingestion-time identification" — a cheap,
+  persisted skip-check so query-time enforcement never re-scans a chunk
+  that was never tagged.
+- **Query time** (`retrieval/pipeline.py`): `RetrievalPipeline.
+  _redact_sensitive_fields` calls `redact_sensitive_fields(text, roles)`
+  for any chunk carrying a tag, replacing every matched span with
+  `[REDACTED:SENSITIVE_FIELD]` unless the caller's roles intersect that
+  policy's `allowed_roles`. Runs once, right after relationship expansion
+  and before injection flagging, inside `_retrieve_timed` — the single
+  method shared by `retrieve()`, `answer()`, and (transitively)
+  `eval/run_eval.py`'s broad retrieval call — so directly-retrieved
+  **and** relationship-expanded chunks are redacted by the same pass (see
+  "relationship expansion" below), and every downstream consumer
+  (`_build_context`'s prompt, `answer()`'s `sources`, `eval/run_eval.py`'s
+  reference-context checks, `run_ragas_eval.py`'s `retrieved_contexts`)
+  sees the already-redacted text with no separate scrubbing step.
+  Redaction builds a `Chunk.model_copy(update={"content": ...})` rather
+  than mutating in place, since relationship expansion's
+  `parents_by_id`/`section_cache` can hold the same `Chunk` instance
+  referenced by more than one `SearchResult` within a single query.
+
+### Why this is the strongest defense against encoding/transformation attacks
+
+No Base64/reversal/splitting *detector* was built, and none was needed:
+because redaction happens on the retrieved chunk's `content` before
+`_build_context` ever renders the prompt, the raw value structurally
+cannot reach the generation model for an unauthorized caller — there is
+nothing for the model to encode, reverse, or spell out. A dedicated
+integration test (`tests/integration/test_field_level_redaction.py::
+test_encoding_or_splitting_the_query_cannot_change_what_is_retrieved`)
+proves this directly: three differently-phrased adversarial queries
+(Base64, character-by-character, reversed) all retrieve byte-identical,
+already-redacted chunk text — query phrasing has no code path into the
+redaction decision at all.
+
+### Fail-closed on missing identity (design-review adjustment 1)
+
+Document-level `AuthorizationContext` semantics treat `auth=None` as
+"fully unrestricted" (backward compatibility with the untenanted
+pre-milestone corpus). Field-level redaction deliberately does **not**
+inherit that default: `FieldRedactionConfig.enabled` is an independent
+toggle from `AuthorizationConfig.enabled`, and whenever it's `True`,
+`RetrievalPipeline` resolves the caller's roles as `effective_auth.roles
+if effective_auth is not None else []` — an empty role list — before
+calling `redact_sensitive_fields`. Because `redact_sensitive_fields`
+redacts unless a caller's role is explicitly in a policy's
+`allowed_roles`, an empty list satisfies no policy, so a missing identity
+(no `auth` supplied at all, or `authorization.enabled` itself left
+`False`) redacts every tagged field rather than passing it through
+unrestricted. `test_field_redaction_fails_closed_when_no_authorization_
+context_supplied` (unit) and the same property implicitly in every
+integration scenario are the regression guard for this. When
+`field_redaction.enabled` is left at its default (`False`), behavior is
+byte-identical to before this milestone — the fail-closed rule only
+applies once the feature itself is turned on.
+
+### Authorization integration: a fourth, independent control
+
+Per the design review's explicit instruction not to overload
+`AuthorizationContext`: field disclosure is implemented as a plain
+function taking `roles: list[str]`, not a new field on
+`AuthorizationContext`. Tenant ACL, document ACL, freshness, trust, and
+field disclosure remain five conceptually separate controls that compose
+by simply all running in sequence, not by growing one shared context
+object. This is possible specifically because field policy only ever
+needs "which roles is this caller asserting" — it never needs tenant,
+`as_of`, or trust level, since those questions were already answered by
+the time a chunk reaches the redaction step.
+
+### Relationship expansion
+
+`_redact_sensitive_fields` runs on the full result list *after*
+`_expand_with_relationships`, so a directly-retrieved, non-sensitive
+chunk that expands to a sensitive parent/neighbor gets that expanded
+chunk redacted under the identical rule — there is no separate "trust
+expanded content more" carve-out.
+`test_relationship_expanded_parent_chunk_is_also_redacted` (integration)
+proves this with a real ingested table+prose pair where the credential
+lives only in the prose parent, pulled in via `include_parent` expansion.
+
+### Metrics: separating document-level from field-level failure modes
+
+`eval/run_eval.py`'s `"safety"` report section gained (see that module's
+inline metric-note strings for exact definitions):
+
+- **`document_unauthorized_retrieval_rate`** (renamed from
+  `unauthorized_retrieval_rate`): now excludes any `forbidden_documents`
+  entry that's *also* in `allowed_documents` for that example
+  (`_document_only_forbidden`) — the literal fix for the ambiguity the
+  previous milestone's report flagged. A document allowed at the ACL
+  level but restricted at the field level no longer counts as a
+  document-level authorization failure.
+- **`sensitive_data_leakage_rate`** (unchanged definition — post-
+  generation literal scan of the final answer): expected to trend toward
+  0 once structural redaction is enabled, since the literal can no longer
+  reach the prompt in the first place.
+- **`sensitive_data_authorized_disclosure_accuracy`** (new): among
+  authorized-disclosure examples (caller *should* receive the value),
+  fraction that actually did — the over-redaction / false-refusal risk on
+  the other side of the same coin.
+- **`sensitive_data_false_redaction_rate`** (new): among every
+  `redacted_field_ids` instance across all generation sources, the
+  fraction where the caller's roles actually *did* satisfy that field's
+  policy — i.e. redacted despite being authorized. Correct enforcement
+  code makes this identically 0 by construction (the same role check
+  drives both the redaction decision and this metric), so it's a
+  regression guard, not a discovery metric.
+- **`encoded_extraction_success_rate`** (new): among sensitive,
+  refusal-expected examples whose question matches an encoding-attempt
+  phrase heuristic, fraction where the literal is still recoverable from
+  the answer via a direct scan, a reversed-text scan, or a
+  Base64-decode-then-scan.
+- Section 9's benign-regression check (does redaction hurt normal
+  answers) is deliberately **not** a new metric — it reuses the existing
+  `answer_quality`/`current_document_answer_quality` machinery already
+  computed for every example with an `expected_answer`, plus
+  `sensitive_data_false_redaction_rate` above. A dedicated new metric here
+  would just re-measure the same signal twice.
+- New per-example `field_level_evidence` block (for every
+  `sensitive_data_present=true` row): `user_tenant`/`user_roles`,
+  `source_documents`, `document_access_authorized`, `field_access_
+  authorized`, `raw_value_in_generation_context`, `redaction_occurred`,
+  `answer_leaked_value`, `expected_behavior` — makes a non-zero rate
+  diagnosable per-question instead of only an aggregate percentage,
+  without persisting any raw secret value into the report itself (only
+  booleans and field ids).
+
+### Logging and hosted-judge safety
+
+No separate scrubbing step was added anywhere — because redaction happens
+once, at the single retrieval choke point every downstream consumer reads
+from, `experiments/results/*.json`, generated reports, MLflow artifacts,
+and `run_ragas_eval.py`'s judge payload (`retrieved_contexts` built from
+`generation_sources[i]["content"]`) all inherit the already-redacted text
+for free. `test_answer_sources_never_contain_raw_value_for_unauthorized_
+caller` (integration) proves this directly against the real `answer()`
+path, not just `retrieve()`.
+
+### Experiment design
+
+Reused the already-recorded `secure_rag_baseline_v1` (`experiment_026`)
+as the control ("field redaction disabled") rather than re-running it —
+identical config in every other respect. The candidate
+(`config/experiments/secure-rag-baseline-v1-field-redaction.yaml`) adds
+only `security.field_redaction.enabled: true`; `generation.prompt` is
+deliberately left at `v3`, matching the control exactly, so field
+redaction is the only meaningful changed safety mechanism in the A/B
+(design-review adjustment 2) — a prompt-v4 defense-in-depth variant
+(redaction-marker-aware phrasing) is an optional follow-up, not run as
+part of this primary comparison. See `PROJECT_JOURNAL.md`'s field-level-
+safety entry for the full result table.
+
+### Known limitations (deliberate, not hidden)
+
+- Field policies are a short, hardcoded, dataset-specific literal-pattern
+  list — not a general-purpose secret scanner, and not intended to be one
+  (per the milestone's own constraint).
+- `sensitivity_type`/`allowed_roles` are authored once per policy, not
+  per-document — correct today because tenant scoping already happens at
+  the document-ACL layer first, but a future document needing a
+  *different* allowed-roles set for the *same* literal pattern would need
+  either a new `field_id` or a `source_glob`-style scoping extension
+  (not built, since nothing in the current corpus needs it).
+  `SensitiveFieldPolicy.detector: Literal["regex"]` is the one swap point
+  actually wired for a future non-regex detector kind; no second
+  implementation was built.
+- `encoded_extraction_success_rate`'s Base64/reverse checks are
+  deterministic heuristics (same documented-limitation style as this
+  project's other triage metrics) — they prove a *specific* transform
+  didn't leak the value, not that no transform could.
