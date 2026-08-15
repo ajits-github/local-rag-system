@@ -281,11 +281,132 @@ class FieldRedactionConfig(BaseModel):
     enabled: bool = False
 
 
+class JWTConfig(BaseModel):
+    """JWT verification tunables for `AuthConfig` (auth-boundary milestone).
+
+    `algorithm` defaults to `HS256` (shared-secret, env-driven via
+    `secret_env_var`) -- this is a single-instance, offline-first system
+    with no existing IdP or key-distribution infrastructure, so token
+    issuance and verification are the same trust domain today.
+    `RS256`/`ES256` (asymmetric, `public_key_path_env_var` names a PEM
+    file) are supported for when a real IdP is fronted later -- a
+    one-line config change, no code change. `issuer`/`audience` are only
+    checked when non-`None` (opt-in, since a local test token issuer has
+    no natural value for either). `required_claims` are checked present
+    via `pyjwt`'s `options={"require": [...]}` -- a token missing any of
+    these is rejected as malformed regardless of signature validity.
+    """
+
+    algorithm: Literal["HS256", "RS256", "ES256"] = "HS256"
+    secret_env_var: str = "JWT_HS256_SECRET"
+    public_key_path_env_var: str = "JWT_PUBLIC_KEY_PATH"
+    issuer: str | None = None
+    audience: str | None = None
+    leeway_seconds: int = 30
+    required_claims: list[str] = Field(default_factory=lambda: ["sub", "tenant_id", "roles"])
+
+
+class AuthConfig(BaseModel):
+    """API-boundary JWT authentication tunables (auth-boundary milestone).
+
+    `enabled: false` (the default) is a true no-op: `POST /query`/`POST
+    /ingest` behave exactly as before this milestone -- caller-supplied
+    `tenant_id`/`roles` are trusted directly, unchanged. When `enabled` is
+    `True`, a verified `Authorization: Bearer <jwt>` is required and
+    caller-supplied `tenant_id`/`roles` in the request body are ignored
+    for authorization purposes (see `api/routers/query.py`).
+    `insecure_dev_mode` is a second, independent, off-by-default flag: it
+    only ever matters when `enabled=True`, and even then it only relaxes
+    the "a JWT is required at all" rule for requests with **no**
+    `Authorization` header -- an invalid/expired/malformed JWT is always
+    rejected with 401 regardless of this flag (fail-closed; never a
+    silent fallback to unrestricted retrieval on a failed verification).
+    `ingest_roles` gates `POST /ingest` when `enabled=True` -- a caller's
+    verified roles must intersect this list, independent of tenant/role
+    document-level ACL (ingestion is a write path, not a retrieval path).
+    """
+
+    enabled: bool = False
+    insecure_dev_mode: bool = False
+    ingest_roles: list[str] = Field(
+        default_factory=lambda: ["security_admin", "system_admin", "techfusion_support"]
+    )
+    jwt: JWTConfig = Field(default_factory=JWTConfig)
+
+
+class DoSLimitsConfig(BaseModel):
+    """Bounded request-size validation for `POST /query`/`POST /ingest`.
+
+    Enforced as explicit router-level checks (not Pydantic field
+    constraints), since the bounds need to come from runtime config, not
+    a value baked into the request model at class-definition time.
+    """
+
+    max_query_length: int = 2000
+    max_top_k: int = 20
+    max_filters_bytes: int = 4096
+    max_upload_bytes: int = 26_214_400  # 25 MiB
+
+
+class RateLimitConfig(BaseModel):
+    """Per-caller request-rate limiting (`slowapi`, in-memory backend).
+
+    `enabled: false` (the default) is a true no-op. `key` controls how
+    callers are bucketed: `"tenant"` (the default) uses the verified
+    identity's `tenant_id` when present, falling back to client IP for
+    unauthenticated callers (e.g. `auth.enabled=False`); `"ip"` always
+    buckets by client IP. In-memory state is process-local -- see
+    `docs/architecture.md`'s auth-boundary section for the documented
+    multi-replica limitation; Redis-backed storage is a future item, not
+    implemented here.
+    """
+
+    enabled: bool = False
+    requests_per_minute: int = 60
+    key: Literal["tenant", "ip"] = "tenant"
+
+
+class EgressPolicyConfig(BaseModel):
+    """Provider-egress policy gate for hosted-judge (RAGAS) calls only.
+
+    `enabled: false` (the default) is a true no-op -- `run_ragas_eval.py`
+    sends retrieved context to the configured hosted judge exactly as
+    before this milestone. Applies only at the one confirmed hosted-egress
+    point in this codebase (`config.judge.provider` in {openai, anthropic}
+    -- production `answer()` never calls a hosted LLM, since
+    `generation.provider` is `ollama`-only). `classification_policy` maps
+    a document's `classification` field to whether its content may leave
+    the local environment; a classification with **no entry** in this
+    dict is treated as blocked (`.get(classification, False)`) --
+    fail-closed on unknown classifications, not silently allowed. `None`/
+    missing classification (most of the pre-governance corpus) is treated
+    as allowed, matching `"internal"`'s default, to preserve existing
+    behavior for content that predates the governance metadata milestone.
+    """
+
+    enabled: bool = False
+    block_unredacted_sensitive_fields: bool = True
+    require_authoritative_trust: bool = False
+    blocked_tenant_ids: list[str] = Field(default_factory=list)
+    classification_policy: dict[str, bool] = Field(
+        default_factory=lambda: {
+            "public": True,
+            "internal": True,
+            "confidential": False,
+            "restricted": False,
+        }
+    )
+
+
 class SecurityConfig(BaseModel):
     """Root config block for the safety/freshness milestone's retrieval controls."""
 
     authorization: AuthorizationConfig = Field(default_factory=AuthorizationConfig)
     field_redaction: FieldRedactionConfig = Field(default_factory=FieldRedactionConfig)
+    auth: AuthConfig = Field(default_factory=AuthConfig)
+    dos_limits: DoSLimitsConfig = Field(default_factory=DoSLimitsConfig)
+    rate_limit: RateLimitConfig = Field(default_factory=RateLimitConfig)
+    egress_policy: EgressPolicyConfig = Field(default_factory=EgressPolicyConfig)
 
 
 class VisionConfig(BaseModel):
@@ -388,6 +509,42 @@ class AppConfig(BaseModel):
             The API key, or ``None`` if that environment variable is unset.
         """
         return os.environ.get(self.judge.anthropic.api_key_env_var)
+
+    def jwt_signing_key(self) -> str | bytes:
+        """Resolve the JWT verification key per `security.auth.jwt.algorithm`.
+
+        Returns
+        -------
+        str | bytes
+            The HS256 shared secret (from `jwt.secret_env_var`), or the
+            PEM-encoded public key bytes read from the file named by
+            `jwt.public_key_path_env_var` for RS256/ES256.
+
+        Raises
+        ------
+        RuntimeError
+            If the relevant environment variable is unset or empty, or
+            (for RS256/ES256) the PEM file it names does not exist.
+        """
+        jwt_config = self.security.auth.jwt
+        if jwt_config.algorithm == "HS256":
+            value = os.environ.get(jwt_config.secret_env_var)
+            if not value:
+                raise RuntimeError(
+                    f"Environment variable '{jwt_config.secret_env_var}' is not set. "
+                    "Set it to the HS256 shared signing secret."
+                )
+            return value
+        path_value = os.environ.get(jwt_config.public_key_path_env_var)
+        if not path_value:
+            raise RuntimeError(
+                f"Environment variable '{jwt_config.public_key_path_env_var}' is not set. "
+                f"Set it to a PEM public key file path for {jwt_config.algorithm}."
+            )
+        key_path = Path(path_value)
+        if not key_path.is_file():
+            raise RuntimeError(f"JWT public key file not found: {key_path}")
+        return key_path.read_bytes()
 
     def prompt_template_path(self) -> Path:
         """Resolve `generation.prompt.path`, relative to the repo root if not absolute.

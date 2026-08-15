@@ -34,5 +34,6 @@ repos:
           - types-psycopg2
           - fastapi>=0.115
           - python-dotenv>=1.0
+          - pyjwt>=2.8
         args: [--config-file=pyproject.toml]
         files: ^src/

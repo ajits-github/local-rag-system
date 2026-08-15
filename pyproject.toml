@@ -23,6 +23,8 @@ dependencies = [
     "ollama>=0.3",
     "python-dotenv>=1.0",
     "rank-bm25>=0.2",
+    "pyjwt>=2.8",
+    "slowapi>=0.1.9",
 ]
 
 [project.optional-dependencies]
@@ -111,6 +113,7 @@ module = [
     "anthropic.*",
     "mlflow.*",
     "rank_bm25.*",
+    "slowapi.*",
 ]
 ignore_missing_imports = true
 

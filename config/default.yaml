@@ -97,3 +97,34 @@ security:
     cross_tenant_support_roles: ["techfusion_support"]
   field_redaction:
     enabled: false # no-op when false; see config/experiments/secure-rag-baseline-v1-field-redaction.yaml
+  auth:
+    enabled: false # no-op when false; see docs/architecture.md and config/experiments/secure-rag-baseline-v2-jwt-auth.yaml
+    insecure_dev_mode: false # only relevant when enabled=true; never overrides a present-but-invalid JWT
+    ingest_roles: ["security_admin", "system_admin", "techfusion_support"]
+    jwt:
+      algorithm: HS256 # swap point: HS256 | RS256 | ES256
+      secret_env_var: JWT_HS256_SECRET
+      public_key_path_env_var: JWT_PUBLIC_KEY_PATH
+      issuer: null # null = issuer claim not checked
+      audience: null # null = audience claim not checked
+      leeway_seconds: 30
+      required_claims: ["sub", "tenant_id", "roles"]
+  dos_limits:
+    max_query_length: 2000
+    max_top_k: 20
+    max_filters_bytes: 4096
+    max_upload_bytes: 26214400 # 25 MiB
+  rate_limit:
+    enabled: false # no-op when false; in-process/single-instance limiter, see docs/architecture.md
+    requests_per_minute: 60
+    key: tenant # swap point: tenant | ip
+  egress_policy:
+    enabled: false # no-op when false; gates hosted RAGAS judge calls only, see docs/architecture.md
+    block_unredacted_sensitive_fields: true
+    require_authoritative_trust: false
+    blocked_tenant_ids: []
+    classification_policy:
+      public: true
+      internal: true
+      confidential: false
+      restricted: false
