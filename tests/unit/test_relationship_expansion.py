@@ -16,6 +16,7 @@ def _chunk(
     chunk_index: int = 0,
     parent_chunk_id: str | None = None,
     source: str = "a.md",
+    sensitive_field_ids: list[str] | None = None,
 ) -> Chunk:
     """Build a Chunk with minimal-but-valid metadata for expansion tests."""
     now = datetime.now(UTC)
@@ -33,6 +34,7 @@ def _chunk(
             dataset_id="test-dataset",
             section_path=section_path,
             parent_chunk_id=parent_chunk_id,
+            sensitive_field_ids=sensitive_field_ids,
         ),
     )
 
@@ -364,3 +366,42 @@ def test_expansion_threads_authorization_context_into_relationship_lookups():
     passed_auth = vectorstore.get_chunks_by_ids_auth_calls[0]
     assert passed_auth is not None
     assert passed_auth.tenant_id == "tenant_alpha"
+
+
+_ALPHA_ADMIN_KEY = "SYNTHETIC_ONLY_ALPHA_KEY_7Q4M_DO_NOT_USE"
+
+
+def test_field_redaction_applies_to_relationship_expanded_content():
+    """Task section 7: an expanded parent/neighbor chunk is redacted under the same rules.
+
+    A safe, non-sensitive chunk expands to a parent containing a
+    protected field -- the expansion step must not bypass field-level
+    redaction just because the content arrived via a second lookup
+    (get_chunks_by_ids) rather than the primary search() call.
+    """
+    from rag.retrieval.authorization import AuthorizationContext
+
+    child = _chunk("c1", "The retry delay is 45 seconds.", parent_chunk_id="parent-1")
+    parent = _chunk(
+        "parent-1",
+        f"The synthetic test key is {_ALPHA_ADMIN_KEY}.",
+        sensitive_field_ids=["synthetic_admin_credential"],
+    )
+    vectorstore = FakeVectorStore(
+        results=[_result(child, score=0.7)], chunks_by_id={"parent-1": parent}
+    )
+    vectorstore.list_document_versions = lambda dataset_id: []
+    config = _config_with_expansion(enabled=True, include_parent=True, include_neighbors=False)
+    config = config.model_copy(deep=True)
+    config.security.authorization.enabled = True
+    config.security.field_redaction.enabled = True
+    auth = AuthorizationContext(tenant_id="tenant_alpha", roles=["tenant_alpha_operator"])
+
+    results = _pipeline(config, vectorstore).retrieve(
+        "q", filters={"dataset_id": "techfusion"}, auth=auth
+    )
+
+    expanded = next(r for r in results if r.origin == "expanded")
+    assert _ALPHA_ADMIN_KEY not in expanded.chunk.content
+    assert "[REDACTED:SENSITIVE_FIELD]" in expanded.chunk.content
+    assert expanded.redacted_field_ids == ["synthetic_admin_credential"]

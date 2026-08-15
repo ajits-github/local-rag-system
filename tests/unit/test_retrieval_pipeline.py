@@ -18,7 +18,13 @@ def _make_indexed_results(n: int, prefix: str = "d") -> list[SearchResult]:
     ]
 
 
-def _make_result(chunk_id: str, content: str, source: str, score: float) -> SearchResult:
+def _make_result(
+    chunk_id: str,
+    content: str,
+    source: str,
+    score: float,
+    sensitive_field_ids: list[str] | None = None,
+) -> SearchResult:
     """Build a SearchResult with minimal-but-valid chunk metadata."""
     now = datetime.now(UTC)
     metadata = ChunkMetadata(
@@ -30,6 +36,7 @@ def _make_result(chunk_id: str, content: str, source: str, score: float) -> Sear
         last_modified=now,
         chunk_index=0,
         dataset_id="test-dataset",
+        sensitive_field_ids=sensitive_field_ids,
     )
     return SearchResult(chunk=Chunk(id=chunk_id, content=content, metadata=metadata), score=score)
 
@@ -650,3 +657,133 @@ def test_retrieve_flags_injection_suspected_on_results():
     by_id = {r.chunk.id: r for r in results}
     assert by_id["c1"].injection_suspected is True
     assert by_id["c2"].injection_suspected is False
+
+
+_ALPHA_ADMIN_KEY = "SYNTHETIC_ONLY_ALPHA_KEY_7Q4M_DO_NOT_USE"
+
+
+def _config_with_field_redaction(enabled: bool):
+    """`load_config()` with `security.field_redaction.enabled` overridden."""
+    config = load_config().model_copy(deep=True)
+    config.security.field_redaction.enabled = enabled
+    return config
+
+
+def test_field_redaction_disabled_by_default_is_a_noop():
+    """With field_redaction.enabled at its default (False), sensitive content passes through."""
+    result = _make_result(
+        "c1",
+        f"The synthetic test key is {_ALPHA_ADMIN_KEY}.",
+        source="a.md",
+        score=0.9,
+        sensitive_field_ids=["synthetic_admin_credential"],
+    )
+    vectorstore = FakeVectorStore([result])
+    pipeline = RetrievalPipeline(
+        load_config(), vectorstore=vectorstore, embedder=FakeEmbedder(), reranker=FakeReranker()
+    )
+
+    results = pipeline.retrieve("q", candidate_k=1, reranker_top_n=1, generation_context_top_n=1)
+
+    assert _ALPHA_ADMIN_KEY in results[0].chunk.content
+    assert results[0].redacted_field_ids == []
+
+
+def test_field_redaction_enabled_redacts_for_unauthorized_role():
+    """An authorized document + unauthorized role gets the value replaced, chunk kept."""
+    from rag.retrieval.authorization import AuthorizationContext
+
+    result = _make_result(
+        "c1",
+        f"The synthetic test key is {_ALPHA_ADMIN_KEY}. The retry delay is 45 seconds.",
+        source="a.md",
+        score=0.9,
+        sensitive_field_ids=["synthetic_admin_credential"],
+    )
+    vectorstore = FakeVectorStore([result])
+    config = _config_with_field_redaction(enabled=True)
+    config.security.authorization.enabled = True
+    pipeline = RetrievalPipeline(
+        config, vectorstore=vectorstore, embedder=FakeEmbedder(), reranker=FakeReranker()
+    )
+    auth = AuthorizationContext(tenant_id="tenant_alpha", roles=["tenant_alpha_operator"])
+
+    results = pipeline.retrieve(
+        "q", candidate_k=1, reranker_top_n=1, generation_context_top_n=1, auth=auth
+    )
+
+    assert _ALPHA_ADMIN_KEY not in results[0].chunk.content
+    assert "[REDACTED:SENSITIVE_FIELD]" in results[0].chunk.content
+    assert "45 seconds" in results[0].chunk.content  # rest of the chunk preserved
+    assert results[0].redacted_field_ids == ["synthetic_admin_credential"]
+
+
+def test_field_redaction_enabled_preserves_value_for_authorized_role():
+    """A caller whose role is on the field policy's allowed list sees the raw value."""
+    from rag.retrieval.authorization import AuthorizationContext
+
+    result = _make_result(
+        "c1",
+        f"The synthetic test key is {_ALPHA_ADMIN_KEY}.",
+        source="a.md",
+        score=0.9,
+        sensitive_field_ids=["synthetic_admin_credential"],
+    )
+    vectorstore = FakeVectorStore([result])
+    config = _config_with_field_redaction(enabled=True)
+    config.security.authorization.enabled = True
+    pipeline = RetrievalPipeline(
+        config, vectorstore=vectorstore, embedder=FakeEmbedder(), reranker=FakeReranker()
+    )
+    auth = AuthorizationContext(tenant_id="tenant_alpha", roles=["tenant_alpha_admin"])
+
+    results = pipeline.retrieve(
+        "q", candidate_k=1, reranker_top_n=1, generation_context_top_n=1, auth=auth
+    )
+
+    assert _ALPHA_ADMIN_KEY in results[0].chunk.content
+    assert results[0].redacted_field_ids == []
+
+
+def test_field_redaction_fails_closed_when_no_authorization_context_supplied():
+    """Regression test (design-review adjustment 1): missing identity must redact, not pass through.
+
+    Even with document-level authorization untouched (no `auth` passed at
+    all -- e.g. an open/unauthenticated caller, or `authorization.enabled`
+    itself left False), enabling `field_redaction` alone must still
+    redact a tagged sensitive field rather than treating the missing
+    `AuthorizationContext` as unrestricted access.
+    """
+    result = _make_result(
+        "c1",
+        f"The synthetic test key is {_ALPHA_ADMIN_KEY}.",
+        source="a.md",
+        score=0.9,
+        sensitive_field_ids=["synthetic_admin_credential"],
+    )
+    vectorstore = FakeVectorStore([result])
+    config = _config_with_field_redaction(enabled=True)
+    assert config.security.authorization.enabled is False  # no identity ever resolved
+    pipeline = RetrievalPipeline(
+        config, vectorstore=vectorstore, embedder=FakeEmbedder(), reranker=FakeReranker()
+    )
+
+    results = pipeline.retrieve("q", candidate_k=1, reranker_top_n=1, generation_context_top_n=1)
+
+    assert _ALPHA_ADMIN_KEY not in results[0].chunk.content
+    assert results[0].redacted_field_ids == ["synthetic_admin_credential"]
+
+
+def test_field_redaction_skips_untagged_chunks_entirely():
+    """A chunk with no sensitive_field_ids tag is never scanned/modified."""
+    result = _make_result("c1", "The retry delay is 45 seconds.", source="a.md", score=0.9)
+    vectorstore = FakeVectorStore([result])
+    config = _config_with_field_redaction(enabled=True)
+    pipeline = RetrievalPipeline(
+        config, vectorstore=vectorstore, embedder=FakeEmbedder(), reranker=FakeReranker()
+    )
+
+    results = pipeline.retrieve("q", candidate_k=1, reranker_top_n=1, generation_context_top_n=1)
+
+    assert results[0].chunk.content == "The retry delay is 45 seconds."
+    assert results[0].redacted_field_ids == []
