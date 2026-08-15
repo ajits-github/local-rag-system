@@ -43,6 +43,18 @@ class FakeVectorStore:
         """Return no results, always; unused by these tests."""
         return []
 
+    def list_document_sources(self, dataset_id: str) -> list[str]:
+        """Report no pre-existing documents -- every ingest_path call here starts fresh."""
+        return []
+
+    def delete_documents_by_source(self, dataset_id: str, sources: list[str]) -> int:
+        """No-op: these tests never exercise deleted-document detection."""
+        return 0
+
+    def count_chunks_by_document(self, dataset_id: str) -> dict[str, int]:
+        """No-op: these tests never exercise the chunks_reused stat."""
+        return {}
+
 
 class FakeEmbedder:
     """Minimal Embedder double: returns a fixed placeholder vector."""

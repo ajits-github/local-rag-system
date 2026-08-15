@@ -19,6 +19,7 @@ from rag.embedders.base import Embedder
 from rag.factory import build_embedder, build_vectorstore, build_vision_provider
 from rag.ingestion.writer import Writer
 from rag.loaders.registry import get_loader
+from rag.schemas import IngestionStats
 from rag.vectorstore.base import VectorStore
 from rag.vision.base import VisionProvider
 
@@ -141,7 +142,7 @@ class IngestionPipeline:
         )
         return {"document_id": document_id, "chunks_written": len(chunks), "changed": True}
 
-    def ingest_path(self, path: Path, dataset_id: str) -> list[dict[str, Any]]:
+    def ingest_path(self, path: Path, dataset_id: str) -> IngestionStats:
         """Ingest a single file, or recursively ingest a directory tree.
 
         Every chunk written is tagged with `dataset_id`, which isolates it
@@ -154,6 +155,24 @@ class IngestionPipeline:
         `runbooks/postgres`, etc. as filterable metadata within that
         dataset.
 
+        Per-file incremental behavior (new/changed/unchanged, via stable
+        `(source, dataset_id)` identity + checksum) already lived entirely
+        in `ingest_file`/`VectorStore.get_or_create_document_id` before this
+        milestone -- an unchanged file's loader still runs (cheap: one file
+        read + hash), but it is never rechunked, re-embedded, or rewritten.
+        What this method adds: (1) **deleted-document detection** -- a
+        directory walk only ever discovers files that currently exist on
+        disk, so a source removed since the last ingestion previously stayed
+        in Postgres forever; this now diffs the pre-run
+        `VectorStore.list_document_sources(dataset_id)` snapshot against
+        what's discovered this run and deletes the difference via
+        `delete_documents_by_source`. Skipped for a single-file target (no
+        directory listing to diff against). (2) **aggregate statistics**
+        (discovered/new/changed/unchanged/deleted/chunks_embedded/
+        chunks_reused) via `IngestionStats`, consumed by
+        `eval/run_eval.py`'s corpus-lineage reporting and printed by this
+        module's CLI.
+
         Parameters
         ----------
         path : Path
@@ -163,20 +182,83 @@ class IngestionPipeline:
 
         Returns
         -------
-        list[dict[str, Any]]
-            One `ingest_file` result dict per file ingested.
+        IngestionStats
+            Aggregate counts plus one `ingest_file`-shaped entry (with an
+            added `"status"` key: `"new"`/`"changed"`/`"unchanged"`) per
+            file processed, in `.results`.
         """
         path = Path(path)
+        existing_sources = set(self._vectorstore.list_document_sources(dataset_id))
+
         if not path.is_dir():
-            return [self.ingest_file(path, dataset_id)]
+            result = self.ingest_file(path, dataset_id)
+            discovered = [str(path)]
+            return self._aggregate_ingestion_stats(
+                [result], discovered, dataset_id, existing_sources, detect_deletions=False
+            )
 
         results = []
+        discovered = []
         for ext in self._config.ingestion.supported_extensions:
             for file_path in sorted(path.rglob(f"*{ext}")):
                 relative_dir = file_path.relative_to(path).parent
                 category = None if relative_dir == Path(".") else relative_dir.as_posix()
                 results.append(self.ingest_file(file_path, dataset_id, category=category))
-        return results
+                discovered.append(str(file_path))
+        return self._aggregate_ingestion_stats(
+            results, discovered, dataset_id, existing_sources, detect_deletions=True
+        )
+
+    def _aggregate_ingestion_stats(
+        self,
+        results: list[dict[str, Any]],
+        discovered_sources: list[str],
+        dataset_id: str,
+        existing_sources_before: set[str],
+        detect_deletions: bool,
+    ) -> IngestionStats:
+        """Classify each file's status, delete removed documents, and total chunk counts."""
+        deleted_count = 0
+        if detect_deletions:
+            deleted_sources = existing_sources_before - set(discovered_sources)
+            if deleted_sources:
+                deleted_count = self._vectorstore.delete_documents_by_source(
+                    dataset_id, sorted(deleted_sources)
+                )
+
+        new_count = changed_count = unchanged_count = 0
+        chunks_embedded = 0
+        reused_document_ids: list[str] = []
+        for source, result in zip(discovered_sources, results, strict=True):
+            if not result["changed"]:
+                status = "unchanged"
+                unchanged_count += 1
+                reused_document_ids.append(result["document_id"])
+            elif source in existing_sources_before:
+                status = "changed"
+                changed_count += 1
+                chunks_embedded += result["chunks_written"]
+            else:
+                status = "new"
+                new_count += 1
+                chunks_embedded += result["chunks_written"]
+            result["status"] = status
+
+        chunks_reused = 0
+        if reused_document_ids:
+            counts = self._vectorstore.count_chunks_by_document(dataset_id)
+            chunks_reused = sum(counts.get(doc_id, 0) for doc_id in reused_document_ids)
+
+        return IngestionStats(
+            discovered=len(discovered_sources),
+            new=new_count,
+            changed=changed_count,
+            unchanged=unchanged_count,
+            deleted=deleted_count,
+            chunks_embedded=chunks_embedded,
+            chunks_reused=chunks_reused,
+            results=results,
+        )
 
 
 def main() -> None:
@@ -206,8 +288,14 @@ def main() -> None:
     if args.clear:
         pipeline.clear_dataset(args.dataset_id)
         print(f"Cleared dataset '{args.dataset_id}'")
-    for result in pipeline.ingest_path(Path(args.path), args.dataset_id):
+    stats = pipeline.ingest_path(Path(args.path), args.dataset_id)
+    for result in stats.results:
         print(result)
+    print(
+        f"discovered={stats.discovered} new={stats.new} changed={stats.changed} "
+        f"unchanged={stats.unchanged} deleted={stats.deleted} "
+        f"chunks_embedded={stats.chunks_embedded} chunks_reused={stats.chunks_reused}"
+    )
 
 
 if __name__ == "__main__":
