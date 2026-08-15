@@ -1,0 +1,149 @@
+# secure_rag_baseline_v2_jwt_auth: the auth-boundary milestone's primary
+# candidate.
+#
+# Identical to secure-rag-baseline-v1-field-redaction.yaml (experiment_027)
+# except:
+#   - security.auth.enabled: true (JWT verification required at POST
+#     /query -- see src/rag/api/auth.py, api/deps.py:get_current_identity)
+#   - security.auth.insecure_dev_mode: false (no body-trusted fallback --
+#     production-shaped: a missing/invalid token is always rejected)
+# generation.prompt is deliberately left at v3, matching experiment_027 --
+# structural LLM system/user role separation (see generation/base.py's
+# LLM.generate(system, user) and OllamaLLM's chat-endpoint switch) is
+# always active regardless of prompt version, so this A/B isolates the
+# JWT-boundary change from any prompt-wording change. A v4-prompt
+# evaluation is a separate, optional follow-up, not part of this
+# comparison. Deterministic eval note: rag.eval.run_eval's gold-driven
+# harness calls RetrievalPipeline directly (never through POST /query),
+# so security.auth.enabled has no effect on its own metrics -- it only
+# matters for evaluate_authentication_boundary_probes (opt-in,
+# --include-api-probes) and real HTTP-layer testing.
+#
+# Every component below is a "swap point": change `provider` (and its
+# provider-specific block) to try a different embedding model, vector
+# backend, chunker, reranker, or LLM without touching pipeline code.
+#
+# Secrets and host/port values are never hardcoded here: fields ending in
+# `_env_var` name an environment variable that is resolved at load time by
+# rag.config.Settings.
+
+app:
+  name: local-rag-system
+  log_level: INFO
+
+embedding:
+  provider: sentence_transformers # swap point
+  model_name: sentence-transformers/all-MiniLM-L6-v2
+  device: cpu
+  batch_size: 32
+  normalize: true
+  dimension: 384 # must match model output dim; used to size the pgvector column
+
+vectorstore:
+  provider: pgvector # swap point (future: chroma, faiss, ...)
+  connection_env_var: DATABASE_URL # never hardcode host/port/credentials
+  documents_table: documents
+  chunks_table: chunks
+  distance_metric: cosine
+
+chunking:
+  provider: structured_markdown # swap point: recursive_character | structured_markdown
+  chunk_size: 500
+  chunk_overlap: 50
+  structured_markdown:
+    table_row_group_size: 20
+    max_atomic_block_chars: 2000
+
+reranker:
+  provider: none # swap point: none | cross_encoder | cohere
+  cross_encoder:
+    model_name: cross-encoder/ms-marco-MiniLM-L-6-v2
+  cohere:
+    model_name: rerank-english-v3.0
+    api_key_env_var: COHERE_API_KEY
+
+generation:
+  provider: ollama # swap point
+  model_name: qwen2.5:3b
+  base_url_env_var: OLLAMA_BASE_URL
+  temperature: 0.0 # matches secure_rag_baseline_v1_field_redaction/classic_rag_baseline_v1
+  max_tokens: 512
+  seed: 42 # matches secure_rag_baseline_v1_field_redaction/classic_rag_baseline_v1
+  prompt:
+    id: rag_answer
+    version: v3 # deliberately unchanged from experiment_027 -- see header note
+    path: src/rag/prompts/templates/rag_answer_v3.yaml
+
+judge:
+  provider: openai # swap point: openai | anthropic | ollama (ollama = local, for experimentation only)
+  temperature: 0.0
+  max_tokens: 1024
+  openai:
+    model_name: gpt-4o-mini
+    api_key_env_var: OPENAI_API_KEY
+  anthropic:
+    model_name: claude-haiku-4-5-20251001
+    api_key_env_var: ANTHROPIC_API_KEY
+  ollama:
+    model_name: llama3.1:8b # deliberately distinct from generation.model_name
+
+mlflow:
+  enabled: true
+  tracking_uri: "sqlite:///mlflow.db" # swap point: local sqlite file | a real MLflow tracking server URL
+  experiment_name: local-rag-system
+
+retrieval:
+  provider: hybrid # matches secure_rag_baseline_v1_field_redaction/classic_rag_baseline_v1
+  candidate_k: 5
+  generation_context_top_n: 3
+  hybrid:
+    rrf_k: 60
+  relationship_expansion:
+    enabled: true # matches secure_rag_baseline_v1_field_redaction/classic_rag_baseline_v1
+    include_parent: true
+    include_neighbors: true
+    max_related_elements: 3
+
+ingestion:
+  supported_extensions: [".pdf", ".docx", ".html", ".htm", ".txt", ".md"]
+
+vision:
+  provider: none # hosted vision OFF (not this milestone)
+
+security:
+  authorization:
+    enabled: true # unchanged from secure-rag-baseline-v1-field-redaction.yaml
+    cross_tenant_support_roles: ["techfusion_support"]
+  field_redaction:
+    enabled: true # unchanged from secure-rag-baseline-v1-field-redaction.yaml
+  auth:
+    enabled: true # THE auth-boundary milestone's toggle -- see src/rag/api/auth.py
+    insecure_dev_mode: false # production-shaped: no body-trusted fallback
+    ingest_roles: ["security_admin", "system_admin", "techfusion_support"]
+    jwt:
+      algorithm: HS256
+      secret_env_var: JWT_HS256_SECRET
+      public_key_path_env_var: JWT_PUBLIC_KEY_PATH
+      issuer: null
+      audience: null
+      leeway_seconds: 30
+      required_claims: ["sub", "tenant_id", "roles"]
+  dos_limits:
+    max_query_length: 2000
+    max_top_k: 20
+    max_filters_bytes: 4096
+    max_upload_bytes: 26214400
+  rate_limit:
+    enabled: false # not the focus of this A/B; see docs/architecture.md's documented limitation
+    requests_per_minute: 60
+    key: tenant
+  egress_policy:
+    enabled: false # gates hosted RAGAS judge calls only; no RAGAS run planned in this pass
+    block_unredacted_sensitive_fields: true
+    require_authoritative_trust: false
+    blocked_tenant_ids: []
+    classification_policy:
+      public: true
+      internal: true
+      confidential: false
+      restricted: false

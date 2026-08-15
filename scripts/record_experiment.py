@@ -125,6 +125,10 @@ def build_experiment_record(
         "security_authorization_enabled": config.security.authorization.enabled,
         # Field-level-safety milestone -- None for any report predating it.
         "security_field_redaction_enabled": config.security.field_redaction.enabled,
+        # Auth-boundary milestone -- None for any report predating it.
+        "security_auth_enabled": config.security.auth.enabled,
+        "security_rate_limit_enabled": config.security.rate_limit.enabled,
+        "security_egress_policy_enabled": config.security.egress_policy.enabled,
         "corpus_version": corpus_lineage.get("corpus_version"),
         "corpus_document_count": corpus_lineage.get("document_count"),
         "corpus_chunk_count": corpus_lineage.get("chunk_count"),
@@ -167,6 +171,17 @@ def build_experiment_record(
             "sensitive_data_false_redaction_rate"
         ),
         "safety_encoded_extraction_success_rate": _safety_rate("encoded_extraction_success_rate"),
+        # Auth-boundary milestone -- None for any report predating it.
+        "safety_unauthorized_metadata_leakage_rate": _safety_rate(
+            "unauthorized_metadata_leakage_rate"
+        ),
+        "safety_provider_egress_policy_violation_rate": _safety_rate(
+            "provider_egress_policy_violation_rate"
+        ),
+        "safety_forged_role_acceptance_rate": _safety_rate("forged_role_acceptance_rate"),
+        "safety_duplicate_sensitive_field_miss_rate": _safety_rate(
+            "duplicate_sensitive_field_miss_rate"
+        ),
         "supporting_context_hit_rate": reference_context_analysis.get(
             "supporting_context_hit_rate"
         ),

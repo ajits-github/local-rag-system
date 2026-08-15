@@ -46,6 +46,12 @@ _PARAM_FIELDS = [
     # Field-level-safety milestone: independent on/off toggle for
     # retrieval/field_policy.py's redaction pass -- see FieldRedactionConfig.
     "security_field_redaction_enabled",
+    # Auth-boundary milestone: independent on/off toggles -- JWT auth at
+    # the API boundary, in-process rate limiting, hosted-provider egress
+    # policy. See AuthConfig/RateLimitConfig/EgressPolicyConfig.
+    "security_auth_enabled",
+    "security_rate_limit_enabled",
+    "security_egress_policy_enabled",
     "corpus_version",
     "corpus_document_count",
     "corpus_chunk_count",
@@ -147,6 +153,11 @@ _METRIC_FIELDS = [
     "safety_sensitive_data_authorized_disclosure_accuracy",
     "safety_sensitive_data_false_redaction_rate",
     "safety_encoded_extraction_success_rate",
+    # Auth-boundary milestone.
+    "safety_unauthorized_metadata_leakage_rate",
+    "safety_provider_egress_policy_violation_rate",
+    "safety_forged_role_acceptance_rate",
+    "safety_duplicate_sensitive_field_miss_rate",
 ]
 
 
@@ -217,6 +228,7 @@ def log_experiment(
                 "security_field_redaction_enabled": str(
                     bool(record.get("security_field_redaction_enabled"))
                 ),
+                "security_auth_enabled": str(bool(record.get("security_auth_enabled"))),
             }
         )
         for field in _PARAM_FIELDS:
