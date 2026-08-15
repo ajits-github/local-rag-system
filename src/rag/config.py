@@ -239,6 +239,34 @@ class IngestionConfig(BaseModel):
     )
 
 
+class AuthorizationConfig(BaseModel):
+    """Retrieval-time tenant/role/freshness enforcement tunables.
+
+    `enabled: false` (the default) is a true no-op: `RetrievalPipeline`
+    still builds an `AuthorizationContext` when the caller supplies one, but
+    every chunk with `tenant_id IS NULL` (the entire pre-existing corpus)
+    passes unconditionally either way, and the config flag exists so a
+    security-focused experiment config can flip it on without also having
+    to touch every other retrieval knob -- see
+    `config/experiments/secure-rag-baseline-v1.yaml`. `cross_tenant_support_roles`
+    is the explicit, configurable allow-list of role names that may cross a
+    tenant boundary *only when that same role also appears in the target
+    document's own `allowed_roles`* (see `retrieval/authorization.py`) --
+    deliberately not "any role appearing in both places", to avoid an
+    accidental allowed_roles typo silently granting cross-tenant access to
+    an unrelated role.
+    """
+
+    enabled: bool = False
+    cross_tenant_support_roles: list[str] = Field(default_factory=lambda: ["techfusion_support"])
+
+
+class SecurityConfig(BaseModel):
+    """Root config block for the safety/freshness milestone's retrieval controls."""
+
+    authorization: AuthorizationConfig = Field(default_factory=AuthorizationConfig)
+
+
 class VisionConfig(BaseModel):
     """Vision provider selection for image-derived indexable content.
 
@@ -272,6 +300,7 @@ class AppConfig(BaseModel):
     retrieval: RetrievalConfig
     ingestion: IngestionConfig
     vision: VisionConfig = Field(default_factory=VisionConfig)
+    security: SecurityConfig = Field(default_factory=SecurityConfig)
 
     # -- resolved env accessors -------------------------------------------------
     # Kept as methods (not fields) so they always read the *current* process

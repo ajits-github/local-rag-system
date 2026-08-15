@@ -90,3 +90,8 @@ ingestion:
 
 vision:
   provider: none # swap point: none (only provider implemented so far; see docs/architecture.md)
+
+security:
+  authorization:
+    enabled: false # no-op when false; see docs/architecture.md and config/experiments/secure-rag-baseline-v1.yaml
+    cross_tenant_support_roles: ["techfusion_support"]

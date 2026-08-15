@@ -238,6 +238,51 @@ def test_classic_rag_baseline_v1_changes_only_temperature_and_seed():
     assert baseline_dict == classic_dict
 
 
+def test_default_config_authorization_disabled_by_default():
+    """config/default.yaml's security.authorization is off -- a no-op unless explicitly enabled."""
+    config = load_config()
+    assert config.security.authorization.enabled is False
+    assert config.security.authorization.cross_tenant_support_roles == ["techfusion_support"]
+
+
+def test_secure_rag_baseline_v1_changes_only_prompt_and_authorization():
+    """secure-rag-baseline-v1.yaml is classic-rag-baseline-v1.yaml + prompt v3 + auth enabled.
+
+    No other variable (retrieval, chunking, embedding, reranking, model,
+    temperature, seed, relationship expansion) differs -- matches this
+    project's established single-variable-isolation pattern for baseline
+    configs (see test_classic_rag_baseline_v1_changes_only_temperature_and_seed).
+    """
+    baseline = load_config("config/experiments/classic-rag-baseline-v1.yaml")
+    secure = load_config("config/experiments/secure-rag-baseline-v1.yaml")
+
+    assert baseline.generation.prompt.version == "v2"
+    assert secure.generation.prompt.version == "v3"
+    assert baseline.security.authorization.enabled is False
+    assert secure.security.authorization.enabled is True
+
+    baseline_dict = baseline.model_dump(
+        exclude={"generation": {"prompt"}, "security": {"authorization": {"enabled"}}}
+    )
+    secure_dict = secure.model_dump(
+        exclude={"generation": {"prompt"}, "security": {"authorization": {"enabled"}}}
+    )
+    assert baseline_dict == secure_dict
+
+
+def test_secure_rag_baseline_v1_auth_disabled_variant_isolates_only_authorization():
+    """The auth-disabled variant differs from secure-rag-baseline-v1.yaml only by that flag."""
+    secure = load_config("config/experiments/secure-rag-baseline-v1.yaml")
+    disabled = load_config("config/experiments/secure-rag-baseline-v1-auth-disabled.yaml")
+
+    assert secure.security.authorization.enabled is True
+    assert disabled.security.authorization.enabled is False
+
+    secure_dict = secure.model_dump(exclude={"security": {"authorization": {"enabled"}}})
+    disabled_dict = disabled.model_dump(exclude={"security": {"authorization": {"enabled"}}})
+    assert secure_dict == disabled_dict
+
+
 def test_all_live_config_files_migrated_to_new_cutoff_field_names():
     """Every config file AppConfig ever loads uses the new retrieval/reranker cutoff fields.
 
