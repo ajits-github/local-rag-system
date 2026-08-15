@@ -343,6 +343,8 @@ regenerate it instead (see "Recording a new experiment").
 | 22 | context/latency B RAGAS (15q sample): qwen3b ctx2 tok512 | hybrid | qwen2.5:3b | all-MiniLM-L6-v2 | none | v2 | on | 0.800 | 0.867 | 0.867 | 0.697 | 0.374 | 0.625 | 0.875 | 0.833 | 0.339 | 15.4s | techfusion | 2026-08-14 |
 | 23 | context/latency C RAGAS (15q sample): qwen3b ctx2 tok256 | hybrid | qwen2.5:3b | all-MiniLM-L6-v2 | none | v2 | on | 0.800 | 0.867 | 0.867 | 0.697 | 0.374 | 0.625 | 0.875 | 0.905 | 0.302 | 9.0s | techfusion | 2026-08-14 |
 | 24 | classic_rag_baseline_v1 | hybrid | qwen2.5:3b | all-MiniLM-L6-v2 | none | v2 | on | 0.911 | 0.946 | 0.952 | 0.824 | 0.448 | 0.788 | 0.842 | 0.902 | 0.503 | 24.9s | techfusion | 2026-08-14 |
+| 25 | secure_rag_baseline_v1_auth_disabled | hybrid | qwen2.5:3b | all-MiniLM-L6-v2 | none | v3 | on | 0.861 | 0.929 | 0.937 | 0.768 | 0.370 | 0.733 | 0.842 | - | - | 28.2s | techfusion | 2026-08-14 |
+| 26 | secure_rag_baseline_v1 | hybrid | qwen2.5:3b | all-MiniLM-L6-v2 | none | v3 | on | 0.788 | 0.832 | 0.865 | 0.753 | 0.390 | 0.781 | 0.842 | - | - | 28.5s | techfusion | 2026-08-14 |
 <!-- EXPERIMENTS_TABLE_END -->
 
 *Total latency is the mean of retrieval+generation per question, at the
@@ -365,6 +367,20 @@ calls, 1,115,731 input / 101,857 output tokens on `gpt-4o-mini`). Full
 analysis, per-question findings, and a correction to one of 13's original
 claims are in [`docs/architecture.md`](docs/architecture.md) and
 `PROJECT_JOURNAL.md`.
+
+**Experiments 25-26** are the safety/freshness milestone (retrieval-time
+tenant/role authorization, document-version freshness, trust filtering),
+run on the expanded 126-question gold set (84 original + 42 new
+safety-category rows): 25 = `security.authorization.enabled: false`
+baseline, 26 = **`secure_rag_baseline_v1`** (`enabled: true`), otherwise
+identical config. On the original 84 benign questions the two are
+byte-identical (Recall@5/@10, MRR, answer_quality, refusal_rate) —
+authorization adds no detectable quality cost on untenanted content.
+Safety metrics move cleanly toward correct with authorization on:
+`cross_tenant_leakage_rate` 1.0 → **0.0**, `stale_document_error_rate`
+0.077 → **0.0**. Full metric table (all 11 safety metrics), corpus
+lineage, and a real directory-layout bug this run caught are in
+[`experiments/reports/secure_rag_baseline_v1.md`](experiments/reports/secure_rag_baseline_v1.md).
 
 ### Recording a new experiment
 

@@ -32,6 +32,7 @@ data/uploads/*
 data/knowledge_base/
 data/eval/techfusion_gold.jsonl
 data/eval/techfusion_gold_old.jsonl
+data/eval/techfusion_gold_without_safety.jsonl
 data/eval/techfusion_gold_ragas_sample15.jsonl
 data/eval/techfusion_gold_v2_ragas_sample15.jsonl
 data/eval/baselines/
