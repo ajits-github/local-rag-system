@@ -38,13 +38,9 @@ _METADATA_COLUMNS = """chunk_id, document_id, chunk_index, content,
 def _build_where_clause(filters: dict[str, Any] | None) -> tuple[str, list[Any]]:
     """Build a `WHERE ...` SQL fragment and its bound params from a filters dict.
 
-    Module-level (not a method) so it's directly unit-testable without
-    constructing a `PgVectorStore`/opening a DB connection. Shared by
-    `PgVectorStore.search` and `.search_keyword` -- the only piece of
-    their query construction that's actually identical; their
-    ranking/limiting SQL diverges (`search` ranks+limits in SQL via
-    `ORDER BY ... LIMIT`, `search_keyword` fetches the full filtered set
-    unranked and ranks in Python via BM25).
+    Shared by `PgVectorStore.search` and `.search_keyword`. Dense search
+    ranks and limits in SQL, while keyword search fetches the filtered
+    corpus and ranks it in Python with BM25.
 
     Parameters
     ----------
@@ -54,7 +50,7 @@ def _build_where_clause(filters: dict[str, Any] | None) -> tuple[str, list[Any]]
     Returns
     -------
     tuple[str, list[Any]]
-        ``(where_sql, params)`` -- `where_sql` is ``""`` or
+        ``(where_sql, params)``. `where_sql` is ``""`` or
         ``"WHERE key = %s AND ..."``; `params` holds the bound values in
         the same order as the `%s` placeholders.
 
@@ -80,42 +76,33 @@ def build_authorization_where_clause(
 ) -> tuple[str, list[Any]]:
     """Build the authorization/freshness `AND (...)` SQL fragment for one query.
 
-    Module-level (unit-testable without a DB connection), structurally
-    separate from `_build_where_clause`: this predicate is never built from
-    caller-suppliable input (see `retrieval/authorization.py`'s docstring),
-    only from an `AuthorizationContext` a pipeline constructs itself, and it
-    is always ANDed on top of whatever `_build_where_clause` produces so it
-    can only narrow results, never broaden them.
+    Module-level and unit-testable without a DB connection. Structurally
+    separate from `_build_where_clause`: this predicate is built only from
+    a pipeline-constructed `AuthorizationContext`, never from
+    caller-suppliable input, and is always ANDed on top of
+    `_build_where_clause`'s fragment so it can only narrow results.
 
-    Enforcement rule (matches the TechFusion authorization matrix):
-    a chunk is visible when its `tenant_id IS NULL` (untenanted legacy
-    content -- never gated), OR the caller's tenant matches, OR the caller
-    holds a configured cross-tenant support role that is *also* listed in
-    this specific chunk's own `allowed_roles` (a document-specific grant,
-    not a blanket one) -- AND, independently, when `allowed_roles` is set
-    at all, the caller must hold at least one of them (this is what makes a
-    same-tenant request still subject to role checks, e.g. a plain
-    `employee` role denied a `restricted` document within their own
-    tenant). `resolved_excluded_document_ids` (populated by
-    `RetrievalPipeline.retrieve()` from `retrieval/freshness.py`) is ANDed
-    in as a further, independent exclusion, and so is
-    `require_trust_level` when set (section 7: a query that requires an
-    authoritative source excludes chunks whose `trust_level` doesn't
-    match, while leaving untenanted/untagged content -- `trust_level IS
-    NULL` -- unaffected).
+    Enforcement rule: a chunk is visible when its `tenant_id IS NULL`
+    (untenanted content, never gated), OR the caller's tenant matches, OR
+    the caller holds a configured cross-tenant support role that is also
+    listed in that chunk's own `allowed_roles`. Independently, when
+    `allowed_roles` is set at all, the caller must hold at least one of
+    them — this is what still subjects a same-tenant request to role
+    checks. `resolved_excluded_document_ids` and `require_trust_level`
+    (when set) are ANDed in as further, independent exclusions.
 
     Parameters
     ----------
     auth : AuthorizationContext | None
         `None` produces an empty (unrestricted) fragment.
     cross_tenant_support_roles : list[str]
-        `config.security.authorization.cross_tenant_support_roles` --
-        server policy, never caller-supplied.
+        Server policy for cross-tenant support access; never
+        caller-supplied.
 
     Returns
     -------
     tuple[str, list[Any]]
-        ``(sql_fragment, params)`` -- `sql_fragment` is `""` (unrestricted)
+        ``(sql_fragment, params)``. `sql_fragment` is `""` (unrestricted)
         or a bare, unprefixed boolean expression (no leading `WHERE`/`AND`);
         see `_combine_where_clauses` for how it's joined with
         `_build_where_clause`'s own fragment. Params are in placeholder order.
@@ -298,10 +285,8 @@ class PgVectorStore(VectorStore):
         maxconn : int, optional
             Maximum pooled connections, by default 5.
         cross_tenant_support_roles : list[str] | None, optional
-            `config.security.authorization.cross_tenant_support_roles` --
-            server policy for `build_authorization_where_clause`, by default
-            `["techfusion_support"]` (matching `AuthorizationConfig`'s
-            default) when omitted.
+            Server policy for `build_authorization_where_clause`, by
+            default `["techfusion_support"]` when omitted.
         """
         self._documents_table = documents_table
         self._chunks_table = chunks_table
@@ -317,19 +302,9 @@ class PgVectorStore(VectorStore):
     def _connection(self) -> Iterator[PgConnection]:
         """Check out a pooled connection, guaranteeing it's always returned.
 
-        `register_vector(conn)` runs *inside* the try/finally, not before
-        it -- a connection checked out via `pool.getconn()` is only ever
-        "ours" for as long as we hold a reference to it, so anything that
-        can raise between checkout and use (registering the vector type
-        adapter included) must already be inside the block that returns
-        it, or the connection leaks out of the pool forever. This was the
-        root cause of a real `PoolError: connection pool exhausted`: the
-        previous `_conn()` helper called `pool.getconn()` then
-        `register_vector(conn)` as two separate statements *before*
-        returning to the caller's own `try/finally`, so a `register_vector`
-        failure (e.g. the `vector` extension not yet installed on a fresh
-        database) checked out a connection that no `finally` block ever
-        saw, let alone returned.
+        `register_vector(conn)` runs inside the try/finally, so a failure
+        registering the vector type adapter still returns the connection
+        to the pool.
 
         Yields
         ------
@@ -638,14 +613,14 @@ class PgVectorStore(VectorStore):
         r"""See `VectorStore.search_keyword`.
 
         Builds a fresh in-memory `rank_bm25.BM25Okapi` index per call from
-        the (optionally filtered) chunk content fetched via SQL -- no
+        the optionally filtered chunk content fetched via SQL. There is no
         persistent BM25 index or caching. At this project's current scale
         (a few hundred chunks per dataset), rebuilding per query is
         sub-second and avoids the invalidation complexity of caching an
         index that would need to track re-ingestion; revisit (e.g. a
         persistent index, or Postgres `tsvector`/`ts_rank` full-text
         search) if corpus size ever grows enough to make this measurably
-        slow. Tokenization (`_tokenize`) is `\\w+`-based -- lowercase word
+        slow. Tokenization (`_tokenize`) is `\\w+`-based: lowercase word
         tokens with surrounding punctuation stripped, so e.g. JSON's
         `"maximum_wait_minutes":` still matches a plain query token
         `maximum_wait_minutes`. Still no stemming/lemmatization, so this

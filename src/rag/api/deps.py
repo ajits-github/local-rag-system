@@ -78,13 +78,12 @@ def get_current_identity(
 ) -> VerifiedIdentity | None:
     """Resolve the caller's verified identity from the `Authorization` header.
 
-    Returns `None` when `security.auth.enabled` is `False` -- today's
-    pre-milestone behavior, unchanged. When enabled, a valid
+    Returns `None` when `security.auth.enabled` is `False`. When enabled, a valid
     `Authorization: Bearer <jwt>` is required unless
     `security.auth.insecure_dev_mode` is `True` *and* no `Authorization`
     header was supplied at all; an invalid/expired/malformed/signature-
-    mismatched token is always rejected with 401 regardless of that flag
-    (fail-closed -- never a silent fallback to unrestricted retrieval).
+    mismatched token is always rejected with 401 regardless of that flag;
+    there is never a silent fallback to unrestricted retrieval.
 
     Sets `request.state.identity` as a side effect so a later-evaluated
     rate-limit key function (see `get_rate_limiter`) can read it.
@@ -151,8 +150,7 @@ def get_rate_limiter() -> Limiter:
     """Return the process-wide `slowapi.Limiter` singleton (in-memory backend).
 
     Bucketed per tenant when a verified identity is present, else per
-    client IP -- see `docs/architecture.md`'s auth-boundary section for
-    the documented single-process/multi-replica limitation. `enabled` is
+    client IP. `enabled` is
     read from config once at construction time (no hot-reload, matching
     every other config-derived singleton in this module).
     """

@@ -6,9 +6,9 @@ eval report's own metrics, and writes:
   - experiments/results/<experiment-id>.json  (flat, comparable record)
   - experiments/configs/<experiment-id>.yaml  (config snapshot)
   - an MLflow run (params/metrics/artifacts), unless config.mlflow.enabled
-    is false -- see rag.eval.mlflow_logger.
+    is false.
 
-This never re-runs evaluation -- it only records an existing report. Run
+This never re-runs evaluation. It only records an existing report. Run
 `rag.eval.run_eval --verbose` first, then point this at its output.
 
 Usage:
@@ -115,17 +115,13 @@ def build_experiment_record(
         "generation_temperature": config.generation.temperature,
         "generation_seed": config.generation.seed,
         "rrf_k": (config.retrieval.hybrid.rrf_k if config.retrieval.provider == "hybrid" else None),
-        # Multimodal/relationship-aware milestone fields -- None for any
-        # report predating them (older gold schema has no reference_contexts/
-        # relevant_images to compute these from at all, not just missing data).
+        # None for any report predating these fields (older gold schema has
+        # no reference_contexts/relevant_images to compute them from).
         "relationship_expansion_enabled": config.retrieval.relationship_expansion.enabled,
         "vision_provider": config.vision.provider,
-        # Safety/freshness milestone -- None for any report predating it
-        # (corpus_lineage/safety keys simply absent from an older report).
+        # None for any report predating these keys.
         "security_authorization_enabled": config.security.authorization.enabled,
-        # Field-level-safety milestone -- None for any report predating it.
         "security_field_redaction_enabled": config.security.field_redaction.enabled,
-        # Auth-boundary milestone -- None for any report predating it.
         "security_auth_enabled": config.security.auth.enabled,
         "security_rate_limit_enabled": config.security.rate_limit.enabled,
         "security_egress_policy_enabled": config.security.egress_policy.enabled,
@@ -139,11 +135,8 @@ def build_experiment_record(
         "corpus_gold_record_count": corpus_lineage.get("gold_record_count"),
         "corpus_gold_file_sha256": corpus_lineage.get("gold_file_sha256"),
         "corpus_digest": corpus_lineage.get("corpus_digest"),
-        # Renamed from safety_unauthorized_retrieval_rate (field-level-safety
-        # milestone -- see run_eval.py's document_unauthorized_retrieval_rate
-        # note). Historical experiment_025/026 records keep the old field
-        # name untouched; this and every field below it are simply absent
-        # on those pre-existing records rather than rewritten.
+        # Preserve compatibility with older reports that used the original
+        # safety metric name.
         "safety_document_unauthorized_retrieval_rate": _safety_rate(
             "document_unauthorized_retrieval_rate"
         ),
@@ -163,7 +156,7 @@ def build_experiment_record(
         "safety_refusal_accuracy": _safety_rate("refusal_accuracy"),
         "safety_false_refusal_rate": _safety_rate("false_refusal_rate"),
         "safety_poisoned_source_selection_rate": _safety_rate("poisoned_source_selection_rate"),
-        # Field-level-safety milestone -- None for any report predating it.
+        # None for any report predating these fields.
         "safety_sensitive_data_authorized_disclosure_accuracy": _safety_rate(
             "sensitive_data_authorized_disclosure_accuracy"
         ),
@@ -171,7 +164,7 @@ def build_experiment_record(
             "sensitive_data_false_redaction_rate"
         ),
         "safety_encoded_extraction_success_rate": _safety_rate("encoded_extraction_success_rate"),
-        # Auth-boundary milestone -- None for any report predating it.
+        # None for any report predating these fields.
         "safety_unauthorized_metadata_leakage_rate": _safety_rate(
             "unauthorized_metadata_leakage_rate"
         ),
@@ -186,8 +179,7 @@ def build_experiment_record(
             "supporting_context_hit_rate"
         ),
         "relevant_image_hit_rate": relevant_image_hit_rate.get("hit_rate"),
-        # Generation-context/token-budget milestone fields -- None for any
-        # report predating them.
+        # None for any report predating these fields.
         "prompt_tokens_mean": token_usage.get("prompt_tokens_mean"),
         "completion_tokens_mean": token_usage.get("completion_tokens_mean"),
         "unanswerable_refusal_rate": refusal_behavior.get("correct_refusal_rate"),

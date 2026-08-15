@@ -1,11 +1,11 @@
 """Mint a signed JWT for local manual testing of the authenticated API boundary.
 
-Auth-boundary milestone. For the default `HS256` algorithm, reads the same
-`JWT_HS256_SECRET` env var `config.jwt_signing_key()` reads, so a token
-minted here verifies successfully against a locally running `POST /query`
-with `security.auth.enabled: true`. RS256/ES256 signing needs a PRIVATE
-key this script does not read from config (config only names a PUBLIC key
-path, for verification) -- pass `--private-key-path` explicitly for those.
+For the default `HS256` algorithm, reads the same `JWT_HS256_SECRET` env
+var `config.jwt_signing_key()` reads, so a token minted here verifies
+successfully against a locally running `POST /query` with
+`security.auth.enabled: true`. RS256/ES256 signing needs a private key
+this script does not read from config; pass `--private-key-path`
+explicitly for those.
 
 Usage:
     JWT_HS256_SECRET=dev-secret python scripts/issue_dev_token.py \

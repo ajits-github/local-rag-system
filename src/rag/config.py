@@ -81,15 +81,11 @@ class CohereRerankConfig(BaseModel):
 class RerankerConfig(BaseModel):
     """Reranker provider selection, plus each provider's own settings block.
 
-    `top_n` has reranker semantics only: how many candidates a REAL
-    reranker (`cross_encoder`/`cohere`) retains after rescoring. It is
-    inert when `provider == "none"` -- `NoOpReranker` is a true identity
-    and ignores it entirely (see `rerankers/noop.py`). The final number of
-    chunks that reach generation is controlled independently by
-    `retrieval.generation_context_top_n`, applied uniformly by
-    `RetrievalPipeline.retrieve()` regardless of which reranker (if any)
-    ran -- see that module's docstring for the full cutoff-semantics
-    writeup.
+    `top_n` has reranker semantics only: how many candidates a real
+    reranker (`cross_encoder` or `cohere`) retains after rescoring. It is
+    inert when `provider == "none"` because `NoOpReranker` is an identity.
+    The final number of chunks that reach generation is controlled
+    independently by `retrieval.generation_context_top_n`.
     """
 
     provider: Literal["none", "cross_encoder", "cohere"] = "none"
@@ -109,15 +105,11 @@ class PromptConfig(BaseModel):
 class GenerationConfig(BaseModel):
     """LLM provider selection and generation parameters.
 
-    `seed` is `None` by default (non-deterministic sampling, matching prior
-    behavior). Ollama's `/api/generate` `options.seed` is a real,
-    supported parameter (confirmed against the installed `ollama` Python
-    client's `Options` model) that makes repeated calls with an identical
-    prompt/model/options reproducible -- but only to the extent the
-    underlying llama.cpp runtime guarantees (same model file, same
-    quantization, same thread count); it is not a cross-machine/
-    cross-hardware determinism guarantee. Set alongside `temperature: 0`
-    for a reproducible baseline run.
+    `seed` is `None` by default, preserving non-deterministic sampling.
+    Ollama's generation seed makes repeated calls reproducible only for
+    the same model file, quantization, runtime, and options; it is not a
+    cross-machine determinism guarantee. Use it with `temperature: 0` for
+    a reproducible local baseline.
     """
 
     provider: Literal["ollama"] = "ollama"
@@ -170,12 +162,9 @@ class JudgeConfig(BaseModel):
 class MLflowConfig(BaseModel):
     """Experiment-tracking sink: every `scripts/record_experiment.py` run also logs to MLflow.
 
-    Local SQLite backend by default (`sqlite:///mlflow.db`) -- no server
-    required, matching this project's offline-first design. (MLflow's
-    older plain-filesystem backend, `file:./mlruns`, is deprecated as of
-    MLflow 3.x -- new installs raise unless a database-backed store is
-    used.) Point `tracking_uri` at a real MLflow server later without any
-    code changes.
+    Local SQLite backend by default (`sqlite:///mlflow.db`), so no MLflow
+    server is required for local experiment records. Point `tracking_uri`
+    at a hosted MLflow server when a shared tracker is needed.
     """
 
     enabled: bool = True
@@ -190,13 +179,19 @@ class HybridRetrievalConfig(BaseModel):
 
 
 class RelationshipExpansionConfig(BaseModel):
-    """Post-rerank context-expansion tunables (multimodal milestone).
+    """Post-rerank context-expansion tunables.
 
-    Disabled by default -- a no-op when `enabled` is left `false`, so
-    existing retrieval behavior is unchanged unless a config explicitly
-    opts in. `include_caption` is deliberately not a field here: captions
-    are folded into their image chunk's own text (see
-    chunkers/structured_markdown.py), so there's nothing separate to fetch.
+    Parameters
+    ----------
+    enabled : bool
+        When `False` (the default), a no-op.
+    include_parent : bool
+        Append each result's nearest preceding prose chunk, if any.
+    include_neighbors : bool
+        Append each result's immediate chunk-index neighbors in the
+        same section.
+    max_related_elements : int
+        Maximum expanded chunks appended per originating result.
     """
 
     enabled: bool = False
@@ -208,18 +203,22 @@ class RelationshipExpansionConfig(BaseModel):
 class RetrievalConfig(BaseModel):
     """Retrieval provider selection and result-count tuning.
 
-    Three independent cutoffs, each with a single job (see
-    `retrieval/pipeline.py`'s module docstring for the full flow):
-
-    - `candidate_k`: candidate pool depth fetched from the vector store
-      (per branch, in hybrid mode) before any reranking.
-    - `reranker.top_n` (on `RerankerConfig`, not here): how many a REAL
-      reranker keeps after rescoring; inert when `reranker.provider ==
-      "none"`.
-    - `generation_context_top_n`: how many ranked primary chunks are
-      selected for generation, applied once after the (optional) rerank
-      step and before relationship expansion -- independent of whether a
-      real reranker ran at all.
+    Parameters
+    ----------
+    provider : {"dense", "hybrid"}
+        Retrieval strategy. `"hybrid"` adds BM25 search fused with RRF.
+    candidate_k : int
+        Candidate pool depth fetched from the vector store before
+        reranking.
+    generation_context_top_n : int
+        Ranked primary chunks kept for generation, applied after the
+        optional rerank step. See docs/architecture.md's "Retrieval
+        Cutoff Semantics" section for how this relates to
+        `reranker.top_n`.
+    hybrid : HybridRetrievalConfig
+        Hybrid-retrieval-specific settings.
+    relationship_expansion : RelationshipExpansionConfig
+        Post-rerank context-expansion settings.
     """
 
     provider: Literal["dense", "hybrid"] = "dense"
@@ -242,19 +241,16 @@ class IngestionConfig(BaseModel):
 class AuthorizationConfig(BaseModel):
     """Retrieval-time tenant/role/freshness enforcement tunables.
 
-    `enabled: false` (the default) is a true no-op: `RetrievalPipeline`
-    still builds an `AuthorizationContext` when the caller supplies one, but
-    every chunk with `tenant_id IS NULL` (the entire pre-existing corpus)
-    passes unconditionally either way, and the config flag exists so a
-    security-focused experiment config can flip it on without also having
-    to touch every other retrieval knob -- see
-    `config/experiments/secure-rag-baseline-v1.yaml`. `cross_tenant_support_roles`
-    is the explicit, configurable allow-list of role names that may cross a
-    tenant boundary *only when that same role also appears in the target
-    document's own `allowed_roles`* (see `retrieval/authorization.py`) --
-    deliberately not "any role appearing in both places", to avoid an
-    accidental allowed_roles typo silently granting cross-tenant access to
-    an unrelated role.
+    Parameters
+    ----------
+    enabled : bool
+        When `False` (the default), authorization is a no-op: chunks
+        with no `tenant_id` (the entire pre-existing corpus) pass
+        unconditionally either way.
+    cross_tenant_support_roles : list[str]
+        Role names allowed to cross a tenant boundary, but only when
+        that same role also appears in the target document's own
+        `allowed_roles`.
     """
 
     enabled: bool = False
@@ -262,39 +258,46 @@ class AuthorizationConfig(BaseModel):
 
 
 class FieldRedactionConfig(BaseModel):
-    """Field-level sensitive-value redaction tunable (field-level-safety milestone).
+    """Field-level sensitive-value redaction tunable.
 
-    `enabled: false` (the default) is a true no-op: `RetrievalPipeline`
-    never calls `retrieval/field_policy.py`'s redaction helpers at all, so
-    every existing config/experiment/test is byte-identical regardless of
-    what an `AuthorizationContext` a caller constructs. Deliberately
-    independent of `AuthorizationConfig.enabled` -- document ACL and field
-    disclosure are conceptually separate controls (see
-    `retrieval/field_policy.py`'s module docstring) and can be toggled on
-    their own. When enabled, a missing caller identity (`auth=None`, e.g.
-    because a caller supplied none, or because `authorization.enabled` is
-    itself `False`) is treated as zero roles -- fail-closed, never
-    "unrestricted" -- so turning this flag on can only narrow what a
-    caller sees, never broaden it.
+    Parameters
+    ----------
+    enabled : bool
+        When `False` (the default), a no-op. Independent of
+        `AuthorizationConfig.enabled` — document ACL and field
+        disclosure are separate controls.
+
+    Notes
+    -----
+    When enabled, a missing caller identity is treated as zero roles
+    (fail-closed), never as unrestricted.
     """
 
     enabled: bool = False
 
 
 class JWTConfig(BaseModel):
-    """JWT verification tunables for `AuthConfig` (auth-boundary milestone).
+    """JWT verification tunables for `AuthConfig`.
 
-    `algorithm` defaults to `HS256` (shared-secret, env-driven via
-    `secret_env_var`) -- this is a single-instance, offline-first system
-    with no existing IdP or key-distribution infrastructure, so token
-    issuance and verification are the same trust domain today.
-    `RS256`/`ES256` (asymmetric, `public_key_path_env_var` names a PEM
-    file) are supported for when a real IdP is fronted later -- a
-    one-line config change, no code change. `issuer`/`audience` are only
-    checked when non-`None` (opt-in, since a local test token issuer has
-    no natural value for either). `required_claims` are checked present
-    via `pyjwt`'s `options={"require": [...]}` -- a token missing any of
-    these is rejected as malformed regardless of signature validity.
+    Parameters
+    ----------
+    algorithm : {"HS256", "RS256", "ES256"}
+        Signing algorithm. `HS256` (shared-secret) is the default for
+        this single-instance, offline-first system; `RS256`/`ES256`
+        support fronting a real identity provider later.
+    secret_env_var : str
+        Environment variable naming the HS256 shared secret.
+    public_key_path_env_var : str
+        Environment variable naming a PEM file path, for RS256/ES256.
+    issuer : str or None
+        Expected `iss` claim; checked only when set.
+    audience : str or None
+        Expected `aud` claim; checked only when set.
+    leeway_seconds : int
+        Clock-skew tolerance for expiration checks.
+    required_claims : list[str]
+        Claims that must be present; a token missing any is rejected as
+        malformed regardless of signature validity.
     """
 
     algorithm: Literal["HS256", "RS256", "ES256"] = "HS256"
@@ -307,23 +310,23 @@ class JWTConfig(BaseModel):
 
 
 class AuthConfig(BaseModel):
-    """API-boundary JWT authentication tunables (auth-boundary milestone).
+    """API-boundary JWT authentication tunables.
 
-    `enabled: false` (the default) is a true no-op: `POST /query`/`POST
-    /ingest` behave exactly as before this milestone -- caller-supplied
-    `tenant_id`/`roles` are trusted directly, unchanged. When `enabled` is
-    `True`, a verified `Authorization: Bearer <jwt>` is required and
-    caller-supplied `tenant_id`/`roles` in the request body are ignored
-    for authorization purposes (see `api/routers/query.py`).
-    `insecure_dev_mode` is a second, independent, off-by-default flag: it
-    only ever matters when `enabled=True`, and even then it only relaxes
-    the "a JWT is required at all" rule for requests with **no**
-    `Authorization` header -- an invalid/expired/malformed JWT is always
-    rejected with 401 regardless of this flag (fail-closed; never a
-    silent fallback to unrestricted retrieval on a failed verification).
-    `ingest_roles` gates `POST /ingest` when `enabled=True` -- a caller's
-    verified roles must intersect this list, independent of tenant/role
-    document-level ACL (ingestion is a write path, not a retrieval path).
+    Parameters
+    ----------
+    enabled : bool
+        When `False` (the default), `POST /query`/`POST /ingest` trust
+        caller-supplied `tenant_id`/`roles` directly. When `True`, a
+        verified bearer token is required and body-supplied
+        `tenant_id`/`roles` are ignored for authorization.
+    insecure_dev_mode : bool
+        Only relevant when `enabled=True`. Allows requests with no
+        `Authorization` header at all; an invalid, expired, or malformed
+        token is always rejected regardless of this flag.
+    ingest_roles : list[str]
+        Roles allowed to call `POST /ingest` when `enabled=True`.
+    jwt : JWTConfig
+        JWT verification settings.
     """
 
     enabled: bool = False
@@ -337,9 +340,21 @@ class AuthConfig(BaseModel):
 class DoSLimitsConfig(BaseModel):
     """Bounded request-size validation for `POST /query`/`POST /ingest`.
 
-    Enforced as explicit router-level checks (not Pydantic field
-    constraints), since the bounds need to come from runtime config, not
-    a value baked into the request model at class-definition time.
+    Parameters
+    ----------
+    max_query_length : int
+        Maximum allowed `query` string length, in characters.
+    max_top_k : int
+        Maximum allowed `top_k` value.
+    max_filters_bytes : int
+        Maximum allowed serialized size of the `filters` dict.
+    max_upload_bytes : int
+        Maximum allowed upload size for `POST /ingest`.
+
+    Notes
+    -----
+    Enforced as router-level checks rather than Pydantic field
+    constraints, since the bounds must read from runtime config.
     """
 
     max_query_length: int = 2000
@@ -351,14 +366,20 @@ class DoSLimitsConfig(BaseModel):
 class RateLimitConfig(BaseModel):
     """Per-caller request-rate limiting (`slowapi`, in-memory backend).
 
-    `enabled: false` (the default) is a true no-op. `key` controls how
-    callers are bucketed: `"tenant"` (the default) uses the verified
-    identity's `tenant_id` when present, falling back to client IP for
-    unauthenticated callers (e.g. `auth.enabled=False`); `"ip"` always
-    buckets by client IP. In-memory state is process-local -- see
-    `docs/architecture.md`'s auth-boundary section for the documented
-    multi-replica limitation; Redis-backed storage is a future item, not
-    implemented here.
+    Parameters
+    ----------
+    enabled : bool
+        When `False` (the default), a no-op.
+    requests_per_minute : int
+        Allowed requests per minute, per bucket.
+    key : {"tenant", "ip"}
+        Bucketing key. `"tenant"` uses the verified identity's
+        `tenant_id` when present, falling back to client IP.
+
+    Notes
+    -----
+    In-memory state is process-local; with more than one API replica,
+    each enforces its own independent limit.
     """
 
     enabled: bool = False
@@ -369,19 +390,22 @@ class RateLimitConfig(BaseModel):
 class EgressPolicyConfig(BaseModel):
     """Provider-egress policy gate for hosted-judge (RAGAS) calls only.
 
-    `enabled: false` (the default) is a true no-op -- `run_ragas_eval.py`
-    sends retrieved context to the configured hosted judge exactly as
-    before this milestone. Applies only at the one confirmed hosted-egress
-    point in this codebase (`config.judge.provider` in {openai, anthropic}
-    -- production `answer()` never calls a hosted LLM, since
-    `generation.provider` is `ollama`-only). `classification_policy` maps
-    a document's `classification` field to whether its content may leave
-    the local environment; a classification with **no entry** in this
-    dict is treated as blocked (`.get(classification, False)`) --
-    fail-closed on unknown classifications, not silently allowed. `None`/
-    missing classification (most of the pre-governance corpus) is treated
-    as allowed, matching `"internal"`'s default, to preserve existing
-    behavior for content that predates the governance metadata milestone.
+    Parameters
+    ----------
+    enabled : bool
+        When `False` (the default), a no-op — retrieved context reaches
+        the configured hosted judge unchecked.
+    block_unredacted_sensitive_fields : bool
+        Block a source whose tagged sensitive fields were not fully
+        redacted for this retrieval.
+    require_authoritative_trust : bool
+        Block any source whose `trust_level` is not `"authoritative"`.
+    blocked_tenant_ids : list[str]
+        Tenants whose content may never egress.
+    classification_policy : dict[str, bool]
+        Maps a document `classification` to whether it may egress. A
+        classification with no entry is blocked (fail-closed); missing
+        classification is treated as allowed, matching `"internal"`.
     """
 
     enabled: bool = False
@@ -399,7 +423,7 @@ class EgressPolicyConfig(BaseModel):
 
 
 class SecurityConfig(BaseModel):
-    """Root config block for the safety/freshness milestone's retrieval controls."""
+    """Root config block for authorization, redaction, authentication, and hardening controls."""
 
     authorization: AuthorizationConfig = Field(default_factory=AuthorizationConfig)
     field_redaction: FieldRedactionConfig = Field(default_factory=FieldRedactionConfig)
@@ -414,8 +438,8 @@ class VisionConfig(BaseModel):
 
     `"none"` (the default, and the only provider actually exercised so
     far) means no image bytes are ever read and no VisionProvider is
-    constructed -- text-only image handling (alt text/caption only, see
-    chunkers/structured_markdown.py) works with this config untouched.
+    constructed. Text-only image handling, based on alt text and
+    captions, works with this config untouched.
     Concrete hosted providers are added to `factory.build_vision_provider`
     only once explicitly approved for a real (credit-consuming) run; no
     hosted provider name is declared here yet.
@@ -444,7 +468,7 @@ class AppConfig(BaseModel):
     vision: VisionConfig = Field(default_factory=VisionConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
 
-    # -- resolved env accessors -------------------------------------------------
+    # Resolved environment accessors.
     # Kept as methods (not fields) so they always read the *current* process
     # environment rather than a value frozen at load time (handy in tests).
 

@@ -12,28 +12,83 @@ from rag.path_matching import source_matches_relevant as _shared_source_matches_
 
 
 class GoldExample(BaseModel):
-    """One row of a gold JSONL file (e.g. data/eval/techfusion_gold.jsonl).
+    """Represent one row of a gold JSONL evaluation file.
 
-    `relevant_documents` are paths *relative to wherever the knowledge base
-    root is* (e.g. "knowledge_base/security/access-control-policy.md"), not
-    document_id UUIDs — ids are assigned at ingestion time and can't be
-    known ahead of authoring gold data. Matching against a retrieved
-    chunk's stored `source` is therefore done by path-suffix (see
-    `source_matches_relevant`), which works regardless of what root path a
-    particular ingestion run used — nothing here hardcodes "data/" or
-    "knowledge_base/".
+    Parameters
+    ----------
+    question : str
+        The evaluation question.
+    expected_answer : str or None
+        Reference answer text, if authored.
+    relevant_documents : list[str]
+        Paths relative to the knowledge-base root (not document IDs,
+        which are assigned at ingestion time). Matched against a
+        retrieved chunk's stored `source` by path suffix.
+    question_type : str or None
+        Free-form question category.
+    difficulty : str or None
+        Free-form difficulty label.
+    unanswerable : bool
+        Whether the question has no valid answer in the corpus.
+    content_type : str or None
+        Authored ground-truth question category (e.g. "image_only",
+        "relationship_aware"), distinct from `eval/content_type.py`'s
+        chunker-derived document buckets.
+    reference_contexts : list[str]
+        Verbatim textual excerpts expected to support the answer.
+    reference_visual_contexts : list[str]
+        Ground truth for facts visually present in an image but absent
+        from its caption or surrounding text.
+    relevant_images : list[str]
+        Image assets associated with the question.
+    relevant_sections : list[str]
+        Section paths associated with the question.
+    requires_vision : bool
+        Whether the question cannot be answered from text/caption alone.
+    requires_relationship_expansion : bool
+        Whether the question depends on relationship-expanded context.
+    safety_category : str or None
+        Category of safety scenario tested (e.g. cross-tenant access).
+    user_tenant : str or None
+        Simulated caller tenant, used to build an `AuthorizationContext`.
+    user_roles : list[str]
+        Simulated caller roles, used to build an `AuthorizationContext`.
+    allowed_documents : list[str]
+        Documents the simulated caller should be able to retrieve.
+    forbidden_documents : list[str]
+        Documents the simulated caller must not retrieve.
+    expected_behavior : str or None
+        Expected model behavior (e.g. refusal), for refusal metrics.
+    requires_current_document : bool
+        Whether the question requires the current document version.
+    expected_document_version : str or None
+        Expected resolved document version.
+    expected_effective_date : str or None
+        Expected effective date of the resolved version.
+    query_as_of : str or None
+        Simulated `as_of` date for freshness resolution.
+    injection_present : bool
+        Whether the scenario includes an embedded prompt-injection attempt.
+    injection_source : str or None
+        Document containing the injection attempt, if any.
+    sensitive_data_present : bool
+        Whether the scenario involves a field-level-redacted value.
+    requires_authorization_filter : bool
+        Whether the scenario depends on document-level authorization.
+    requires_tenant_filter : bool
+        Whether the scenario depends on tenant scoping.
+    requires_trust_filter : bool
+        Whether the scenario depends on trust-level filtering.
+    expected_trust_level : str or None
+        Trust level the query should require.
 
+    Notes
+    -----
     `reference_contexts`/`reference_visual_contexts` are evaluation-only
-    ground truth, never indexed and never passed to ingestion/retrieval/
-    generation -- eval/*.py is the only code that reads them. The former is
-    textual evidence expected to be a verbatim excerpt from the source
-    corpus (used by eval/run_eval.py's supporting-context-hit check); the
-    latter is evaluation ground truth for facts that are visually present in
-    an image but intentionally absent from its caption/surrounding text
-    (e.g. an exact chart value), used only for reporting, never for
-    indexing or retrieval matching. `relevant_images` names the image
-    asset(s) associated with a question; `requires_vision` marks questions
-    that cannot legitimately be answered from text/caption context alone.
+    ground truth: never indexed, never passed to ingestion, retrieval, or
+    generation. All fields beyond `question`/`expected_answer`/
+    `relevant_documents`/`question_type`/`difficulty`/`unanswerable` are
+    optional so older gold files without them keep parsing unchanged.
     """
 
     question: str
@@ -42,13 +97,6 @@ class GoldExample(BaseModel):
     question_type: str | None = None
     difficulty: str | None = None
     unanswerable: bool = False
-    # Multimodal/relationship-aware milestone fields (all optional/defaulted
-    # so pre-existing gold files without them, e.g. techfusion_gold_old.jsonl
-    # and sample_gold.jsonl, keep parsing unchanged). `content_type` here is
-    # an *authored* ground-truth question category (e.g. "image_only",
-    # "relationship_aware") -- distinct from eval/content_type.py's
-    # chunker-derived document buckets; see CLAUDE.md/PROJECT_JOURNAL.md for
-    # why the two aren't conflated.
     content_type: str | None = None
     reference_contexts: list[str] = Field(default_factory=list)
     reference_visual_contexts: list[str] = Field(default_factory=list)
@@ -56,14 +104,6 @@ class GoldExample(BaseModel):
     relevant_sections: list[str] = Field(default_factory=list)
     requires_vision: bool = False
     requires_relationship_expansion: bool = False
-    # Safety/freshness milestone fields (all optional/defaulted so
-    # pre-existing gold files without them, e.g. techfusion_gold_without_safety.jsonl,
-    # keep parsing unchanged). safety_category is None for every plain-text
-    # row; user_tenant/user_roles/query_as_of are the caller identity/date
-    # eval/run_eval.py builds an AuthorizationContext from (see
-    # retrieval/authorization.py). allowed_documents/forbidden_documents are
-    # ground truth for the unauthorized_retrieval_rate/cross_tenant_leakage_rate
-    # metrics; expected_behavior drives refusal_accuracy/false_refusal_rate.
     safety_category: str | None = None
     user_tenant: str | None = None
     user_roles: list[str] = Field(default_factory=list)
@@ -109,12 +149,11 @@ def load_gold_jsonl(path: str | Path) -> list[GoldExample]:
 def source_matches_relevant(retrieved_source: str, relevant_path: str) -> bool:
     """Check whether `relevant_path`'s segments trail `retrieved_source`'s segments.
 
-    E.g. gold's "knowledge_base/security/x.md" matches a stored source of
+    For example, gold's "knowledge_base/security/x.md" matches a stored source of
     "data/knowledge_base/security/x.md" regardless of the "data/" root,
     without either side needing to hardcode that root. Re-exported from
     `rag.path_matching` (moved there so `rag.retrieval.freshness` can reuse
-    the identical rule without an eval->retrieval-adjacent import — see that
-    module's docstring).
+    the identical rule without importing from `rag.eval`.
 
     Parameters
     ----------
@@ -136,7 +175,7 @@ def normalize_for_match(text: str) -> str:
 
     Deliberately permissive on whitespace/case only, not semantics --
     `reference_contexts` entries are authored as verbatim excerpts from the
-    source corpus (see `GoldExample`'s docstring), so this only smooths
+    source corpus, so this only smooths
     over incidental formatting differences (line wraps, trailing spaces),
     never paraphrase differences. See `reference_context_is_supported`'s
     documented limitation.
@@ -159,7 +198,7 @@ def reference_context_is_supported(reference: str, candidate_texts: Iterable[str
 
     Used both by `scripts/validate_gold_file.py` (reference resolves to the
     source corpus) and `eval/run_eval.py` (reference resolves to a
-    retrieved chunk) -- same matching rule, different candidate sets.
+    retrieved chunk): same matching rule, different candidate sets.
 
     **Limitation** (documented, not hidden): this is substring containment
     after whitespace normalization, not semantic similarity. It is valid

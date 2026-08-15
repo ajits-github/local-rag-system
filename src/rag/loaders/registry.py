@@ -1,7 +1,7 @@
 """Maps a file's extension to the `Loader` that handles it.
 
-Simple enough to live as an inline extension->instance dict rather than
-going through `factory.py` (see CLAUDE.md's swap-point convention).
+This is a small inline extension-to-instance mapping rather than a
+separate factory abstraction.
 """
 
 from __future__ import annotations

@@ -39,16 +39,12 @@ _PARAM_FIELDS = [
     "dataset_id",
     "ragas_judge_provider",
     "ragas_judge_model",
-    # Safety/freshness milestone: dataset-lineage identity (eval/corpus_lineage.py)
-    # and the authorization on/off toggle -- all config/identity fields, not
-    # measured outcomes, so they're params, not metrics.
+    # Config/identity fields, not measured outcomes, so they're params,
+    # not metrics. Each on/off toggle below is independent (see
+    # AuthorizationConfig/FieldRedactionConfig/AuthConfig/RateLimitConfig/
+    # EgressPolicyConfig).
     "security_authorization_enabled",
-    # Field-level-safety milestone: independent on/off toggle for
-    # retrieval/field_policy.py's redaction pass -- see FieldRedactionConfig.
     "security_field_redaction_enabled",
-    # Auth-boundary milestone: independent on/off toggles -- JWT auth at
-    # the API boundary, in-process rate limiting, hosted-provider egress
-    # policy. See AuthConfig/RateLimitConfig/EgressPolicyConfig.
     "security_auth_enabled",
     "security_rate_limit_enabled",
     "security_egress_policy_enabled",
@@ -132,12 +128,9 @@ _METRIC_FIELDS = [
     "completion_tokens_mean",
     "unanswerable_refusal_rate",
     "expanded_context_utilization_rate",
-    # Safety/freshness milestone: measured outcome rates (see
-    # eval/run_eval.py's "safety" report section for exact definitions and
-    # lower/higher-is-better direction).
-    # Renamed from safety_unauthorized_retrieval_rate (field-level-safety
-    # milestone) -- historical experiment_025/026 records keep the old
-    # metric name; only new records populate this one.
+    # Measured outcome rates; see eval/run_eval.py's "safety" report
+    # section for exact definitions and lower/higher-is-better direction.
+    # Compatibility metric name for older safety reports.
     "safety_document_unauthorized_retrieval_rate",
     "safety_cross_tenant_leakage_rate",
     "safety_stale_document_error_rate",
@@ -149,11 +142,9 @@ _METRIC_FIELDS = [
     "safety_refusal_accuracy",
     "safety_false_refusal_rate",
     "safety_poisoned_source_selection_rate",
-    # Field-level-safety milestone.
     "safety_sensitive_data_authorized_disclosure_accuracy",
     "safety_sensitive_data_false_redaction_rate",
     "safety_encoded_extraction_success_rate",
-    # Auth-boundary milestone.
     "safety_unauthorized_metadata_leakage_rate",
     "safety_provider_egress_policy_violation_rate",
     "safety_forged_role_acceptance_rate",
@@ -251,7 +242,7 @@ def _log_corpus_input(mlflow_module: Any, record: dict[str, Any]) -> None:
 
     Uses `mlflow.data.from_dict` (available on the MLflow versions this
     project pins) to register the corpus-lineage snapshot as a tracked
-    "dataset" input on the run, distinct from -- additive to -- the flat
+    "dataset" input on the run, distinct from and additive to the flat
     `corpus_*` params already logged above. Never raises: an older/newer
     MLflow release lacking `mlflow.data`/`from_dict`, or any other failure
     here, is swallowed so a dataset-lineage nicety never breaks the primary
@@ -277,5 +268,5 @@ def _log_corpus_input(mlflow_module: Any, record: dict[str, Any]) -> None:
             name=digest,
         )
         mlflow_module.log_input(dataset, context="eval")
-    except Exception:  # noqa: BLE001 -- best-effort, see docstring
+    except Exception:  # noqa: BLE001 - best-effort lineage logging
         pass

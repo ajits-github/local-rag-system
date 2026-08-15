@@ -36,8 +36,8 @@ def apply_egress_policy(source: dict[str, Any], config: AppConfig) -> EgressDeci
     """Decide whether `source`'s content may leave the local environment.
 
     A no-op (`allowed=True`, content unchanged) when
-    `config.security.egress_policy.enabled` is `False` -- today's
-    pre-milestone behavior, unchanged. When enabled, checked in order:
+    `config.security.egress_policy.enabled` is `False`. When enabled,
+    checked in order:
 
     1. `source["tenant_id"]` against `blocked_tenant_ids` -- an explicit
        tenant deny-list.

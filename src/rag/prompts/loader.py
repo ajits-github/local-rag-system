@@ -1,9 +1,7 @@
 """Loads and validates versioned prompt templates from YAML.
 
-Simple enough (read YAML -> validate -> render) to live as an inline
-module rather than going through factory.py -- see CLAUDE.md's
-swap-point convention, and loaders/registry.py / chunkers/registry.py
-for the same pattern applied elsewhere.
+Prompt loading is a small read/validate/render path, so it stays in this
+module rather than going through provider factories.
 """
 
 from __future__ import annotations

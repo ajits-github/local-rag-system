@@ -39,13 +39,11 @@ def _build_rows(
 ) -> tuple[list[dict[str, Any]], int]:
     """Zip sliced `GoldExample`s with `evaluate()`'s per_example entries into scoring rows.
 
-    Skips examples with no `expected_answer` — RAGAS's `reference`-requiring
-    metrics can't function without one. Each source's `content` is passed
-    through `egress_policy.apply_egress_policy` before entering `contexts`
-    -- a no-op when `config.security.egress_policy.enabled` is `False`
-    (the default); when enabled, a blocked source is dropped from
-    `contexts` entirely rather than sent to the hosted judge, and a
-    summary count (never per-row content) is audit-logged.
+    Skips examples with no `expected_answer`, since RAGAS's
+    `reference`-requiring metrics can't function without one. Each
+    source's `content` passes through `egress_policy.apply_egress_policy`
+    before entering `contexts`; when enabled, a blocked source is dropped
+    entirely rather than sent to the hosted judge.
 
     Parameters
     ----------

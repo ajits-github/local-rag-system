@@ -90,15 +90,13 @@ def build_schema_sql(*, documents_table: str, chunks_table: str, dimension: int)
     ALTER TABLE {chunks_table} ADD COLUMN IF NOT EXISTS attachment_name TEXT;
     ALTER TABLE {chunks_table} ADD COLUMN IF NOT EXISTS source_anchor TEXT;
 
-    -- Migrations for tables created before the multimodal/relationship-aware
-    -- ingestion milestone: parent_chunk_id links a table/code/config/chart/
-    -- image chunk to the nearest preceding prose chunk in its section (no
-    -- FK -- parent and child chunks land in the same insert batch, and
-    -- deletion is always whole-document via ON DELETE CASCADE, so a
-    -- self-referential FK's insert-ordering fragility isn't worth taking on).
-    -- vision_generated/vision_description hold a VisionProvider's output,
-    -- kept on a separate sibling chunk from -- never overwriting -- the
-    -- image's original caption/alt-text chunk.
+    -- parent_chunk_id links a table/code/config/chart/image chunk to the
+    -- nearest preceding prose chunk in its section. No FK: parent and
+    -- child chunks land in the same insert batch, and deletion is always
+    -- whole-document via ON DELETE CASCADE, so a self-referential FK's
+    -- insert-ordering fragility isn't worth taking on. vision_generated/
+    -- vision_description hold a VisionProvider's output, kept on a
+    -- separate sibling chunk from the image's original caption/alt-text.
     ALTER TABLE {chunks_table} ADD COLUMN IF NOT EXISTS parent_chunk_id TEXT;
     ALTER TABLE {chunks_table} ADD COLUMN IF NOT EXISTS vision_description TEXT;
     ALTER TABLE {chunks_table}
@@ -143,17 +141,15 @@ def build_schema_sql(*, documents_table: str, chunks_table: str, dimension: int)
     CREATE INDEX IF NOT EXISTS {chunks_table}_parent_chunk_id_idx
         ON {chunks_table} (parent_chunk_id);
 
-    -- Migrations for the safety/freshness milestone: tenant/role/
-    -- classification/status/version/trust governance fields, copied onto
-    -- every chunk of a document exactly like category/dataset_id (see
-    -- ingestion/writer.py). doc_source_type is deliberately not named
-    -- source_type a second time -- that column already means
-    -- "markdown"/"text" (the loader's file-type tag), a different concept
-    -- from front matter's source_type (a trust-provenance label). No FK on
-    -- tenant/allowed_roles -- these are plain metadata columns, not
-    -- references. supersedes_source is a raw filename string, matched by
-    -- path suffix at query time (see retrieval/freshness.py), not resolved
-    -- to a document_id at ingestion time.
+    -- Document governance fields (tenant/role/classification/status/
+    -- version/trust), copied onto every chunk of a document like
+    -- category/dataset_id. doc_source_type is deliberately not named
+    -- source_type a second time: that column already means "markdown"/
+    -- "text" (the loader's file-type tag), a different concept from front
+    -- matter's source_type (a trust-provenance label). No FK on tenant/
+    -- allowed_roles; these are plain metadata columns. supersedes_source
+    -- is a raw filename string, matched by path suffix at query time, not
+    -- resolved to a document_id at ingestion time.
     ALTER TABLE {chunks_table} ADD COLUMN IF NOT EXISTS tenant_id TEXT;
     ALTER TABLE {chunks_table} ADD COLUMN IF NOT EXISTS allowed_roles TEXT[];
     ALTER TABLE {chunks_table} ADD COLUMN IF NOT EXISTS classification TEXT;
@@ -173,13 +169,11 @@ def build_schema_sql(*, documents_table: str, chunks_table: str, dimension: int)
     CREATE INDEX IF NOT EXISTS {chunks_table}_trust_level_idx
         ON {chunks_table} (trust_level);
 
-    -- Field-level-safety milestone: ingestion-time tagging only (see
-    -- retrieval/field_policy.py's detect_sensitive_field_ids) -- which
-    -- SensitiveFieldPolicy.field_id patterns this chunk's text matches.
-    -- No role decision is stored here; RetrievalPipeline uses this purely
-    -- as a cheap "nothing to redact" skip and re-runs the actual
-    -- role-aware redaction at query time. Not indexed -- never used in a
-    -- WHERE clause, only read back per-row.
+    -- Ingestion-time tagging only: which SensitiveFieldPolicy.field_id
+    -- patterns this chunk's text matches. No role decision is stored
+    -- here; RetrievalPipeline uses this as a cheap "nothing to redact"
+    -- skip and re-runs the actual role-aware redaction at query time.
+    -- Not indexed: never used in a WHERE clause, only read back per-row.
     ALTER TABLE {chunks_table} ADD COLUMN IF NOT EXISTS sensitive_field_ids TEXT[];
 
     -- Caches a VisionProvider's generated description per image, keyed by

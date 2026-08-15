@@ -1,28 +1,20 @@
 """Deterministic resolution of which document version was effective as of a given date.
 
-Adjustment to the original design: rather than making every superseded
-version eligible and leaving version selection to the LLM, this module
-resolves -- in Python, from declared metadata alone -- exactly which
-member of a document-version family (linked via `supersedes_source`, see
-`schemas.DocumentVersionInfo`) should be excluded from retrieval for a given
-`AuthorizationContext.as_of`/`include_superseded` policy. Generalizes to any
-chain depth (v1 -> v2 -> v3 -> ...) via full transitive-closure grouping,
-not just the two-version case seen in the current corpus.
+Determines which members of a document-version family (linked via
+`supersedes_source`) should be excluded from retrieval, from declared
+metadata alone rather than leaving version selection to the LLM.
+Generalizes to any chain depth via transitive-closure grouping.
 
-**Documented limitations** (deliberate, not hidden):
-- A family is only formed via `supersedes_source` path-suffix links. A
-  document with no `supersedes`/no document supersedes it is never grouped,
-  even if it's topically related to another document -- this module never
-  guesses a family from naming similarity.
-- Current-mode (`as_of=None`) resolution relies on `status="active"` being
-  set correctly on exactly the current member. If **no** member of a family
-  is marked active, nothing in that family is excluded (safer than guessing
-  a version by date when the corpus doesn't declare one).
-- Historical-mode (`as_of=<date>`) resolution relies on `effective_from`
-  being set. A family member with no `effective_from` can't be placed in
-  time, so it is never excluded by this logic (kept eligible) -- callers
-  that need a hard guarantee here must ensure `effective_from` is always
-  authored.
+Notes
+-----
+Limitations, by design rather than oversight:
+
+- Families form only via `supersedes_source` links; topically related
+  documents with no such link are never grouped.
+- If no family member is marked `status="active"`, nothing in that
+  family is excluded, rather than guessing a version by date.
+- A family member with no `effective_from` is never excluded by
+  `as_of`-based resolution.
 """
 
 from __future__ import annotations
@@ -42,11 +34,9 @@ def _links_to(candidate: DocumentVersionInfo, target: DocumentVersionInfo) -> bo
 
 
 def _build_families(versions: list[DocumentVersionInfo]) -> list[list[DocumentVersionInfo]]:
-    """Group `versions` into version families via `supersedes_source` links (union-find).
+    """Group `versions` into connected `supersedes_source` families via union-find.
 
-    A "family" is a connected component of 2+ documents linked (in either
-    direction, any chain depth) by `supersedes_source`. Documents with no
-    such link at all are never returned (nothing to resolve for them).
+    Documents with no such link are excluded from the result.
     """
     parent: dict[str, str] = {v.document_id: v.document_id for v in versions}
 
@@ -73,7 +63,7 @@ def _build_families(versions: list[DocumentVersionInfo]) -> list[list[DocumentVe
 
 
 def _excluded_for_current(family: list[DocumentVersionInfo]) -> set[str]:
-    """Within one family, exclude every non-`active` member -- unless none is active."""
+    """Exclude every non-active member of `family`, unless none is active."""
     active_ids = {v.document_id for v in family if (v.status or "").strip().lower() == "active"}
     if not active_ids:
         return set()
@@ -81,10 +71,9 @@ def _excluded_for_current(family: list[DocumentVersionInfo]) -> set[str]:
 
 
 def _excluded_for_as_of(family: list[DocumentVersionInfo], as_of: date) -> set[str]:
-    """Within one family, keep only the member effective on `as_of`; exclude the rest.
+    """Keep only the family member effective on `as_of`; exclude the rest.
 
-    Members with no `effective_from` are never excluded (can't be placed in
-    time -- see module docstring).
+    Members with no `effective_from` are never excluded.
     """
     dated = [(v, v.effective_from) for v in family if v.effective_from is not None]
     if not dated:
@@ -109,13 +98,11 @@ def resolve_excluded_document_ids(
         Every document's governance metadata for one dataset (see
         `VectorStore.list_document_versions`).
     as_of : date | None
-        `None` for "current" (prefer `status=active`); an explicit date to
-        deterministically resolve each family to the version effective then.
+        `None` for "current" (prefer `status=active`); an explicit date
+        resolves each family to the version effective then.
     include_superseded : bool
-        When `as_of is None`, `True` disables freshness filtering entirely
-        (returns an empty set). Ignored when `as_of` is set -- an explicit
-        date always resolves deterministically, per this milestone's
-        "don't leave version selection to the LLM" requirement.
+        When `as_of is None`, `True` disables freshness filtering
+        entirely. Ignored when `as_of` is set.
 
     Returns
     -------

@@ -87,9 +87,9 @@ def _enforce_ingest_authorization(identity: VerifiedIdentity | None, config: App
     """Reject an ingest request whose verified roles aren't allow-listed.
 
     A no-op unless `security.auth.enabled=True` **and** a verified
-    identity was actually supplied -- matches the pre-milestone
-    wide-open-by-default behavior when auth is disabled or when
-    `insecure_dev_mode` let an unauthenticated caller through.
+    identity was actually supplied -- ingestion stays wide-open by default
+    when auth is disabled or when `insecure_dev_mode` let an
+    unauthenticated caller through.
 
     Parameters
     ----------

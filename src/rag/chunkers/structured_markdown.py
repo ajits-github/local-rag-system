@@ -1,14 +1,12 @@
 """`Chunker` that keeps Markdown tables, fenced code/config, and charts atomic.
 
-Instead of slicing through them the way `RecursiveCharacterChunker` would
-once a document exceeds `chunk_size`. Only active for
-`source_type == "markdown"` — everything else passes
-straight through to the composed `RecursiveCharacterChunker`, which is
-also what handles every prose run *within* a Markdown document. This is
-why a prose-only Markdown document (no table/fence syntax) produces
-chunk text byte-identical to `RecursiveCharacterChunker` used directly:
-the whole document becomes one prose run, flushed through the same
-chunker with the same parameters.
+Prevents `RecursiveCharacterChunker` from slicing through structured
+blocks once a document exceeds `chunk_size`. Only active for
+`source_type == "markdown"`; everything else passes straight through to
+the composed `RecursiveCharacterChunker`, which also handles every prose
+run within a Markdown document. A prose-only Markdown document therefore
+produces chunk text identical to `RecursiveCharacterChunker` used
+directly.
 
 `split()` walks the document once, line by line, applying these rules in
 priority order:

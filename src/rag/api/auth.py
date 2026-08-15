@@ -1,12 +1,8 @@
-"""JWT verification at the API boundary (auth-boundary milestone).
+"""JWT verification at the API boundary.
 
-Authentication ("who is the caller?") lives entirely here. Authorization
-("what may this verified caller access?") stays in
-`retrieval/authorization.py`/`retrieval/pipeline.py`/`vectorstore/pgvector.py`,
-unchanged -- this module never constructs an `AuthorizationContext` and
-never imports `RetrievalPipeline`/`VectorStore`. `VerifiedIdentity` is the
-one-way handoff between the two: `api/routers/query.py` maps its
-`tenant_id`/`roles` onto `AuthorizationContext`, nothing more.
+Authentication (who is the caller) lives here. Authorization (what a
+verified caller may access) is handled separately in the retrieval
+layer; this module never constructs an `AuthorizationContext`.
 """
 
 from __future__ import annotations
@@ -32,9 +28,8 @@ AuthFailureReason = Literal[
 class AuthenticationError(Exception):
     """A JWT failed verification.
 
-    Carries a `reason` (never the token itself, never a raw exception
-    message that might embed claim values) so callers can log a precise,
-    audit-safe failure category.
+    Carries a `reason` category instead of the token or a raw exception
+    message, so callers can log a precise, audit-safe failure reason.
     """
 
     def __init__(self, reason: AuthFailureReason, detail: str = "") -> None:
@@ -44,12 +39,26 @@ class AuthenticationError(Exception):
 
 
 class VerifiedIdentity(BaseModel):
-    """Claims extracted from a verified JWT.
+    """Represent identity claims extracted from a verified JWT.
 
-    `subject`/`issuer`/`audience` are never mapped onto
-    `AuthorizationContext` -- that model stays retrieval-scoped. They're
-    used only for audit logging at the API boundary (`subject` always via
-    a hashed/pseudonymous form, see `api/audit.py`), then discarded.
+    Parameters
+    ----------
+    subject : str
+        Identifier of the authenticated caller (the JWT `sub` claim).
+    tenant_id : str or None
+        Tenant associated with the caller.
+    roles : list[str]
+        Verified roles used for retrieval authorization.
+    issuer : str or None
+        JWT issuer metadata.
+    audience : str or None
+        JWT audience metadata.
+
+    Notes
+    -----
+    `subject`/`issuer`/`audience` are used only for audit logging at the
+    API boundary; only `tenant_id`/`roles` are mapped onto
+    `AuthorizationContext`.
     """
 
     subject: str
@@ -64,9 +73,8 @@ def verify_jwt(token: str, config: AppConfig) -> VerifiedIdentity:
 
     Verifies signature, expiration, issuer (if configured), audience (if
     configured), and presence of every claim in
-    `config.security.auth.jwt.required_claims` -- rejecting a token
-    missing any of them as malformed, per requirement 2's "reject ...
-    token missing required tenant/role claims."
+    `config.security.auth.jwt.required_claims`, rejecting a token missing
+    any of them.
 
     Parameters
     ----------
@@ -84,9 +92,8 @@ def verify_jwt(token: str, config: AppConfig) -> VerifiedIdentity:
     Raises
     ------
     AuthenticationError
-        On any verification failure -- signature, expiration, issuer,
-        audience, or a missing required claim. The token's contents are
-        never included in the raised exception.
+        On any verification failure. The token's contents are never
+        included in the raised exception.
     """
     jwt_config = config.security.auth.jwt
     key = config.jwt_signing_key()

@@ -1,7 +1,7 @@
 """Maps `ChunkingConfig.provider` to a `Chunker` instance.
 
-Simple enough to live as an inline dispatch rather than going through
-`factory.py` (see CLAUDE.md's swap-point convention).
+This is a small inline dispatch table rather than a separate factory
+abstraction.
 """
 
 from __future__ import annotations

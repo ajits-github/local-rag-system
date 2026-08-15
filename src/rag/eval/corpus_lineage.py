@@ -1,14 +1,13 @@
 """Corpus/gold lineage snapshot: what exactly was scored, for one eval run.
 
-Section 0.0 of the safety/freshness milestone: before recording an
-experiment, capture `dataset_id`/`corpus_version`/document count/chunk
-count/image count/canonical gold-record count/gold-file digest/a
-deterministic corpus digest, so two experiments claiming to run against
-"techfusion" can be checked for whether they actually scored the same
-corpus and gold file. Read-only against `VectorStore`; never mutates
-anything. `corpus_version` is a free-form string the caller supplies (e.g.
-`--corpus-version 2026-08-14-safety-v1`) -- no version-numbering scheme is
-invented here.
+Before recording an experiment, capture `dataset_id`/`corpus_version`/
+document count/chunk count/image count/canonical gold-record count/
+gold-file digest/a deterministic corpus digest, so two experiments
+claiming to run against the same dataset can be checked for whether they
+actually scored the same corpus and gold file. Read-only against
+`VectorStore`; never mutates anything. `corpus_version` is a free-form
+string the caller supplies -- no version-numbering scheme is invented
+here.
 """
 
 from __future__ import annotations
@@ -48,8 +47,7 @@ def compute_corpus_lineage(
     dataset_id : str
         Namespace to snapshot.
     corpus_version : str
-        Caller-supplied free-form version label (e.g. a date or milestone
-        slug) -- not auto-generated.
+        Caller-supplied free-form version label; not auto-generated.
     gold_path : Path
         Path to the gold JSONL file this eval run scores against.
 

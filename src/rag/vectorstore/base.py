@@ -15,11 +15,9 @@ from rag.schemas import Chunk, DocumentVersionInfo, SearchResult
 
 # Metadata fields that retrieval filters are allowed to touch. An explicit
 # whitelist so a filters dict can never be used to inject arbitrary SQL
-# identifiers/columns. Distinct from AuthorizationContext (see
-# retrieval/authorization.py): these are exact-match, caller-suppliable
-# convenience filters; tenant_id/allowed_roles/status enforcement never
-# flows through this dict -- see _build_authorization_where_clause in
-# pgvector.py, which is never constructed from caller input.
+# identifiers/columns. These are exact-match convenience filters; tenant,
+# role, freshness, and trust enforcement are handled by AuthorizationContext
+# and backend-specific authorization predicates.
 ALLOWED_FILTER_FIELDS = {
     "document_id",
     "source",
@@ -129,7 +127,7 @@ class VectorStore(ABC):
         """List every currently-persisted document's `source` within a dataset.
 
         Used by `IngestionPipeline.ingest_path` to detect deleted documents
-        (a `source` persisted here but no longer discovered on disk) --
+        (a `source` persisted here but no longer discovered on disk).
         `ingest_path` only ever walks files that currently exist, so this is
         the other half of "new/changed/unchanged/**deleted**" incremental
         ingestion.
@@ -274,7 +272,7 @@ class VectorStore(ABC):
             `ALLOWED_FILTER_FIELDS`.
         auth : AuthorizationContext | None, optional
             Caller identity/date context (see `retrieval/authorization.py`).
-            `None` means fully unrestricted -- passing a context can only
+            `None` means fully unrestricted. Passing a context can only
             ever narrow results (ANDed with `filters`), never broaden them.
             Applied in SQL, before any row leaves the database.
 
@@ -309,7 +307,7 @@ class VectorStore(ABC):
             Exact-match metadata filters; keys must be in
             `ALLOWED_FILTER_FIELDS`.
         auth : AuthorizationContext | None, optional
-            See `search`'s `auth` parameter -- identical semantics, applied
+            Same semantics as `search`'s `auth` parameter, applied
             to the same underlying SQL fetch before BM25 ranking runs.
 
         Returns
@@ -317,7 +315,7 @@ class VectorStore(ABC):
         list[SearchResult]
             Matching chunks with BM25 scores, ranked best-first. `.score`
             is the raw BM25 score (unbounded, not comparable across
-            queries) -- callers that need a comparable ranking signal
+            queries). Callers that need a comparable ranking signal
             across dense and keyword results should fuse via
             `rag.retrieval.fusion.reciprocal_rank_fusion`, not compare
             `.score` directly.
@@ -334,17 +332,10 @@ class VectorStore(ABC):
     ) -> list[Chunk]:
         """Fetch chunks by primary key, e.g. to resolve a `parent_chunk_id` reference.
 
-        Used by relationship expansion (retrieval/pipeline.py) -- callers
-        only ever pass ids already sourced from an already-`dataset_id`-
-        filtered `SearchResult` (a `parent_chunk_id` on a chunk's own
-        metadata), so this never needs its own `dataset_id` check to stay
-        isolated: a `chunk_id`/`document_id` is never shared across
-        datasets (see CLAUDE.md's "Document identity" section). `auth` is
-        applied defensively here too (belt-and-suspenders): a parent chunk
-        shares its document's tenant_id/allowed_roles by construction, so
-        this should never actually exclude anything a caller wasn't already
-        authorized to see the sibling of -- see
-        `tests/integration/test_authorization_isolation.py`.
+        Used by relationship expansion. Callers pass ids sourced from an
+        already dataset-filtered result, such as a `parent_chunk_id` from
+        chunk metadata. `auth` is applied defensively so an expansion lookup
+        cannot bypass the same authorization predicate used by search.
 
         Parameters
         ----------

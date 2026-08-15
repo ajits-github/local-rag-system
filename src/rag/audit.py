@@ -1,20 +1,18 @@
-"""Structured security-audit logging (auth-boundary milestone).
+"""Structured security-audit logging.
 
-Lives at the top level (not under `api/`) because it's called from both
-the API boundary (`api/deps.py`, `api/routers/*.py`) and retrieval-layer
-code (`retrieval/pipeline.py`) -- `retrieval/` must never import from
-`api/`, matching every other swap-point module in this codebase (see
-CLAUDE.md's directory map). Reuses `logging_config.py`'s existing
-`JSONFormatter` + request-id contextvar wholesale -- no new formatter/
-handler/sink is introduced, only new `logger.info(...)` call sites on a
-dedicated `rag.audit` logger name (filterable/routable independently of
-`rag.api`'s general request logs later, e.g. to a different sink or an
-OpenTelemetry exporter, without a schema change). Every event logs only
-IDs/categories/counts already available on existing objects -- never JWT
-contents, raw secrets, sensitive chunk text, or API keys, per the
-milestone's explicit requirement. The JWT `sub` claim in particular is
-never logged raw (its opacity/PII-safety is not guaranteed for this
-milestone's tokens) -- `pseudonymous_subject` hashes it first.
+Lives at the top level because it is called from both the API boundary
+(`api/deps.py`, `api/routers/*.py`) and retrieval-layer code. Keeping it
+outside `api/` preserves the API boundary and retrieval-layer separation.
+It reuses `logging_config.py`'s existing `JSONFormatter` and request-id
+context variable.
+
+Notes
+-----
+Every event logs only IDs, categories, and counts already available on
+existing objects. JWT contents, raw secrets, sensitive chunk text, and API
+keys must never be logged. The JWT `sub` claim is hashed by
+`pseudonymous_subject` before logging because its opacity is not
+guaranteed.
 """
 
 from __future__ import annotations
@@ -52,7 +50,7 @@ def pseudonymous_subject(subject: str) -> str:
     Returns
     -------
     str
-        A truncated sha256 hex digest of `subject` -- stable across calls
+        A truncated sha256 hex digest of `subject`. Stable across calls
         for the same subject (so the same caller's events can be
         correlated), but never reversible to the original value.
     """
@@ -67,8 +65,8 @@ def log_audit_event(event: AuthEventType, **fields: Any) -> None:
     event : AuthEventType
         One of the fixed audit event names.
     **fields : Any
-        Additional structured fields -- IDs, categories, counts only.
-        Callers must never pass raw token contents, secrets, or chunk
-        text here; see this module's docstring.
+        Additional structured fields. Callers must pass only IDs,
+        categories, and counts, never raw token contents, secrets, or
+        chunk text.
     """
     _audit_logger.info(event, extra=fields)

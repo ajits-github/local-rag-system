@@ -1,23 +1,14 @@
 """Measure what dense retrieval, BM25, and RRF fusion each contribute, independently.
 
-An observability/evaluation milestone, not a retrieval-tuning one: nothing
-here changes `config/default.yaml`, `RetrievalPipeline.retrieve()`/
-`answer()`, RRF's `k`, the reranker, embeddings, chunking, the prompt
-version, or the generation model. `RetrievalPipeline.retrieve_attribution`
-(see that method's docstring) is the one small, additive pipeline change
-this milestone needed -- it fetches dense and BM25 rankings independently
-and fuses them via the same `reciprocal_rank_fusion` production uses,
-without ever calling the reranker or relationship expansion.
+Observability only; nothing here changes production retrieval config or
+behavior. Uses `RetrievalPipeline.retrieve_attribution` to fetch dense
+and BM25 rankings independently, without reranking or relationship
+expansion, and reuses `eval/metrics.py`'s Recall/Hit-Rate/MRR.
 
-Fully deterministic and local: real Postgres/pgvector retrieval, no LLM
-generation, no hosted judge call. Reuses `eval/metrics.py` (Recall/Hit
-Rate/MRR) and `eval/gold_schema.py`'s `source_matches_relevant`/
-`reference_context_bucket` rather than inventing parallel definitions.
-
-Ranks, not raw scores, are the primary comparison throughout: a dense
-cosine-similarity score and a BM25 score are not on the same scale (see
-`retrieval/fusion.py`'s own docstring for why RRF itself is rank-based),
-so this module never compares `SearchResult.score` across retrievers.
+Notes
+-----
+Comparisons are rank-based throughout, since a dense cosine-similarity
+score and a BM25 score are not on the same scale.
 """
 
 from __future__ import annotations

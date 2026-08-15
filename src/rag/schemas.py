@@ -9,25 +9,50 @@ from pydantic import BaseModel, Field
 
 
 class RawDocument(BaseModel):
-    """Common output shape produced by every loader, before cleaning/chunking.
+    """Represent the common output shape produced by every loader, before cleaning/chunking.
 
-    `tenant_id`/`allowed_roles`/`classification`/`status`/`document_version`/
-    `effective_from`/`trust_level`/`doc_source_type`/`supersedes_source` are
-    the safety/freshness milestone's governance fields, parsed from a
-    document's YAML front matter by `loaders/text_loader.py` (see that
-    module) -- all `None`/empty for documents with no such front matter
-    (every pre-existing knowledge-base file), so this is purely additive.
-    `doc_source_type` is deliberately not named `source_type` a second time:
-    that field already means "markdown"/"text" (the loader's file-type tag)
-    here, a different concept from front matter's `source_type`
-    (`controlled_internal`/`user_uploaded`, a trust-provenance label) --
-    reusing the name would silently overload one column with two meanings.
-    `supersedes_source` is the raw `supersedes` filename string as authored
-    (e.g. "incident-response-v1.md"), not a resolved document_id -- resolving
-    a cross-file reference during single-file ingestion is an
-    ordering-fragile chicken/egg problem, so it's matched by path suffix at
-    query time instead (see `retrieval/freshness.py`), the same pattern
-    already used for gold `relevant_documents`.
+    Parameters
+    ----------
+    content : str
+        The document's raw text content.
+    source : str
+        Path or identifier the document was loaded from.
+    source_type : str
+        Loader file-type tag, e.g. "markdown" or "text".
+    title, author, url : str or None
+        Optional descriptive metadata.
+    created_at, last_modified : datetime
+        Document timestamps.
+    language : str or None
+        Document language, if known.
+    tenant_id : str or None
+        Owning tenant, from governance front matter.
+    allowed_roles : list[str] or None
+        Roles authorized to retrieve this document.
+    classification : str or None
+        Data-classification label (e.g. "confidential").
+    status : str or None
+        Version lifecycle status (e.g. "active", "superseded").
+    document_version : str or None
+        Authored version label.
+    effective_from : date or None
+        Date this version became effective.
+    trust_level : str or None
+        Knowledge-source trust label (e.g. "authoritative").
+    doc_source_type : str or None
+        Trust-provenance label from front matter (e.g.
+        "controlled_internal"), distinct from `source_type`.
+    supersedes_source : str or None
+        Raw filename this document supersedes, as authored; resolved to
+        a document by path suffix at query time, not at ingestion.
+    extra : dict[str, Any]
+        Loader-specific fields not otherwise modeled.
+
+    Notes
+    -----
+    The governance fields (`tenant_id` through `supersedes_source`) are
+    parsed from YAML front matter by `loaders/text_loader.py` and are
+    `None`/empty for documents with no such front matter.
     """
 
     content: str
@@ -52,12 +77,30 @@ class RawDocument(BaseModel):
 
 
 class ChunkSpan(BaseModel):
-    """One chunk of text plus optional structural hints from a `Chunker`.
+    """Represent one chunk of text plus optional structural hints from a `Chunker`.
 
-    All hint fields default to `None`. `Writer.write` fills in
-    `content_type="prose"` for any span that leaves it unset, so every
-    persisted `ChunkMetadata.content_type` is always a concrete string,
-    never `None`.
+    Parameters
+    ----------
+    text : str
+        The chunk's text content.
+    content_type : str or None
+        Structural content type (e.g. "prose", "table", "code", "image").
+        `Writer.write` fills in "prose" for any span left unset.
+    section_path : str or None
+        Markdown heading breadcrumb, e.g. "Setup > Docker".
+    code_language, table_headers, attachment_name, source_anchor : optional
+        Structural hints for code, table, and attachment content.
+    parent_chunk_id : str or None
+        Nearest preceding prose chunk in the same section; set later by
+        `Writer.write`, since chunkers don't assign `chunk_id`.
+    vision_generated : bool
+        Whether `vision_description` was produced by a vision model.
+    vision_description : str or None
+        Vision-generated description, stored separately from the span's
+        own caption/alt-text-derived `text`.
+    sensitive_field_ids : list[str] or None
+        Ingestion-time tags for sensitive-value policies matched in this
+        span's text; does not itself imply a role decision.
     """
 
     text: str
@@ -67,30 +110,70 @@ class ChunkSpan(BaseModel):
     table_headers: list[str] | None = None
     attachment_name: str | None = None
     source_anchor: str | None = None
-    # Relationship-aware ingestion (multimodal milestone): id of the nearest
-    # preceding prose chunk sharing this span's section_path, set by
-    # Writer.write's single pass over chunk_spans (chunkers don't know
-    # chunk_id, which is assigned at write time) -- None for prose spans
-    # themselves and for a non-prose span with no preceding prose in its
-    # section. See structured_markdown.py for how image spans are produced.
     parent_chunk_id: str | None = None
-    # Set only for a vision-generated sibling of an image span (see
-    # VisionProvider); vision_description is that generated text, stored
-    # separately from (never overwriting) the image span's own
-    # caption/alt-text-derived `text`.
     vision_generated: bool = False
     vision_description: str | None = None
-    # Field-level safety milestone: ingestion-time tagging only (see
-    # retrieval/field_policy.py's detect_sensitive_field_ids) -- which
-    # SensitiveFieldPolicy.field_id patterns this span's text matches.
-    # None/empty for the overwhelming majority of spans; carries no role
-    # decision by itself, just lets RetrievalPipeline skip the redaction
-    # pass entirely for spans that were never tagged.
     sensitive_field_ids: list[str] | None = None
 
 
 class ChunkMetadata(BaseModel):
-    """Metadata stored alongside a chunk's embedding in the vector store."""
+    """Represent metadata stored alongside a chunk's embedding in the vector store.
+
+    Parameters
+    ----------
+    document_id, chunk_id : str
+        Identifiers for the owning document and this chunk.
+    source, source_type, title, author, url : str or None
+        Document-level descriptive metadata, copied onto every chunk.
+    created_at, last_modified : datetime
+        Document timestamps.
+    language : str or None
+        Document language, if known.
+    chunk_index : int
+        Position of this chunk within its document.
+    category : str or None
+        Folder path relative to the ingested root; `None` for
+        single-file ingestion or API uploads.
+    dataset_id : str
+        Namespace every chunk must declare at ingestion time, so
+        datasets never share retrieval results.
+    content_type : str or None
+        Structural content type (e.g. "prose", "table", "code", "image").
+    section_path, code_language, table_headers, attachment_name, source_anchor : optional
+        Structural hints from the originating `ChunkSpan`.
+    parent_chunk_id : str or None
+        Nearest preceding prose chunk in the same section, if any.
+    vision_generated : bool
+        Whether `vision_description` was produced by a vision model.
+    vision_description : str or None
+        Vision-generated description text, if any.
+    sensitive_field_ids : list[str] or None
+        Ingestion-time tags for sensitive-value policies matched in this
+        chunk's text.
+    tenant_id : str or None
+        Owning tenant, from document governance metadata.
+    allowed_roles : list[str] or None
+        Roles authorized to retrieve this chunk's document.
+    classification : str or None
+        Data-classification label.
+    status : str or None
+        Version lifecycle status.
+    document_version : str or None
+        Authored version label.
+    effective_from : date or None
+        Date this version became effective.
+    trust_level : str or None
+        Knowledge-source trust label.
+    doc_source_type : str or None
+        Trust-provenance label from front matter.
+    supersedes_source : str or None
+        Raw filename this document supersedes, as authored.
+
+    Notes
+    -----
+    All governance fields (`tenant_id` through `supersedes_source`) are
+    `None` for documents with no governance front matter.
+    """
 
     document_id: str
     chunk_id: str
@@ -103,38 +186,18 @@ class ChunkMetadata(BaseModel):
     last_modified: datetime
     language: str | None = None
     chunk_index: int
-    # Relative folder path under the ingested root (e.g. "security"), set by
-    # the ingestion pipeline when walking a directory tree. None for
-    # single-file ingestion or API uploads, which have no folder context.
     category: str | None = None
-    # Namespace tag (e.g. "techfusion", "sample_docs") every chunk must
-    # declare at ingestion time. No default: this is deliberate — omitting
-    # it silently would defeat the point, which is that two datasets can
-    # never accidentally share retrieval results. Required as a filter by
-    # eval/run_eval.py; available as an optional POST /query filter too.
     dataset_id: str
-    # Structured-content hints from ChunkSpan, carried through per-chunk
-    # (not per-document) so a table row and a prose paragraph from the
-    # same file can be tagged differently. See ChunkSpan for details.
     content_type: str | None = None
     section_path: str | None = None
     code_language: str | None = None
     table_headers: list[str] | None = None
     attachment_name: str | None = None
     source_anchor: str | None = None
-    # See ChunkSpan for what these mean; carried through per-chunk into
-    # persisted metadata the same way the structured-content hints above are.
     parent_chunk_id: str | None = None
     vision_generated: bool = False
     vision_description: str | None = None
-    # See ChunkSpan.sensitive_field_ids -- carried through per-chunk the
-    # same way the structured-content hints above are.
     sensitive_field_ids: list[str] | None = None
-    # Safety/freshness milestone: document-level governance fields, copied
-    # onto every chunk of a document exactly like category/title (see
-    # RawDocument for what each means and why doc_source_type isn't named
-    # source_type). All None for documents with no governance front matter
-    # -- the entire pre-existing corpus is unaffected.
     tenant_id: str | None = None
     allowed_roles: list[str] | None = None
     classification: str | None = None
@@ -156,43 +219,58 @@ class Chunk(BaseModel):
 
 
 class SearchResult(BaseModel):
-    """A chunk returned by a vector store search, with its similarity score.
+    """Represent a chunk returned by a vector store search, with its similarity score.
 
-    `origin`/`expanded_from` distinguish directly-retrieved results from
-    ones added afterward by relationship expansion (see
-    retrieval/pipeline.py). Expanded results keep their originating chunk's
-    `score` field meaningless for ranking purposes -- they are appended
-    after the ranked list, never interleaved into it or given a fabricated
-    comparable score.
+    Parameters
+    ----------
+    chunk : Chunk
+        The retrieved chunk.
+    score : float
+        Similarity or ranking score. Meaningless for ranking on an
+        expanded result, which inherits its originating result's score.
+    origin : {"retrieved", "expanded"}
+        Whether this result was directly retrieved or added by
+        relationship expansion.
+    expanded_from : str or None
+        `chunk_id` of the originating result, if `origin == "expanded"`.
+    injection_suspected : bool
+        Whether `detect_injection` flagged this chunk's content.
+        Observability only; never gates retrieval.
+    redacted_field_ids : list[str]
+        `field_id`s whose matched value in this chunk's content was
+        replaced with a redaction marker.
     """
 
     chunk: Chunk
     score: float
     origin: Literal["retrieved", "expanded"] = "retrieved"
     expanded_from: str | None = None
-    # Safety milestone: set by RetrievalPipeline from
-    # retrieval.injection_detection.detect_injection(chunk.content) --
-    # observability/prompt-reinforcement only (see that module's docstring
-    # for why this never blocks a result; authorization is the actual gate).
     injection_suspected: bool = False
-    # Field-level safety milestone: field_id(s) whose matched value in this
-    # result's chunk.content was replaced with a redaction marker (see
-    # retrieval/field_policy.py). Empty unless config.security.
-    # field_redaction.enabled is True and a policy actually fired for this
-    # caller. Observability/diagnosability -- the redaction itself already
-    # happened to chunk.content by the time this is set.
     redacted_field_ids: list[str] = Field(default_factory=list)
 
 
 class DocumentVersionInfo(BaseModel):
-    """One document's governance/versioning metadata, for freshness resolution.
+    """Represent one document's governance/versioning metadata, for freshness resolution.
 
-    Produced by `VectorStore.list_document_versions` -- one row per
-    `document_id` within a dataset (the same governance fields are uniform
-    across every chunk of a document, so a plain `SELECT DISTINCT` is
-    enough; see `ingestion/writer.py`). Consumed by
-    `retrieval/freshness.py` to resolve, per document-version family, which
-    version was effective as of a given date -- never persisted itself.
+    Parameters
+    ----------
+    document_id, source : str
+        Identifiers for the document.
+    status : str or None
+        Version lifecycle status (e.g. "active", "superseded").
+    document_version : str or None
+        Authored version label.
+    effective_from : date or None
+        Date this version became effective.
+    supersedes_source : str or None
+        Raw filename this document supersedes, as authored.
+    tenant_id : str or None
+        Owning tenant.
+
+    Notes
+    -----
+    Produced by `VectorStore.list_document_versions`, one row per
+    `document_id`. Consumed by `retrieval/freshness.py`; never persisted.
     """
 
     document_id: str
@@ -205,17 +283,21 @@ class DocumentVersionInfo(BaseModel):
 
 
 class IngestionStats(BaseModel):
-    """Aggregate + per-file report from `IngestionPipeline.ingest_path`.
+    """Represent the aggregate and per-file report from `IngestionPipeline.ingest_path`.
 
-    `results` preserves the pre-existing per-file `{"document_id",
-    "chunks_written", "changed"}` shape (plus a new `"status"` key: `"new"`/
-    `"changed"`/`"unchanged"`), so existing callers reading individual
-    entries are unaffected; the aggregate counts are what's new for the
-    safety/freshness milestone's ingestion-observability requirement.
-    `chunks_reused` is the total chunk count of every `"unchanged"`
-    document (never re-embedded this run, but still real, queryable
-    chunks) -- distinct from `chunks_embedded`, which only counts
-    newly-written chunks from `"new"`/`"changed"` documents.
+    Parameters
+    ----------
+    discovered : int
+        Total files discovered during this ingestion run.
+    new, changed, unchanged, deleted : int
+        Per-status file counts.
+    chunks_embedded : int
+        Chunks newly written this run (from "new"/"changed" documents).
+    chunks_reused : int
+        Chunks belonging to "unchanged" documents, not re-embedded.
+    results : list[dict[str, Any]]
+        Per-file `{"document_id", "chunks_written", "changed", "status"}`
+        records.
     """
 
     discovered: int = 0
@@ -231,13 +313,11 @@ class IngestionStats(BaseModel):
 class RetrievalAttribution(BaseModel):
     """Raw, per-retriever rankings from one query, before rerank/expansion.
 
-    Produced by `RetrievalPipeline.retrieve_attribution` (see that
-    method's docstring) — purely additive/observability: nothing in the
-    production `retrieve()`/`answer()` path constructs or consumes this.
-    Each list is independently ranked (`dense`/`bm25` best-first from
-    their own retriever; `fused` best-first by RRF score), and none of
-    them have been through `Reranker.rerank` (so no `rerank_top_n`
-    truncation) or relationship expansion.
+    Produced by `RetrievalPipeline.retrieve_attribution` for observability;
+    production `retrieve()` and `answer()` do not consume it. Each list is
+    independently ranked (`dense`/`bm25` best-first from their retriever,
+    `fused` best-first by RRF score), before reranking or relationship
+    expansion.
     """
 
     dense: list[SearchResult]

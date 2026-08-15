@@ -145,6 +145,33 @@ flowchart TD
 - 🔧 = Config-driven swaps (every colored box is selectable via `config/default.yaml`)
 - Dashed arrows = conditional paths (hybrid mode, dense-only mode) or evaluation flow
 
+## Retrieval Cutoff Semantics
+
+`RetrievalPipeline.retrieve()` has three independent, explicitly-named
+cutoffs rather than one overloaded parameter:
+
+- `retrieval.candidate_k` — how many raw/fused candidates are fetched
+  from the vector store (per branch, in hybrid mode) before any
+  reranking. Controls retrieval-depth/candidate-pool-size only.
+- `reranker.top_n` — how many candidates a real reranker
+  (`cross_encoder`/`cohere`) retains after rescoring. Inert when
+  `reranker.provider == "none"`: `NoOpReranker` is a true identity and
+  ignores it.
+- `retrieval.generation_context_top_n` — how many ranked primary chunks
+  are selected for generation, applied once, uniformly, after the
+  optional rerank step and before relationship expansion, independent
+  of whether a real reranker ran. This is the only place `retrieve()`
+  truncates for generation-context size.
+
+Relationship expansion always operates on the already-truncated primary
+list and appends its output after that list rather than interleaving it,
+so it can never contaminate Recall@K/MRR computed from a broad-enough
+override (see `eval/run_eval.py`).
+
+This replaced an earlier design where a single `rerank_top_n` did both
+jobs at once, and `NoOpReranker` silently truncated results even with no
+reranker configured — see `ISSUES.md` for the bug this fixed.
+
 ## Multimodal + Relationship-Aware Ingestion
 
 Extends the ingestion/retrieval pipelines above to treat images as
@@ -361,6 +388,25 @@ concrete findings (including a documented false-negative gap in the
 `vision_behavior_breakdown` heuristic, caught by reading actual model
 answers rather than trusting the aggregate counts).
 
+### RAGAS Judge-Call Caching
+
+RAGAS ships its own disk cache (`ragas.cache.DiskCacheBackend`), keyed by
+a hash of the rendered judge prompt and generation kwargs. That hash is
+computed from a bound method, so the wrapped LLM instance — and
+therefore the judge provider/model it was built from — never enters the
+key. Sharing one `DiskCacheBackend` across two different judge models
+would silently replay one model's verdict for another model's
+byte-identical-looking prompt.
+
+`eval/ragas_cache.py` closes this gap by namespacing every cache key
+with a fingerprint of the judge's provider, model, temperature,
+max_tokens, and the installed `ragas` version, so switching judge model
+or provider always misses rather than silently reusing a stale verdict.
+`reference_contexts` (gold-authored ground truth) is not part of the key
+material today, since `ragas_scorer.build_dataset` doesn't feed it into
+the RAGAS dataset; if a future change starts passing it to RAGAS, it
+becomes part of the rendered prompt text and is covered automatically.
+
 ### RAGAS run on the multimodal gold set (experiment_013)
 
 The first RAGAS run against the rewritten 84-question
@@ -549,20 +595,20 @@ trust checks all run as SQL predicates in `PgVectorStore`, before any row
 leaves Postgres — the prompt-level rules (`rag_answer_v3.yaml`) are
 defense-in-depth, not the actual gate.
 
-### Identity model: enforcement, not authentication
+### Identity model at this layer
 
-No authentication/session layer exists anywhere in this codebase (no JWT,
-no login, no user model). This milestone implements **enforcement given an
-already-asserted identity**, not identity issuance/verification —
-`POST /query` accepts `tenant_id`/`roles`/`as_of`/`require_trust_level` as
-plain, trusted request fields (the realistic analogue: an API
-gateway/service mesh that already authenticated the caller and forwards
-verified claims). A real deployment would populate these from a verified
-JWT/session claim at the same boundary instead. `eval/run_eval.py` builds
-the same context from gold's `user_tenant`/`user_roles`/`query_as_of`/
-`requires_trust_filter` fields — a controlled, trusted harness input. This
-is stated plainly rather than implied, per "don't fabricate security
-guarantees that aren't implemented."
+This retrieval layer implements **authorization enforcement given an
+identity context**. It does not authenticate callers or verify JWTs; that
+boundary now lives in `api/auth.py` and `api/routers/query.py`, described
+in "Authenticated API Boundary and Security Hardening" below.
+
+The original safety/freshness milestone started from raw request-body
+`tenant_id`/`roles` fields. Current authenticated HTTP requests instead
+map verified JWT claims into `AuthorizationContext`; request-body
+`tenant_id`/`roles` are ignored when a verified identity is present.
+`as_of` and `require_trust_level` remain caller-supplied query controls.
+`eval/run_eval.py` still builds the same context from trusted gold-file
+fields because the evaluation harness has no HTTP authentication boundary.
 
 ### AuthorizationContext and the enforcement predicate
 
@@ -803,10 +849,10 @@ dynamically:
 
 ```python
 class SensitiveFieldPolicy(BaseModel):
-    field_id: str                  # e.g. "synthetic_admin_credential"
-    sensitivity_type: str          # e.g. "credential"
-    detector: Literal["regex"] = "regex"   # swap point for a future detector kind
-    pattern: str                   # regex over chunk text
+    field_id: str  # e.g. "synthetic_admin_credential"
+    sensitivity_type: str  # e.g. "credential"
+    detector: Literal["regex"] = "regex"  # swap point for a future detector kind
+    pattern: str  # regex over chunk text
     allowed_roles: list[str] = Field(default_factory=list)
     redaction_marker: str = "[REDACTED:SENSITIVE_FIELD]"
 ```

@@ -1,28 +1,8 @@
-"""Query pipeline: embed query -> vectorstore.search(filters) -> rerank -> generate.
+"""Query pipeline for retrieval-augmented generation.
 
-Cutoff semantics (the "retrieval_candidate_k / reranker_top_n /
-generation_context_top_n" split -- see PROJECT_JOURNAL.md for the
-motivating bug):
-
-- `retrieval.candidate_k`: how many raw/fused candidates are fetched from
-  the vector store (per branch, in hybrid mode) before any reranking.
-  Retrieval-depth/candidate-pool-size only.
-- `reranker.top_n`: how many candidates a REAL reranker
-  (`cross_encoder`/`cohere`) retains after rescoring. Inert when
-  `reranker.provider == "none"` -- `NoOpReranker` ignores it and returns
-  every candidate unchanged (a true identity: no reorder, no rescore, no
-  truncation).
-- `retrieval.generation_context_top_n`: how many ranked PRIMARY chunks are
-  selected for generation, applied once, uniformly, after the (optional)
-  rerank step and before relationship expansion -- independent of whether
-  a real reranker ran at all. This is the *only* place `retrieve()`
-  truncates for generation-context size.
-
-Relationship expansion always operates on the already-`generation_context_
-top_n`-truncated primary list, and its output is appended after that list,
-never interleaved into it -- so it can never contaminate Recall@K/MRR
-computed from a broad-enough `candidate_k`/`reranker_top_n`/
-`generation_context_top_n` override (see eval/run_eval.py).
+The pipeline embeds a query, retrieves dense or hybrid candidates, applies
+optional reranking and relationship expansion, redacts unauthorized fields,
+and builds separated system/user prompt turns for the LLM.
 """
 
 from __future__ import annotations
@@ -47,21 +27,24 @@ from rag.vectorstore.base import VectorStore
 
 
 def _source_label(result: SearchResult) -> str:
-    """Build one result's "[Source N: ...]" provenance label (without the leading "[Source N: ").
+    """Build the provenance label for a retrieved source.
 
-    Includes section, content type, and -- for an image chunk -- whether
-    its text is a caption/alt-text or a vision-generated description, so
-    the prompt never gives the model grounds to imply it visually
-    inspected an image when only caption/alt-text was available (see
-    prompt v2's "preserve exact ... verbatim" / no-unsupported-claims
-    rules). Relationship-expanded results are labeled "related context" so
-    they're identifiable as such, not indistinguishable from a directly
-    retrieved match. Safety milestone: a non-authoritative `trust_level` and
-    a `detect_injection` hit on this chunk's own content are both surfaced
-    per-chunk -- reinforcing, not replacing, the authorization filter that
-    already keeps unauthorized chunks out of `results` entirely (see
-    `retrieval/injection_detection.py`'s docstring for why this never
-    blocks a result).
+    The label includes source metadata such as section, content type,
+    trust level, injection status, and relationship-expansion origin.
+
+    For image chunks, the label distinguishes caption or alt-text content
+    from vision-generated descriptions so the generated answer does not
+    imply visual inspection when no vision model was used.
+
+    Parameters
+    ----------
+    result : SearchResult
+        Retrieved result whose source metadata should be formatted.
+
+    Returns
+    -------
+    str
+        Human-readable provenance label without the leading source number.
     """
     meta = result.chunk.metadata
     parts = [meta.source]
@@ -105,7 +88,7 @@ class RetrievalPipeline:
         llm: LLM | None = None,
         prompt_template: PromptTemplate | None = None,
     ) -> None:
-        """Wire up the pipeline's stages from config (or injected instances).
+        """Wire up the pipeline's stages from config, or injected instances.
 
         Parameters
         ----------
@@ -129,36 +112,23 @@ class RetrievalPipeline:
         self._reranker = reranker or build_reranker(config)
         self._llm = llm or build_llm(config)
         self._prompt_template = prompt_template or load_prompt_template_from_config(config)
-        # Hard kill-switch, read once: when False, retrieve()/answer() never
-        # pass a caller-supplied AuthorizationContext down to the
-        # vectorstore at all (always auth=None), so behavior is byte-
-        # identical to before this milestone regardless of what a caller
-        # constructs -- see config.security.authorization's docstring.
+        # Read once: when False, a caller-supplied AuthorizationContext is
+        # never passed down to the vectorstore.
         self._authorization_enabled = config.security.authorization.enabled
-        # Field-level-safety milestone: independent of the document-level
-        # kill switch above (see FieldRedactionConfig's docstring). When
-        # True, _redact_sensitive_fields runs on every result regardless
-        # of whether effective_auth is None -- a missing identity is
-        # treated as zero roles (fail-closed), never as "unrestricted".
+        # Independent toggle. When True, a missing identity is treated as
+        # zero roles (fail-closed) rather than unrestricted.
         self._field_redaction_enabled = config.security.field_redaction.enabled
 
     def _resolve_auth(
         self, auth: AuthorizationContext | None, filters: dict[str, Any] | None
     ) -> AuthorizationContext | None:
-        """Apply the enabled kill-switch and resolve freshness exclusions for one query.
+        """Apply the authorization kill-switch and resolve freshness exclusions.
 
-        Returns `None` (fully unrestricted) when `auth` is `None` or
-        `config.security.authorization.enabled` is `False`. Otherwise
-        resolves `retrieval/freshness.py`'s document-version-family
-        exclusions -- scoped to `filters["dataset_id"]`, since
-        `VectorStore.list_document_versions` needs a dataset to query.
-        **Documented limitation**: if a caller omits `dataset_id` from
-        `filters`, freshness resolution is skipped (there is no dataset to
-        scope it to) -- tenant/role enforcement still applies unaffected,
-        only the version-family exclusion is skipped. Every production
-        caller in this codebase (`eval.run_eval`, `POST /query` via
-        `api/deps.py`) already sets `dataset_id`, matching the pre-existing
-        mandatory-`dataset_id`-for-eval convention.
+        Returns `None` (unrestricted) when `auth` is `None` or
+        authorization is disabled. Otherwise resolves document-version
+        freshness exclusions scoped to `filters["dataset_id"]`; freshness
+        resolution is skipped if `dataset_id` is absent, though tenant and
+        role enforcement still apply.
         """
         if auth is None or not self._authorization_enabled:
             return None
@@ -180,9 +150,8 @@ class RetrievalPipeline:
     def _flag_injections(results: list[SearchResult]) -> list[SearchResult]:
         """Set `injection_suspected` on each result from its own chunk content.
 
-        Mutates and returns the same list -- observability-only, never
-        drops a result (see `injection_detection.detect_injection`'s
-        docstring for why detection never gates retrieval).
+        Mutates and returns the same list. Observability only; never
+        drops a result.
         """
         flagged = 0
         for result in results:
@@ -199,35 +168,18 @@ class RetrievalPipeline:
     def _redact_sensitive_fields(
         results: list[SearchResult], roles: list[str]
     ) -> list[SearchResult]:
-        """Replace unauthorized sensitive-field values in each result's chunk content.
+        """Replace unauthorized sensitive-field values in each result's chunk and metadata.
 
-        Only called when `config.security.field_redaction.enabled` is
-        True (see `__init__`); `roles` is `effective_auth.roles` when an
-        `AuthorizationContext` was resolved, or `[]` when it wasn't
-        (missing identity, or `authorization.enabled` itself False) --
-        `redact_sensitive_fields`'s own fail-closed semantics mean `[]`
-        redacts every matched field rather than none. Skips a chunk with
-        no `sensitive_field_ids` tag entirely (the common case) without
-        running any regex. Replaces `result.chunk` with a
-        `model_copy(update=...)` rather than mutating in place, since
-        relationship-expansion's `parents_by_id`/`section_cache` can hold
-        the same `Chunk` instance referenced by more than one `SearchResult`
-        within a single query. Auth-boundary milestone: also redacts
-        `attachment_name`/`section_path` on the chunk's own metadata
-        (`field_policy.redact_source_metadata`) -- a redacted-field value
-        can otherwise leak indirectly through those fields even when
-        `content` itself is clean (e.g. `attachment_name="admin-key-
-        2024.pdf"`). Every downstream consumer of this pipeline's richer
-        `answer()['sources']` dict (eval reports, MLflow artifacts)
-        inherits the same redacted metadata, not just `POST /query`'s
-        narrower response.
+        Skips chunks with no `sensitive_field_ids` tag. Replaces
+        `result.chunk` via `model_copy` rather than mutating in place,
+        since the same `Chunk` instance may be shared across results.
 
         Parameters
         ----------
         results : list[SearchResult]
-            Results to redact in place (list mutated, chunk objects replaced).
+            Results to redact in place.
         roles : list[str]
-            Caller roles for this query; `[]` means "no asserted identity".
+            Caller roles for this query; empty means no asserted identity.
 
         Returns
         -------
@@ -292,16 +244,14 @@ class RetrievalPipeline:
         `"dense"` (the default), behavior is unchanged from plain vector
         search.
 
-        Three independent, explicitly-named overrides (see this module's
-        docstring for what each controls) -- callers that want a broad,
-        evaluation-safe ranking (e.g. eval computing Recall@10) pass all
-        three together rather than relying on the reranker step to
-        under-truncate, so the override never depends on what production's
-        `generation_context_top_n` happens to be configured to.
+        The candidate, reranker, and generation-context cutoffs are
+        independent. Evaluation callers that need a broad ranking should
+        pass explicit values for all three rather than depending on
+        production context-size defaults.
 
         When `config.retrieval.relationship_expansion.enabled`, parent/
         neighbor context is appended after the generation-context cutoff
-        (see `_expand_with_relationships`) -- disabled by default, a no-op
+        (see `_expand_with_relationships`). It is disabled by default and a no-op
         when left that way.
 
         Parameters
@@ -325,12 +275,11 @@ class RetrievalPipeline:
             regardless of which reranker (if any) ran.
         auth : AuthorizationContext | None, optional
             Caller identity/date context (see `retrieval/authorization.py`).
-            `None` (the default) is fully unrestricted -- passing a context
+            `None` (the default) is fully unrestricted. Passing a context
             can only narrow results, never broaden them, and has no effect
             at all unless `config.security.authorization.enabled` is also
             `True` (see `_resolve_auth`). Applied in SQL before dense/BM25
-            fetch, before fusion, before reranking -- i.e. before anything
-            else in this method runs.
+            fetch, fusion, reranking, and relationship expansion.
 
         Returns
         -------
@@ -448,15 +397,15 @@ class RetrievalPipeline:
         for it: `retrieve()`'s own behavior (including which provider it
         uses, reranking, and relationship expansion) is completely
         unchanged by this method's existence. Always computes *both*
-        dense and BM25 -- unlike `retrieve()`, which only computes BM25
-        when `config.retrieval.provider == "hybrid"` -- so attribution
+        dense and BM25. Unlike `retrieve()`, which only computes BM25
+        when `config.retrieval.provider == "hybrid"`, attribution
         can answer "what would each retriever alone have found" even
         when production is configured for `"dense"`. Uses
         `config.retrieval.hybrid.rrf_k` for fusion regardless of
         `config.retrieval.provider`, since that value has a config
         default even when hybrid isn't the active provider.
 
-        Never calls `self._reranker` or `_expand_with_relationships` --
+        Never calls `self._reranker` or `_expand_with_relationships`;
         the returned rankings are exactly what dense search, BM25 search,
         and RRF fusion produced, so neither a real reranker's rescoring
         nor relationship expansion can ever influence them.
@@ -472,7 +421,7 @@ class RetrievalPipeline:
             Number of results fetched *per retriever* (not a combined
             total); defaults to `config.retrieval.candidate_k`.
         auth : AuthorizationContext | None, optional
-            See `retrieve`'s `auth` parameter -- applied identically here,
+            Same semantics as `retrieve`'s `auth` parameter; applied identically here,
             so attribution reports never surface content a caller wasn't
             authorized to see either.
 
@@ -507,7 +456,7 @@ class RetrievalPipeline:
 
         Ranking and expansion stay separate: expanded chunks are appended
         after the ranked list (`origin="expanded"`, `expanded_from=<id>`),
-        never interleaved into it or given a freshly computed score --
+        never interleaved into it or given a freshly computed score.
         `.score` is inherited from the originating result, so `origin` (not
         `.score`) is what callers should check to tell directly-retrieved
         context from expanded context apart. A `parent_chunk_id`/section
@@ -635,19 +584,19 @@ class RetrievalPipeline:
             track them just reports `None` rather than raising.
             `latency_breakdown_ms`
             splits `retrieval_ms` into its component stages (embed, dense/
-            BM25 search, fusion, rerank, expansion -- see `_retrieve_timed`)
+            BM25 search, fusion, rerank, expansion)
             plus `generation_ms`, for latency comparisons (e.g. how much a
             real reranker adds) that `retrieval_ms`/`generation_ms` alone
             can't answer. Each `sources` entry includes the chunk's raw
             `content` alongside its metadata (including `content_type`,
             `attachment_name`/`source_anchor` for image hits,
             `origin`/`expanded_from` for relationship-expansion
-            provenance, and -- safety milestone -- `tenant_id`/
+            provenance, and `tenant_id`/
             `trust_level`/`status`/`document_version`/`injection_suspected`/
             `sensitive_field_ids` (ingestion-time tag, present regardless
             of redaction)/`redacted_field_ids` (only non-empty when
             `config.security.field_redaction.enabled` and a policy fired
-            -- `content` for such a source already has the raw value
+            and `content` for such a source already has the raw value
             replaced with `[REDACTED:SENSITIVE_FIELD]`, so this list is
             observability only, never a place a raw value could hide),
             so callers (e.g. RAGAS scoring, eval's reference-context/

@@ -1,35 +1,14 @@
 """Persistent, judge-identity-safe caching for RAGAS judge LLM calls.
 
-RAGAS ships its own disk cache (`ragas.cache.DiskCacheBackend` /
-`CacheInterface`, wired in via `cache=` on `LangchainLLMWrapper`): every
-`generate_text`/`agenerate_text` call is memoized under a key hashed from
-the function name plus its call args/kwargs (`ragas.cache._generate_cache_key`).
-Because that hash is computed from a *bound* method, the wrapped LLM
-instance itself (and therefore the judge provider/model it was built from)
-never enters the hash -- only the rendered prompt text and generation
-kwargs (`n`/`temperature`/`stop`) do. That's fine for detecting a changed
-question/answer/context/metric, since RAGAS's own metric prompts (see
-e.g. `ragas.metrics._faithfulness.NLIStatementPrompt`) render the full
-question/context/statements/instruction text into that prompt -- but it
-means an unmodified `DiskCacheBackend` shared across two different judge
-models would silently replay one model's verdict for another model's
-byte-identical-looking prompt. That's exactly the kind of
-experiment-invalidating bug this project has hit before with a
-similarly "looks harmless, isn't" config coupling (see CLAUDE.md's
-`rerank_top_n` story) -- so this module namespaces every cache key by an
-explicit fingerprint of the judge's provider/model/temperature/max_tokens
-(plus the installed `ragas` version, so a RAGAS upgrade that changes a
-metric's prompt template also invalidates the cache) before delegating to
-RAGAS's own disk-backed storage.
+Wraps RAGAS's own disk cache with an explicit fingerprint of the judge's
+provider, model, and generation settings, so switching judge model or
+provider always misses the cache rather than replaying another model's
+verdict.
 
-`reference_contexts` (this project's gold-authored evidence-level ground
-truth, see CLAUDE.md's "Multimodal ingestion" section) is deliberately
-not part of this module's key material: `ragas_scorer.build_dataset` never
-feeds it into the RAGAS dataset (only `question`/`answer`/`contexts`/
-`expected_answer` are), so it isn't an input to any judged metric today --
-nothing to key on. If a future change starts passing it to RAGAS, it will
-already be covered by the same mechanism that covers `contexts` today,
-since it will become part of the rendered judge prompt text.
+Notes
+-----
+See docs/architecture.md's "RAGAS Judge-Call Caching" section for why
+this fingerprinting is necessary.
 """
 
 from __future__ import annotations
@@ -44,13 +23,9 @@ if TYPE_CHECKING:
 
 CACHE_SCHEMA_VERSION = "v1"
 
-# Confirmed against this project's own tracked judge usage (see
-# PROJECT_JOURNAL.md's experiment_015 entry: 1,115,731 input / 101,857
-# output tokens on gpt-4o-mini priced out to $0.2285, matching OpenAI's
-# published $0.15/1M input, $0.60/1M output). Deliberately not populated
-# for models this project hasn't verified a real cost against -- see
-# `estimate_avoided_cost`'s "no pricing configured" branch rather than
-# guessing a number.
+# Only populated for models with a verified real-cost data point;
+# unpriced models fall into estimate_avoided_cost's "no pricing
+# configured" branch rather than a guessed number.
 PRICING_USD_PER_1M_TOKENS: dict[tuple[str, str], dict[str, float]] = {
     ("openai", "gpt-4o-mini"): {"input": 0.15, "output": 0.60},
 }
@@ -86,8 +61,7 @@ def judge_fingerprint(config: AppConfig) -> str:
     """Build a short, stable fingerprint of the active judge configuration.
 
     Used as a cache-key namespace so a cache entry produced by one judge
-    provider/model can never be replayed for another -- see this module's
-    docstring for why RAGAS's own key hash doesn't already guarantee that.
+    provider/model can never be replayed for another.
 
     Parameters
     ----------
@@ -207,15 +181,14 @@ def estimate_avoided_cost(
 ) -> dict[str, Any] | None:
     """Estimate the USD cost avoided by `avoided_calls` cache hits this run.
 
-    Extrapolates from the *same run's* actual (uncached) judge usage --
-    `judge_llm.call_count`/`.input_tokens`/`.output_tokens`, tracked by
-    `OpenAILLM`/`AnthropicLLM` themselves (see their docstrings) -- rather
-    than a fixed per-call assumption, since prompt length varies by
+    Extrapolates from the same run's actual uncached judge usage:
+    `judge_llm.call_count`, `.input_tokens`, and `.output_tokens`. This is
+    more accurate than a fixed per-call assumption, since prompt length varies by
     question/context. Returns `None` when there's nothing to estimate
     (`avoided_calls == 0`); otherwise returns a dict that always explains
     *why* if it can't produce a number (local provider, no uncached calls
-    to extrapolate from this run, or no pricing on file for this model) --
-    never a guessed dollar figure.
+    to extrapolate from this run, or no pricing on file for this model).
+    It never returns a guessed dollar figure.
 
     Parameters
     ----------

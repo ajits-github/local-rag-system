@@ -10,12 +10,10 @@ class LLM(ABC):
 
     `system`/`user` are kept as two distinct arguments (not
     pre-concatenated into one string) so every implementation can deliver
-    them to the underlying model as genuinely separate channels -- e.g.
-    Ollama's/OpenAI's/Anthropic's own role-aware chat APIs -- rather than
+    them to the underlying model as genuinely separate channels, such as
+    Ollama's/OpenAI's/Anthropic's own role-aware chat APIs, rather than
     relying on prompt-text labeling alone to keep system instructions,
-    retrieved evidence, and the user's question apart (see
-    `retrieval/pipeline.py`'s `answer()` and the auth-boundary milestone's
-    prompt-injection-architecture hardening).
+    retrieved evidence, and the user's question apart.
     """
 
     @abstractmethod
@@ -28,7 +26,7 @@ class LLM(ABC):
             System instruction text (may be empty). Never contains
             retrieved content.
         user : str
-            User-turn text -- the rendered retrieved context plus the
+            User-turn text: the rendered retrieved context plus the
             question, per the active prompt template.
 
         Returns

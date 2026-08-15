@@ -28,12 +28,11 @@ METRIC_NAMES = [
 
 # Metrics ragas exposes only as classes needing instantiation, not as
 # ready-built singletons under `ragas.metrics` (unlike METRIC_NAMES above).
-# Added per the generation-context-latency milestone's "if supported
-# cleanly by the project's pinned RAGAS version" requirement -- both use
-# the same {user_input, response, retrieved_contexts, reference} columns
-# `build_dataset` already produces, so no dataset changes are needed.
-# Loaded best-effort in `_load_metrics`: an unsupported/renamed class in a
-# future ragas version fails into `failed`, not a hard import error.
+# Both use the same {user_input, response, retrieved_contexts, reference}
+# columns `build_dataset` already produces, so no dataset changes are
+# needed. Loaded best-effort in `_load_metrics`: an unsupported/renamed
+# class in a future ragas version fails into `failed`, not a hard import
+# error.
 _EXTRA_METRIC_CLASSES = {
     "noise_sensitivity": "NoiseSensitivity",
     "factual_correctness": "FactualCorrectness",

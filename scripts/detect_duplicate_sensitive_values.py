@@ -1,11 +1,10 @@
 """Diagnostic: find sensitive literals duplicated across chunks, or missing their ingestion tag.
 
-Auth-boundary milestone (requirement 7: duplicate-secret/alternate-copy
-protection). Reads every chunk's `content`/`sensitive_field_ids` straight
-from Postgres and runs `field_policy.find_duplicate_sensitive_occurrences`
-against them -- a diagnostic/validation tool over the real corpus, not
-part of the query-time enforcement path (see that function's docstring).
-Never prints a raw secret value; only sha256 hashes and chunk/document ids.
+Reads every chunk's `content`/`sensitive_field_ids` straight from
+Postgres and runs `field_policy.find_duplicate_sensitive_occurrences`
+against them. A diagnostic/validation tool over the real corpus, not part
+of the query-time enforcement path. Never prints a raw secret value; only
+sha256 hashes and chunk/document ids.
 
 Usage:
     python scripts/detect_duplicate_sensitive_values.py [--config config/default.yaml]
@@ -31,14 +30,14 @@ from rag.retrieval.field_policy import find_duplicate_sensitive_occurrences  # n
 
 @dataclass
 class _ChunkMetadataStub:
-    """Minimal duck-typed stand-in for `ChunkMetadata` -- only what the detector reads."""
+    """Minimal duck-typed stand-in for the metadata fields the detector reads."""
 
     sensitive_field_ids: list[str] | None
 
 
 @dataclass
 class _ChunkStub:
-    """Minimal duck-typed stand-in for `Chunk` -- only what the detector reads."""
+    """Minimal duck-typed stand-in for the chunk fields the detector reads."""
 
     id: str
     content: str
@@ -48,10 +47,8 @@ class _ChunkStub:
 def _load_chunks(config) -> list[_ChunkStub]:  # noqa: ANN001
     """Read every chunk's id/content/sensitive_field_ids directly from Postgres.
 
-    A direct SQL read rather than going through `VectorStore.search` --
-    there is no existing "fetch every chunk" primitive on that interface,
-    and adding one solely for this one-off diagnostic script would be
-    exactly the kind of speculative abstraction this codebase avoids.
+    Uses direct SQL because `VectorStore.search` is query-shaped and
+    top_k-limited, and the interface has no "fetch every chunk" primitive.
     """
     table = config.vectorstore.chunks_table
     conn = psycopg2.connect(config.database_url())

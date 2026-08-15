@@ -145,33 +145,15 @@ class IngestionPipeline:
     def ingest_path(self, path: Path, dataset_id: str) -> IngestionStats:
         """Ingest a single file, or recursively ingest a directory tree.
 
-        Every chunk written is tagged with `dataset_id`, which isolates it
-        from every other dataset at retrieval time (see
-        `vectorstore.base.ALLOWED_FILTER_FIELDS` and `eval/run_eval.py`,
-        which filters on it unconditionally). When walking a directory,
-        each file's path relative to `path` (minus its own filename) is
-        additionally recorded as the chunk metadata's `category` — e.g.
-        ingesting `data/knowledge_base` preserves `security`,
-        `runbooks/postgres`, etc. as filterable metadata within that
-        dataset.
+        Every chunk written is tagged with `dataset_id`, isolating it from
+        every other dataset at retrieval time. When walking a directory,
+        each file's path relative to `path` is additionally recorded as
+        the chunk metadata's `category`.
 
-        Per-file incremental behavior (new/changed/unchanged, via stable
-        `(source, dataset_id)` identity + checksum) already lived entirely
-        in `ingest_file`/`VectorStore.get_or_create_document_id` before this
-        milestone -- an unchanged file's loader still runs (cheap: one file
-        read + hash), but it is never rechunked, re-embedded, or rewritten.
-        What this method adds: (1) **deleted-document detection** -- a
-        directory walk only ever discovers files that currently exist on
-        disk, so a source removed since the last ingestion previously stayed
-        in Postgres forever; this now diffs the pre-run
-        `VectorStore.list_document_sources(dataset_id)` snapshot against
-        what's discovered this run and deletes the difference via
-        `delete_documents_by_source`. Skipped for a single-file target (no
-        directory listing to diff against). (2) **aggregate statistics**
-        (discovered/new/changed/unchanged/deleted/chunks_embedded/
-        chunks_reused) via `IngestionStats`, consumed by
-        `eval/run_eval.py`'s corpus-lineage reporting and printed by this
-        module's CLI.
+        For a directory target, also detects documents deleted since the
+        last ingestion (diffing the pre-run set of known sources against
+        what's discovered this run) and deletes them via
+        `delete_documents_by_source`. Skipped for a single-file target.
 
         Parameters
         ----------

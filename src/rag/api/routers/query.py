@@ -24,15 +24,13 @@ class QueryRequest(BaseModel):
     """Request body for `POST /query`.
 
     `tenant_id`/`roles` are only trusted as caller-identity claims when
-    `config.security.auth.enabled` is `False` (the system default,
-    unchanged pre-milestone behavior) or when
+    `config.security.auth.enabled` is `False` (the system default) or when
     `security.auth.insecure_dev_mode` is explicitly `True` and no JWT was
     supplied. Whenever a verified `Authorization: Bearer <jwt>` identity is
-    present, these two fields are ignored for authorization purposes --
-    the verified JWT's own `tenant_id`/`roles` claims are used instead
-    (see `api/routers/query.py:_build_authorization_context`). `as_of`/
-    `require_trust_level` are always legitimate caller-supplied query
-    parameters (not identity claims) and are honored either way.
+    present, these two fields are ignored for authorization; the verified
+    JWT claims are used instead. `as_of` and `require_trust_level` are
+    caller-supplied query parameters rather than identity claims, so they
+    are honored either way.
     """
 
     query: str
@@ -69,17 +67,14 @@ def _build_authorization_context(
 ) -> AuthorizationContext | None:
     """Build the `AuthorizationContext` for this request.
 
-    When `identity` is present (a verified JWT was supplied), `tenant_id`/
-    `roles` come **strictly** from the verified identity -- the request
-    body's `tenant_id`/`roles` are never consulted for authorization,
-    satisfying "the API must no longer trust caller-supplied tenant_id or
-    roles when authentication is enabled." If the body's values differ
-    from the verified identity's, a `forged_claim_attempt` audit event is
-    logged (harmless, since the forged values are never used, but a
-    signal worth recording). Otherwise (no verified identity -- either
-    `security.auth.enabled=False`, the system default, or
-    `insecure_dev_mode=True` with no token supplied), falls back to the
-    pre-milestone body-trusted construction unchanged.
+    When `identity` is present, tenant and role claims come strictly from
+    the verified JWT identity. If the request body claims different
+    values, this logs a `forged_claim_attempt` event but does not use
+    those body fields for authorization.
+
+    When no verified identity is present, the function falls back to body
+    fields. That path is used when JWT auth is disabled, or when insecure
+    development mode allows a request without a token.
 
     Parameters
     ----------
@@ -186,13 +181,12 @@ def query(
     Parameters
     ----------
     request : Request
-        The raw HTTP request -- required by `slowapi`'s rate-limit
+        The raw HTTP request, required by `slowapi`'s rate-limit
         decorator and passed to `get_current_identity`.
     body : QueryRequest
         The query, plus optional `top_k`/`filters` overrides. `top_k`
-        maps onto `RetrievalPipeline.answer`'s `candidate_k` (the
-        external API field name is kept stable; only the internal
-        parameter name changed -- see `retrieval/pipeline.py`).
+        maps onto `RetrievalPipeline.answer`'s `candidate_k`; the public
+        API field name remains stable.
     identity : VerifiedIdentity | None
         The verified caller identity (see `get_current_identity`), or
         `None` when JWT auth is disabled.
