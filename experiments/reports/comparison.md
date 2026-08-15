@@ -26,3 +26,4 @@
 | 24 | classic_rag_baseline_v1 | hybrid | qwen2.5:3b | all-MiniLM-L6-v2 | none | v2 | on | 0.911 | 0.946 | 0.952 | 0.824 | 0.448 | 0.788 | 0.842 | 0.902 | 0.503 | 24.9s | techfusion | 2026-08-14 |
 | 25 | secure_rag_baseline_v1_auth_disabled | hybrid | qwen2.5:3b | all-MiniLM-L6-v2 | none | v3 | on | 0.861 | 0.929 | 0.937 | 0.768 | 0.370 | 0.733 | 0.842 | - | - | 28.2s | techfusion | 2026-08-14 |
 | 26 | secure_rag_baseline_v1 | hybrid | qwen2.5:3b | all-MiniLM-L6-v2 | none | v3 | on | 0.788 | 0.832 | 0.865 | 0.753 | 0.390 | 0.781 | 0.842 | - | - | 28.5s | techfusion | 2026-08-14 |
+| 27 | secure_rag_baseline_v1_field_redaction | hybrid | qwen2.5:3b | all-MiniLM-L6-v2 | none | v3 | on | 0.788 | 0.832 | 0.865 | 0.753 | 0.405 | 0.781 | 0.842 | - | - | 21.7s | techfusion | 2026-08-15 |
