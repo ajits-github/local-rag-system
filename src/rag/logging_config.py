@@ -1,8 +1,12 @@
-"""Structured JSON logging with request-id propagation.
+"""Structured JSON logging with request-id and trace-id propagation.
 
-No OpenTelemetry here by design (deferred — see README Roadmap); this gives
-clean, greppable JSON lines with a request_id that ties every log line in a
-request together, which is enough for local development and debugging.
+This module owns log formatting only; OpenTelemetry tracing itself lives
+in `rag.observability.tracing` (see `docs/architecture.md`'s
+"Observability" section for the full split between the two). Every log
+line still carries the `request_id` contextvar this module has always
+set, and now additionally carries `trace_id`/`span_id` when a real
+(non-no-op) span is active, so a log line and the trace it happened
+inside can be cross-referenced without a second correlation mechanism.
 """
 
 from __future__ import annotations
@@ -82,6 +86,27 @@ def get_request_id() -> str | None:
     return _request_id_var.get()
 
 
+def _current_trace_ids() -> tuple[str, str] | None:
+    """Return `(trace_id, span_id)` as hex strings, or `None` if no real span is active.
+
+    Deliberately does not import `rag.observability` at module scope --
+    this module is imported very early (before config is loaded), and
+    this keeps the two modules' import order irrelevant. Never raises:
+    a missing/no-op span context is the common case (tracing disabled by
+    default), not an error.
+    """
+    try:
+        from opentelemetry import trace
+
+        span = trace.get_current_span()
+        ctx = span.get_span_context()
+        if not ctx.is_valid:
+            return None
+        return format(ctx.trace_id, "032x"), format(ctx.span_id, "016x")
+    except Exception:
+        return None
+
+
 class JSONFormatter(logging.Formatter):
     """Renders each `logging.LogRecord` as a single JSON line."""
 
@@ -105,6 +130,9 @@ class JSONFormatter(logging.Formatter):
             "message": record.getMessage(),
             "request_id": _request_id_var.get(),
         }
+        trace_ids = _current_trace_ids()
+        if trace_ids is not None:
+            payload["trace_id"], payload["span_id"] = trace_ids
         extras = {
             key: val
             for key, val in record.__dict__.items()

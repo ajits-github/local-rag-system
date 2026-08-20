@@ -35,5 +35,9 @@ repos:
           - fastapi>=0.115
           - python-dotenv>=1.0
           - pyjwt>=2.8
+          - prometheus-client>=0.20
+          - opentelemetry-api>=1.27
+          - opentelemetry-sdk>=1.27
+          - opentelemetry-exporter-otlp-proto-http>=1.27
         args: [--config-file=pyproject.toml]
         files: ^src/
