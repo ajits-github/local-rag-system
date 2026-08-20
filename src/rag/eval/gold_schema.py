@@ -81,6 +81,59 @@ class GoldExample(BaseModel):
         Whether the scenario depends on trust-level filtering.
     expected_trust_level : str or None
         Trust level the query should require.
+    requires_query_decomposition : bool
+        Agentic RAG milestone: whether answering requires the agent to
+        split the question into subquestions (`decompose` node).
+    requires_multiple_retrieval_calls : bool
+        Agentic RAG milestone: whether answering genuinely requires more
+        than one tool dispatch, not just one broad retrieval.
+    requires_latest_document_tool : bool
+        Agentic RAG milestone: whether answering requires resolving a
+        version family via the `get_latest_document` tool specifically
+        (as opposed to freshness resolution inside plain `retrieve()`).
+    expects_insufficient_evidence_retry : bool
+        Agentic RAG milestone: whether a first retrieval is expected to
+        miss, requiring the bounded reformulate-and-retry loop to find
+        the answer.
+    tool_not_needed : bool
+        Agentic RAG milestone: whether this question should route to
+        `classic_rag` even when `config.agent.enabled=True` -- used to
+        score `unnecessary_agent_rate`.
+    expects_max_step_termination : bool
+        Agentic RAG milestone: whether this question is expected to
+        exhaust `max_agent_steps`/`max_retrieval_attempts`/`max_tool_calls`
+        rather than resolve normally.
+    adversarial_tool_instruction : bool
+        Agentic RAG milestone: whether a tool's output (not the original
+        query) carries a prompt-injection payload -- tests that tool
+        output stays evidence, never becomes an instruction.
+    expected_tool_sequence : list[str]
+        Agentic RAG milestone: the expected ordered tool names for
+        `tool_selection_accuracy` scoring.
+    agentic_category : str or None
+        Agentic RAG milestone: authored scenario bucket (e.g.
+        "query_decomposition", "latest_document_resolution",
+        "retrieval_reformulation", "tool_not_needed",
+        "insufficient_evidence", "adversarial_tool_output") -- distinct
+        from `content_type`'s multimodal buckets and `safety_category`'s
+        security buckets; used for `run_agent_eval.py`'s per-category
+        breakdown.
+    agentic_rationale : str or None
+        Agentic RAG milestone: one-sentence authored explanation of why
+        this question requires the tagged agentic behavior.
+    expected_subquestions : list[str]
+        Agentic RAG milestone: reference subquestions for scoring
+        `decompose` node output quality.
+    expected_reformulation : str or None
+        Agentic RAG milestone: a reference reformulated query, for
+        scenarios where the first phrasing is expected to miss and the
+        `evaluate_evidence` node's retry should look more like this.
+    minimum_expected_tool_calls, maximum_expected_tool_calls : int or None
+        Agentic RAG milestone: the expected reasonable range of total
+        tool dispatches for this question -- `0`/`0` for `tool_not_needed`
+        rows -- used to flag an agent run as under- or over-working a
+        question, distinct from the hard `config.agent.max_tool_calls`
+        ceiling.
 
     Notes
     -----
@@ -121,6 +174,20 @@ class GoldExample(BaseModel):
     requires_tenant_filter: bool = False
     requires_trust_filter: bool = False
     expected_trust_level: str | None = None
+    requires_query_decomposition: bool = False
+    requires_multiple_retrieval_calls: bool = False
+    requires_latest_document_tool: bool = False
+    expects_insufficient_evidence_retry: bool = False
+    tool_not_needed: bool = False
+    expects_max_step_termination: bool = False
+    adversarial_tool_instruction: bool = False
+    expected_tool_sequence: list[str] = Field(default_factory=list)
+    agentic_category: str | None = None
+    agentic_rationale: str | None = None
+    expected_subquestions: list[str] = Field(default_factory=list)
+    expected_reformulation: str | None = None
+    minimum_expected_tool_calls: int | None = None
+    maximum_expected_tool_calls: int | None = None
 
 
 def load_gold_jsonl(path: str | Path) -> list[GoldExample]:

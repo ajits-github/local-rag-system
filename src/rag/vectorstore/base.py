@@ -383,6 +383,41 @@ class VectorStore(ABC):
         """
 
     @abstractmethod
+    def get_chunks_by_source(
+        self,
+        source: str,
+        dataset_id: str,
+        auth: AuthorizationContext | None = None,
+        limit: int | None = None,
+    ) -> list[Chunk]:
+        """Fetch every chunk of one document by its exact `source` path, ordered by `chunk_index`.
+
+        Used by the agent `get_document`/`get_latest_document` tools
+        (`rag/agent/tools.py`) to fetch a specific document's content
+        directly, rather than via similarity search. `auth` is applied
+        defensively, identically to `get_chunks_by_section`.
+
+        Parameters
+        ----------
+        source : str
+            Exact `source` value to match.
+        dataset_id : str
+            The dataset namespace to search within.
+        auth : AuthorizationContext | None, optional
+            See `search`'s `auth` parameter.
+        limit : int | None, optional
+            Maximum number of chunks to return (a SQL-level `LIMIT`,
+            applied before any caller-side selection). Callers needing a
+            bounded read regardless of document size (e.g. agent tools)
+            should always pass this; `None` returns every chunk.
+
+        Returns
+        -------
+        list[Chunk]
+            Matching chunks, ordered by `chunk_index` ascending.
+        """
+
+    @abstractmethod
     def get_cached_image_description(self, image_checksum: str) -> str | None:
         """Look up a previously-generated vision description by image checksum.
 

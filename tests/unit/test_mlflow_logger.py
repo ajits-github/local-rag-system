@@ -254,6 +254,21 @@ def test_build_run_name_includes_rel_exp_only_when_enabled():
     assert with_expansion == f"{without}_rel-exp"
 
 
+def test_build_run_name_includes_agentic_only_when_enabled():
+    """The 'agentic' segment appears only when agent_enabled is truthy."""
+    base = {
+        "experiment_id": "experiment_030",
+        "generation_model": "qwen2.5:3b",
+        "prompt_version": "v3",
+        "retrieval_provider": "hybrid",
+    }
+    without = build_run_name(base)
+    with_agent = build_run_name({**base, "agent_enabled": True})
+
+    assert "agentic" not in without
+    assert with_agent == f"{without}_agentic"
+
+
 def test_log_experiment_attaches_existing_artifact_paths(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):

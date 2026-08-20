@@ -433,6 +433,62 @@ class SecurityConfig(BaseModel):
     egress_policy: EgressPolicyConfig = Field(default_factory=EgressPolicyConfig)
 
 
+class AgentConfig(BaseModel):
+    """Bounded agentic-RAG workflow tunables, layered above the classic retrieval pipeline.
+
+    Parameters
+    ----------
+    enabled : bool
+        When `False` (the default), `POST /agent/query` still exists but
+        `classify_query` always routes to `classic_rag` -- a coarse
+        kill-switch matching `AuthorizationConfig`/`FieldRedactionConfig`'s
+        convention.
+    max_agent_steps : int
+        Hard ceiling on total graph node executions per request.
+    max_retrieval_attempts : int
+        Hard ceiling on reformulate-and-retry loop iterations.
+    max_tool_calls : int
+        Hard ceiling on total tool dispatches (search + document + latest
+        + related context combined).
+    max_json_parse_retries : int
+        Bounded reparse-nudge attempts when an LLM decision call returns
+        invalid JSON, before that decision fails safely.
+    max_tool_top_k : int
+        Server ceiling clamped onto `search_knowledge_base`'s `top_k`
+        argument, independent of that argument's own Pydantic `le` bound
+        -- a config change, not just the schema literal, is always the
+        true final ceiling.
+    max_chunks_per_document_fetch : int
+        Final chunk count `get_document`/`get_latest_document` keep after
+        relevance-selecting against the current query.
+    max_chunks_per_document_fetch_hard_ceiling : int
+        SQL-level `LIMIT` applied to `get_document`/`get_latest_document`'s
+        underlying fetch, before relevance selection -- bounds the read
+        itself regardless of a document's actual size. Neither this nor
+        `max_chunks_per_document_fetch` is exposed to the LLM in any tool
+        schema.
+    classify_prompt_path, decompose_prompt_path, tool_select_prompt_path,
+    evidence_sufficiency_prompt_path, synthesize_prompt_path : str
+        Paths to each decision point's `PromptTemplate` YAML.
+    """
+
+    enabled: bool = False
+    max_agent_steps: int = 8
+    max_retrieval_attempts: int = 2
+    max_tool_calls: int = 6
+    max_json_parse_retries: int = 1
+    max_tool_top_k: int = 20
+    max_chunks_per_document_fetch: int = 10
+    max_chunks_per_document_fetch_hard_ceiling: int = 50
+    classify_prompt_path: str = "src/rag/prompts/templates/agent_classify_v1.yaml"
+    decompose_prompt_path: str = "src/rag/prompts/templates/agent_decompose_v1.yaml"
+    tool_select_prompt_path: str = "src/rag/prompts/templates/agent_tool_select_v1.yaml"
+    evidence_sufficiency_prompt_path: str = (
+        "src/rag/prompts/templates/agent_evidence_sufficiency_v1.yaml"
+    )
+    synthesize_prompt_path: str = "src/rag/prompts/templates/agent_synthesize_v1.yaml"
+
+
 class VisionConfig(BaseModel):
     """Vision provider selection for image-derived indexable content.
 
@@ -467,6 +523,25 @@ class AppConfig(BaseModel):
     ingestion: IngestionConfig
     vision: VisionConfig = Field(default_factory=VisionConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
+    agent: AgentConfig = Field(default_factory=AgentConfig)
+
+    def agent_prompt_template_path(self, path: str) -> Path:
+        """Resolve one of `agent.*_prompt_path`, relative to the repo root if not absolute.
+
+        Parameters
+        ----------
+        path : str
+            One of `agent.classify_prompt_path`/`decompose_prompt_path`/
+            `tool_select_prompt_path`/`evidence_sufficiency_prompt_path`/
+            `synthesize_prompt_path`.
+
+        Returns
+        -------
+        Path
+            The resolved path to the prompt template YAML file.
+        """
+        candidate = Path(path)
+        return candidate if candidate.is_absolute() else REPO_ROOT / candidate
 
     # Resolved environment accessors.
     # Kept as methods (not fields) so they always read the *current* process

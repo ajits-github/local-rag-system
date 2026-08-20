@@ -4,7 +4,7 @@ import uuid
 from pathlib import Path
 
 from rag.ingestion.pipeline import IngestionPipeline
-from rag.retrieval.pipeline import RetrievalPipeline, _build_context
+from rag.retrieval.pipeline import RetrievalPipeline, build_context
 
 TEST_DATASET_ID = "pytest-integration"
 
@@ -74,7 +74,7 @@ def test_flagged_retrieved_injection_is_preserved_as_labeled_evidence_not_droppe
             "observability only, never a redaction/drop"
         )
 
-        context = _build_context(results)
+        context = build_context(results)
         assert "possible embedded instruction" in context
         # The label appears in the same rendered block as the chunk's own
         # content -- it travels with the evidence into the prompt's user

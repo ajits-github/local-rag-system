@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from rag.retrieval.freshness import resolve_excluded_document_ids
+from rag.retrieval.freshness import resolve_current_document_source, resolve_excluded_document_ids
 from rag.schemas import DocumentVersionInfo
 
 
@@ -125,3 +125,72 @@ def test_three_version_chain_resolves_correctly_at_any_depth():
         versions, as_of=date(2025, 6, 1), include_superseded=False
     )
     assert excluded == {"d1", "d3"}  # only d2 (effective 2025-01-01) survives
+
+
+def test_resolve_current_document_source_redirects_an_old_version_path():
+    """Naming a superseded family member's source resolves to the currently-active one's.
+
+    This is the exact case `get_latest_document` (rag.agent.tools) needs:
+    an agent (or a gold question) may name an old version's path, and
+    the tool must still return current content, not the stale document.
+    """
+    versions = [
+        _v("d1", "policy-v1.md", status="superseded"),
+        _v("d2", "policy-v2.md", status="active", supersedes_source="policy-v1.md"),
+    ]
+    assert resolve_current_document_source("policy-v1.md", versions) == "policy-v2.md"
+    # Asking for the already-current path resolves to itself.
+    assert resolve_current_document_source("policy-v2.md", versions) == "policy-v2.md"
+
+
+def test_resolve_current_document_source_three_version_chain():
+    """A source path from any point in a v1->v2->v3 chain resolves to the current member."""
+    versions = [
+        _v("d1", "policy-v1.md", status="superseded"),
+        _v("d2", "policy-v2.md", status="superseded", supersedes_source="policy-v1.md"),
+        _v("d3", "policy-v3.md", status="active", supersedes_source="policy-v2.md"),
+    ]
+    assert resolve_current_document_source("policy-v1.md", versions) == "policy-v3.md"
+    assert resolve_current_document_source("policy-v2.md", versions) == "policy-v3.md"
+
+
+def test_resolve_current_document_source_as_of_resolves_to_dated_winner():
+    """An explicit as_of resolves an old-version source to whichever member was effective then."""
+    versions = [
+        _v("d1", "policy-v1.md", effective_from=date(2025, 1, 1)),
+        _v(
+            "d2",
+            "policy-v2.md",
+            effective_from=date(2026, 5, 15),
+            supersedes_source="policy-v1.md",
+        ),
+    ]
+    assert (
+        resolve_current_document_source("policy-v1.md", versions, as_of=date(2026, 3, 15))
+        == "policy-v1.md"
+    )
+    assert (
+        resolve_current_document_source("policy-v1.md", versions, as_of=date(2026, 8, 14))
+        == "policy-v2.md"
+    )
+
+
+def test_resolve_current_document_source_unknown_source_returned_unchanged():
+    """A source matching no known document is returned unchanged -- never guesses."""
+    versions = [_v("d1", "policy-v1.md", status="active")]
+    assert resolve_current_document_source("unrelated.md", versions) == "unrelated.md"
+
+
+def test_resolve_current_document_source_no_family_returned_unchanged():
+    """A document with no supersedes_source link at all resolves to itself."""
+    versions = [_v("d1", "standalone.md", status="active")]
+    assert resolve_current_document_source("standalone.md", versions) == "standalone.md"
+
+
+def test_resolve_current_document_source_no_active_member_falls_back_to_requested():
+    """No active/dated-resolvable family member -- the requested source is returned unchanged."""
+    versions = [
+        _v("d1", "policy-v1.md", status="draft"),
+        _v("d2", "policy-v2.md", status="draft", supersedes_source="policy-v1.md"),
+    ]
+    assert resolve_current_document_source("policy-v1.md", versions) == "policy-v1.md"

@@ -1,0 +1,17 @@
+prompt_id: agent_decompose
+version: v1
+description: >
+  Agentic RAG milestone: decompose node. Splits a question already
+  classified as complex into a bounded set of ordered subquestions.
+  Structured JSON output, parsed and validated in Python
+  (rag.agent.decisions) -- not provider-native tool calling.
+system_template: |-
+  You are the decomposition component of a bounded retrieval-augmented question-answering agent. The question below has already been classified as complex, requiring multiple, dependent lookups. Break it into at most 4 focused subquestions, ordered so that answering each one supplies information the next one may need. If the question cannot be meaningfully decomposed, return a single-item list containing the original question unchanged.
+
+  Respond with ONLY a single JSON object matching this exact schema, no other text, no markdown code fences:
+  {{"subquestions": ["<subquestion 1>", "<subquestion 2>"]}}
+user_template: |-
+  Question: {query}
+required_variables:
+  - query
+created_at: "2026-08-15"

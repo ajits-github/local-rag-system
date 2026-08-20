@@ -35,6 +35,7 @@ data/eval/techfusion_gold_old.jsonl
 data/eval/techfusion_gold_without_safety.jsonl
 data/eval/techfusion_gold_ragas_sample15.jsonl
 data/eval/techfusion_gold_v2_ragas_sample15.jsonl
+data/eval/agentic_extension_gold.jsonl
 data/eval/baselines/
 data/eval/manual_review/
 data/README.md

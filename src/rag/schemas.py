@@ -228,9 +228,11 @@ class SearchResult(BaseModel):
     score : float
         Similarity or ranking score. Meaningless for ranking on an
         expanded result, which inherits its originating result's score.
-    origin : {"retrieved", "expanded"}
-        Whether this result was directly retrieved or added by
-        relationship expansion.
+    origin : {"retrieved", "expanded", "tool_fetched"}
+        Whether this result was directly retrieved, added by relationship
+        expansion, or fetched directly by an agent tool (`get_document`/
+        `get_latest_document`/`get_related_context`'s seed lookup) rather
+        than via similarity search.
     expanded_from : str or None
         `chunk_id` of the originating result, if `origin == "expanded"`.
     injection_suspected : bool
@@ -243,7 +245,7 @@ class SearchResult(BaseModel):
 
     chunk: Chunk
     score: float
-    origin: Literal["retrieved", "expanded"] = "retrieved"
+    origin: Literal["retrieved", "expanded", "tool_fetched"] = "retrieved"
     expanded_from: str | None = None
     injection_suspected: bool = False
     redacted_field_ids: list[str] = Field(default_factory=list)

@@ -26,7 +26,7 @@ from rag.schemas import Chunk, RetrievalAttribution, SearchResult
 from rag.vectorstore.base import VectorStore
 
 
-def _source_label(result: SearchResult) -> str:
+def source_label(result: SearchResult) -> str:
     """Build the provenance label for a retrieved source.
 
     The label includes source metadata such as section, content type,
@@ -35,6 +35,10 @@ def _source_label(result: SearchResult) -> str:
     For image chunks, the label distinguishes caption or alt-text content
     from vision-generated descriptions so the generated answer does not
     imply visual inspection when no vision model was used.
+
+    Public so the agent synthesize node (`rag/agent/graph.py`) can reuse
+    this exact provenance-labeling logic for tool-fetched evidence,
+    rather than reimplementing it.
 
     Parameters
     ----------
@@ -58,6 +62,8 @@ def _source_label(result: SearchResult) -> str:
         )
     if result.origin == "expanded":
         parts.append("related context")
+    elif result.origin == "tool_fetched":
+        parts.append("agent tool result")
     if meta.trust_level and meta.trust_level.lower() != "authoritative":
         parts.append(f"trust: {meta.trust_level}")
     if result.injection_suspected:
@@ -67,13 +73,52 @@ def _source_label(result: SearchResult) -> str:
     return " | ".join(parts)
 
 
-def _build_context(results: list[SearchResult]) -> str:
-    """Join reranked chunks into a "[Source N: ...]"-labeled context block."""
+def build_context(results: list[SearchResult]) -> str:
+    """Join reranked chunks into a "[Source N: ...]"-labeled context block.
+
+    Public so the agent synthesize node can build its prompt context from
+    accumulated tool evidence using the same formatting `answer()` uses,
+    rather than reimplementing it.
+    """
     labeled = [
-        f"[Source {i}: {_source_label(r)}]\n{r.chunk.content}"
+        f"[Source {i}: {source_label(r)}]\n{r.chunk.content}"
         for i, r in enumerate(results, start=1)
     ]
     return "\n\n---\n\n".join(labeled)
+
+
+def source_dict(result: SearchResult) -> dict[str, Any]:
+    """Render one `SearchResult` as `answer()`'s per-source dict shape.
+
+    Public so any caller needing the same `chunk_id`/`content`/governance-
+    metadata shape `answer()`'s `"sources"` list already produces -- e.g.
+    RAGAS context-building or egress-policy checks over agent-gathered
+    evidence, which never goes through `answer()` -- can reuse it instead
+    of re-deriving the same field list.
+    """
+    return {
+        "chunk_id": result.chunk.metadata.chunk_id,
+        "document_id": result.chunk.metadata.document_id,
+        "source": result.chunk.metadata.source,
+        "category": result.chunk.metadata.category,
+        "score": result.score,
+        "content": result.chunk.content,
+        "content_type": result.chunk.metadata.content_type,
+        "section_path": result.chunk.metadata.section_path,
+        "attachment_name": result.chunk.metadata.attachment_name,
+        "source_anchor": result.chunk.metadata.source_anchor,
+        "vision_generated": result.chunk.metadata.vision_generated,
+        "origin": result.origin,
+        "expanded_from": result.expanded_from,
+        "tenant_id": result.chunk.metadata.tenant_id,
+        "trust_level": result.chunk.metadata.trust_level,
+        "classification": result.chunk.metadata.classification,
+        "status": result.chunk.metadata.status,
+        "document_version": result.chunk.metadata.document_version,
+        "injection_suspected": result.injection_suspected,
+        "redacted_field_ids": result.redacted_field_ids,
+        "sensitive_field_ids": result.chunk.metadata.sensitive_field_ids,
+    }
 
 
 class RetrievalPipeline:
@@ -226,6 +271,46 @@ class RetrievalPipeline:
             )
         return results
 
+    def sanitize_evidence(
+        self, results: list[SearchResult], auth: AuthorizationContext | None
+    ) -> list[SearchResult]:
+        """Apply field redaction and injection flagging to arbitrary results, uniformly.
+
+        The same two steps `_retrieve_timed` already applies to every
+        `retrieve()`/`answer()` result, exposed as one public entry point
+        so any other caller that assembles `SearchResult`s outside the
+        normal search path -- specifically the agent tool layer
+        (`rag/agent/tools.py`'s `get_document`/`get_latest_document`,
+        which fetch chunks directly via `VectorStore.get_chunks_by_source`
+        rather than `retrieve()`) -- gets identical treatment. There is no
+        other, tool-specific sanitization path; this is the single place
+        it happens, so no tool can bypass it by construction.
+
+        Idempotent: results already sanitized by `_retrieve_timed` (e.g.
+        `search_knowledge_base` tool results) are unaffected by a second
+        pass -- already-redacted content matches no further sensitive-field
+        pattern, and `detect_injection` is a pure function of content.
+
+        Parameters
+        ----------
+        results : list[SearchResult]
+            Results to sanitize, from any source.
+        auth : AuthorizationContext | None
+            The caller's resolved authorization context; `roles` drives
+            field-redaction eligibility exactly as in `_retrieve_timed`
+            (an absent context redacts every tagged field, fail-closed,
+            when field redaction is enabled).
+
+        Returns
+        -------
+        list[SearchResult]
+            The same list, redacted (if enabled) and injection-flagged.
+        """
+        if self._field_redaction_enabled:
+            roles = auth.roles if auth is not None else []
+            results = self._redact_sensitive_fields(results, roles)
+        return self._flag_injections(results)
+
     def retrieve(
         self,
         query: str,
@@ -251,7 +336,7 @@ class RetrievalPipeline:
 
         When `config.retrieval.relationship_expansion.enabled`, parent/
         neighbor context is appended after the generation-context cutoff
-        (see `_expand_with_relationships`). It is disabled by default and a no-op
+        (see `expand_with_relationships`). It is disabled by default and a no-op
         when left that way.
 
         Parameters
@@ -370,7 +455,7 @@ class RetrievalPipeline:
 
         if self._config.retrieval.relationship_expansion.enabled:
             t = time.perf_counter()
-            results = self._expand_with_relationships(primary, auth=effective_auth)
+            results = self.expand_with_relationships(primary, auth=effective_auth)
             stage_ms["expansion_ms"] = (time.perf_counter() - t) * 1000
         else:
             results = primary
@@ -405,7 +490,7 @@ class RetrievalPipeline:
         `config.retrieval.provider`, since that value has a config
         default even when hybrid isn't the active provider.
 
-        Never calls `self._reranker` or `_expand_with_relationships`;
+        Never calls `self._reranker` or `expand_with_relationships`;
         the returned rankings are exactly what dense search, BM25 search,
         and RRF fusion produced, so neither a real reranker's rescoring
         nor relationship expansion can ever influence them.
@@ -449,10 +534,14 @@ class RetrievalPipeline:
             fused_results = self._redact_sensitive_fields(fused_results, roles)
         return RetrievalAttribution(dense=dense_results, bm25=bm25_results, fused=fused_results)
 
-    def _expand_with_relationships(
+    def expand_with_relationships(
         self, results: list[SearchResult], auth: AuthorizationContext | None = None
     ) -> list[SearchResult]:
         """Append parent/neighbor context for each result, per `retrieval.relationship_expansion`.
+
+        Public so the agent `get_related_context` tool
+        (`rag/agent/tools.py`) can reuse this exact expansion logic
+        directly, rather than reimplementing parent/neighbor lookup.
 
         Ranking and expansion stay separate: expanded chunks are appended
         after the ranked list (`origin="expanded"`, `expanded_from=<id>`),
@@ -610,7 +699,7 @@ class RetrievalPipeline:
             query, filters=filters, candidate_k=candidate_k, auth=auth
         )
         t1 = time.perf_counter()
-        context = _build_context(results)
+        context = build_context(results)
         system, user = self._prompt_template.render(context=context, query=query)
         answer_text = self._llm.generate(system, user)
         t2 = time.perf_counter()
@@ -620,32 +709,7 @@ class RetrievalPipeline:
             "prompt_tokens": getattr(self._llm, "last_prompt_tokens", None),
             "completion_tokens": getattr(self._llm, "last_completion_tokens", None),
             "query_injection_suspected": detect_injection(query),
-            "sources": [
-                {
-                    "chunk_id": r.chunk.metadata.chunk_id,
-                    "document_id": r.chunk.metadata.document_id,
-                    "source": r.chunk.metadata.source,
-                    "category": r.chunk.metadata.category,
-                    "score": r.score,
-                    "content": r.chunk.content,
-                    "content_type": r.chunk.metadata.content_type,
-                    "section_path": r.chunk.metadata.section_path,
-                    "attachment_name": r.chunk.metadata.attachment_name,
-                    "source_anchor": r.chunk.metadata.source_anchor,
-                    "vision_generated": r.chunk.metadata.vision_generated,
-                    "origin": r.origin,
-                    "expanded_from": r.expanded_from,
-                    "tenant_id": r.chunk.metadata.tenant_id,
-                    "trust_level": r.chunk.metadata.trust_level,
-                    "classification": r.chunk.metadata.classification,
-                    "status": r.chunk.metadata.status,
-                    "document_version": r.chunk.metadata.document_version,
-                    "injection_suspected": r.injection_suspected,
-                    "redacted_field_ids": r.redacted_field_ids,
-                    "sensitive_field_ids": r.chunk.metadata.sensitive_field_ids,
-                }
-                for r in results
-            ],
+            "sources": [source_dict(r) for r in results],
             "retrieval_ms": (t1 - t0) * 1000,
             "generation_ms": generation_ms,
             "latency_breakdown_ms": {**stage_ms, "generation_ms": generation_ms},

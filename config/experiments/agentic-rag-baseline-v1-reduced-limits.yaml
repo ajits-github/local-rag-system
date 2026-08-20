@@ -1,0 +1,168 @@
+# agentic_rag_baseline_v1_reduced_limits: a dedicated, deliberately
+# tightened-bound variant of agentic-rag-baseline-v1.yaml, used ONLY to
+# exercise `termination_reason="max_steps"` behavior under controlled
+# conditions. Not a candidate baseline itself -- a diagnostic run.
+#
+# The only field that differs from agentic-rag-baseline-v1.yaml is
+# agent.max_agent_steps: 8 -> 4. With the graph's step-counting (classify=1,
+# decompose=1, then select_tool/execute_tool/evaluate_evidence=1 each per
+# loop iteration -- see src/rag/agent/graph.py's module docstring), a step
+# cap of 4 forces every complex-routed question to stop immediately after
+# its FIRST tool execution (step 4), before evaluate_evidence ever runs --
+# a clean, deterministic way to observe max-step termination without
+# redesigning the agent's bound *logic*, only its configured *value* for
+# this diagnostic pass. max_retrieval_attempts/max_tool_calls are
+# unchanged (8->4 on max_agent_steps is always the binding constraint at
+# this setting).
+#
+# IMPORTANT interpretation note (do not skip when reading this run's
+# report): the two insufficient_evidence gold rows (agentic_extension_gold
+# rows 14-15) are NOT evidence of a new failure mode introduced by this
+# tighter limit. Their correct, already-expected behavior under the
+# UNMODIFIED baseline config is already "stop and report insufficient
+# evidence" (expects_insufficient_evidence_retry, not
+# expects_max_step_termination) -- under this reduced-limit config they may
+# additionally terminate via max_steps before ever reaching that
+# insufficient-evidence judgment, which is a property of this diagnostic
+# config's artificially tight bound, not a real regression. Report their
+# outcome separately from the genuine expects_max_step_termination rows.
+
+app:
+  name: local-rag-system
+  log_level: INFO
+
+embedding:
+  provider: sentence_transformers # swap point
+  model_name: sentence-transformers/all-MiniLM-L6-v2
+  device: cpu
+  batch_size: 32
+  normalize: true
+  dimension: 384 # must match model output dim; used to size the pgvector column
+
+vectorstore:
+  provider: pgvector # swap point (future: chroma, faiss, ...)
+  connection_env_var: DATABASE_URL # never hardcode host/port/credentials
+  documents_table: documents
+  chunks_table: chunks
+  distance_metric: cosine
+
+chunking:
+  provider: structured_markdown # swap point: recursive_character | structured_markdown
+  chunk_size: 500
+  chunk_overlap: 50
+  structured_markdown:
+    table_row_group_size: 20
+    max_atomic_block_chars: 2000
+
+reranker:
+  provider: none # swap point: none | cross_encoder | cohere
+  cross_encoder:
+    model_name: cross-encoder/ms-marco-MiniLM-L-6-v2
+  cohere:
+    model_name: rerank-english-v3.0
+    api_key_env_var: COHERE_API_KEY
+
+generation:
+  provider: ollama # swap point
+  model_name: qwen2.5:3b
+  base_url_env_var: OLLAMA_BASE_URL
+  temperature: 0.0 # matches secure_rag_baseline_v2_jwt_auth
+  max_tokens: 512
+  seed: 42 # matches secure_rag_baseline_v2_jwt_auth
+  prompt:
+    id: rag_answer
+    version: v3 # unchanged -- see header note; agent synthesis uses a separate prompt
+    path: src/rag/prompts/templates/rag_answer_v3.yaml
+
+judge:
+  provider: openai # swap point: openai | anthropic | ollama (ollama = local, for experimentation only)
+  temperature: 0.0
+  max_tokens: 1024
+  cache_enabled: true
+  cache_dir: .cache/ragas
+  openai:
+    model_name: gpt-4o-mini
+    api_key_env_var: OPENAI_API_KEY
+  anthropic:
+    model_name: claude-haiku-4-5-20251001
+    api_key_env_var: ANTHROPIC_API_KEY
+  ollama:
+    model_name: llama3.1:8b # deliberately distinct from generation.model_name
+
+mlflow:
+  enabled: true
+  tracking_uri: "sqlite:///mlflow.db" # swap point: local sqlite file | a real MLflow tracking server URL
+  experiment_name: local-rag-system
+
+retrieval:
+  provider: hybrid # matches secure_rag_baseline_v2_jwt_auth
+  candidate_k: 5
+  generation_context_top_n: 3
+  hybrid:
+    rrf_k: 60
+  relationship_expansion:
+    enabled: true # matches secure_rag_baseline_v2_jwt_auth
+    include_parent: true
+    include_neighbors: true
+    max_related_elements: 3
+
+ingestion:
+  supported_extensions: [".pdf", ".docx", ".html", ".htm", ".txt", ".md"]
+
+vision:
+  provider: none # hosted vision OFF (not this milestone)
+
+agent:
+  enabled: true # THE agentic-RAG milestone's toggle -- see src/rag/agent/graph.py
+  max_agent_steps: 4 # reduced from 8 -- see header note; the only field that differs from agentic-rag-baseline-v1.yaml
+  max_retrieval_attempts: 2
+  max_tool_calls: 6
+  max_json_parse_retries: 1
+  max_tool_top_k: 20
+  max_chunks_per_document_fetch: 10
+  max_chunks_per_document_fetch_hard_ceiling: 50
+  classify_prompt_path: src/rag/prompts/templates/agent_classify_v1.yaml
+  decompose_prompt_path: src/rag/prompts/templates/agent_decompose_v1.yaml
+  tool_select_prompt_path: src/rag/prompts/templates/agent_tool_select_v1.yaml
+  evidence_sufficiency_prompt_path: src/rag/prompts/templates/agent_evidence_sufficiency_v1.yaml
+  synthesize_prompt_path: src/rag/prompts/templates/agent_synthesize_v1.yaml
+
+security:
+  authorization:
+    enabled: true # unchanged from secure-rag-baseline-v2-jwt-auth.yaml
+    cross_tenant_support_roles: ["techfusion_support"]
+  field_redaction:
+    enabled: true # unchanged from secure-rag-baseline-v2-jwt-auth.yaml
+  auth:
+    enabled: true # unchanged from secure-rag-baseline-v2-jwt-auth.yaml
+    insecure_dev_mode: false
+    ingest_roles: ["security_admin", "system_admin", "techfusion_support"]
+    jwt:
+      algorithm: HS256
+      secret_env_var: JWT_HS256_SECRET
+      public_key_path_env_var: JWT_PUBLIC_KEY_PATH
+      issuer: null
+      audience: null
+      leeway_seconds: 30
+      required_claims: ["sub", "tenant_id", "roles"]
+  dos_limits:
+    max_query_length: 2000
+    max_top_k: 20
+    max_filters_bytes: 4096
+    max_upload_bytes: 26214400
+  rate_limit:
+    enabled: false # not the focus of this evaluation
+    requests_per_minute: 60
+    key: tenant
+  egress_policy:
+    enabled: true # ON for this config -- see header note (adversarial_tool_output rows
+    # reference classification: confidential tenant documents; those must never
+    # reach the hosted RAGAS judge)
+    block_unredacted_sensitive_fields: true
+    require_authoritative_trust: false
+    blocked_tenant_ids: []
+    classification_policy:
+      public: true
+      internal: true
+      confidential: false
+      restricted: false

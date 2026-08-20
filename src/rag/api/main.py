@@ -9,7 +9,7 @@ from slowapi.middleware import SlowAPIMiddleware
 
 from rag.api.deps import get_config, get_rate_limiter
 from rag.api.middleware import RequestIDMiddleware
-from rag.api.routers import health, ingest, query
+from rag.api.routers import agent_query, health, ingest, query
 from rag.audit import log_audit_event
 from rag.logging_config import configure_logging
 
@@ -53,3 +53,4 @@ app.add_middleware(SlowAPIMiddleware)
 app.include_router(health.router)
 app.include_router(ingest.router)
 app.include_router(query.router)
+app.include_router(agent_query.router)

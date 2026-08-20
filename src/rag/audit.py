@@ -36,6 +36,10 @@ AuthEventType = Literal[
     "rate_limit_exceeded",
     "oversized_request_rejected",
     "egress_policy_blocked",
+    "agent_tool_argument_rejected",
+    "agent_max_steps_reached",
+    "agent_max_retrieval_attempts_reached",
+    "agent_max_tool_calls_reached",
 ]
 
 

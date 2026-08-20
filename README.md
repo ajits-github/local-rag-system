@@ -9,7 +9,8 @@ swappable via `config/default.yaml`: nothing is hardcoded, so comparative
 experiments can change one axis without touching pipeline code. Runs fully
 offline on a CPU-only, 8GB-RAM machine; no API keys required by default.
 
-See [`CLAUDE.md`](CLAUDE.md) for the architecture map and module conventions.
+The fastest path is: install Python dependencies, start Postgres, ingest
+`data/sample_docs`, start the API, and call `/query`.
 
 ## Architecture
 
@@ -36,11 +37,22 @@ For the detailed system view, see [`docs/architecture.md`](docs/architecture.md)
 | Embeddings | all-MiniLM-L6-v2 | swappable |
 | Vector DB | PostgreSQL + pgvector | swappable |
 | Chunker | structured Markdown | swappable |
-| Retrieval | dense vector search | hybrid retrieval |
+| Retrieval | dense or hybrid search | configurable |
 | Reranker | optional cross-encoder | Cohere / none |
 | LLM | Qwen2.5 via Ollama | swappable |
-| Prompt | versioned YAML templates | v1 / v2 |
+| Prompt | versioned YAML templates | configurable |
 | Evaluation | Recall@k, MRR, RAGAS | extensible |
+
+## Agentic RAG
+
+`POST /agent/query` is an optional bounded workflow above the classic
+`POST /query` path. It can route simple questions to classic RAG and use a
+small tool loop for complex or multi-hop questions. The graph is bounded
+by `max_agent_steps`, `max_retrieval_attempts`, and `max_tool_calls`, and
+uses the same retrieval authorization, freshness, redaction, and injection
+checks as the classic path.
+
+The details live in [`docs/architecture.md`](docs/architecture.md).
 
 ## Prerequisites
 
@@ -55,18 +67,26 @@ For the detailed system view, see [`docs/architecture.md`](docs/architecture.md)
   serving with `ollama list` (or `curl http://localhost:11434/api/version`).
   If it's installed but not on your PATH, invoke it by its full path (e.g.
   on Windows: `C:\Users\<you>\AppData\Local\Programs\Ollama\ollama.exe`).
-- **`make`**: used for the `up`/`ingest`/`query`/`test` shortcuts below.
+- **`make`**: optional shortcut for `up`/`ingest`/`query`/`test`.
   **Not installed by default on Windows** (neither Git Bash nor PowerShell
   ship it). Install it via `choco install make`, `scoop install make`, or
   WSL, *or* skip it entirely and run the underlying command shown next to
-  each `make` target below; every target is a one-liner.
+  each `make` target below. The Makefile uses `bash`, so native
+  PowerShell users should prefer the explicit commands.
 
 ## Setup
 
-1. Create a virtualenv and install the project:
+1. Create a virtualenv and install the project.
+   PowerShell:
    ```
    python -m venv .venv
-   .venv/Scripts/activate        # Windows
+   .\.venv\Scripts\Activate.ps1
+   pip install -e ".[dev]"
+   ```
+   macOS/Linux:
+   ```
+   python -m venv .venv
+   source .venv/bin/activate
    pip install -e ".[dev]"
    ```
 2. Copy `.env.example` to `.env` and adjust if needed. `DATABASE_URL` points
@@ -88,22 +108,18 @@ For the detailed system view, see [`docs/architecture.md`](docs/architecture.md)
    docker compose up -d
    python scripts/init_db.py
    ```
-4. Ingest a knowledge base - any file or directory works, nothing is
-   hardcoded. The bundled smoke-test set:
+   If `init_db.py` cannot connect immediately, wait until the
+   `local-rag-postgres` container is healthy and run it again.
+4. Ingest the bundled smoke-test documents.
    ```
-   make ingest FILE=data/sample_docs
+   make ingest FILE=data/sample_docs DATASET_ID=sample_docs
    ```
    Without `make`:
    ```
-   python -m rag.ingestion.pipeline data/sample_docs
+   python -m rag.ingestion.pipeline data/sample_docs --dataset-id sample_docs
    ```
-   This repo doesn't ship a large real-world knowledge base. A larger one
-   (internally called "TechFusion") was used against this pipeline during
-   development, with a folder-per-category layout (`engineering/`,
-   `security/`, `hr/`, etc.) preserved as filterable `category` metadata,
-   but neither it nor its gold eval set are committed here. Point the same
-   ingestion command at your own directory to reproduce that; the path is
-   always a CLI argument, never hardcoded.
+   Any file or directory can be ingested. Use a different `--dataset-id`
+   when you ingest a separate corpus.
 
    Re-running ingestion on unchanged files is a no-op (checksum-based, no
    duplicate chunks); edited files are detected and re-chunked in place
@@ -133,11 +149,9 @@ For the detailed system view, see [`docs/architecture.md`](docs/architecture.md)
 
 ## Containerized development
 
-Postgres+pgvector and the API can both run in containers; Ollama stays
-native on Windows. `docker-compose.yml` builds `rag-api` from the repo's
-multi-stage `Dockerfile` (no `tests`/`scripts`/`data`/optional extras in
-the final image; runs as non-root) and wires it to `postgres` and to the
-host's Ollama via `host.docker.internal`. Requires **Docker Compose V2**.
+Postgres+pgvector and the API can both run in containers. Ollama usually
+stays native on the host, and the API container reaches it through
+`host.docker.internal`. Requires **Docker Compose V2**.
 
 ```
 docker compose up -d --build          # first build pulls ~1-2GB of ML deps (PyTorch); later ones are cached
@@ -148,12 +162,12 @@ docker compose down                   # add -v to also drop the pgdata volume
 ```
 Ingest/query work exactly as in native dev, same port/endpoints. `src/`
 and `config/` are bind-mounted with `--reload`, so Python edits need no
-rebuild — only `pyproject.toml` changes do.
+rebuild. Only `pyproject.toml` changes require rebuilding the image.
 
 **Production-shaped run**: `docker-compose.prod.yml` drops the bind
 mounts and `--reload`, stops publishing Postgres's port, and tightens
 health-check timing (same-host "productionized," not a Kubernetes
-substitute — see [Roadmap](#roadmap)):
+substitute):
 ```
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 ```
@@ -168,15 +182,16 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
   volumes without any `chown`/`chmod` step (native Linux would need the
   container UID to match the host user's).
 - The embedding model downloads from Hugging Face Hub on first use inside
-  a fresh container/volume if not already cached — needs outbound internet
+  a fresh container/volume if not already cached. It needs outbound internet
   that one time, same as native.
 
 ## Configuration
 
 All provider choices and tunables live in `config/default.yaml`:
 embedding model, chunk size/overlap, reranker (`none` / `cross_encoder` /
-`cohere`), LLM, retrieval `top_k`. Point at an alternate config with
-`--config path/to/other.yaml` on the ingestion/eval CLIs, or by editing the
+`cohere`), LLM, retrieval `candidate_k`, generation context size, security
+toggles, and agent bounds. Point at an alternate config with
+`--config path/to/other.yaml` on the ingestion/eval CLIs, or edit the
 default file directly for local experiments.
 
 Generation prompts are versioned YAML files under
@@ -185,113 +200,52 @@ Generation prompts are versioned YAML files under
 version is selected by `config/default.yaml`'s `generation.prompt` block
 (`id`, `version`, `path`); `RetrievalPipeline` loads it once at
 construction and rejects the file if its own declared `prompt_id`/`version`
-don't match what's configured. `rag_answer_v2.yaml` ships as an example of
-a stricter grounding/citation prompt but isn't active by default.
+don't match what's configured.
 
 ## Metadata & filtering
 
-Every chunk carries: `document_id, chunk_id, source, source_type, title,
-author, url, created_at, last_modified, language, category`. For Markdown
-sources with a YAML front-matter block (`title`/`owner`/`last_reviewed`,
-the convention used by the private TechFusion knowledge base mentioned
-above), `title`/`author`/`last_modified` are parsed from it rather than
-falling back to the filename/filesystem timestamp, and the front-matter
-block itself is stripped before chunking.
-`category` is the file's folder path relative to whatever root you ingested
-(e.g. `security`, or `security/subteam` for nested folders); `None` for a
-single ingested file or an API upload, which have no folder context.
-`POST /query`'s `filters` field can restrict retrieval by any of
-`document_id, source, source_type, title, author, url, language, category`
-(see the `curl` example above).
+Every chunk carries source metadata such as `document_id`, `chunk_id`,
+`source`, `source_type`, timestamps, language, `category`, governance
+fields, and structural fields. For directory ingestion, `category` is the
+file's path relative to the ingested root, such as `security` or
+`security/subteam`.
+
+`POST /query` accepts exact-match filters for approved metadata fields.
+The most common filter is `category`.
 
 ## Evaluation
 
-A gold file is a JSONL file, one labeled question per line:
-`question, expected_answer, relevant_documents, question_type, difficulty,
-unanswerable`. `relevant_documents` are paths *relative to wherever the
-knowledge base root is* (e.g. `"knowledge_base/security/access-control-policy.md"`)
-rather than `document_id`s, since ids are only assigned at ingestion time.
-Matching a retrieved chunk's stored `source` against these paths is done by
-path-suffix, not exact equality or a hardcoded root, so the same gold file
-and the same `run_eval` command work regardless of what directory you
-actually ingested from.
-
-`data/eval/sample_gold.jsonl` is a tiny smoke-test gold file bundled with
-this repo, matching `data/sample_docs/`. A much larger gold set
-(`question_type`s `single_document`/`multi_hop`, plus unanswerable and
-multimodal questions) was used against the private TechFusion knowledge
-base during development; it isn't committed here either. Point `--gold`
-at your own to reproduce that kind of evaluation.
+`data/eval/sample_gold.jsonl` is a small smoke-test gold file for
+`data/sample_docs`. Run it after the sample dataset is ingested:
 
 ```
 python -m rag.eval.run_eval --gold data/eval/sample_gold.jsonl --dataset-id sample_docs
 ```
-`--dataset-id` is mandatory, it's injected as a filter on every retrieval
-the runner makes, so an evaluation can never silently score chunks from a
-different dataset. Point `--gold`/`--dataset-id` at any gold file and
-dataset; nothing about the runner is tied to a particular one. Reports,
-for the configured pipeline:
-- **Recall@5 / Recall@10** and **Hit Rate@5 / Hit Rate@10**: recall
-  averages the fraction of *all* relevant documents found per question;
-  hit rate is binary (was *any* relevant document found), so the two
-  diverge on multi-document questions.
-- **MRR** (mean reciprocal rank).
-- **Retrieval / generation / total latency** (mean, ms), measured from the
-  pipeline's actual configured `rerank_top_n` (not the broader top-10 fetch
-  used for the Recall@10 calculation above, which would otherwise inflate
-  the latency number).
-- **Answer quality**: a keyword-overlap heuristic scored against
-  `expected_answer` (see the caveat in its own output; it's a placeholder,
-  not a correctness judge — see the RAGAS section below for the real one).
-
-Add `--verbose` to include full per-question detail (retrieved sources,
-generated answer, individual scores) in the JSON output, or
-`--skip-generation` to get only the retrieval metrics quickly, without
-waiting on LLM calls for every question.
+`--dataset-id` is mandatory and is injected as a filter on every retrieval.
+Reports include Recall@5/10, Hit Rate@5/10, MRR, latency, and a simple
+keyword-overlap answer-quality score. Add `--verbose` for per-question
+details or `--skip-generation` for retrieval-only metrics.
 
 ### RAGAS generation-quality evaluation (optional)
 
-An opt-in, additive layer on top of the metrics above: faithfulness,
-answer relevancy, context precision, context recall, and (if supported
-cleanly by the installed RAGAS version) answer correctness — each scored
-by an independently-configured LLM judge, not by `qwen2.5:1.5b`/`3b` (the
-models already used for generation). Install with:
+RAGAS scoring is optional and uses a separately configured judge model.
+Install the extra only if you plan to run it:
 ```
 pip install .[ragas]         # local (ollama) judge
 pip install .[ragas,anthropic]  # + hosted anthropic judge
 ```
-The judge is selected via `config/default.yaml`'s `judge:` block
-(`provider: openai | anthropic | ollama`, each with its own model/API-key
-settings, resolved from `*_env_var` environment variables — never
-hardcoded). `ollama` is offered for free local experimentation only; the
-docs and RAGAS's own guidance both note small local judges give less
-reliable scores than a hosted model.
+The judge is selected in `config/default.yaml` under `judge:`. Hosted
+judges read API keys from environment variables; no key is hardcoded.
 
 ```
 python -m rag.eval.run_ragas_eval --gold data/eval/sample_gold.jsonl \
     --dataset-id sample_docs --verbose > /tmp/ragas_report.json
 ```
-`--sample-size` (default **15**) caps how many gold questions get judged —
-validate cost, latency, and score quality on a small subset before scaling
-up to a full gold set. The report records per-question and aggregate
-scores, judge provider/model and estimated API usage, `prompt_id`/
-`prompt_version`, and the RAG config that produced it — feed it into
-`scripts/record_experiment.py` exactly like a normal `run_eval.py` report.
+`--sample-size` defaults to 15 so hosted judging can be tested cheaply
+before scaling up. Judge calls are cached under `.cache/ragas` by default.
 
-Judge calls are cached to disk by default (`config.judge.cache_enabled:
-true`, `cache_dir: .cache/ragas` — gitignored, never commit cached judge
-responses), so re-running an unchanged eval doesn't re-pay for identical
-verdicts. The cache key is namespaced by judge provider/model/temperature/
-max_tokens (not just the rendered prompt) so switching judges always
-misses instead of silently replaying another model's cached score — see
-`rag/eval/ragas_cache.py`. The report's `ragas.cache` key shows
-`hits`/`misses`/`total` and an `avoided_cost_estimate` (extrapolated from
-that run's own uncached-call token usage; reports a `reason` instead of a
-number it can't back up, e.g. an unpriced model). Set
-`judge.cache_enabled: false` to disable.
-
-**RAGAS scores are not validated until reviewed against real human
-judgment.** Two scripts help with that:
+RAGAS scores should be checked against human labels before treating them
+as project quality gates:
 ```
 python scripts/generate_manual_review.py --eval-output /tmp/ragas_report.json --num-rows 10
 # ... fill in the human_faithful/human_correct/human_relevant/human_correct_refusal
@@ -300,8 +254,7 @@ python scripts/compare_ragas_manual.py --ragas-output /tmp/ragas_report.json \
     --manual-review data/eval/manual_review/sample_docs_manual_review.jsonl
 ```
 The comparison report shows where the judge agrees or disagrees with the
-human labels — do not treat RAGAS scores as ground truth until you've run
-this and reviewed the result yourself.
+human labels.
 
 ## Benchmarks
 
@@ -349,85 +302,14 @@ regenerate it instead (see "Recording a new experiment").
 | 28 | secure_rag_baseline_v2_jwt_auth | hybrid | qwen2.5:3b | all-MiniLM-L6-v2 | none | v3 | on | 0.788 | 0.832 | 0.865 | 0.753 | 0.420 | 0.781 | 0.842 | - | - | 20.6s | techfusion | 2026-08-15 |
 <!-- EXPERIMENTS_TABLE_END -->
 
-*Total latency is the mean of retrieval+generation per question, at the
-config's production `rerank_top_n` (not the broader top-10 fetch used for
-Recall@10). Every row measured against `dataset_id`-isolated retrieval
-(see Metadata & filtering above), so results are never contaminated by a
-different dataset in the same vector store.*
+*Total latency is the mean retrieval plus generation time per question.
+Every row is measured with `dataset_id`-isolated retrieval, so results are
+not mixed across datasets in the same vector store.*
 
-**Experiments 11-15** are the multimodal/relationship-aware milestone:
-11-12 isolate relationship expansion (identical Recall/MRR, higher
-`Supp.Ctx Hit`/`Img Hit`, ~2.6x latency); 13 adds RAGAS scoring on a
-stratified 15-question sample (not directly comparable to 11/12/14/15's
-full-84-question numbers); 14 swaps the generation model
-(`qwen2.5:1.5b` -> `qwen2.5:3b`) on top of 12's config; 15 is #14's config
-(the best found so far) RAGAS-scored against the **full 84-question gold
-set**, not a sample. Faithfulness (0.898) and answer_correctness (0.513)
-are the highest recorded for this project. Total hosted judge cost across
-13+15: **$0.2684** (13: $0.0399; 15: $0.2285, from tracked usage — 1,431
-calls, 1,115,731 input / 101,857 output tokens on `gpt-4o-mini`). Full
-analysis, per-question findings, and a correction to one of 13's original
-claims are in [`docs/architecture.md`](docs/architecture.md) and
-`PROJECT_JOURNAL.md`.
-
-**Experiments 25-26** are the safety/freshness milestone (retrieval-time
-tenant/role authorization, document-version freshness, trust filtering),
-run on the expanded 126-question gold set (84 original + 42 new
-safety-category rows): 25 = `security.authorization.enabled: false`
-baseline, 26 = **`secure_rag_baseline_v1`** (`enabled: true`), otherwise
-identical config. On the original 84 benign questions the two are
-byte-identical (Recall@5/@10, MRR, answer_quality, refusal_rate) —
-authorization adds no detectable quality cost on untenanted content.
-Safety metrics move cleanly toward correct with authorization on:
-`cross_tenant_leakage_rate` 1.0 → **0.0**, `stale_document_error_rate`
-0.077 → **0.0**. Full metric table (all 11 safety metrics), corpus
-lineage, and a real directory-layout bug this run caught are in
-[`experiments/reports/secure_rag_baseline_v1.md`](experiments/reports/secure_rag_baseline_v1.md).
-
-**Experiment 27** is the field-level-safety milestone: a caller
-tenant/role-authorized for a *document* could still extract one specific
-*field* inside it (e.g. an admin credential) via prompt injection —
-`secure_rag_baseline_v1`'s own report flagged this gap
-(`sensitive_data_leakage_rate` 2/7). `secure_rag_baseline_v1_field_redaction`
-adds `security.field_redaction.enabled: true` on top of experiment 26's
-config (prompt unchanged at `v3`, the only variable that differs) —
-retrieval-side metrics are byte-identical to 26 by construction (redaction
-never changes which chunks are retrieved), and `sensitive_data_leakage_rate`
-drops from 0.286 (2/7) to **0.000 (0/7)** with no over-redaction
-(`sensitive_data_false_redaction_rate` 0/8,
-`sensitive_data_authorized_disclosure_accuracy` 1/1). Two real bugs this
-run caught (a second tenant's credential using a different literal shape;
-an operational customer-id pattern producing a false-positive "leak") and
-the full metric table are in
-[`experiments/reports/secure_rag_baseline_v1_field_redaction.md`](experiments/reports/secure_rag_baseline_v1_field_redaction.md).
-
-**Experiment 28** is the auth-boundary milestone:
-`secure_rag_baseline_v1`/`v1_field_redaction` still trusted whatever
-`tenant_id`/`roles` a caller's request body claimed — nothing verified
-identity at the API boundary. `secure_rag_baseline_v2_jwt_auth` adds
-`security.auth.enabled: true` (JWT verification required at `POST
-/query`, prompt unchanged at `v3`) on top of experiment 27's config —
-retrieval-side metrics are byte-identical to 26/27 by construction (JWT
-verification happens before retrieval, never changes which chunks are
-retrieved). Two new regression-guard metrics both read exactly as
-correct code should: `forged_role_acceptance_rate` **0.0 (0/42)** — a
-request body claiming a different, more-privileged tenant/roles never
-overrides a verified JWT's own claims — and `duplicate_sensitive_field_miss_rate`
-**0.0 (0/0)** — no duplicated or inconsistently-tagged secret literal
-found anywhere in the corpus. Two new metrics,
-`unauthorized_metadata_leakage_rate` and `provider_egress_policy_
-violation_rate`, both read 0.095 (2/21) — inspecting the two flagged
-rows directly showed both are the *same* two cases: a tenant admin
-correctly, legitimately seeing their own tenant's credential (matching
-the existing `sensitive_data_authorized_disclosure_accuracy` 1/1 case),
-which the field-level policy correctly leaves unredacted for that caller
-but the *egress* policy correctly still flags as unsafe to hand to a
-hosted third-party judge without separate authorization — the metric
-distinguishing "authorized for this caller" from "authorized to leave
-the local environment" exactly as designed, not a false positive. Full
-design writeup in [`docs/architecture.md`](docs/architecture.md)'s
-"Authenticated API Boundary and Security Hardening" section and
-`PROJECT_JOURNAL.md`.
+Detailed experiment writeups live in `experiments/reports/`,
+[`docs/architecture.md`](docs/architecture.md), and `PROJECT_JOURNAL.md`.
+The README keeps the comparison table so changes remain visible at a
+glance without turning this file into an experiment log.
 
 ### Recording a new experiment
 
@@ -436,8 +318,8 @@ design writeup in [`docs/architecture.md`](docs/architecture.md)'s
 2. Run the eval and save its full report (or `rag.eval.run_ragas_eval` for
    the RAGAS-scored variant, see above):
    ```
-   python -m rag.eval.run_eval --gold data/eval/techfusion_gold.jsonl \
-     --dataset-id techfusion --verbose > /tmp/eval_report.json
+   python -m rag.eval.run_eval --gold data/eval/sample_gold.jsonl \
+     --dataset-id sample_docs --verbose > /tmp/eval_report.json
    ```
 3. Register it as an experiment (never re-runs eval, just records the
    report above):
@@ -464,11 +346,11 @@ design writeup in [`docs/architecture.md`](docs/architecture.md)'s
 Every `scripts/record_experiment.py` call also logs an MLflow run (config
 as params, metrics, and the eval-output/record/config files as artifacts),
 under a readable run name like `experiment_015_qwen2-5-3b_v2_hybrid_rel-exp`
-(display-only — the real MLflow run UUID is unaffected) and tagged with
+(display-only; the real MLflow run UUID is unaffected) and tagged with
 `experiment_id`/`label`/`generation_model`/`prompt_version`/
 `retrieval_provider`/`reranker_provider`/`relationship_expansion`/
 `dataset_id` for fast filtering in the MLflow UI. Requires the `mlflow`
-extra (`pip install .[mlflow]`) — fails loudly rather than silently
+extra (`pip install .[mlflow]`). It fails loudly rather than silently
 skipping if enabled but not installed. Local by default, no server
 required (`mlflow.tracking_uri: sqlite:///mlflow.db`):
 ```
@@ -501,21 +383,21 @@ ingest -> query round trip against them (see
 `.github/workflows/ci.yml` runs on every PR/push to `main` (and via manual
 `workflow_dispatch`), in four parallel jobs:
 
-- **code-quality** — `pre-commit run --all-files` (ruff, ruff-format, mypy,
-  hygiene hooks — the same checks `pre-commit install` runs locally).
-- **unit-tests** — the full `tests/unit` suite; no external services.
-- **integration-tests** — `tests/integration` against a `pgvector/pgvector:pg16`
+- **code-quality**: `pre-commit run --all-files` (ruff, ruff-format, mypy,
+  hygiene hooks; the same checks `pre-commit install` runs locally).
+- **unit-tests**: the full `tests/unit` suite; no external services.
+- **integration-tests**: `tests/integration` against a `pgvector/pgvector:pg16`
   service container spun up by the workflow itself (not your local `make up`
   stack). Tests gated on a local Ollama (`require_ollama` in
   `tests/integration/conftest.py`) skip cleanly, since CI doesn't run Ollama.
-- **docker-build** — builds the production image from `Dockerfile`, runs it
+- **docker-build**: builds the production image from `Dockerfile`, runs it
   against the same Postgres service container, and checks `GET /health`
   reports `vectorstore: ok` (Ollama is expected `unreachable` here, for the
   same reason as above). No image is pushed anywhere yet.
 
 What CI intentionally leaves out: RAGAS scoring, hosted-judge (OpenAI/
-Anthropic) calls, MLflow experiment logging, and the full TechFusion
-evaluation — all of these need either a local Ollama, hosted API keys, or
+Anthropic) calls, MLflow experiment logging, and full private-corpus
+evaluation. These need either a local Ollama, hosted API keys, or
 minutes-long LLM calls that don't belong in per-PR feedback. They stay
 manual, run locally via `scripts/record_experiment.py` /
 `eval/run_ragas_eval.py` as today.
@@ -530,13 +412,16 @@ Deferred for now, tracked here rather than left as empty scaffolding:
   (`rerankers/cohere.py`) once there's a use case needing a hosted reranker.
 - **RAGAS trust**: judge-vs-human agreement has been spot-checked
   (`scripts/compare_ragas_manual.py`) on several samples, but scores still
-  aren't validated against human labels by default — see the caveat in
+  aren't validated against human labels by default. See the caveat in
   every RAGAS report.
-- **LangGraph**: move retrieval/generation orchestration to a graph for
-  multi-step or agentic query handling.
-- **MCP**: expose ingest/query as MCP tools for use from other agents.
-- **Multi-agent workflows**: e.g. a query-planning agent in front of
-  retrieval, or specialized agents per document source.
+- **MCP**: expose the agentic RAG tool layer (`rag/agent/tools.py`,
+  already MCP-shape-agnostic) as an actual MCP server for use from other
+  agents.
+- **LangGraph**: revisit only if a future need appears for checkpoint/
+  resume across requests, human-in-the-loop approval, or substantially
+  more complex branching than today's bounded agentic workflow (see
+  [`docs/architecture.md`](docs/architecture.md)'s "Agentic RAG" section)
+  before adopting it.
 - **Kubernetes deployment**: containerize the API and vector store for a
   non-local deployment target.
 - **Observability**: OpenTelemetry tracing/metrics on top of the current

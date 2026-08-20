@@ -700,6 +700,33 @@ class PgVectorStore(VectorStore):
             for chunk_id, content, metadata in (_row_to_metadata(row) for row in rows)
         ]
 
+    def get_chunks_by_source(
+        self,
+        source: str,
+        dataset_id: str,
+        auth: AuthorizationContext | None = None,
+        limit: int | None = None,
+    ) -> list[Chunk]:
+        """See `VectorStore.get_chunks_by_source`."""
+        auth_sql, auth_params = build_authorization_where_clause(
+            auth, self._cross_tenant_support_roles
+        )
+        where_sql = _combine_where_clauses("WHERE source = %s AND dataset_id = %s", auth_sql)
+        limit_sql = " LIMIT %s" if limit is not None else ""
+        sql = f"""SELECT {_METADATA_COLUMNS} FROM {self._chunks_table}
+            {where_sql}
+            ORDER BY chunk_index{limit_sql}"""
+        params: list[Any] = [source, dataset_id, *auth_params]
+        if limit is not None:
+            params.append(limit)
+        with self._connection() as conn, conn.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+        return [
+            Chunk(id=chunk_id, content=content, metadata=metadata)
+            for chunk_id, content, metadata in (_row_to_metadata(row) for row in rows)
+        ]
+
     def get_cached_image_description(self, image_checksum: str) -> str | None:
         """See `VectorStore.get_cached_image_description`."""
         with self._connection() as conn, conn.cursor() as cur:

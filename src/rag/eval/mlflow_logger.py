@@ -48,6 +48,10 @@ _PARAM_FIELDS = [
     "security_auth_enabled",
     "security_rate_limit_enabled",
     "security_egress_policy_enabled",
+    # Agentic RAG milestone: config identity, not a measured outcome --
+    # same "independent on/off toggle" pattern as the security_* fields
+    # above.
+    "agent_enabled",
     "corpus_version",
     "corpus_document_count",
     "corpus_chunk_count",
@@ -103,6 +107,8 @@ def build_run_name(record: dict[str, Any]) -> str:
     ]
     if record.get("relationship_expansion_enabled"):
         segments.append("rel-exp")
+    if record.get("agent_enabled"):
+        segments.append("agentic")
     return "_".join(s for s in segments if s != "na")
 
 
@@ -149,6 +155,22 @@ _METRIC_FIELDS = [
     "safety_provider_egress_policy_violation_rate",
     "safety_forged_role_acceptance_rate",
     "safety_duplicate_sensitive_field_miss_rate",
+    # Agentic RAG milestone: see eval/run_agent_eval.py's report sections
+    # for exact definitions.
+    "agent_routing_accuracy",
+    "agent_unnecessary_agent_rate",
+    "agent_tool_selection_accuracy",
+    "agent_tool_success_rate",
+    "agent_average_tool_calls",
+    "agent_average_agent_steps",
+    "agent_evidence_sufficiency_accuracy",
+    "agent_retry_success_rate",
+    "agent_max_step_termination_rate",
+    "agent_citation_support_rate",
+    "agent_answer_correctness",
+    "agent_latency_ms",
+    "agent_prompt_tokens_mean",
+    "agent_completion_tokens_mean",
 ]
 
 
@@ -220,6 +242,7 @@ def log_experiment(
                     bool(record.get("security_field_redaction_enabled"))
                 ),
                 "security_auth_enabled": str(bool(record.get("security_auth_enabled"))),
+                "agent_enabled": str(bool(record.get("agent_enabled"))),
             }
         )
         for field in _PARAM_FIELDS:

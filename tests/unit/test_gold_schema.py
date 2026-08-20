@@ -38,6 +38,34 @@ def test_load_gold_jsonl_skips_blank_lines(tmp_path: Path):
     assert len(examples) == 1
 
 
+def test_agentic_fields_default_to_false_and_empty_so_old_gold_files_still_parse():
+    """The 7 agentic-milestone fields are all optional/defaulted -- additive, not breaking."""
+    example = GoldExample(question="what?")
+    assert example.requires_query_decomposition is False
+    assert example.requires_multiple_retrieval_calls is False
+    assert example.requires_latest_document_tool is False
+    assert example.expects_insufficient_evidence_retry is False
+    assert example.tool_not_needed is False
+    assert example.expects_max_step_termination is False
+    assert example.adversarial_tool_instruction is False
+    assert example.expected_tool_sequence == []
+
+
+def test_agentic_fields_parse_when_present():
+    """The 7 agentic-milestone fields parse correctly when a gold row supplies them."""
+    example = GoldExample.model_validate(
+        {
+            "question": "which service caused the backlog, and what is the rollback?",
+            "requires_query_decomposition": True,
+            "requires_multiple_retrieval_calls": True,
+            "expected_tool_sequence": ["search_knowledge_base", "get_related_context"],
+        }
+    )
+    assert example.requires_query_decomposition is True
+    assert example.requires_multiple_retrieval_calls is True
+    assert example.expected_tool_sequence == ["search_knowledge_base", "get_related_context"]
+
+
 def test_gold_example_defaults():
     """A GoldExample with only a question gets sane field defaults."""
     example = GoldExample(question="what?")

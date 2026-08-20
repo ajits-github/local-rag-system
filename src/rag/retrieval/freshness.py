@@ -85,6 +85,76 @@ def _excluded_for_as_of(family: list[DocumentVersionInfo], as_of: date) -> set[s
     return {v.document_id for v, _ in dated if v.document_id != winner.document_id}
 
 
+def resolve_current_document_source(
+    source: str,
+    versions: list[DocumentVersionInfo],
+    as_of: date | None = None,
+    include_superseded: bool = False,
+) -> str:
+    """Resolve any family member's `source` to its currently-effective member's `source`.
+
+    A version family's members each have their own, distinct `source`
+    path (e.g. `policy-v1.md` superseded by `policy-v2.md`) — unlike
+    `resolve_excluded_document_ids`, which only reports which
+    `document_id`s to exclude, this answers "if a caller names an
+    arbitrary (possibly superseded) family member, what path should be
+    fetched instead." Used by the `get_latest_document` agent tool so
+    that naming an old version's path still resolves to current content.
+
+    Parameters
+    ----------
+    source : str
+        Any family member's `source` path, matched by suffix (see
+        `rag.path_matching.source_matches_relevant`).
+    versions : list[DocumentVersionInfo]
+        Every document's governance metadata for one dataset (see
+        `VectorStore.list_document_versions`).
+    as_of : date | None, optional
+        Same semantics as `resolve_excluded_document_ids`.
+    include_superseded : bool, optional
+        Same semantics as `resolve_excluded_document_ids`.
+
+    Returns
+    -------
+    str
+        The resolved, currently-effective member's `source`. Returns
+        `source` unchanged if it matches no known document, if the
+        matched document belongs to no `supersedes_source` family, or if
+        resolution can't determine a winner (e.g. no family member is
+        `status="active"` and `as_of` is `None`) — never guesses.
+    """
+    matched = next((v for v in versions if source_matches_relevant(v.source, source)), None)
+    if matched is None:
+        return source
+
+    families = _build_families(versions)
+    family = next(
+        (f for f in families if any(v.document_id == matched.document_id for v in f)), None
+    )
+    if family is None:
+        return matched.source
+
+    if as_of is not None:
+        excluded_ids = _excluded_for_as_of(family, as_of)
+    elif include_superseded:
+        excluded_ids = set()
+    else:
+        excluded_ids = _excluded_for_current(family)
+
+    candidates = [v for v in family if v.document_id not in excluded_ids]
+    if not candidates:
+        return matched.source
+    if len(candidates) == 1:
+        return candidates[0].source
+    # More than one candidate remains (rare - e.g. multiple family members
+    # share effective_from); prefer the most recently effective one rather
+    # than guessing arbitrarily.
+    dated = [v for v in candidates if v.effective_from is not None]
+    if not dated:
+        return matched.source
+    return max(dated, key=lambda v: v.effective_from).source  # type: ignore[arg-type,return-value]
+
+
 def resolve_excluded_document_ids(
     versions: list[DocumentVersionInfo],
     as_of: date | None,

@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-import json
 from datetime import date
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 
 from rag.api.auth import VerifiedIdentity
 from rag.api.deps import get_config, get_current_identity, get_rate_limiter, get_retrieval_pipeline
-from rag.audit import log_audit_event, pseudonymous_subject
+from rag.api.request_auth import build_authorization_context, enforce_dos_limits
 from rag.config import AppConfig
 from rag.retrieval.authorization import AuthorizationContext
 from rag.retrieval.pipeline import RetrievalPipeline
@@ -67,99 +66,23 @@ def _build_authorization_context(
 ) -> AuthorizationContext | None:
     """Build the `AuthorizationContext` for this request.
 
-    When `identity` is present, tenant and role claims come strictly from
-    the verified JWT identity. If the request body claims different
-    values, this logs a `forged_claim_attempt` event but does not use
-    those body fields for authorization.
-
-    When no verified identity is present, the function falls back to body
-    fields. That path is used when JWT auth is disabled, or when insecure
-    development mode allows a request without a token.
-
-    Parameters
-    ----------
-    body : QueryRequest
-        The parsed request body.
-    identity : VerifiedIdentity | None
-        The verified caller identity, or `None`.
-    config : AppConfig
-        Application configuration.
-
-    Returns
-    -------
-    AuthorizationContext | None
-        `None` means fully unrestricted retrieval.
+    Thin wrapper over `rag.api.request_auth.build_authorization_context`
+    (shared with `routers/agent_query.py`) that unpacks `QueryRequest`'s
+    fields; see that function for the full precedence/forged-claim
+    behavior.
     """
-    if identity is not None:
-        body_tenant_differs = body.tenant_id is not None and body.tenant_id != identity.tenant_id
-        body_roles_differ = bool(body.roles) and set(body.roles or []) != set(identity.roles)
-        if body_tenant_differs or body_roles_differ:
-            log_audit_event(
-                "forged_claim_attempt",
-                subject=pseudonymous_subject(identity.subject),
-                verified_tenant_id=identity.tenant_id,
-                body_tenant_id=body.tenant_id,
-            )
-        return AuthorizationContext(
-            tenant_id=identity.tenant_id,
-            roles=identity.roles,
-            as_of=body.as_of,
-            require_trust_level=body.require_trust_level,
-        )
-
-    has_auth_fields = (
-        body.tenant_id is not None
-        or body.roles
-        or body.as_of is not None
-        or body.require_trust_level is not None
-    )
-    return (
-        AuthorizationContext(
-            tenant_id=body.tenant_id,
-            roles=body.roles or [],
-            as_of=body.as_of,
-            require_trust_level=body.require_trust_level,
-        )
-        if has_auth_fields
-        else None
+    return build_authorization_context(
+        identity, body.tenant_id, body.roles, body.as_of, body.require_trust_level
     )
 
 
 def _enforce_dos_limits(body: QueryRequest, config: AppConfig) -> None:
     """Reject oversized requests with a 422, per `security.dos_limits`.
 
-    Parameters
-    ----------
-    body : QueryRequest
-        The parsed request body.
-    config : AppConfig
-        Application configuration.
-
-    Raises
-    ------
-    HTTPException
-        422, when `query`/`top_k`/`filters` exceed their configured bound.
+    Thin wrapper over `rag.api.request_auth.enforce_dos_limits` (shared
+    with `routers/agent_query.py`) that unpacks `QueryRequest`'s fields.
     """
-    limits = config.security.dos_limits
-    if len(body.query) > limits.max_query_length:
-        log_audit_event("oversized_request_rejected", field="query", limit=limits.max_query_length)
-        raise HTTPException(
-            status_code=422,
-            detail=f"query exceeds maximum length of {limits.max_query_length} characters",
-        )
-    if body.top_k is not None and body.top_k > limits.max_top_k:
-        log_audit_event("oversized_request_rejected", field="top_k", limit=limits.max_top_k)
-        raise HTTPException(status_code=422, detail=f"top_k exceeds maximum of {limits.max_top_k}")
-    if body.filters is not None:
-        filters_bytes = len(json.dumps(body.filters).encode("utf-8"))
-        if filters_bytes > limits.max_filters_bytes:
-            log_audit_event(
-                "oversized_request_rejected", field="filters", limit=limits.max_filters_bytes
-            )
-            raise HTTPException(
-                status_code=422,
-                detail=f"filters exceeds maximum size of {limits.max_filters_bytes} bytes",
-            )
+    enforce_dos_limits(body.query, body.top_k, body.filters, config)
 
 
 def _query_rate_limit_string() -> str:

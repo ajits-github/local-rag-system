@@ -1,12 +1,16 @@
-# Default configuration for local-rag-system.
+# agentic_rag_baseline_v1_agent_disabled: the classic-RAG control for the
+# agentic-RAG A/B comparison over data/eval/agentic_extension_gold.jsonl.
 #
-# Every component below is a "swap point": change `provider` (and its
-# provider-specific block) to try a different embedding model, vector
-# backend, chunker, reranker, or LLM without touching pipeline code.
-#
-# Secrets and host/port values are never hardcoded here — fields ending in
-# `_env_var` name an environment variable that is resolved at load time by
-# rag.config.Settings.
+# Byte-identical to agentic-rag-baseline-v1.yaml except agent.enabled:
+# true -> false. Every question in the 18-row agentic extension gold set
+# takes the unmodified `RetrievalPipeline.answer()` fast path (rag_answer_v3,
+# zero extra LLM decision calls) -- this is the "what would classic RAG
+# alone have done with these same questions" control, distinct from the
+# separate 84-question techfusion_gold.jsonl classic baseline
+# (secure_rag_baseline_v2_jwt_auth) already recorded. Same retrieval/
+# security/model/corpus on every other axis, so the only variable under
+# test against agentic-rag-baseline-v1.yaml's results is whether the
+# bounded agent graph ran at all.
 
 app:
   name: local-rag-system
@@ -45,20 +49,22 @@ reranker:
 
 generation:
   provider: ollama # swap point
-  model_name: qwen2.5:1.5b
+  model_name: qwen2.5:3b
   base_url_env_var: OLLAMA_BASE_URL
-  temperature: 0.2
+  temperature: 0.0 # matches secure_rag_baseline_v2_jwt_auth
   max_tokens: 512
-  seed: null # swap point: set an int (e.g. 42) for reproducible Ollama sampling; null = non-deterministic
+  seed: 42 # matches secure_rag_baseline_v2_jwt_auth
   prompt:
     id: rag_answer
-    version: v1
-    path: src/rag/prompts/templates/rag_answer_v1.yaml
+    version: v3 # unchanged -- see header note; agent synthesis uses a separate prompt
+    path: src/rag/prompts/templates/rag_answer_v3.yaml
 
 judge:
   provider: openai # swap point: openai | anthropic | ollama (ollama = local, for experimentation only)
   temperature: 0.0
   max_tokens: 1024
+  cache_enabled: true
+  cache_dir: .cache/ragas
   openai:
     model_name: gpt-4o-mini
     api_key_env_var: OPENAI_API_KEY
@@ -74,13 +80,13 @@ mlflow:
   experiment_name: local-rag-system
 
 retrieval:
-  provider: dense # swap point: dense | hybrid (BM25 + dense, fused via RRF)
+  provider: hybrid # matches secure_rag_baseline_v2_jwt_auth
   candidate_k: 5
   generation_context_top_n: 3
   hybrid:
     rrf_k: 60
   relationship_expansion:
-    enabled: true # no-op when false; see docs/architecture.md
+    enabled: true # matches secure_rag_baseline_v2_jwt_auth
     include_parent: true
     include_neighbors: true
     max_related_elements: 3
@@ -89,48 +95,10 @@ ingestion:
   supported_extensions: [".pdf", ".docx", ".html", ".htm", ".txt", ".md"]
 
 vision:
-  provider: none # swap point: none (only provider implemented so far; see docs/architecture.md)
-
-security:
-  authorization:
-    enabled: true # no-op when false; see docs/architecture.md and config/experiments/secure-rag-baseline-v1.yaml
-    cross_tenant_support_roles: ["techfusion_support"]
-  field_redaction:
-    enabled: true # no-op when false; see config/experiments/secure-rag-baseline-v1-field-redaction.yaml
-  auth:
-    enabled: true # no-op when false; see docs/architecture.md and config/experiments/secure-rag-baseline-v2-jwt-auth.yaml
-    insecure_dev_mode: false # only relevant when enabled=true; never overrides a present-but-invalid JWT
-    ingest_roles: ["security_admin", "system_admin", "techfusion_support"]
-    jwt:
-      algorithm: HS256 # swap point: HS256 | RS256 | ES256
-      secret_env_var: JWT_HS256_SECRET
-      public_key_path_env_var: JWT_PUBLIC_KEY_PATH
-      issuer: null # null = issuer claim not checked
-      audience: null # null = audience claim not checked
-      leeway_seconds: 30
-      required_claims: ["sub", "tenant_id", "roles"]
-  dos_limits:
-    max_query_length: 2000
-    max_top_k: 20
-    max_filters_bytes: 4096
-    max_upload_bytes: 26214400 # 25 MiB
-  rate_limit:
-    enabled: false # no-op when false; in-process/single-instance limiter, see docs/architecture.md
-    requests_per_minute: 60
-    key: tenant # swap point: tenant | ip
-  egress_policy:
-    enabled: false # no-op when false; gates hosted RAGAS judge calls only, see docs/architecture.md
-    block_unredacted_sensitive_fields: true
-    require_authoritative_trust: false
-    blocked_tenant_ids: []
-    classification_policy:
-      public: true
-      internal: true
-      confidential: false
-      restricted: false
+  provider: none # hosted vision OFF (not this milestone)
 
 agent:
-  enabled: true # no-op when false; classify_query always routes to classic_rag, see docs/architecture.md
+  enabled: false # the ONLY field that differs from agentic-rag-baseline-v1.yaml -- classic-RAG control
   max_agent_steps: 8
   max_retrieval_attempts: 2
   max_tool_calls: 6
@@ -143,3 +111,43 @@ agent:
   tool_select_prompt_path: src/rag/prompts/templates/agent_tool_select_v1.yaml
   evidence_sufficiency_prompt_path: src/rag/prompts/templates/agent_evidence_sufficiency_v1.yaml
   synthesize_prompt_path: src/rag/prompts/templates/agent_synthesize_v1.yaml
+
+security:
+  authorization:
+    enabled: true # unchanged from secure-rag-baseline-v2-jwt-auth.yaml
+    cross_tenant_support_roles: ["techfusion_support"]
+  field_redaction:
+    enabled: true # unchanged from secure-rag-baseline-v2-jwt-auth.yaml
+  auth:
+    enabled: true # unchanged from secure-rag-baseline-v2-jwt-auth.yaml
+    insecure_dev_mode: false
+    ingest_roles: ["security_admin", "system_admin", "techfusion_support"]
+    jwt:
+      algorithm: HS256
+      secret_env_var: JWT_HS256_SECRET
+      public_key_path_env_var: JWT_PUBLIC_KEY_PATH
+      issuer: null
+      audience: null
+      leeway_seconds: 30
+      required_claims: ["sub", "tenant_id", "roles"]
+  dos_limits:
+    max_query_length: 2000
+    max_top_k: 20
+    max_filters_bytes: 4096
+    max_upload_bytes: 26214400
+  rate_limit:
+    enabled: false # not the focus of this evaluation
+    requests_per_minute: 60
+    key: tenant
+  egress_policy:
+    enabled: true # ON for this config -- see header note (adversarial_tool_output rows
+    # reference classification: confidential tenant documents; those must never
+    # reach the hosted RAGAS judge)
+    block_unredacted_sensitive_fields: true
+    require_authoritative_trust: false
+    blocked_tenant_ids: []
+    classification_policy:
+      public: true
+      internal: true
+      confidential: false
+      restricted: false

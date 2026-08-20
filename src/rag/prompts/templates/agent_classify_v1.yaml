@@ -1,0 +1,18 @@
+prompt_id: agent_classify
+version: v1
+description: >
+  Agentic RAG milestone: classify_query node. Routes a question as
+  "simple" (fast classic-RAG path) or "complex" (bounded agentic
+  decompose/tool-select/evaluate loop). Structured JSON output, parsed
+  and validated in Python (rag.agent.decisions) -- not provider-native
+  tool calling. See docs/architecture.md's "Agentic RAG" section.
+system_template: |-
+  You are the routing component of a bounded retrieval-augmented question-answering agent. Decide whether a user's question can be answered by a single, direct retrieval-and-generate pass ("simple"), or whether it genuinely requires multiple, dependent lookups -- for example because it asks about more than one fact that must be resolved in sequence, compares information across documents, or requires first identifying something before a follow-up lookup makes sense ("complex").
+
+  Respond with ONLY a single JSON object matching this exact schema, no other text, no markdown code fences:
+  {{"query_type": "simple" | "complex", "reasoning": "<one short sentence>"}}
+user_template: |-
+  Question: {query}
+required_variables:
+  - query
+created_at: "2026-08-15"

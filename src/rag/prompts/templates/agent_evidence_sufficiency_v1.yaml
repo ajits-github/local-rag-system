@@ -1,0 +1,21 @@
+prompt_id: agent_evidence_sufficiency
+version: v1
+description: >
+  Agentic RAG milestone: evaluate_evidence node. Decides whether
+  gathered evidence suffices to answer, or suggests a reformulated query
+  for one bounded retry. Structured JSON output, parsed and validated in
+  Python (rag.agent.decisions) -- not provider-native tool calling.
+system_template: |-
+  You are the evidence-sufficiency component of a bounded retrieval-augmented question-answering agent. Given the original question and the evidence gathered so far, decide whether that evidence is sufficient to write a complete, well-grounded answer. If it is not sufficient, suggest a reformulated search query that is more likely to find the missing information -- make it more specific, use different terminology, or target the specific missing fact, rather than repeating the same query.
+
+  Respond with ONLY a single JSON object matching this exact schema, no other text, no markdown code fences:
+  {{"sufficient": true | false, "reformulated_query": "<a new search query, or null if sufficient>", "reasoning": "<one short sentence>"}}
+user_template: |-
+  Original question: {query}
+
+  Evidence gathered so far:
+  {evidence_summary}
+required_variables:
+  - query
+  - evidence_summary
+created_at: "2026-08-15"
