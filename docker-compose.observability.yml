@@ -1,0 +1,61 @@
+# Optional local-development observability stack: Prometheus + Grafana + Jaeger.
+#
+# Never brought up by `make up`/`docker-compose.yml` alone -- entirely
+# opt-in, layered on top:
+#   docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
+# or: make observability-up
+#
+# Jaeger is the trace *storage + UI* here; there is deliberately no
+# separate OpenTelemetry Collector container -- Jaeger (v1.35+) accepts
+# OTLP directly on 4317 (gRPC)/4318 (HTTP), so rag-api exports straight to
+# it. One fewer moving part than Collector+backend for a local dev stack.
+# See docs/architecture.md's "Observability" section for the full reasoning.
+#
+# Bringing this up does not, by itself, enable tracing: rag-api only
+# exports spans when observability.tracing.enabled is true in
+# config/default.yaml (default false). Prometheus metrics and the /metrics
+# endpoint are unaffected by this file either way -- they're already
+# enabled by default and this just adds something that scrapes them.
+services:
+  rag-api:
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.60
+    container_name: local-rag-jaeger
+    restart: unless-stopped
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686" # Jaeger UI + query API (also what Grafana's Jaeger datasource talks to)
+      - "4317:4317" # OTLP gRPC receiver
+      - "4318:4318" # OTLP HTTP receiver
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    container_name: local-rag-prometheus
+    restart: unless-stopped
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+
+  grafana:
+    image: grafana/grafana:11.3.1
+    container_name: local-rag-grafana
+    restart: unless-stopped
+    environment:
+      # Local-dev only: anonymous viewer access, no login screen. Never
+      # use this pattern for a non-local deployment.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+      - jaeger

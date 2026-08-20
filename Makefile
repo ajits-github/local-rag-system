@@ -1,6 +1,6 @@
 SHELL := bash
 
-.PHONY: up down ingest query test
+.PHONY: up down ingest query test observability-up observability-down
 
 # Bring up Postgres+pgvector and initialize the schema.
 up:
@@ -27,3 +27,14 @@ query:
 # Unit tests always run; integration tests self-skip if Postgres/Ollama aren't up.
 test:
 	pytest tests/ -v
+
+# Bring up Prometheus + Grafana + Jaeger alongside the base stack (opt-in;
+# never brought up by plain `make up`). Enable tracing by setting
+# observability.tracing.enabled: true in config/default.yaml first.
+observability-up:
+	docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
+	@echo "Prometheus: http://localhost:9090  Grafana: http://localhost:3000  Jaeger: http://localhost:16686"
+
+# Companion teardown to observability-up.
+observability-down:
+	docker compose -f docker-compose.yml -f docker-compose.observability.yml down

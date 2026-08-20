@@ -1,0 +1,171 @@
+{
+  "title": "Agentic RAG Overview",
+  "uid": "agentic-rag-overview",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "HTTP request rate by status code (are requests succeeding?)",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "sum(rate(rag_http_requests_total[5m])) by (path, status_code)",
+          "legendFormat": "{{path}} [{{status_code}}]"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Classic vs agent route latency (p95)",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "histogram_quantile(0.95, sum(rate(rag_agent_total_latency_seconds_bucket[5m])) by (le, route))",
+          "legendFormat": "{{route}} p95"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Agent node latency: total vs LLM-inference-only (p95, by node)",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "histogram_quantile(0.95, sum(rate(rag_agent_node_latency_seconds_bucket[5m])) by (le, node))",
+          "legendFormat": "{{node}} total"
+        },
+        {
+          "datasource": "Prometheus",
+          "expr": "histogram_quantile(0.95, sum(rate(rag_agent_node_llm_latency_seconds_bucket[5m])) by (le, node))",
+          "legendFormat": "{{node}} llm-only"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Slowest tools (p95 tool dispatch latency)",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "histogram_quantile(0.95, sum(rate(rag_agent_tool_latency_seconds_bucket[5m])) by (le, tool_name))",
+          "legendFormat": "{{tool_name}}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Average agent steps and tool calls per run",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "rate(rag_agent_steps_sum[5m]) / rate(rag_agent_steps_count[5m])",
+          "legendFormat": "avg steps/run"
+        },
+        {
+          "datasource": "Prometheus",
+          "expr": "sum(rate(rag_agent_tool_calls_total[5m]))",
+          "legendFormat": "tool calls/sec"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Agent termination reasons (1h)",
+      "type": "piechart",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "sum(increase(rag_agent_termination_reason_total[1h])) by (reason)",
+          "legendFormat": "{{reason}}"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Retrieval time vs LLM-node time (mean, seconds)",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "sum(rate(rag_retrieval_latency_seconds_sum[5m])) / sum(rate(rag_retrieval_latency_seconds_count[5m]))",
+          "legendFormat": "retrieval (mean)"
+        },
+        {
+          "datasource": "Prometheus",
+          "expr": "sum(rate(rag_agent_node_llm_latency_seconds_sum[5m])) / sum(rate(rag_agent_node_llm_latency_seconds_count[5m]))",
+          "legendFormat": "llm inference (mean, across all nodes)"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Tool call success rate",
+      "type": "stat",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 }, "overrides": [] },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "sum(rate(rag_agent_tool_calls_total{success=\"true\"}[15m])) / sum(rate(rag_agent_tool_calls_total[15m]))",
+          "legendFormat": "success rate"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "Evidence-sufficiency outcomes (1h)",
+      "type": "piechart",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "sum(increase(rag_agent_evidence_sufficiency_total[1h])) by (sufficient)",
+          "legendFormat": "sufficient={{sufficient}}"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "Errors by component",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "sum(rate(rag_errors_total[5m])) by (component)",
+          "legendFormat": "{{component}}"
+        }
+      ]
+    }
+  ]
+}

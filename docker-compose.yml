@@ -43,6 +43,9 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       COHERE_API_KEY: ${COHERE_API_KEY:-}
       JWT_HS256_SECRET: ${JWT_HS256_SECRET:-}
+      # Only consulted when observability.tracing.enabled is true (default false).
+      # docker-compose.observability.yml overrides this to the containerized Jaeger.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://localhost:4318}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
