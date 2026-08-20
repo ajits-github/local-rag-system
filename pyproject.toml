@@ -25,6 +25,10 @@ dependencies = [
     "rank-bm25>=0.2",
     "pyjwt>=2.8",
     "slowapi>=0.1.9",
+    "prometheus-client>=0.20",
+    "opentelemetry-api>=1.27",
+    "opentelemetry-sdk>=1.27",
+    "opentelemetry-exporter-otlp-proto-http>=1.27",
 ]
 
 [project.optional-dependencies]

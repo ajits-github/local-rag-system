@@ -172,6 +172,79 @@ class MLflowConfig(BaseModel):
     experiment_name: str = "local-rag-system"
 
 
+class MetricsConfig(BaseModel):
+    """Prometheus `/metrics` endpoint tunable.
+
+    Parameters
+    ----------
+    enabled : bool
+        When `True` (the default), `/metrics` serves Prometheus text
+        exposition and every request/agent metric is recorded. Harmless
+        on by default: purely in-process counters/histograms, no
+        external service required for this to be a no-op in practice
+        unless something actually scrapes the endpoint -- same
+        "default-on, no external dependency" precedent as `MLflowConfig`.
+    path : str
+        The mount path for the metrics endpoint.
+    """
+
+    enabled: bool = True
+    path: str = "/metrics"
+
+
+class TracingConfig(BaseModel):
+    """OpenTelemetry distributed-tracing tunable.
+
+    Parameters
+    ----------
+    enabled : bool
+        When `False` (the default), a true no-op: the OpenTelemetry API's
+        own built-in no-op `TracerProvider` stays in place, so every
+        `start_span` call in the codebase is free. `True` requires an
+        OTLP endpoint actually listening (see `AppConfig.otlp_endpoint`,
+        resolved from `OTEL_EXPORTER_OTLP_ENDPOINT`) -- default off so a
+        fresh checkout never produces background exporter connection
+        errors with nothing running to receive them.
+    service_name : str
+        The `service.name` resource attribute on every exported span.
+    sample_ratio : float
+        Fraction of traces sampled, in `[0.0, 1.0]`. `1.0` (the default)
+        is appropriate for local development's low request volume.
+    """
+
+    enabled: bool = False
+    service_name: str = "local-rag-system"
+    sample_ratio: float = 1.0
+
+
+class LiveEventsConfig(BaseModel):
+    """`POST /agent/query/stream` (SSE) tunable.
+
+    Parameters
+    ----------
+    enabled : bool
+        When `True` (the default), the streaming endpoint is mounted.
+        Adds a route only -- no external dependency, no cost unless a
+        caller actually opens a stream.
+    """
+
+    enabled: bool = True
+
+
+class ObservabilityConfig(BaseModel):
+    """Root config block for operational telemetry: metrics, tracing, live events.
+
+    Deliberately independent of `MLflowConfig` -- operational telemetry
+    (this block) and experiment tracking (`MLflowConfig`) have different
+    responsibilities and neither replaces the other (see
+    `docs/architecture.md`'s "Observability" section).
+    """
+
+    metrics: MetricsConfig = Field(default_factory=MetricsConfig)
+    tracing: TracingConfig = Field(default_factory=TracingConfig)
+    live_events: LiveEventsConfig = Field(default_factory=LiveEventsConfig)
+
+
 class HybridRetrievalConfig(BaseModel):
     """Tunables specific to the `hybrid` retrieval provider."""
 
@@ -524,6 +597,7 @@ class AppConfig(BaseModel):
     vision: VisionConfig = Field(default_factory=VisionConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     agent: AgentConfig = Field(default_factory=AgentConfig)
+    observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
 
     def agent_prompt_template_path(self, path: str) -> Path:
         """Resolve one of `agent.*_prompt_path`, relative to the repo root if not absolute.
@@ -598,6 +672,19 @@ class AppConfig(BaseModel):
             The API key, or ``None`` if that environment variable is unset.
         """
         return os.environ.get(self.judge.openai.api_key_env_var)
+
+    def otlp_endpoint(self) -> str:
+        """Resolve the OTLP exporter endpoint for OpenTelemetry tracing.
+
+        Returns
+        -------
+        str
+            The URL read from `OTEL_EXPORTER_OTLP_ENDPOINT`, or
+            ``"http://localhost:4318"`` (a native/uvicorn-on-host Jaeger)
+            if unset. `docker-compose.observability.yml` overrides this
+            to ``http://jaeger:4318`` for the containerized `rag-api`.
+        """
+        return os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318")
 
     def anthropic_api_key(self) -> str | None:
         """Resolve the Anthropic API key from `judge.anthropic.api_key_env_var`.

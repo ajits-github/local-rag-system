@@ -73,6 +73,17 @@ mlflow:
   tracking_uri: "sqlite:///mlflow.db" # swap point: local sqlite file | a real MLflow tracking server URL
   experiment_name: local-rag-system
 
+observability:
+  metrics:
+    enabled: true # default-on; in-process only, harmless unless something scrapes /metrics
+    path: /metrics
+  tracing:
+    enabled: false # no-op when false; see docs/architecture.md. Requires an OTLP endpoint (Jaeger) to be useful
+    service_name: local-rag-system
+    sample_ratio: 1.0
+  live_events:
+    enabled: true # mounts POST /agent/query/stream; no external dependency
+
 retrieval:
   provider: dense # swap point: dense | hybrid (BM25 + dense, fused via RRF)
   candidate_k: 5
@@ -80,7 +91,7 @@ retrieval:
   hybrid:
     rrf_k: 60
   relationship_expansion:
-    enabled: true # no-op when false; see docs/architecture.md
+    enabled: false # no-op when false; see docs/architecture.md
     include_parent: true
     include_neighbors: true
     max_related_elements: 3
@@ -93,12 +104,12 @@ vision:
 
 security:
   authorization:
-    enabled: true # no-op when false; see docs/architecture.md and config/experiments/secure-rag-baseline-v1.yaml
+    enabled: false # no-op when false; see docs/architecture.md and config/experiments/secure-rag-baseline-v1.yaml
     cross_tenant_support_roles: ["techfusion_support"]
   field_redaction:
-    enabled: true # no-op when false; see config/experiments/secure-rag-baseline-v1-field-redaction.yaml
+    enabled: false # no-op when false; see config/experiments/secure-rag-baseline-v1-field-redaction.yaml
   auth:
-    enabled: true # no-op when false; see docs/architecture.md and config/experiments/secure-rag-baseline-v2-jwt-auth.yaml
+    enabled: false # no-op when false; see docs/architecture.md and config/experiments/secure-rag-baseline-v2-jwt-auth.yaml
     insecure_dev_mode: false # only relevant when enabled=true; never overrides a present-but-invalid JWT
     ingest_roles: ["security_admin", "system_admin", "techfusion_support"]
     jwt:
