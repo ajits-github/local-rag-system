@@ -32,6 +32,32 @@ class Citation(BaseModel):
     score: float | None = None
 
 
+class NodeInvocationTiming(BaseModel):
+    """One graph-node call's timing, split into LLM-inference time and everything else.
+
+    `llm_ms`/`overhead_ms` are `None` for a node that makes no direct LLM
+    call (`execute_tool`) -- deliberately not `0.0`, which would misread
+    as "an LLM call happened and took no time."
+
+    Parameters
+    ----------
+    total_ms : float
+        Total wall-clock time for this node invocation.
+    llm_ms : float | None
+        The portion of `total_ms` spent inside `LLM.generate()` calls
+        (summed across any JSON-parse retries `run_decision` made this
+        invocation) -- see `rag.agent.graph._TimingLLM`.
+    overhead_ms : float | None
+        `total_ms - llm_ms`: JSON parsing/validation, prompt-template
+        rendering, and any other node-local work that isn't the model
+        call itself.
+    """
+
+    total_ms: float
+    llm_ms: float | None = None
+    overhead_ms: float | None = None
+
+
 class ToolCallRecord(BaseModel):
     """One tool dispatch's outcome, for observability and bounding.
 
@@ -108,6 +134,21 @@ class AgentState(BaseModel):
         Sources backing `final_answer`.
     termination_reason : str or None
         Why the run stopped; `None` only while still in progress.
+    node_timings_ms : dict[str, list[NodeInvocationTiming]]
+        Every node invocation's timing, keyed by node name (`classify`/
+        `decompose`/`tool_select`/`execute_tool`/`evidence_sufficiency`/
+        `synthesize`). A list, not a single value, because
+        `tool_select`/`execute_tool`/`evidence_sufficiency` can run more
+        than once per request (the bounded retry loop) -- both individual
+        invocation timing and aggregate-across-invocations timing are
+        derivable from this, never just the aggregate. Populated by
+        `rag.agent.graph`'s node-timing wrapper, not by node functions
+        themselves.
+    node_token_usage : dict[str, dict[str, int]]
+        Per-node-type `{"prompt": int, "completion": int}` token totals,
+        summed across every invocation of that node type this run made.
+        Same best-effort/per-call-overwrite caveat as `prompt_tokens`/
+        `completion_tokens` applies per invocation.
     """
 
     original_query: str
@@ -123,6 +164,8 @@ class AgentState(BaseModel):
     step_count: int = 0
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    node_timings_ms: dict[str, list[NodeInvocationTiming]] = Field(default_factory=dict)
+    node_token_usage: dict[str, dict[str, int]] = Field(default_factory=dict)
     evidence_sufficient: bool | None = None
     final_answer: str | None = None
     citations: list[Citation] = Field(default_factory=list)

@@ -19,15 +19,26 @@ Every tool call's evidence passes through `RetrievalPipeline.sanitize_evidence`
 before it is appended to state -- applied uniformly here, in
 `_execute_tool`, regardless of which tool produced it, so no tool can
 bypass field redaction/injection detection by construction.
+
+Observability (node timing, OpenTelemetry spans, Prometheus metrics, and
+safe live-progress events -- see `docs/architecture.md`'s "Observability"
+section) is added by wrapping existing node calls, not by changing any
+node function's internal decision logic. `_TimingLLM` and `_call_node`
+are the two pieces that do this centrally: every node call in `run_agent`
+goes through `_call_node`, and every LLM-calling node is handed the same
+`_TimingLLM`-wrapped `llm` instance instead of the raw one, so this
+module is the only place that needs to know about instrumentation at all.
 """
 
 from __future__ import annotations
 
+import logging
 import time
-from functools import lru_cache
+from collections.abc import Callable
+from functools import lru_cache, partial
 from typing import Any, Literal
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 
 from rag.agent import tools
 from rag.agent.decisions import (
@@ -37,16 +48,21 @@ from rag.agent.decisions import (
     ToolSelectionDecision,
     run_decision,
 )
-from rag.agent.state import AgentState, Citation, ToolCallRecord
+from rag.agent.events import AgentEvent, EventType
+from rag.agent.state import AgentState, Citation, NodeInvocationTiming, ToolCallRecord
 from rag.agent.tool_schemas import TOOL_ARG_MODELS
 from rag.audit import log_audit_event
 from rag.config import AgentConfig, AppConfig
 from rag.embedders.base import Embedder
 from rag.generation.base import LLM
+from rag.observability import metrics as observability_metrics
+from rag.observability import tracing
 from rag.prompts.loader import PromptTemplate, load_prompt_template
 from rag.retrieval.pipeline import RetrievalPipeline, build_context
 from rag.schemas import SearchResult
 from rag.vectorstore.base import VectorStore
+
+logger = logging.getLogger(__name__)
 
 _MAX_SUBQUESTIONS = 4
 _EVIDENCE_SUMMARY_CHARS = 400
@@ -54,17 +70,64 @@ _INSUFFICIENT_EVIDENCE_ANSWER = (
     "I don't have enough authorized, retrieved evidence to answer this question confidently."
 )
 
+OnAgentEvent = Callable[[AgentEvent], None]
+
+
+class NodeTimingStats(BaseModel):
+    """Aggregate timing for one node type across every invocation a run made.
+
+    Parameters
+    ----------
+    count : int
+        Number of times this node ran this request.
+    total_ms : float
+        Sum of `total_ms` across every invocation.
+    mean_ms : float
+        `total_ms / count`.
+    llm_ms_mean : float | None
+        Mean LLM-inference-only time per invocation, or `None` for a node
+        that makes no direct LLM call (`execute_tool`).
+    overhead_ms_mean : float | None
+        Mean non-LLM time per invocation (JSON parsing/validation/
+        template rendering/tool dispatch), or `None` alongside
+        `llm_ms_mean`.
+    """
+
+    count: int
+    total_ms: float
+    mean_ms: float
+    llm_ms_mean: float | None = None
+    overhead_ms_mean: float | None = None
+
 
 class AgentRunResult(BaseModel):
     """The outcome of one `run_agent` call: final state plus API-facing summary fields.
 
     `retrieval_ms`/`generation_ms` are exact (read from `pipeline.answer()`'s
     own breakdown) on the `"classic_rag"` route. On the `"agent"` route
-    they are an approximation: `retrieval_ms` sums every tool call's own
-    latency, and `generation_ms` is everything else (every LLM decision
-    call -- classify/decompose/select_tool/evaluate_evidence/synthesize --
-    collapsed together, since they all go through the same `LLM`
-    instance). `total_ms` is always exact wall-clock time.
+    they are an approximation kept for backward compatibility:
+    `retrieval_ms` sums every tool call's own latency, and `generation_ms`
+    is everything else added together -- every LLM decision call
+    (classify/decompose/select_tool/evaluate_evidence/synthesize)
+    collapsed into one number, since they all go through the same `LLM`
+    instance. This is *not* a single generation call's duration; for a
+    real per-node breakdown (including the LLM-inference-vs-overhead
+    split within each node), use `node_timings_ms` instead. `total_ms` is
+    always exact wall-clock time.
+
+    Parameters
+    ----------
+    node_timings_ms : dict[str, NodeTimingStats]
+        Per-node-type aggregate timing (`classify`/`decompose`/
+        `tool_select`/`tool_execute`/`evidence_sufficiency`/`synthesize`),
+        empty on the `"classic_rag"` route (that route has no per-node
+        structure -- see `pipeline.answer()`'s own `latency_breakdown_ms`
+        instead).
+    llm_call_count : int
+        Total `LLM.generate()` calls made this run (including JSON-parse
+        retries). `1` on the `"classic_rag"` route.
+    node_token_usage : dict[str, dict[str, int]]
+        Per-node-type `{"prompt": int, "completion": int}` token totals.
     """
 
     state: AgentState
@@ -72,6 +135,44 @@ class AgentRunResult(BaseModel):
     retrieval_ms: float
     generation_ms: float
     total_ms: float
+    node_timings_ms: dict[str, NodeTimingStats] = Field(default_factory=dict)
+    llm_call_count: int = 0
+    node_token_usage: dict[str, dict[str, int]] = Field(default_factory=dict)
+
+
+class _TimingLLM(LLM):
+    """Wraps an `LLM`, accumulating wall-clock time spent in `generate()`.
+
+    Never changes what's generated -- every call is forwarded to the
+    wrapped instance unchanged, including retries (`run_decision` may
+    call `generate()` more than once per node invocation; `total_llm_ms`
+    accumulates across all of them so retries are never undercounted, the
+    same undercount `AgentState.prompt_tokens` already documents for
+    token accounting). `__getattr__` forwards everything else (notably
+    `last_prompt_tokens`/`last_completion_tokens`) to the wrapped
+    instance unchanged, so `_accumulate_tokens`'s existing `getattr(...)`
+    pattern keeps working without modification.
+    """
+
+    def __init__(self, llm: LLM) -> None:
+        self._llm = llm
+        self.total_llm_ms: float = 0.0
+        self.call_count: int = 0
+
+    def generate(self, system: str, user: str) -> str:
+        """Time one `generate()` call and forward it unchanged."""
+        t0 = time.perf_counter()
+        result = self._llm.generate(system, user)
+        self.total_llm_ms += (time.perf_counter() - t0) * 1000
+        self.call_count += 1
+        return result
+
+    def health_check(self) -> bool:
+        """Forward to the wrapped instance."""
+        return self._llm.health_check()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._llm, name)
 
 
 @lru_cache(maxsize=16)
@@ -113,19 +214,143 @@ def _summarize_evidence(evidence: list[SearchResult]) -> str:
     return "\n\n".join(lines)
 
 
-def _accumulate_tokens(state: AgentState, llm: LLM) -> None:
+def _accumulate_tokens(state: AgentState, llm: LLM, node: str) -> None:
     """Best-effort add the LLM's last-call token counts to the state's running total.
 
     Mirrors `RetrievalPipeline.answer()`'s `getattr(..., None)` pattern --
     an `LLM` implementation that doesn't track tokens contributes 0, never
-    an error.
+    an error. Also adds the same counts to `state.node_token_usage[node]`,
+    for a per-node-type breakdown alongside the run-wide total.
     """
     prompt = getattr(llm, "last_prompt_tokens", None)
+    completion = getattr(llm, "last_completion_tokens", None)
     if prompt is not None:
         state.prompt_tokens += prompt
-    completion = getattr(llm, "last_completion_tokens", None)
     if completion is not None:
         state.completion_tokens += completion
+    if prompt is not None or completion is not None:
+        bucket = state.node_token_usage.setdefault(node, {"prompt": 0, "completion": 0})
+        bucket["prompt"] += prompt or 0
+        bucket["completion"] += completion or 0
+
+
+def _call_node(
+    name: str,
+    state: AgentState,
+    fn: Callable[[], Any],
+    *,
+    timed_llm: _TimingLLM | None = None,
+) -> Any:
+    """Time one node-function call, split LLM-inference time from overhead, and record telemetry.
+
+    Wraps an existing node call without altering its logic: `fn` is a
+    zero-argument closure over whatever the call already was, invoked
+    exactly once, synchronously, here. Opens an OpenTelemetry span named
+    `name`, appends a `NodeInvocationTiming` to
+    `state.node_timings_ms[name]`, and records both Prometheus node
+    latency histograms (total and LLM-only).
+
+    Parameters
+    ----------
+    name : str
+        The node name (`classify`/`decompose`/`tool_select`/
+        `tool_execute`/`evidence_sufficiency`/`synthesize`).
+    state : AgentState
+        The state being threaded through the graph; timing is recorded
+        onto it directly.
+    fn : Callable[[], Any]
+        The node call to make.
+    timed_llm : _TimingLLM | None, optional
+        When set, the LLM-inference portion of this call is measured via
+        the delta in `timed_llm.total_llm_ms` before/after `fn()` runs.
+        `None` for a node that makes no direct LLM call (`execute_tool`),
+        so `llm_ms`/`overhead_ms` are recorded as `None` rather than a
+        misleading `0.0`.
+
+    Returns
+    -------
+    Any
+        Whatever `fn()` returned, unchanged.
+    """
+    llm_ms_before = timed_llm.total_llm_ms if timed_llm is not None else None
+    t0 = time.perf_counter()
+    with tracing.start_span(name) as span:
+        result = fn()
+        total_ms = (time.perf_counter() - t0) * 1000
+        llm_ms = (
+            (timed_llm.total_llm_ms - llm_ms_before)
+            if timed_llm is not None and llm_ms_before is not None
+            else None
+        )
+        overhead_ms = max(total_ms - llm_ms, 0.0) if llm_ms is not None else None
+        tracing.set_attributes(
+            span, {"node": name, "total_ms": total_ms, "llm_ms": llm_ms, "overhead_ms": overhead_ms}
+        )
+    state.node_timings_ms.setdefault(name, []).append(
+        NodeInvocationTiming(total_ms=total_ms, llm_ms=llm_ms, overhead_ms=overhead_ms)
+    )
+    observability_metrics.observe_node_latency(
+        name, total_ms / 1000, llm_ms / 1000 if llm_ms is not None else None
+    )
+    return result
+
+
+def _aggregate_node_timings(
+    node_timings_ms: dict[str, list[NodeInvocationTiming]],
+) -> dict[str, NodeTimingStats]:
+    """Reduce per-invocation node timings into one `NodeTimingStats` per node type."""
+    stats: dict[str, NodeTimingStats] = {}
+    for name, invocations in node_timings_ms.items():
+        count = len(invocations)
+        total_ms = sum(t.total_ms for t in invocations)
+        llm_values = [t.llm_ms for t in invocations if t.llm_ms is not None]
+        overhead_values = [t.overhead_ms for t in invocations if t.overhead_ms is not None]
+        stats[name] = NodeTimingStats(
+            count=count,
+            total_ms=total_ms,
+            mean_ms=total_ms / count if count else 0.0,
+            llm_ms_mean=(sum(llm_values) / len(llm_values)) if llm_values else None,
+            overhead_ms_mean=(
+                (sum(overhead_values) / len(overhead_values)) if overhead_values else None
+            ),
+        )
+    return stats
+
+
+def _emit_event(
+    on_event: OnAgentEvent | None,
+    event_type: EventType,
+    state: AgentState,
+    *,
+    t_start: float | None = None,
+    tool_name: str | None = None,
+    result_count: int | None = None,
+    route: str | None = None,
+) -> None:
+    """Emit one safe live-progress event, if a sink is set.
+
+    Never raises -- a broken consumer callback can never crash the run.
+    Carries only bounded, already-safe metadata (see `AgentEvent`'s own
+    docstring); never chain-of-thought, raw prompts, retrieved content,
+    or credentials.
+    """
+    if on_event is None:
+        return
+    try:
+        on_event(
+            AgentEvent(
+                event_type=event_type,
+                step=state.step_count,
+                tool_name=tool_name,
+                elapsed_ms=(time.perf_counter() - t_start) * 1000 if t_start is not None else None,
+                retrieved_chunk_count=result_count,
+                evidence_sufficient=state.evidence_sufficient,
+                termination_reason=state.termination_reason,
+                route=route,
+            )
+        )
+    except Exception:
+        logger.warning("on_event callback raised; continuing", exc_info=True)
 
 
 def _step_or_stop(state: AgentState, agent_cfg: AgentConfig) -> bool:
@@ -146,7 +371,7 @@ def _classify_query(
     decision = run_decision(
         llm, template, ClassifyDecision, max_retries, query=state.original_query
     )
-    _accumulate_tokens(state, llm)
+    _accumulate_tokens(state, llm, "classify")
     state.query_type = decision.query_type if decision is not None else "simple"
     return state
 
@@ -158,7 +383,7 @@ def _decompose(
     decision = run_decision(
         llm, template, DecomposeDecision, max_retries, query=state.original_query
     )
-    _accumulate_tokens(state, llm)
+    _accumulate_tokens(state, llm, "decompose")
     subquestions = (decision.subquestions if decision is not None else [])[:_MAX_SUBQUESTIONS]
     state.subquestions = subquestions
     state.current_query = subquestions[0] if subquestions else state.original_query
@@ -244,6 +469,7 @@ def _execute_tool(
     embedder: Embedder,
     dataset_id: str | None,
     agent_cfg: AgentConfig,
+    on_event: OnAgentEvent | None = None,
 ) -> AgentState:
     """`execute_tool` node: validate arguments, dispatch, sanitize, and record the outcome.
 
@@ -253,6 +479,10 @@ def _execute_tool(
     validation failure or any tool-execution error is recorded as a
     failed `ToolCallRecord` and returned safely; it never propagates and
     never crashes the request.
+
+    Opens a per-tool-name OpenTelemetry span (nested under the caller's
+    `tool_execute` node span) and records `rag_agent_tool_calls_total`/
+    `rag_agent_tool_latency_seconds` around the actual dispatch attempt.
     """
     t0 = time.perf_counter()
     arg_model = TOOL_ARG_MODELS[decision.tool_name]
@@ -262,42 +492,54 @@ def _execute_tool(
         log_audit_event(
             "agent_tool_argument_rejected", tool_name=decision.tool_name, reason=str(exc)[:200]
         )
+        latency_ms = (time.perf_counter() - t0) * 1000
         state.tool_call_history.append(
             ToolCallRecord(
                 tool_name=decision.tool_name,
                 args={},
                 result_count=0,
-                latency_ms=(time.perf_counter() - t0) * 1000,
+                latency_ms=latency_ms,
                 success=False,
                 error="invalid_arguments",
             )
         )
         state.tool_call_count += 1
+        observability_metrics.observe_tool_call(decision.tool_name, False, latency_ms / 1000)
+        observability_metrics.observe_error("tool")
         return state
 
+    _emit_event(on_event, "tool_started", state, tool_name=decision.tool_name)
     try:
-        results = _dispatch_tool(
-            decision.tool_name,
-            args,
-            state=state,
-            pipeline=pipeline,
-            vectorstore=vectorstore,
-            embedder=embedder,
-            dataset_id=dataset_id,
-            agent_cfg=agent_cfg,
-        )
+        with tracing.start_span(
+            decision.tool_name, attributes={"tool_name": decision.tool_name}
+        ) as span:
+            results = _dispatch_tool(
+                decision.tool_name,
+                args,
+                state=state,
+                pipeline=pipeline,
+                vectorstore=vectorstore,
+                embedder=embedder,
+                dataset_id=dataset_id,
+                agent_cfg=agent_cfg,
+            )
+            tracing.set_attributes(span, {"tool_success": True, "result_count": len(results)})
     except Exception as exc:  # tool failure must never crash the request
+        latency_ms = (time.perf_counter() - t0) * 1000
         state.tool_call_history.append(
             ToolCallRecord(
                 tool_name=decision.tool_name,
                 args=args.model_dump(),
                 result_count=0,
-                latency_ms=(time.perf_counter() - t0) * 1000,
+                latency_ms=latency_ms,
                 success=False,
                 error=str(exc)[:200],
             )
         )
         state.tool_call_count += 1
+        observability_metrics.observe_tool_call(decision.tool_name, False, latency_ms / 1000)
+        observability_metrics.observe_error("tool")
+        _emit_event(on_event, "tool_completed", state, tool_name=decision.tool_name, result_count=0)
         return state
 
     sanitized = pipeline.sanitize_evidence(results, state.authorization_context)
@@ -305,14 +547,19 @@ def _execute_tool(
     if decision.tool_name == "search_knowledge_base":
         state.retrieval_attempts += 1
     state.tool_call_count += 1
+    latency_ms = (time.perf_counter() - t0) * 1000
     state.tool_call_history.append(
         ToolCallRecord(
             tool_name=decision.tool_name,
             args=args.model_dump(),
             result_count=len(sanitized),
-            latency_ms=(time.perf_counter() - t0) * 1000,
+            latency_ms=latency_ms,
             success=True,
         )
+    )
+    observability_metrics.observe_tool_call(decision.tool_name, True, latency_ms / 1000)
+    _emit_event(
+        on_event, "tool_completed", state, tool_name=decision.tool_name, result_count=len(sanitized)
     )
     return state
 
@@ -329,7 +576,7 @@ def _evaluate_evidence(
         query=state.original_query,
         evidence_summary=_summarize_evidence(state.retrieved_evidence),
     )
-    _accumulate_tokens(state, llm)
+    _accumulate_tokens(state, llm, "evidence_sufficiency")
     if decision is None:
         # Safe default on a parsing failure: proceed with whatever's gathered
         # rather than looping or crashing.
@@ -346,7 +593,7 @@ def _synthesize(state: AgentState, llm: LLM, template: PromptTemplate) -> AgentS
     context = build_context(state.retrieved_evidence)
     system, user = template.render(context=context, query=state.original_query)
     state.final_answer = llm.generate(system, user)
-    _accumulate_tokens(state, llm)
+    _accumulate_tokens(state, llm, "synthesize")
     state.citations = [
         Citation(
             chunk_id=r.chunk.metadata.chunk_id,
@@ -375,6 +622,25 @@ def _finalize(state: AgentState, llm: LLM, synthesize_template: PromptTemplate) 
     """Route to `synthesize` if evidence was gathered, else the insufficient-evidence response."""
     if state.retrieved_evidence:
         return _synthesize(state, llm, synthesize_template)
+    return _insufficient_evidence_response(state)
+
+
+def _finalize_timed(
+    state: AgentState,
+    timed_llm: _TimingLLM,
+    templates: dict[str, PromptTemplate],
+    on_event: OnAgentEvent | None,
+    t_start: float,
+) -> AgentState:
+    """`run_agent`'s entrypoint into `_finalize`, timing the `synthesize` node when it runs."""
+    if state.retrieved_evidence:
+        _emit_event(on_event, "synthesis_started", state, t_start=t_start)
+        return _call_node(
+            "synthesize",
+            state,
+            lambda: _synthesize(state, timed_llm, templates["synthesize"]),
+            timed_llm=timed_llm,
+        )
     return _insufficient_evidence_response(state)
 
 
@@ -435,6 +701,7 @@ def run_agent(
     embedder: Embedder,
     llm: LLM,
     config: AppConfig,
+    on_event: OnAgentEvent | None = None,
 ) -> AgentRunResult:
     """Run the bounded agent graph for one query, or the classic-RAG fast path.
 
@@ -451,6 +718,11 @@ def run_agent(
     (`max_agent_steps`/`max_retrieval_attempts`/`max_tool_calls`) — see
     the module docstring for the full graph shape.
 
+    Every node call is wrapped in `_call_node` for timing/tracing/metrics
+    and, for LLM-calling nodes, given a `_TimingLLM`-wrapped `llm` so
+    inference time can be split from node overhead -- none of this
+    changes what any node decides or how the graph routes.
+
     Parameters
     ----------
     state : AgentState
@@ -462,6 +734,12 @@ def run_agent(
         `RetrievalPipeline`/`api.deps` already use.
     config : AppConfig
         Application configuration; `config.agent` supplies every bound.
+    on_event : OnAgentEvent | None, optional
+        Called with a safe `AgentEvent` at each state-machine transition
+        (see `rag.agent.events`), if set. Used by
+        `POST /agent/query/stream` to stream live progress; `/agent/query`
+        itself never sets this. Never raises out of `run_agent` even if
+        the callback itself raises.
 
     Returns
     -------
@@ -471,22 +749,88 @@ def run_agent(
     t_start = time.perf_counter()
     agent_cfg = config.agent
     dataset_id = (state.filters or {}).get("dataset_id") if state.filters else None
+    timed_llm = _TimingLLM(llm)
+
+    root_span_cm = tracing.start_span("agent_query")
+    root_span = root_span_cm.__enter__()
+
+    def _finish(result: AgentRunResult) -> AgentRunResult:
+        """Close the root span, record run-level metrics/events, and attach timing summaries."""
+        tracing.set_attributes(
+            root_span,
+            {
+                "route": result.route,
+                "termination_reason": result.state.termination_reason,
+                "agent_step_count": result.state.step_count,
+                "tool_call_count": result.state.tool_call_count,
+            },
+        )
+        try:
+            root_span_cm.__exit__(None, None, None)
+        except Exception:
+            logger.warning("Failed to close agent_query span", exc_info=True)
+
+        observability_metrics.observe_agent_request(
+            result.route, result.total_ms / 1000, result.state.step_count
+        )
+        if result.state.termination_reason is not None:
+            observability_metrics.observe_termination_reason(result.state.termination_reason)
+        if result.state.evidence_sufficient is not None:
+            observability_metrics.observe_evidence_sufficiency(result.state.evidence_sufficient)
+
+        _emit_event(
+            on_event,
+            "completed" if result.state.termination_reason == "synthesized" else "terminated",
+            result.state,
+            t_start=t_start,
+            route=result.route,
+        )
+        return result.model_copy(
+            update={
+                "node_timings_ms": _aggregate_node_timings(result.state.node_timings_ms),
+                "node_token_usage": result.state.node_token_usage,
+                "llm_call_count": timed_llm.call_count if result.route == "agent" else 1,
+            }
+        )
+
+    _emit_event(on_event, "query_received", state, t_start=t_start)
 
     if not agent_cfg.enabled:
-        return _classic_result(state, pipeline)
+        _emit_event(on_event, "route_selected", state, t_start=t_start, route="classic_rag")
+        return _finish(_classic_result(state, pipeline))
 
     templates = _load_templates(config)
 
-    state = _classify_query(state, llm, templates["classify"], agent_cfg.max_json_parse_retries)
+    state = _call_node(
+        "classify",
+        state,
+        lambda: _classify_query(
+            state, timed_llm, templates["classify"], agent_cfg.max_json_parse_retries
+        ),
+        timed_llm=timed_llm,
+    )
     if _step_or_stop(state, agent_cfg):
-        return _agent_result(_finalize(state, llm, templates["synthesize"]), t_start)
+        state = _finalize_timed(state, timed_llm, templates, on_event, t_start)
+        return _finish(_agent_result(state, t_start))
 
     if state.query_type != "complex":
-        return _classic_result(state, pipeline)
+        _emit_event(on_event, "route_selected", state, t_start=t_start, route="classic_rag")
+        return _finish(_classic_result(state, pipeline))
 
-    state = _decompose(state, llm, templates["decompose"], agent_cfg.max_json_parse_retries)
+    _emit_event(on_event, "route_selected", state, t_start=t_start, route="agent")
+    _emit_event(on_event, "decomposition_started", state, t_start=t_start)
+    state = _call_node(
+        "decompose",
+        state,
+        lambda: _decompose(
+            state, timed_llm, templates["decompose"], agent_cfg.max_json_parse_retries
+        ),
+        timed_llm=timed_llm,
+    )
+    _emit_event(on_event, "decomposition_completed", state, t_start=t_start)
     if _step_or_stop(state, agent_cfg):
-        return _agent_result(_finalize(state, llm, templates["synthesize"]), t_start)
+        state = _finalize_timed(state, timed_llm, templates, on_event, t_start)
+        return _finish(_agent_result(state, t_start))
 
     while True:
         if state.tool_call_count >= agent_cfg.max_tool_calls:
@@ -494,30 +838,56 @@ def run_agent(
             log_audit_event("agent_max_tool_calls_reached", tool_calls=state.tool_call_count)
             break
 
-        decision = _select_tool(
-            state, llm, templates["tool_select"], agent_cfg.max_json_parse_retries
+        decision = _call_node(
+            "tool_select",
+            state,
+            partial(
+                _select_tool,
+                state,
+                timed_llm,
+                templates["tool_select"],
+                agent_cfg.max_json_parse_retries,
+            ),
+            timed_llm=timed_llm,
         )
-        _accumulate_tokens(state, llm)
+        _accumulate_tokens(state, timed_llm, "tool_select")
         if _step_or_stop(state, agent_cfg):
             break
         if decision is None:
             break
+        _emit_event(on_event, "tool_selected", state, t_start=t_start, tool_name=decision.tool_name)
 
-        state = _execute_tool(
+        state = _call_node(
+            "tool_execute",
             state,
-            decision,
-            pipeline=pipeline,
-            vectorstore=vectorstore,
-            embedder=embedder,
-            dataset_id=dataset_id,
-            agent_cfg=agent_cfg,
+            partial(
+                _execute_tool,
+                state,
+                decision,
+                pipeline=pipeline,
+                vectorstore=vectorstore,
+                embedder=embedder,
+                dataset_id=dataset_id,
+                agent_cfg=agent_cfg,
+                on_event=on_event,
+            ),
         )
         if _step_or_stop(state, agent_cfg):
             break
 
-        state = _evaluate_evidence(
-            state, llm, templates["evidence"], agent_cfg.max_json_parse_retries
+        state = _call_node(
+            "evidence_sufficiency",
+            state,
+            partial(
+                _evaluate_evidence,
+                state,
+                timed_llm,
+                templates["evidence"],
+                agent_cfg.max_json_parse_retries,
+            ),
+            timed_llm=timed_llm,
         )
+        _emit_event(on_event, "evidence_evaluated", state, t_start=t_start)
         if _step_or_stop(state, agent_cfg):
             break
 
@@ -529,8 +899,9 @@ def run_agent(
                 "agent_max_retrieval_attempts_reached", attempts=state.retrieval_attempts
             )
             break
+        _emit_event(on_event, "retry_started", state, t_start=t_start)
         # Otherwise current_query has been reformulated (if the decision supplied
         # one) and the loop continues back to select_tool.
 
-    state = _finalize(state, llm, templates["synthesize"])
-    return _agent_result(state, t_start)
+    state = _finalize_timed(state, timed_llm, templates, on_event, t_start)
+    return _finish(_agent_result(state, t_start))

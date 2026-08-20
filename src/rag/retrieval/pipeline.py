@@ -15,6 +15,8 @@ from rag.config import AppConfig
 from rag.embedders.base import Embedder
 from rag.factory import build_embedder, build_llm, build_reranker, build_vectorstore
 from rag.generation.base import LLM
+from rag.observability import metrics as observability_metrics
+from rag.observability import tracing
 from rag.prompts.loader import PromptTemplate, load_prompt_template_from_config
 from rag.rerankers.base import Reranker
 from rag.retrieval.authorization import AuthorizationContext
@@ -384,6 +386,41 @@ class RetrievalPipeline:
         return results
 
     def _retrieve_timed(
+        self,
+        query: str,
+        filters: dict[str, Any] | None = None,
+        candidate_k: int | None = None,
+        reranker_top_n: int | None = None,
+        generation_context_top_n: int | None = None,
+        auth: AuthorizationContext | None = None,
+    ) -> tuple[list[SearchResult], dict[str, float]]:
+        """Do `retrieve()`'s work inside a `retrieval` observability span.
+
+        Thin wrapper around `_retrieve_timed_inner` (the actual retrieval
+        logic, unchanged) so tracing/metrics live in exactly one place --
+        covers both the classic `/query` path and the agent's
+        `search_knowledge_base` tool call, since both eventually call
+        `retrieve()`, which calls this.
+        """
+        t0 = time.perf_counter()
+        with tracing.start_span(
+            "retrieval", attributes={"provider": self._config.retrieval.provider}
+        ) as span:
+            results, stage_ms = self._retrieve_timed_inner(
+                query,
+                filters=filters,
+                candidate_k=candidate_k,
+                reranker_top_n=reranker_top_n,
+                generation_context_top_n=generation_context_top_n,
+                auth=auth,
+            )
+            tracing.set_attributes(span, {**stage_ms, "result_count": len(results)})
+        observability_metrics.observe_retrieval_latency(
+            self._config.retrieval.provider, time.perf_counter() - t0
+        )
+        return results, stage_ms
+
+    def _retrieve_timed_inner(
         self,
         query: str,
         filters: dict[str, Any] | None = None,
