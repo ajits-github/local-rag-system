@@ -54,6 +54,36 @@ checks as the classic path.
 
 The details live in [`docs/architecture.md`](docs/architecture.md).
 
+## Observability
+
+Operational telemetry on top of the agentic workflow: per-node timing
+(with a real-LLM-inference-vs-overhead split), OpenTelemetry traces,
+Prometheus metrics, a local Grafana dashboard, and a safe live-progress
+SSE stream (`POST /agent/query/stream`). Distinct from
+[MLflow tracking](#mlflow-tracking) below, which tracks experiment runs,
+not live requests.
+
+`/metrics` (Prometheus text exposition) and the SSE stream are on by
+default (`observability.metrics.enabled`/`observability.live_events.enabled`,
+both true no-ops with nothing scraping/consuming them); OpenTelemetry
+tracing is off by default (`observability.tracing.enabled: false`) since
+it needs a real OTLP endpoint to be useful.
+
+To see traces and dashboards locally:
+```
+# set observability.tracing.enabled: true in config/default.yaml first
+make observability-up
+```
+This brings up Jaeger (traces, `http://localhost:16686`), Prometheus
+(`http://localhost:9090`), and Grafana (`http://localhost:3000`,
+pre-provisioned with a dashboard) alongside the base stack — layered via
+`docker compose -f docker-compose.yml -f docker-compose.observability.yml
+up -d`, never brought up by plain `make up`. Teardown: `make
+observability-down`.
+
+The details live in [`docs/architecture.md`](docs/architecture.md)'s
+"Observability" section.
+
 ## Prerequisites
 
 - Python 3.11+
@@ -424,5 +454,11 @@ Deferred for now, tracked here rather than left as empty scaffolding:
   before adopting it.
 - **Kubernetes deployment**: containerize the API and vector store for a
   non-local deployment target.
-- **Observability**: OpenTelemetry tracing/metrics on top of the current
-  structured JSON logging.
+- **Sphinx**: proper generated API docs, deliberately deferred past
+  `agentic_rag_baseline_v1` so it doesn't delay or contaminate that
+  baseline evaluation.
+
+Done, not deferred: **Observability** (OpenTelemetry tracing, Prometheus
+metrics, a Grafana dashboard, and a live-progress SSE stream) shipped in
+the observability milestone — see the [Observability](#observability)
+section above and `docs/architecture.md`'s "Observability" section.

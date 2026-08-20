@@ -1754,3 +1754,348 @@ by the mocked unit tests).
   MCP-specific type. `rag/agent/tools.py`'s
   plain-function-plus-Pydantic-schema shape was chosen so a future MCP
   exposure wouldn't require rewriting the underlying business logic.
+
+## Observability
+
+Adds operational telemetry on top of the bounded Agentic RAG workflow:
+per-node latency (including a split between real LLM inference time and
+node-local overhead), OpenTelemetry distributed traces, Prometheus
+metrics, a local Grafana dashboard, and a safe live-progress event stream
+for a running agent query. This is deliberately a separate concern from
+`eval/mlflow_logger.py`'s experiment tracking (see "MLflow stays
+separate" below) and does not touch agent decision logic, prompts,
+retrieval parameters, or model configuration -- the `agentic_rag_baseline_v1`
+evaluation this milestone precedes had to stay a controlled benchmark.
+
+The four systems have distinct, non-overlapping responsibilities:
+
+- **OpenTelemetry** = request/distributed tracing -- "what happened, in
+  what order, nested how, and how long did each step take, for one
+  request."
+- **Prometheus** = time-series operational metrics -- "in aggregate,
+  across many requests, what's slow/failing/how-often."
+- **Grafana** = visualization of the above (plus traces, via a Jaeger
+  datasource).
+- **MLflow** (unchanged, see below) = experiment-run tracking -- "which
+  config produced which offline eval numbers."
+
+### Why wrap existing calls, not change node functions
+
+Every node function in `rag/agent/graph.py` (`_classify_query`,
+`_decompose`, `_select_tool`, `_execute_tool`, `_evaluate_evidence`,
+`_synthesize`) is completely unmodified in its internal logic. All timing/
+tracing/metrics/event instrumentation lives in a small number of wrapper
+points instead:
+
+- **`_TimingLLM`** wraps the injected `LLM` once, at the top of
+  `run_agent()`. It forwards every `generate()` call unchanged and
+  accumulates `total_llm_ms` across calls (including JSON-parse retries
+  inside `decisions.run_decision`, so retries are never undercounted --
+  the same caveat `AgentState.prompt_tokens` already documents for token
+  accounting applies here too, now closed for timing specifically).
+  `__getattr__` forwards everything else (`last_prompt_tokens`/
+  `last_completion_tokens`) to the wrapped instance, so
+  `_accumulate_tokens`'s existing `getattr(...)` pattern needed zero
+  changes. `decisions.py` itself was never touched.
+- **`_call_node`** wraps every node call site inside `run_agent()`'s
+  dispatch. It times the call, opens an OpenTelemetry span named after
+  the node, and -- when a `_TimingLLM` was passed -- reads the delta in
+  `total_llm_ms` before/after the call to split `llm_ms` (real inference
+  time) from `overhead_ms` (JSON parsing/validation/template rendering/
+  everything else). `execute_tool` (no direct LLM call) reports
+  `llm_ms=None`/`overhead_ms=None` rather than a misleading `0.0`.
+- **`_execute_tool`** additionally opens a per-tool-name span (nested
+  under `tool_execute`) around the actual dispatch attempt, and records
+  `rag_agent_tool_calls_total`/`rag_agent_tool_latency_seconds`.
+- **`RetrievalPipeline._retrieve_timed`** was split into a thin wrapper
+  (opens a `retrieval` span, records `rag_retrieval_latency_seconds`) and
+  `_retrieve_timed_inner` (the original, byte-identical retrieval logic,
+  moved verbatim -- a pure rename, not a rewrite, to avoid any risk of
+  behavior change in a heavily-tested method). This one wrapper covers
+  both the classic `/query` path and the agent's `search_knowledge_base`
+  tool call, since both eventually call `retrieve()`, which calls it.
+- **`RequestIDMiddleware`** (already the one place that computed
+  `duration_ms`/method/path for the `request_handled` log line) gained
+  the HTTP-level span and `rag_http_requests_total`/
+  `rag_http_request_duration_seconds` recording -- reusing the existing
+  cross-cutting request hook rather than adding a second middleware.
+
+### Node timing: `NodeInvocationTiming` and `NodeTimingStats`
+
+`AgentState.node_timings_ms: dict[str, list[NodeInvocationTiming]]`
+records every node invocation (not just the latest), keyed by node name --
+a list because `tool_select`/`tool_execute`/`evidence_sufficiency` can run
+more than once per request (the bounded retry loop). Each
+`NodeInvocationTiming` holds `total_ms`/`llm_ms`/`overhead_ms`.
+`AgentState.node_token_usage: dict[str, dict[str, int]]` mirrors this for
+per-node-type prompt/completion token totals, alongside the pre-existing
+run-wide `prompt_tokens`/`completion_tokens`.
+
+`AgentRunResult` gained additive fields built once in `run_agent()`'s
+`_finish()` closure: `node_timings_ms: dict[str, NodeTimingStats]`
+(`count`/`total_ms`/`mean_ms`/`llm_ms_mean`/`overhead_ms_mean` per node
+type), `llm_call_count`, `node_token_usage`. The pre-existing
+`retrieval_ms`/`generation_ms`/`total_ms` fields and their exact formulas
+are untouched -- `generation_ms`'s docstring was rewritten to state
+plainly that on the `"agent"` route it's a backward-compatible sum of
+every agent LLM node's duration, not one generation call, and to point at
+`node_timings_ms` for the real per-node, inference-vs-overhead breakdown.
+This is why `run_agent_eval.py`, `mlflow_logger.py`, and
+`agent_query.py`'s response model needed zero code changes.
+
+### OpenTelemetry
+
+`rag/observability/tracing.py` is the only module that imports
+`opentelemetry.sdk`/the OTLP exporter; every other call site only depends
+on the always-installed `opentelemetry.api`. `configure_tracing(config)`
+(called once, at `rag.api.main` import time) installs a real
+`TracerProvider` + `BatchSpanProcessor(OTLPSpanExporter(...))` only when
+`observability.tracing.enabled` is `True`; otherwise the OpenTelemetry
+API's own built-in no-op `TracerProvider` stays in place, so every
+`start_span()` call anywhere in the codebase is free -- no "is tracing
+enabled" branching needed at any instrumentation call site.
+
+`start_span(name, attributes=None)` is a defensive context manager: span
+creation, attribute-setting, and teardown are each independently guarded,
+so a broken exporter/SDK can never turn into a 500 on `/query` or
+`/agent/query` -- but the *caller's own* exception inside the `with` block
+is never swallowed; it propagates normally after the span is closed (and
+recorded as an error on the span, when tracing is actually active).
+
+One `/agent/query` trace looks like:
+
+```
+POST /agent/query                    (HTTP root span, RequestIDMiddleware)
+  agent_query                        (root span, opened in run_agent())
+    classify
+    decompose
+    tool_select
+    tool_execute
+      search_knowledge_base          (per-tool-name span)
+        retrieval                    (RetrievalPipeline._retrieve_timed)
+    evidence_sufficiency
+    ... (loop repeats on insufficient evidence)
+    synthesize
+```
+
+Span attributes include `route`, `tool_name`, `tool_success`,
+`agent_step_count`, `evidence_sufficient`/termination info on the
+relevant spans, and (on each LLM-calling node's span) `total_ms`/
+`llm_ms`/`overhead_ms`. **Never attached, anywhere**: JWTs, credentials,
+retrieved chunk text, raw prompts, or `decision.reasoning` -- the JSON
+decision models' `reasoning` field was already discarded before reaching
+`AgentState` prior to this milestone (confirmed by re-reading
+`_classify_query`/`_evaluate_evidence`); instrumentation only reads the
+specific fields those functions already extracted, never the full parsed
+decision object.
+
+`rag/logging_config.py`'s `JSONFormatter` optionally adds `trace_id`/
+`span_id` to a log record when a valid (non-no-op) span is active,
+correlating structured logs with traces without a second mechanism --
+wrapped in its own try/except, so a tracing-layer issue can never break
+logging.
+
+### Prometheus
+
+`rag/observability/metrics.py` uses a dedicated `CollectorRegistry`
+(never `prometheus_client`'s process-wide default), so re-importing the
+module -- which happens routinely across `pytest` test collection -- never
+hits `prometheus_client`'s "Duplicated timeseries in CollectorRegistry"
+error the default registry is prone to. Every `observe_*`/`inc_*`
+function is wrapped by a `_defensive` decorator that catches and logs any
+exception rather than raising, so a broken metric object can't fail a
+request either.
+
+Metrics (all bounded-cardinality -- no query text, tenant/document/chunk
+id, or arbitrary tool argument as a label, checked directly against this
+requirement):
+
+| Metric | Type | Labels |
+|---|---|---|
+| `rag_http_requests_total` | Counter | `method`, `path`, `status_code` |
+| `rag_http_request_duration_seconds` | Histogram | `method`, `path` |
+| `rag_agent_requests_total` | Counter | `route` (`classic_rag`/`agent`) |
+| `rag_agent_total_latency_seconds` | Histogram | `route` |
+| `rag_agent_steps` | Histogram | -- |
+| `rag_agent_tool_calls_total` | Counter | `tool_name`, `success` |
+| `rag_agent_tool_latency_seconds` | Histogram | `tool_name` |
+| `rag_agent_node_latency_seconds` | Histogram | `node` (total time) |
+| `rag_agent_node_llm_latency_seconds` | Histogram | `node` (LLM-inference-only time) |
+| `rag_retrieval_latency_seconds` | Histogram | `provider` |
+| `rag_agent_termination_reason_total` | Counter | `reason` |
+| `rag_agent_evidence_sufficiency_total` | Counter | `sufficient` |
+| `rag_errors_total` | Counter | `component` |
+
+`path` uses the matched route template (`request.scope["route"].path`),
+never the raw request URL, keeping the label set bounded to the fixed
+set of registered routes.
+
+### `/metrics` and `GET /`
+
+`GET /metrics` (`api/routers/metrics.py`) is always registered; it checks
+`config.observability.metrics.enabled` at request time (the same
+router-level-runtime-config-check pattern `security.dos_limits` already
+uses) and returns 404 when disabled, else Prometheus text exposition.
+`GET /` (`api/main.py`) is a new, dependency-light endpoint -- no
+vectorstore/LLM health checks (that's `GET /health`) -- returning service
+name/status and links to `/health`/`/docs`/`/metrics` (the last only when
+metrics are enabled).
+
+### Live agent execution events (SSE)
+
+`POST /agent/query/stream` (`api/routers/agent_stream.py`) streams safe,
+bounded `AgentEvent`s (`rag/agent/events.py`) as an agent run progresses,
+ending in one `completed`/`terminated` event carrying the same payload
+shape as `/agent/query`'s JSON response. `/agent/query` itself is
+completely untouched -- this is an additional endpoint, not a
+modification.
+
+`AgentEvent` has no free-text field at all: `event_type` (one of the
+documented state-machine transitions), plus only bounded metadata
+(`step`, `tool_name`, `elapsed_ms`, `retrieved_chunk_count`,
+`evidence_sufficient`, `termination_reason`, `route`). This is a
+structural guarantee, not a policy one -- there's nowhere on the model for
+chain-of-thought, raw prompts, retrieved chunk content, or credentials to
+end up.
+
+Two deliberate design choices:
+
+- **SSE, not a WebSocket.** One-directional server->client progress for a
+  single already-authenticated request is exactly what SSE is for; a
+  WebSocket's bidirectional channel and connection-lifecycle management
+  would be unused machinery.
+- **POST, not GET.** Matches `/agent/query`'s existing JSON-body request
+  shape. This project has no browser frontend, so trading away the
+  browser's native `EventSource` API (GET-only) for a consistent request
+  shape across both endpoints was judged the right tradeoff -- consume via
+  `curl -N` or an HTTP client's streaming mode.
+
+Implementation: `run_agent` is synchronous, so it runs in Starlette's
+worker threadpool (`run_in_threadpool`) while the event loop stays free
+to stream events as they arrive, bridged through an `asyncio.Queue` via
+`call_soon_threadsafe`. The internal `AgentEvent("completed"/"terminated")`
+that `run_agent()`'s own `_finish()` emits is intentionally *not*
+forwarded to the SSE stream -- it's superseded by the richer,
+`AgentQueryResponse`-shaped terminal event the router constructs from the
+final `AgentRunResult`, so the stream never emits two different-shaped
+"completed" events. A client disconnect stops the endpoint from yielding
+further data but cannot cancel the already-running agent turn (it
+finishes in its worker thread regardless) -- a documented limitation, not
+a crash risk.
+
+`config.observability.live_events.enabled` (default `True`, a route-only
+cost) gates the endpoint the same way `/metrics` is gated: always
+registered, 404 when disabled.
+
+### Grafana / Prometheus / Jaeger (local dev, opt-in)
+
+`docker-compose.observability.yml`, layered on top of the base stack
+(`docker compose -f docker-compose.yml -f docker-compose.observability.yml
+up -d`, or `make observability-up`) -- never folded into `docker-compose.yml`
+and never brought up by plain `make up`:
+
+- **Jaeger** (`jaegertracing/all-in-one`) -- trace storage and UI. No
+  separate OpenTelemetry Collector container: Jaeger (v1.35+) accepts
+  OTLP directly on 4317 (gRPC)/4318 (HTTP), so `rag-api` exports straight
+  to it. One fewer moving part than Collector+backend for a local-dev
+  stack; the simplest maintainable option with a real UI (`:16686`).
+- **Prometheus** (`prom/prometheus`) -- scrapes `rag-api:8000/metrics`
+  every 15s (`observability/prometheus/prometheus.yml`). UI/API on
+  `:9090`.
+- **Grafana** (`grafana/grafana`) -- provisioned (not manually configured)
+  via `observability/grafana/provisioning/{datasources,dashboards}/*.yml`:
+  a Prometheus datasource and a Jaeger datasource, plus one auto-loaded
+  dashboard, `observability/grafana/dashboards/agentic-rag-overview.json`
+  (`:3000`, anonymous viewer access -- local dev only).
+
+The dashboard answers exactly the questions this milestone's spec posed:
+request success/error rate; classic-vs-agent route latency (p95); per-
+node latency, total and LLM-only overlaid (so the gap is visibly
+preprocessing/parsing overhead); average steps/tool-calls per run;
+slowest tools; termination-reason breakdown; evidence-sufficiency
+breakdown; retrieval-vs-LLM-inference mean time; tool success rate;
+errors by component.
+
+Bringing the stack up does not, by itself, enable tracing -- `rag-api`
+only exports spans when `observability.tracing.enabled: true` is set in
+`config/default.yaml` (default `false`); Prometheus metrics and
+`/metrics` are unaffected either way, since they're already enabled by
+default and this stack just adds something that scrapes them.
+
+### MLflow stays separate
+
+`eval/mlflow_logger.py`/`scripts/record_agent_experiment.py` are
+untouched by this milestone. Since every `AgentRunResult`/`AgentState`
+addition here is purely additive (verified directly: all
+`run_agent()`/`run_agent_eval.py` call sites use keyword arguments, and
+the full pre-existing test suite passes unmodified), `run_agent_eval.py`'s
+`agent_*` metric fields, `mlflow_logger.py`'s `_PARAM_FIELDS`/
+`_METRIC_FIELDS`, and MLflow experiment records continue to work exactly
+as before. Operational telemetry (this section) is request-scoped and
+always-on-by-construction (disabled by default, defensive); MLflow is
+experiment-run-scoped and invoked explicitly by the recording scripts --
+neither replaces the other.
+
+### Performance / benchmark-relevant overhead
+
+Node-timing/span/metric bookkeeping adds microseconds of pure-Python
+overhead per node call (dict updates, counter increments) -- negligible
+next to actual LLM inference time (hundreds of milliseconds to tens of
+seconds on this project's CPU-only local models). A mocked-LLM
+micro-benchmark (`tests/unit/test_agent_node_timing.py`'s
+`test_average_run_latency_with_instrumentation_stays_small`, 20 runs of a
+single-classify-call agent run with no real I/O) stays under 50ms mean
+total latency with full instrumentation active, confirming the
+overhead is not pathological. No comparative "instrumentation off"
+baseline exists to diff against, since Prometheus metric recording is
+unconditional by design (cheap, in-process, matching `observability.
+metrics.enabled`'s "default-on, harmless" framing) -- only the `/metrics`
+HTTP exposition endpoint and OTel's real exporter are gated by config.
+
+### Testing
+
+Unit tests (all under `tests/unit/`, no real Postgres/Ollama/exporter):
+node-timing capture and cross-invocation aggregation
+(`test_agent_node_timing.py`, including an explicit LLM-inference-vs-
+overhead split proof using a deliberately slowed mock `generate()` call);
+Prometheus metric-family presence and bounded-label proof plus
+`/metrics` 200/404 (`test_prometheus_metrics.py`); tracing no-op/
+defensiveness behavior (`test_tracing_noop.py`); end-to-end proof that a
+broken metric object or tracer never fails `/query`/`/agent/query`
+(`test_telemetry_failure_isolation.py`); safe live-event ordering and
+payload-shape/no-leak proof (`test_agent_live_events.py`); the SSE
+endpoint's event stream and enabled/disabled toggle
+(`test_agent_stream_endpoint.py`); the root endpoint
+(`test_root_endpoint.py`); config defaults
+(`test_observability_config.py`). `tests/integration/
+test_agent_query_stream.py` (real Postgres + real Ollama) proves the
+stream end-to-end against a real agent run, plus a client-disconnect
+scenario. The full pre-existing test suite (agent graph/state/tools,
+retrieval pipeline, API auth boundaries) passes unmodified, confirming no
+agent decision logic changed.
+
+### Known limitations (deliberate, not hidden)
+
+- No comparative "telemetry on vs. off" latency benchmark exists (see
+  "Performance" above) -- metric recording is unconditional by design, so
+  there's no "off" state to diff against for Prometheus specifically;
+  only a rough absolute-overhead sanity check.
+- The SSE endpoint cannot cancel an in-flight agent run on client
+  disconnect -- the worker thread runs to completion regardless. Bounded
+  in practice by the same `max_agent_steps`/`max_tool_calls` limits that
+  already cap every agent run's worst case.
+- Reusing Starlette's worker threadpool for `run_in_threadpool` across
+  many SSE requests can occasionally produce a benign but noisy
+  ERROR-level `opentelemetry.context` "Failed to detach context" log line
+  when a pooled thread is reused across requests with an OTel span
+  context still attached from a prior request; OpenTelemetry's own
+  internal error handling swallows this (it never propagates as an
+  exception -- confirmed no test failures caused by it), but the log noise
+  itself isn't eliminated. See `ISSUES.md` for the full writeup.
+- No OpenTelemetry auto-instrumentation package
+  (`opentelemetry-instrumentation-fastapi`) is used; HTTP spans are
+  hand-written in `RequestIDMiddleware` instead, trading a small amount
+  of manual span-attribute code for a smaller dependency surface and no
+  auto-instrumentation version coupling -- consistent with this project's
+  "no infrastructure without a demonstrated requirement" pattern (already
+  applied to Redis, MCP, and LangGraph).
