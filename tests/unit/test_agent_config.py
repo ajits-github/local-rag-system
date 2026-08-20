@@ -34,9 +34,16 @@ def test_agent_config_none_of_the_bounds_are_llm_writable_anywhere():
 
 
 def test_default_config_loads_agent_section():
-    """config/default.yaml declares an agent: section that validates against AgentConfig."""
+    """config/default.yaml declares an agent: section that validates against AgentConfig.
+
+    `agent.enabled` is `True` in the shipped default -- the Agentic RAG
+    milestone made the agent the active default route, not an opt-in
+    experiment overlay (see `AgentConfig()`'s own default of `False`,
+    still the pydantic-model default for anyone building a config from
+    scratch).
+    """
     config = load_config()
-    assert config.agent.enabled is False
+    assert config.agent.enabled is True
     assert config.agent.classify_prompt_path.endswith("agent_classify_v1.yaml")
 
 
@@ -51,6 +58,6 @@ def test_agent_prompt_template_path_resolves_relative_to_repo_root():
 def test_secure_rag_baseline_configs_are_unaffected_by_the_new_agent_section():
     """Existing experiment configs (no agent: key) still validate, using AgentConfig's defaults."""
     config = load_config()
-    # config/default.yaml has no agent-specific overrides beyond the documented defaults --
+    # config/default.yaml's agent: section is present and enabled (Agentic RAG milestone) --
     # loading it must not require every pre-existing experiment YAML to be touched.
-    assert config.agent.enabled is False
+    assert config.agent.enabled is True

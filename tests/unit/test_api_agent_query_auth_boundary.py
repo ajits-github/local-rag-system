@@ -30,9 +30,10 @@ _SECRET = "unit-test-only-not-a-real-secret-value"
 class _RecordingPipeline:
     """RetrievalPipeline double recording every `answer()` call's `auth` argument.
 
-    config.agent.enabled defaults to False, so /agent/query always takes
-    the classic_rag fast path (a single pipeline.answer() call) -- the
-    same behavior these tests exercise for /query.
+    Every test in this file ends up on the classic_rag fast path (a
+    single `pipeline.answer()` call) -- either because `_StubLLM`
+    classifies as 'simple', or because a test explicitly disables the
+    agent -- the same behavior these tests exercise for `/query`.
     """
 
     def __init__(self) -> None:
@@ -91,11 +92,18 @@ class _StubEmbedder:
 
 
 class _StubLLM:
-    """LLM double whose generate() must never be reached on the classic_rag fast path."""
+    """LLM double that always classifies as 'simple'.
+
+    `config.agent.enabled` is `True` in the shipped default, so
+    `classify_query` genuinely runs (one LLM call) even on a request that
+    ends up taking the classic_rag route -- this double reports 'simple'
+    so every test here lands on classic_rag regardless of whether the
+    agent happens to be enabled or disabled for a given test.
+    """
 
     def generate(self, system: str, user: str) -> str:
-        """Fail the test if the classic_rag path calls the LLM directly."""
-        raise AssertionError("classic_rag path must not call the LLM directly")
+        """Classify as simple, so the run always routes to classic_rag."""
+        return '{"query_type": "simple"}'
 
     def health_check(self) -> bool:
         """Report healthy, always."""
@@ -182,9 +190,17 @@ def test_auth_disabled_by_default_preserves_body_trusted_behavior(client_with):
     assert auth.roles == ["operator"]
 
 
-def test_default_agent_disabled_response_shape_matches_classic_route(client_with):
-    """config.agent.enabled=False by default: response route is 'classic_rag', no tool calls."""
+def test_agent_disabled_response_shape_matches_classic_route(client_with):
+    """config.agent.enabled=False: response route is 'classic_rag', no tool calls, no LLM call.
+
+    `config/default.yaml`'s own default is now `True` (the Agentic RAG
+    milestone), so this test forces it off explicitly to exercise the
+    kill-switch path -- distinct from every other test in this file,
+    which lets `_StubLLM` classify its way to `classic_rag` regardless.
+    """
     config = load_config()
+    agent = config.agent.model_copy(update={"enabled": False})
+    config = config.model_copy(update={"agent": agent})
     assert config.agent.enabled is False
     client, _pipeline = client_with(config)
 
