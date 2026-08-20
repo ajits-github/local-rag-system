@@ -1,14 +1,4 @@
-# Local development compose. Postgres+pgvector and the API run in
-# containers; Ollama stays native on the Windows host (see README's
-# "Containerized development" section for why, and the Linux equivalent of
-# `host.docker.internal`).
-#
-# Requires Docker Compose V2 (`docker compose ...`, not the standalone V1
-# `docker-compose`) — `deploy.resources.limits` below is only honored by V2
-# outside of Swarm mode.
-#
-# For a production-shaped run (no source mounts, no --reload, tighter
-# health-check timing), layer docker-compose.prod.yml on top:
+# Local development compose. For the production-shaped override:
 #   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 services:
   postgres:
@@ -20,7 +10,6 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-rag}
       POSTGRES_DB: ${POSTGRES_DB:-ragdb}
     ports:
-      # Host port is intentionally non-default; container side stays on 5432.
       - "${POSTGRES_HOST_PORT:-15987}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
@@ -46,31 +35,20 @@ services:
     restart: unless-stopped
     depends_on:
       postgres:
-        # Hard dependency: the API can't do anything useful without the DB,
-        # so wait for Postgres's own healthcheck above.
         condition: service_healthy
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-rag}:${POSTGRES_PASSWORD:-rag}@postgres:5432/${POSTGRES_DB:-ragdb}
-      # Deliberately NOT ${OLLAMA_BASE_URL:-...}: .env's OLLAMA_BASE_URL is
-      # for native/uvicorn-on-the-host runs (http://localhost:11434), which
-      # inside a container would resolve to the container itself, not
-      # Windows. CONTAINER_OLLAMA_BASE_URL is the container-specific
-      # equivalent so the two never collide via compose's env substitution.
-      # host.docker.internal resolves to the Windows/Mac host from inside
-      # the container on Docker Desktop; extra_hosts below adds the same
-      # resolution on Linux. Ollama itself is a *soft* dependency — the API
-      # starts without it and GET /health reports "degraded" until it's
-      # reachable, rather than the container refusing to start.
+      # Container-specific Ollama URL; host runs use OLLAMA_BASE_URL.
       OLLAMA_BASE_URL: ${CONTAINER_OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       COHERE_API_KEY: ${COHERE_API_KEY:-}
+      JWT_HS256_SECRET: ${JWT_HS256_SECRET:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
       - "8000:8000"
     volumes:
-      # Dev-only: bind-mount source/config for uvicorn --reload. Removed in
-      # docker-compose.prod.yml, where the image is treated as immutable.
+      # Dev-only bind mounts for uvicorn --reload.
       - ./src:/app/src
       - ./config:/app/config
       - ./data/uploads:/app/data/uploads
