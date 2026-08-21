@@ -240,6 +240,7 @@ class IngestionPipeline:
             chunks_embedded=chunks_embedded,
             chunks_reused=chunks_reused,
             results=results,
+            vision_stats=self._writer.vision_stats if self._writer.vision_provider else None,
         )
 
 
@@ -278,6 +279,13 @@ def main() -> None:
         f"unchanged={stats.unchanged} deleted={stats.deleted} "
         f"chunks_embedded={stats.chunks_embedded} chunks_reused={stats.chunks_reused}"
     )
+    if stats.vision_stats is not None:
+        v = stats.vision_stats
+        avg_ms = v.total_latency_ms / v.cache_misses if v.cache_misses else 0.0
+        print(
+            f"vision: images_processed={v.images_processed} cache_hits={v.cache_hits} "
+            f"cache_misses={v.cache_misses} avg_call_latency_ms={avg_ms:.1f}"
+        )
 
 
 if __name__ == "__main__":

@@ -32,7 +32,7 @@ _METADATA_COLUMNS = """chunk_id, document_id, chunk_index, content,
     attachment_name, source_anchor, parent_chunk_id,
     vision_generated, vision_description, sensitive_field_ids,
     tenant_id, allowed_roles, classification, status, document_version,
-    effective_from, trust_level, doc_source_type, supersedes_source"""
+    effective_from, trust_level, doc_source_type, supersedes_source, page"""
 
 
 def _build_where_clause(filters: dict[str, Any] | None) -> tuple[str, list[Any]]:
@@ -193,6 +193,7 @@ def _row_to_metadata(row: tuple[Any, ...]) -> tuple[str, str, ChunkMetadata]:
         trust_level,
         doc_source_type,
         supersedes_source,
+        page,
     ) = row
     metadata = ChunkMetadata(
         document_id=str(document_id),
@@ -227,6 +228,7 @@ def _row_to_metadata(row: tuple[Any, ...]) -> tuple[str, str, ChunkMetadata]:
         trust_level=trust_level,
         doc_source_type=doc_source_type,
         supersedes_source=supersedes_source,
+        page=page,
     )
     return chunk_id, content, metadata
 
@@ -516,6 +518,7 @@ class PgVectorStore(VectorStore):
                         c.metadata.trust_level,
                         c.metadata.doc_source_type,
                         c.metadata.supersedes_source,
+                        c.metadata.page,
                     )
                     for c in chunks
                 ]
@@ -530,7 +533,7 @@ class PgVectorStore(VectorStore):
                          vision_generated, vision_description, sensitive_field_ids,
                          tenant_id, allowed_roles, classification, status,
                          document_version, effective_from, trust_level,
-                         doc_source_type, supersedes_source)
+                         doc_source_type, supersedes_source, page)
                         VALUES %s
                         ON CONFLICT (chunk_id) DO UPDATE SET
                             content = EXCLUDED.content,
@@ -556,7 +559,8 @@ class PgVectorStore(VectorStore):
                             effective_from = EXCLUDED.effective_from,
                             trust_level = EXCLUDED.trust_level,
                             doc_source_type = EXCLUDED.doc_source_type,
-                            supersedes_source = EXCLUDED.supersedes_source""",
+                            supersedes_source = EXCLUDED.supersedes_source,
+                            page = EXCLUDED.page""",
                     rows,
                 )
 
@@ -727,12 +731,16 @@ class PgVectorStore(VectorStore):
             for chunk_id, content, metadata in (_row_to_metadata(row) for row in rows)
         ]
 
-    def get_cached_image_description(self, image_checksum: str) -> str | None:
+    def get_cached_image_description(
+        self, image_checksum: str, provider: str, model_name: str, prompt_version: str
+    ) -> str | None:
         """See `VectorStore.get_cached_image_description`."""
         with self._connection() as conn, conn.cursor() as cur:
             cur.execute(
-                "SELECT description FROM image_description_cache WHERE image_checksum = %s",
-                (image_checksum,),
+                """SELECT description FROM image_description_cache
+                    WHERE image_checksum = %s AND provider = %s
+                        AND model_name = %s AND prompt_version = %s""",
+                (image_checksum, provider, model_name, prompt_version),
             )
             row = cur.fetchone()
         return row[0] if row else None
@@ -743,6 +751,7 @@ class PgVectorStore(VectorStore):
         source_path: str,
         provider: str,
         model_name: str,
+        prompt_version: str,
         description: str,
     ) -> None:
         """See `VectorStore.cache_image_description`."""
@@ -750,12 +759,19 @@ class PgVectorStore(VectorStore):
             with conn, conn.cursor() as cur:
                 cur.execute(
                     """INSERT INTO image_description_cache
-                        (image_checksum, source_path, provider, model_name, description)
-                        VALUES (%s, %s, %s, %s, %s)
-                        ON CONFLICT (image_checksum) DO UPDATE SET
+                        (image_checksum, source_path, provider, model_name,
+                         prompt_version, description)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (image_checksum, provider, model_name, prompt_version)
+                        DO UPDATE SET
                             source_path = EXCLUDED.source_path,
-                            provider = EXCLUDED.provider,
-                            model_name = EXCLUDED.model_name,
                             description = EXCLUDED.description""",
-                    (image_checksum, source_path, provider, model_name, description),
+                    (
+                        image_checksum,
+                        source_path,
+                        provider,
+                        model_name,
+                        prompt_version,
+                        description,
+                    ),
                 )

@@ -1,12 +1,24 @@
 """`Chunker` that keeps Markdown tables, fenced code/config, and charts atomic.
 
 Prevents `RecursiveCharacterChunker` from slicing through structured
-blocks once a document exceeds `chunk_size`. Only active for
-`source_type == "markdown"`; everything else passes straight through to
-the composed `RecursiveCharacterChunker`, which also handles every prose
-run within a Markdown document. A prose-only Markdown document therefore
-produces chunk text identical to `RecursiveCharacterChunker` used
-directly.
+blocks once a document exceeds `chunk_size`. Active for
+`source_type in {"markdown", "pdf", "docx"}`; everything else passes
+straight through to the composed `RecursiveCharacterChunker`, which also
+handles every prose run within a structured document. A prose-only
+Markdown document therefore produces chunk text identical to
+`RecursiveCharacterChunker` used directly.
+
+`PDFLoader`/`DocxLoader` (the layout-aware ingestion milestone) serialize
+their extracted structure into this same Markdown-equivalent syntax
+(headings, pipe tables, fenced code, standalone image lines with
+emphasis-wrapped captions) rather than this chunker gaining a second
+parsing path -- normalizing onto one structural grammar instead of
+building a parallel element model. The one PDF/DOCX-specific addition is
+a `<!--page:N-->` sentinel line, emitted once per source page (PDF) or
+manual page break (DOCX); never visible in chunk text, it only sets the
+`page` field on every `ChunkSpan` produced until the next marker.
+Markdown/HTML/text documents never contain this sentinel, so `page` stays
+`None` for them, unchanged from before this milestone.
 
 `split()` walks the document once, line by line, applying these rules in
 priority order:
@@ -55,6 +67,8 @@ _MARKDOWN_LINK_RE = re.compile(r"!?\[([^\]\[]*)\]\(([^()\s]+)\)")
 # emphasis-wrapped caption paragraph. The same shape `_consume_fence`
 # already recognizes for chart fence+caption.
 _IMAGE_LINE_RE = re.compile(r"^!\[([^\]\[]*)\]\(([^()\s]+)\)\s*$")
+_PAGE_MARKER_RE = re.compile(r"^<!--\s*page:(\d+)\s*-->\s*$")
+_STRUCTURED_SOURCE_TYPES = {"markdown", "pdf", "docx"}
 _ATTACHMENT_EXTENSIONS = {
     ".svg",
     ".png",
@@ -130,16 +144,16 @@ class StructuredMarkdownChunker(Chunker):
         text : str
             Cleaned document text.
         source_type : str | None, optional
-            Only `"markdown"` triggers structural parsing; anything else
-            (including None) is passed straight to the composed
-            `RecursiveCharacterChunker`, by default None.
+            Only a type in `_STRUCTURED_SOURCE_TYPES` triggers structural
+            parsing; anything else (including None) is passed straight to
+            the composed `RecursiveCharacterChunker`, by default None.
 
         Returns
         -------
         list[ChunkSpan]
             Chunk spans, in document order.
         """
-        if source_type != "markdown":
+        if source_type not in _STRUCTURED_SOURCE_TYPES:
             return self._prose_chunker.split(text, source_type)
 
         lines = text.split("\n")
@@ -147,19 +161,33 @@ class StructuredMarkdownChunker(Chunker):
         spans: list[ChunkSpan] = []
         pending: list[str] = []
         header_stack: list[tuple[int, str]] = []
+        current_page: int | None = None
 
         def current_section_path() -> str | None:
             return " > ".join(title for _, title in header_stack) if header_stack else None
 
+        def tag_page(before: int) -> None:
+            for span in spans[before:]:
+                span.page = current_page
+
         def flush_pending() -> None:
             nonlocal pending
             if pending:
+                before = len(spans)
                 spans.extend(self._flush_prose(pending, current_section_path()))
+                tag_page(before)
                 pending = []
 
         i = 0
         while i < n:
             line = lines[i]
+
+            page_match = _PAGE_MARKER_RE.match(line)
+            if page_match:
+                flush_pending()
+                current_page = int(page_match.group(1))
+                i += 1
+                continue
 
             header_match = _HEADER_RE.match(line)
             if header_match:
@@ -180,25 +208,31 @@ class StructuredMarkdownChunker(Chunker):
                 while j < n and _TABLE_ROW_RE.match(lines[j]):
                     data_rows.append(lines[j])
                     j += 1
+                before = len(spans)
                 spans.extend(
                     self._split_table(header_row, sep_row, data_rows, current_section_path())
                 )
+                tag_page(before)
                 i = j
                 continue
 
             fence_match = _FENCE_START_RE.match(line)
             if fence_match:
                 flush_pending()
+                before = len(spans)
                 i = self._consume_fence(
                     lines, i, fence_match.group(1) or None, current_section_path(), spans
                 )
+                tag_page(before)
                 continue
 
             image_match = _IMAGE_LINE_RE.match(line)
             if image_match and self._is_attachment_target(image_match.group(2)):
                 flush_pending()
                 target = image_match.group(2)
+                before = len(spans)
                 i = self._consume_image(lines, i, target, current_section_path(), spans)
+                tag_page(before)
                 continue
 
             pending.append(line)

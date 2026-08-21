@@ -101,6 +101,11 @@ class ChunkSpan(BaseModel):
     sensitive_field_ids : list[str] or None
         Ingestion-time tags for sensitive-value policies matched in this
         span's text; does not itself imply a role decision.
+    page : int or None
+        1-indexed source page number, for loaders that can determine one
+        (PDF: the page a span was extracted from; DOCX: a running count
+        of explicit manual page breaks encountered so far). `None` for
+        Markdown/text/HTML, which have no fixed pagination.
     """
 
     text: str
@@ -114,6 +119,7 @@ class ChunkSpan(BaseModel):
     vision_generated: bool = False
     vision_description: str | None = None
     sensitive_field_ids: list[str] | None = None
+    page: int | None = None
 
 
 class ChunkMetadata(BaseModel):
@@ -168,6 +174,9 @@ class ChunkMetadata(BaseModel):
         Trust-provenance label from front matter.
     supersedes_source : str or None
         Raw filename this document supersedes, as authored.
+    page : int or None
+        1-indexed source page number, from the originating `ChunkSpan`.
+        `None` for source types with no fixed pagination.
 
     Notes
     -----
@@ -207,6 +216,7 @@ class ChunkMetadata(BaseModel):
     trust_level: str | None = None
     doc_source_type: str | None = None
     supersedes_source: str | None = None
+    page: int | None = None
 
 
 class Chunk(BaseModel):
@@ -300,6 +310,11 @@ class IngestionStats(BaseModel):
     results : list[dict[str, Any]]
         Per-file `{"document_id", "chunks_written", "changed", "status"}`
         records.
+    vision_stats : VisionCallStats or None
+        `Writer.vision_stats` after this run, or `None` when no
+        `VisionProvider` was configured (`config.vision.provider ==
+        "none"`) -- an absent value, not a zeroed one, so "vision wasn't
+        used" is distinguishable from "vision ran and touched zero images".
     """
 
     discovered: int = 0
@@ -310,6 +325,35 @@ class IngestionStats(BaseModel):
     chunks_embedded: int = 0
     chunks_reused: int = 0
     results: list[dict[str, Any]] = Field(default_factory=list)
+    vision_stats: VisionCallStats | None = None
+
+
+class VisionCallStats(BaseModel):
+    """Aggregate `VisionProvider.describe_image` call stats from one `Writer` instance.
+
+    Layout-aware-ingestion milestone: accumulated by
+    `Writer._with_vision_siblings` across every `write()` call the same
+    `Writer` instance handles (i.e. a whole `IngestionPipeline.ingest_path`
+    run, since the pipeline builds one `Writer` and reuses it). Read off
+    `Writer.vision_stats` after a run and folded into `IngestionStats` --
+    an ingestion-time concern, not a retrieval/eval one, so it's not part
+    of `eval/run_eval.py`'s report.
+
+    Parameters
+    ----------
+    images_processed : int
+        Total image spans considered (cache hit or miss).
+    cache_hits, cache_misses : int
+        How many of those were already-cached vs. required a real
+        `describe_image` call.
+    total_latency_ms : float
+        Summed wall-clock time across only the cache-miss (real) calls.
+    """
+
+    images_processed: int = 0
+    cache_hits: int = 0
+    cache_misses: int = 0
+    total_latency_ms: float = 0.0
 
 
 class RetrievalAttribution(BaseModel):

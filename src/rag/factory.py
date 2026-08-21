@@ -21,6 +21,7 @@ from rag.rerankers.noop import NoOpReranker
 from rag.vectorstore.base import VectorStore
 from rag.vectorstore.pgvector import PgVectorStore
 from rag.vision.base import VisionProvider
+from rag.vision.ollama_vision import OllamaVisionProvider
 
 
 def build_embedder(config: AppConfig) -> Embedder:
@@ -151,11 +152,13 @@ def build_llm(config: AppConfig) -> LLM:
 def build_vision_provider(config: AppConfig) -> VisionProvider | None:
     """Construct the `VisionProvider` selected by `config.vision.provider`, if any.
 
-    `None` for the `"none"` provider (the only one implemented so far) --
-    callers (`IngestionPipeline`) must treat `None` as "text-only image
+    `None` for the `"none"` provider (the default) -- callers
+    (`IngestionPipeline`) must treat `None` as "text-only image
     handling," never call `describe_image`, and never read image bytes.
-    No hosted provider branch exists yet; one is added here only once
-    explicitly approved for a real run (see docs/architecture.md).
+    `"ollama"` is the first real provider: a local, offline model call
+    (see `vision.ollama_vision.OllamaVisionProvider`), reusing
+    `config.ollama_base_url()` -- the same native-host Ollama server
+    `build_llm`'s `"ollama"` branch talks to, just a different model.
 
     Parameters
     ----------
@@ -174,6 +177,12 @@ def build_vision_provider(config: AppConfig) -> VisionProvider | None:
     """
     if config.vision.provider == "none":
         return None
+    if config.vision.provider == "ollama":
+        return OllamaVisionProvider(
+            model_name=config.vision.ollama.model_name,
+            base_url=config.ollama_base_url(),
+            prompt_version=config.vision.ollama.prompt_version,
+        )
     raise ValueError(f"Unknown vision provider: {config.vision.provider}")
 
 

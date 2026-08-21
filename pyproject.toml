@@ -15,6 +15,7 @@ dependencies = [
     "uvicorn[standard]>=0.30",
     "python-multipart>=0.0.9",
     "pypdf>=4.0",
+    "pdfplumber>=0.11",
     "python-docx>=1.1",
     "beautifulsoup4>=4.12",
     "lxml>=5.0",
@@ -53,6 +54,9 @@ dev = [
     "mypy>=1.11",
     "types-PyYAML",
     "types-psycopg2",
+    "reportlab>=4.0",  # test-only: builds real multi-page PDF fixtures for
+    # tests/integration/test_layout_aware_ingestion.py's PDF path -- pdfplumber/
+    # pypdf are PDF *readers*, this is the one PDF *writer* the test suite needs
 ]
 
 [build-system]
@@ -110,6 +114,7 @@ module = [
     "ollama.*",
     "docx.*",
     "pypdf.*",
+    "pdfplumber.*",
     "bs4.*",
     "ragas.*",
     "datasets.*",

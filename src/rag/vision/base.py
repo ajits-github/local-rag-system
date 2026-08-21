@@ -26,6 +26,18 @@ class VisionProvider(ABC):
     def model_name(self) -> str:
         """The specific model used, for cache/provenance records."""
 
+    @property
+    @abstractmethod
+    def prompt_version(self) -> str:
+        """Identifier for the instruction prompt this provider sends with each image.
+
+        Part of the image-description cache key alongside `provider_name`/
+        `model_name` (see `ingestion.writer.Writer._with_vision_siblings`),
+        so editing the prompt text invalidates cached descriptions the same
+        way switching provider/model does, rather than silently serving
+        descriptions generated under different instructions.
+        """
+
     @abstractmethod
     def describe_image(self, image_path: Path, alt_text: str | None = None) -> str:
         """Produce a text description of `image_path`.

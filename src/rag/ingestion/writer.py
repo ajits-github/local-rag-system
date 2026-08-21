@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
+import time
 from pathlib import Path
 
 from rag.embedders.base import Embedder
 from rag.retrieval.field_policy import detect_sensitive_field_ids
-from rag.schemas import Chunk, ChunkMetadata, ChunkSpan, RawDocument
+from rag.schemas import Chunk, ChunkMetadata, ChunkSpan, RawDocument, VisionCallStats
 from rag.vectorstore.base import VectorStore
 from rag.vision.base import VisionProvider
+
+logger = logging.getLogger(__name__)
 
 _IMAGE_ALT_TEXT_RE = re.compile(r"^!\[([^\]\[]*)\]")
 
@@ -42,6 +46,12 @@ class Writer:
         self._embedder = embedder
         self._vectorstore = vectorstore
         self._vision_provider = vision_provider
+        self.vision_stats = VisionCallStats()
+
+    @property
+    def vision_provider(self) -> VisionProvider | None:
+        """The configured `VisionProvider`, or `None` for text-only image handling."""
+        return self._vision_provider
 
     def write(
         self,
@@ -114,6 +124,7 @@ class Writer:
                     trust_level=document.trust_level,
                     doc_source_type=document.doc_source_type,
                     supersedes_source=document.supersedes_source,
+                    page=span.page,
                 ),
                 embedding=embedding,
             )
@@ -177,6 +188,14 @@ class Writer:
         its own embeddable `text`. The original caption/alt-text span is
         never modified.
 
+        A `describe_image` call that raises (Ollama unreachable, timed
+        out, or returned something `OllamaVisionProvider` couldn't parse)
+        is caught and logged (`vision_provider_call_failed`) rather than
+        propagated: that one image is skipped -- no vision sibling, same
+        as the missing-asset-file case -- and the rest of the document
+        still ingests normally. A vision-model hiccup on one figure should
+        never fail an entire document's ingestion.
+
         Parameters
         ----------
         chunk_spans : list[ChunkSpan]
@@ -188,7 +207,8 @@ class Writer:
         -------
         list[ChunkSpan]
             `chunk_spans` with a vision-generated sibling inserted after
-            each image span whose asset file was found on disk.
+            each image span whose asset file was found on disk and whose
+            `describe_image` call succeeded.
         """
         assert self._vision_provider is not None  # only called from write() when set
         provider = self._vision_provider
@@ -202,18 +222,38 @@ class Writer:
                 continue
 
             checksum = hashlib.sha256(image_path.read_bytes()).hexdigest()
-            description = self._vectorstore.get_cached_image_description(checksum)
+            self.vision_stats.images_processed += 1
+            description = self._vectorstore.get_cached_image_description(
+                checksum, provider.provider_name, provider.model_name, provider.prompt_version
+            )
             if description is None:
+                self.vision_stats.cache_misses += 1
                 alt_match = _IMAGE_ALT_TEXT_RE.match(span.text)
                 alt_text = alt_match.group(1) if alt_match else None
-                description = provider.describe_image(image_path, alt_text=alt_text)
+                call_start = time.perf_counter()
+                try:
+                    description = provider.describe_image(image_path, alt_text=alt_text)
+                except Exception:
+                    logger.warning(
+                        "vision_provider_call_failed",
+                        extra={
+                            "source_anchor": span.source_anchor,
+                            "provider": provider.provider_name,
+                        },
+                        exc_info=True,
+                    )
+                    continue
+                self.vision_stats.total_latency_ms += (time.perf_counter() - call_start) * 1000
                 self._vectorstore.cache_image_description(
                     image_checksum=checksum,
                     source_path=str(image_path),
                     provider=provider.provider_name,
                     model_name=provider.model_name,
+                    prompt_version=provider.prompt_version,
                     description=description,
                 )
+            else:
+                self.vision_stats.cache_hits += 1
 
             result.append(
                 ChunkSpan(
@@ -224,6 +264,7 @@ class Writer:
                     source_anchor=span.source_anchor,
                     vision_generated=True,
                     vision_description=description,
+                    page=span.page,
                 )
             )
         return result

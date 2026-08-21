@@ -418,13 +418,26 @@ class VectorStore(ABC):
         """
 
     @abstractmethod
-    def get_cached_image_description(self, image_checksum: str) -> str | None:
-        """Look up a previously-generated vision description by image checksum.
+    def get_cached_image_description(
+        self, image_checksum: str, provider: str, model_name: str, prompt_version: str
+    ) -> str | None:
+        """Look up a previously-generated vision description.
+
+        Keyed by image checksum *and* provider/model/prompt_version (see
+        `cache_image_description`), so switching any of the three always
+        misses instead of replaying a description generated under
+        different instructions.
 
         Parameters
         ----------
         image_checksum : str
             sha256 of the image file's bytes.
+        provider : str
+            `VisionProvider.provider_name` of the *current* provider.
+        model_name : str
+            `VisionProvider.model_name` of the *current* provider.
+        prompt_version : str
+            `VisionProvider.prompt_version` of the *current* provider.
 
         Returns
         -------
@@ -439,14 +452,17 @@ class VectorStore(ABC):
         source_path: str,
         provider: str,
         model_name: str,
+        prompt_version: str,
         description: str,
     ) -> None:
-        """Persist a vision-generated description, keyed by image checksum.
+        """Persist a vision-generated description.
 
         So an unchanged image is never reprocessed by a (cost-incurring)
-        hosted VisionProvider call, even across documents or ingestion
-        runs. Postgres-backed rather than a separate cache service, per
-        this project's "prefer Postgres over Redis absent a concrete need"
+        VisionProvider call, even across documents or ingestion runs --
+        as long as provider/model/prompt_version are also unchanged (the
+        cache key includes all three; see `get_cached_image_description`).
+        Postgres-backed rather than a separate cache service, per this
+        project's "prefer Postgres over Redis absent a concrete need"
         convention.
 
         Parameters
@@ -459,6 +475,8 @@ class VectorStore(ABC):
             The `VisionProvider.provider_name` that produced this description.
         model_name : str
             The `VisionProvider.model_name` that produced this description.
+        prompt_version : str
+            The `VisionProvider.prompt_version` that produced this description.
         description : str
             The generated description text.
         """

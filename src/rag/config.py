@@ -303,12 +303,30 @@ class RetrievalConfig(BaseModel):
     )
 
 
+class LayoutParsingConfig(BaseModel):
+    """PDF/DOCX structural-extraction tunables (headings, tables, images, pages).
+
+    `pdf_parser` is the swap point named in this milestone's design: the
+    only implementation today is `"pdfplumber"` (MIT-licensed, used for
+    word-level font sizes, table extraction, and page numbers), but
+    `loaders/pdf_loader.py` reads this field rather than hardcoding the
+    library, so a future parser can be added without touching the
+    chunker or the rest of ingestion.
+    """
+
+    pdf_parser: Literal["pdfplumber"] = "pdfplumber"
+    heading_font_size_ratio: float = 1.15
+    title_font_size_ratio: float = 1.8
+    max_heading_words: int = 12
+
+
 class IngestionConfig(BaseModel):
-    """File-type filtering for the ingestion pipeline."""
+    """File-type filtering and layout-parsing tunables for the ingestion pipeline."""
 
     supported_extensions: list[str] = Field(
         default_factory=lambda: [".pdf", ".docx", ".html", ".htm", ".txt", ".md"]
     )
+    layout_parsing: LayoutParsingConfig = Field(default_factory=LayoutParsingConfig)
 
 
 class AuthorizationConfig(BaseModel):
@@ -555,26 +573,43 @@ class AgentConfig(BaseModel):
     max_chunks_per_document_fetch_hard_ceiling: int = 50
     classify_prompt_path: str = "src/rag/prompts/templates/agent_classify_v1.yaml"
     decompose_prompt_path: str = "src/rag/prompts/templates/agent_decompose_v1.yaml"
-    tool_select_prompt_path: str = "src/rag/prompts/templates/agent_tool_select_v1.yaml"
+    tool_select_prompt_path: str = "src/rag/prompts/templates/agent_tool_select_v2.yaml"
     evidence_sufficiency_prompt_path: str = (
         "src/rag/prompts/templates/agent_evidence_sufficiency_v1.yaml"
     )
     synthesize_prompt_path: str = "src/rag/prompts/templates/agent_synthesize_v1.yaml"
 
 
+class OllamaVisionConfig(BaseModel):
+    """Model settings for the `ollama` vision provider.
+
+    Reuses `generation.base_url_env_var`'s resolved URL
+    (`AppConfig.ollama_base_url()`) rather than declaring a second env
+    var -- vision and text generation are the same native-host Ollama
+    server, just different models. `model_name` defaults to `moondream`
+    (~1.7GB), chosen for this project's CPU-only 8GB-RAM box over
+    heavier options like `llava:7b`; not installed automatically, the
+    operator must `ollama pull` it themselves, same precedent as
+    `generation.model_name`.
+    """
+
+    model_name: str = "moondream"
+    prompt_version: str = "v1"
+
+
 class VisionConfig(BaseModel):
     """Vision provider selection for image-derived indexable content.
 
-    `"none"` (the default, and the only provider actually exercised so
-    far) means no image bytes are ever read and no VisionProvider is
-    constructed. Text-only image handling, based on alt text and
-    captions, works with this config untouched.
-    Concrete hosted providers are added to `factory.build_vision_provider`
-    only once explicitly approved for a real (credit-consuming) run; no
-    hosted provider name is declared here yet.
+    `"none"` (the default) means no image bytes are ever read and no
+    VisionProvider is constructed; text-only image handling, based on
+    alt text and captions, works with this config untouched. `"ollama"`
+    is the first real provider: a local, offline model call (no hosted
+    egress, so `security.egress_policy` is not involved), matching this
+    project's "production generation stays local-only" convention.
     """
 
-    provider: Literal["none"] = "none"
+    provider: Literal["none", "ollama"] = "none"
+    ollama: OllamaVisionConfig = Field(default_factory=OllamaVisionConfig)
 
 
 class AppConfig(BaseModel):

@@ -176,19 +176,50 @@ def build_schema_sql(*, documents_table: str, chunks_table: str, dimension: int)
     -- Not indexed: never used in a WHERE clause, only read back per-row.
     ALTER TABLE {chunks_table} ADD COLUMN IF NOT EXISTS sensitive_field_ids TEXT[];
 
+    -- 1-indexed source page number (PDF: extracted page; DOCX: running
+    -- count of manual page breaks). NULL for source types with no fixed
+    -- pagination (Markdown/text/HTML) -- layout-aware-ingestion milestone.
+    ALTER TABLE {chunks_table} ADD COLUMN IF NOT EXISTS page INTEGER;
+
     -- Caches a VisionProvider's generated description per image, keyed by
-    -- the image file's own sha256 checksum, so an unchanged image is never
-    -- reprocessed by a (cost-incurring) hosted call across documents or
-    -- ingestion runs. Postgres-backed rather than a separate cache service
+    -- the image file's own sha256 checksum *plus* provider/model/prompt
+    -- version, so an unchanged image is never reprocessed by a
+    -- (cost-incurring) call across documents or ingestion runs -- but
+    -- switching provider, model, or prompt wording always misses rather
+    -- than silently replaying a description generated under different
+    -- instructions. Postgres-backed rather than a separate cache service
     -- (see docs/architecture.md) -- no concrete use case for Redis here.
     CREATE TABLE IF NOT EXISTS image_description_cache (
-        image_checksum TEXT PRIMARY KEY,
+        image_checksum TEXT NOT NULL,
         source_path TEXT NOT NULL,
         provider TEXT NOT NULL,
         model_name TEXT NOT NULL,
+        prompt_version TEXT NOT NULL DEFAULT '',
         description TEXT NOT NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
+
+    -- image_description_cache.image_checksum used to be PRIMARY KEY on its
+    -- own; the cache key now also covers provider/model/prompt_version (a
+    -- real gap this milestone closed -- see docs/architecture.md).
+    ALTER TABLE image_description_cache
+        ADD COLUMN IF NOT EXISTS prompt_version TEXT NOT NULL DEFAULT '';
+    DO $$
+    BEGIN
+        IF EXISTS (
+            SELECT 1 FROM pg_constraint WHERE conname = 'image_description_cache_pkey'
+        ) THEN
+            EXECUTE 'ALTER TABLE image_description_cache '
+                'DROP CONSTRAINT image_description_cache_pkey';
+        END IF;
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint WHERE conname = 'image_description_cache_key_pkey'
+        ) THEN
+            EXECUTE 'ALTER TABLE image_description_cache ADD CONSTRAINT '
+                'image_description_cache_key_pkey '
+                'PRIMARY KEY (image_checksum, provider, model_name, prompt_version)';
+        END IF;
+    END $$;
     """
 
 
