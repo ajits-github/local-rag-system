@@ -4,7 +4,7 @@ Reads the config that actually produced a given eval run (authoritative
 for embedding/chunking/reranker/generation/vectorstore settings) plus the
 eval report's own metrics, and writes:
   - experiments/results/<experiment-id>.json  (flat, comparable record)
-  - experiments/configs/<experiment-id>.yaml  (config snapshot)
+  - experiments/config_snapshots/<experiment-id>.yaml  (config snapshot)
   - an MLflow run (params/metrics/artifacts), unless config.mlflow.enabled
     is false.
 
@@ -230,13 +230,13 @@ def main() -> None:
     record = build_experiment_record(eval_report, config, args.experiment_id, args.label)
 
     results_dir = EXPERIMENTS_DIR / "results"
-    configs_dir = EXPERIMENTS_DIR / "configs"
+    config_snapshots_dir = EXPERIMENTS_DIR / "config_snapshots"
     results_dir.mkdir(parents=True, exist_ok=True)
-    configs_dir.mkdir(parents=True, exist_ok=True)
+    config_snapshots_dir.mkdir(parents=True, exist_ok=True)
 
     results_path = results_dir / f"{args.experiment_id}.json"
     results_path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
-    config_snapshot_path = configs_dir / f"{args.experiment_id}.yaml"
+    config_snapshot_path = config_snapshots_dir / f"{args.experiment_id}.yaml"
     shutil.copy(args.config, config_snapshot_path)
 
     print(f"Recorded {args.experiment_id} -> {results_path}")

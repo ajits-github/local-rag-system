@@ -3,7 +3,7 @@
 For experiments recorded before MLflow was integrated (or after a fresh
 mlruns/ directory is created). Reuses rag.eval.mlflow_logger.log_experiment
 directly. No eval re-run, no re-computation. Attaches each record's own
-JSON plus its matching experiments/configs/<id>.yaml as artifacts; the
+JSON plus its matching experiments/config_snapshots/<id>.yaml as artifacts; the
 original raw eval-output JSON (per-question detail) isn't preserved for
 older experiments, so it's simply omitted for those.
 
@@ -29,12 +29,12 @@ def main() -> None:
     """CLI entrypoint: log every experiments/results/*.json record to MLflow."""
     config = load_config(str(DEFAULT_CONFIG_PATH))
     results_dir = EXPERIMENTS_DIR / "results"
-    configs_dir = EXPERIMENTS_DIR / "configs"
+    config_snapshots_dir = EXPERIMENTS_DIR / "config_snapshots"
 
     for results_path in sorted(results_dir.glob("*.json")):
         record = json.loads(results_path.read_text(encoding="utf-8"))
         experiment_id = record.get("experiment_id", results_path.stem)
-        config_snapshot_path = configs_dir / f"{experiment_id}.yaml"
+        config_snapshot_path = config_snapshots_dir / f"{experiment_id}.yaml"
 
         run_id = log_experiment(
             record,

@@ -351,7 +351,7 @@ def test_all_live_config_files_migrated_to_new_cutoff_field_names():
     into reranker.top_n + retrieval.generation_context_top_n): the 9 live
     config files (config/default.yaml + config/experiments/*.yaml) were
     migrated explicitly to the new field names rather than supporting the
-    old names alongside the new ones. Historical experiments/configs/*.yaml
+    old names alongside the new ones. Historical experiments/config_snapshots/*.yaml
     snapshots are untouched, unmigrated archival copies -- they are never
     re-parsed by AppConfig (only copied as MLflow artifacts by
     scripts/record_experiment.py), so they're deliberately excluded here.
