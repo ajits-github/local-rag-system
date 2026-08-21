@@ -1,6 +1,6 @@
 """Safe, structured live-progress events for a running agent query.
 
-`AgentEvent` deliberately has no free-text field at all -- not
+`AgentEvent` deliberately has no free-text field at all. Not
 `reasoning`, not a message string, not evidence content. This is a
 structural guarantee, not a policy one: there is nowhere on the model for
 chain-of-thought, raw prompts, retrieved chunk text, or credentials to
@@ -46,7 +46,7 @@ class AgentEvent(BaseModel):
     elapsed_ms : float | None
         Milliseconds elapsed since the run started, if applicable.
     retrieved_chunk_count : int | None
-        Count only -- never chunk ids or content.
+        Count only. Never chunk ids or content.
     evidence_sufficient : bool | None
         `evaluate_evidence`'s outcome, if this event concerns it.
     termination_reason : str | None

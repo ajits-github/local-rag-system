@@ -87,7 +87,7 @@ def build_authorization_where_clause(
     the caller holds a configured cross-tenant support role that is also
     listed in that chunk's own `allowed_roles`. Independently, when
     `allowed_roles` is set at all, the caller must hold at least one of
-    them — this is what still subjects a same-tenant request to role
+    them. This is what still subjects a same-tenant request to role
     checks. `resolved_excluded_document_ids` and `require_trust_level`
     (when set) are ANDed in as further, independent exclusions.
 
@@ -238,7 +238,7 @@ def _tokenize(text: str) -> list[str]:
     than a plain whitespace split, so punctuation attached to a token
     (e.g. JSON's `"maximum_wait_minutes":`, or a trailing period in
     prose) doesn't prevent it from matching a plain-word query term.
-    Still no stemming/lemmatization -- only exact (post-punctuation-
+    Still no stemming/lemmatization. Only exact (post-punctuation-
     stripping) token matches.
 
     Parameters

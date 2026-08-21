@@ -33,7 +33,7 @@ class RecursiveCharacterChunker(Chunker):
         """Split `text` into chunks using the configured size/overlap.
 
         `source_type` is accepted for interface parity with `Chunker.split`
-        but ignored — this chunker has no structural awareness of any
+        but ignored. This chunker has no structural awareness of any
         source type.
 
         Parameters

@@ -49,7 +49,7 @@ class IngestionPipeline:
         vision_provider : VisionProvider | None, optional
             Vision provider passed to `Writer`; built from
             `config.vision.provider` if omitted (`None` for `"none"`, the
-            only provider implemented so far -- so this is `None` in
+            only provider implemented so far. So this is `None` in
             practice until a hosted provider exists). Inject a test mock
             here to exercise vision-mode ingestion without config changes.
         """

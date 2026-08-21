@@ -4,14 +4,14 @@ Applies at the one confirmed hosted-egress point in this codebase:
 `run_ragas_eval.py`'s context-building step, which hands retrieved chunk
 content to `config.judge.provider` (`openai`/`anthropic`) for RAGAS
 scoring. Production `answer()` never calls a hosted LLM --
-`config.generation.provider` is `Literal["ollama"]` only -- so no other
+`config.generation.provider` is `Literal["ollama"]` only. So no other
 call site needs this gate today; if a future hosted `generation`/`vision`
 provider is added, it should call `apply_egress_policy` the same way.
 
 Independent of, and layered on top of, whatever document-level
 authorization and field-level redaction already ran to produce the
 `source` dict this module inspects (the same per-source dict shape
-`RetrievalPipeline.answer()` returns) -- this is a *third* checkpoint, not
+`RetrievalPipeline.answer()` returns). This is a *third* checkpoint, not
 a replacement for either.
 """
 
@@ -39,16 +39,16 @@ def apply_egress_policy(source: dict[str, Any], config: AppConfig) -> EgressDeci
     `config.security.egress_policy.enabled` is `False`. When enabled,
     checked in order:
 
-    1. `source["tenant_id"]` against `blocked_tenant_ids` -- an explicit
+    1. `source["tenant_id"]` against `blocked_tenant_ids`. An explicit
        tenant deny-list.
     2. `source["classification"]` against `classification_policy` --
        **fails closed**: a classification with no entry in that dict is
        blocked, not silently allowed (`.get(classification, False)`).
        `None`/missing classification is treated as allowed, matching
        `"internal"`'s default, for the pre-governance-metadata corpus.
-    3. `require_authoritative_trust` -- when `True`, only
+    3. `require_authoritative_trust`. When `True`, only
        `trust_level == "authoritative"` may egress.
-    4. `block_unredacted_sensitive_fields` -- when `True`, any source
+    4. `block_unredacted_sensitive_fields`. When `True`, any source
        whose `sensitive_field_ids` isn't a subset of its
        `redacted_field_ids` (i.e. a tagged sensitive field that wasn't
        actually redacted for this particular retrieval) is blocked
@@ -67,7 +67,7 @@ def apply_egress_policy(source: dict[str, Any], config: AppConfig) -> EgressDeci
     Returns
     -------
     EgressDecision
-        `allowed=False` sources carry an empty `redacted_context` -- the
+        `allowed=False` sources carry an empty `redacted_context`. The
         caller must exclude them from anything sent to a hosted provider,
         never send a placeholder derived from the blocked content.
     """

@@ -5,7 +5,7 @@ pair, an "agreement rate": thresholding the continuous [0,1] RAGAS score
 at 0.5 and comparing the resulting boolean against the human label, over
 only the rows a reviewer has actually filled in. This is a simple, honest
 first signal, not a validated statistical benchmark (n is small, the
-threshold is uncalibrated) -- the generated report says so explicitly.
+threshold is uncalibrated). The generated report says so explicitly.
 
 Metric <-> human-label pairing:
     faithfulness       <-> human_faithful

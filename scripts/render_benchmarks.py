@@ -3,7 +3,7 @@
 Baseline files (data/eval/baselines/*.json, produced by
 `rag.eval.run_eval --verbose`) are git-ignored since they contain
 dataset-derived questions/answers, but the table this script prints is
-just aggregate numbers -- safe to paste into README.md.
+just aggregate numbers. Safe to paste into README.md.
 
 Usage:
     python scripts/render_benchmarks.py

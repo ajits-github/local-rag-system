@@ -2,7 +2,7 @@
 
 For experiments recorded before MLflow was integrated (or after a fresh
 mlruns/ directory is created). Reuses rag.eval.mlflow_logger.log_experiment
-directly -- no eval re-run, no re-computation. Attaches each record's own
+directly. No eval re-run, no re-computation. Attaches each record's own
 JSON plus its matching experiments/configs/<id>.yaml as artifacts; the
 original raw eval-output JSON (per-question detail) isn't preserved for
 older experiments, so it's simply omitted for those.

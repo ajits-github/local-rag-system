@@ -1,16 +1,16 @@
 """The four agent tools: thin wrappers over existing, tested application services.
 
-No tool reimplements retrieval or security logic -- each calls
+No tool reimplements retrieval or security logic. Each calls
 `RetrievalPipeline`/`VectorStore`/`rag.retrieval.freshness` directly. Every
 function takes `auth: AuthorizationContext | None` as an explicit parameter
 separate from its validated `args`, always supplied by the graph driver
-from `AgentState.authorization_context` -- never constructed from parsed
+from `AgentState.authorization_context`. Never constructed from parsed
 LLM JSON (see `rag.agent.decisions`).
 
 `get_document`/`get_latest_document` bound how much of a document they load
 into agent state: a server-controlled hard SQL `LIMIT`
 (`max_chunks_hard_ceiling`) followed by a relevance-selection pass against
-the current query (`max_chunks`) -- neither number is LLM-writable, and
+the current query (`max_chunks`). Neither number is LLM-writable, and
 `rag.agent.tool_schemas.GetDocumentArgs`/`GetLatestDocumentArgs` expose no
 chunk-count field at all.
 """
@@ -37,7 +37,7 @@ class ToolExecutionError(Exception):
     """Raised when a tool cannot complete its dispatch (e.g. missing dataset_id).
 
     Caught by the graph driver's `execute_tool` node and recorded as a
-    failed `ToolCallRecord` rather than propagated -- a tool failure must
+    failed `ToolCallRecord` rather than propagated. A tool failure must
     never crash the request (see the "tool failure is handled safely"
     invariant in `docs/architecture.md`'s "Agentic RAG" section).
     """
@@ -61,10 +61,10 @@ def _select_relevant_chunks(
     If `chunks` already fits within `max_chunks`, returns it unchanged
     (still `chunk_index`-ordered, as fetched). Otherwise embeds `query`
     once and each candidate chunk's content (chunks fetched by id/section/
-    source never carry a persisted `embedding` -- see
+    source never carry a persisted `embedding`. See
     `PgVectorStore._METADATA_COLUMNS`), ranks by cosine similarity, and
     keeps the top `max_chunks`. Operates only on an already-fetched,
-    already-authorized, already-hard-bounded batch -- this is the same
+    already-authorized, already-hard-bounded batch. This is the same
     cosine-similarity operation `VectorStore.search` performs, applied
     client-side rather than in SQL, never a new retrieval mechanism.
     """
@@ -106,7 +106,7 @@ def get_document(
     Raises
     ------
     ToolExecutionError
-        If `dataset_id` is missing -- `get_chunks_by_source` requires it,
+        If `dataset_id` is missing. `get_chunks_by_source` requires it,
         and there is no safe default to guess.
     """
     if not dataset_id:
@@ -130,7 +130,7 @@ def get_latest_document(
     """Resolve `args.source` to its currently-effective version, then fetch it.
 
     Unlike a plain `get_document(args.source)` call, this first resolves
-    `args.source` through `resolve_current_document_source` -- if
+    `args.source` through `resolve_current_document_source`. If
     `args.source` names a superseded family member, the *current* member's
     content is returned instead, which is the actual point of this tool
     (see `docs/architecture.md`'s "Agentic RAG" section on why a source
@@ -163,7 +163,7 @@ def get_related_context(
     than reimplementing parent/neighbor lookup; already bounded by
     `config.retrieval.relationship_expansion.max_related_elements`. A
     `chunk_id` that doesn't resolve (not found, or excluded by `auth`) is
-    treated as a normal empty result, not a tool failure -- nothing
+    treated as a normal empty result, not a tool failure. Nothing
     actually errored.
     """
     seed_chunks = vectorstore.get_chunks_by_ids([args.chunk_id], auth=auth)

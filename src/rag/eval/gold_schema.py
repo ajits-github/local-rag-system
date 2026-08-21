@@ -97,7 +97,7 @@ class GoldExample(BaseModel):
         the answer.
     tool_not_needed : bool
         Agentic RAG milestone: whether this question should route to
-        `classic_rag` even when `config.agent.enabled=True` -- used to
+        `classic_rag` even when `config.agent.enabled=True`. Used to
         score `unnecessary_agent_rate`.
     expects_max_step_termination : bool
         Agentic RAG milestone: whether this question is expected to
@@ -105,7 +105,7 @@ class GoldExample(BaseModel):
         rather than resolve normally.
     adversarial_tool_instruction : bool
         Agentic RAG milestone: whether a tool's output (not the original
-        query) carries a prompt-injection payload -- tests that tool
+        query) carries a prompt-injection payload. Tests that tool
         output stays evidence, never becomes an instruction.
     expected_tool_sequence : list[str]
         Agentic RAG milestone: the expected ordered tool names for
@@ -114,7 +114,7 @@ class GoldExample(BaseModel):
         Agentic RAG milestone: authored scenario bucket (e.g.
         "query_decomposition", "latest_document_resolution",
         "retrieval_reformulation", "tool_not_needed",
-        "insufficient_evidence", "adversarial_tool_output") -- distinct
+        "insufficient_evidence", "adversarial_tool_output"). Distinct
         from `content_type`'s multimodal buckets and `safety_category`'s
         security buckets; used for `run_agent_eval.py`'s per-category
         breakdown.
@@ -130,8 +130,8 @@ class GoldExample(BaseModel):
         `evaluate_evidence` node's retry should look more like this.
     minimum_expected_tool_calls, maximum_expected_tool_calls : int or None
         Agentic RAG milestone: the expected reasonable range of total
-        tool dispatches for this question -- `0`/`0` for `tool_not_needed`
-        rows -- used to flag an agent run as under- or over-working a
+        tool dispatches for this question. `0`/`0` for `tool_not_needed`
+        rows. Used to flag an agent run as under- or over-working a
         question, distinct from the hard `config.agent.max_tool_calls`
         ceiling.
 
@@ -273,8 +273,8 @@ def reference_context_is_supported(reference: str, candidate_texts: Iterable[str
     (confirmed against real gold rows: exact JSON blocks, exact backtick
     commands, exact caption sentences including their `*asterisks*`), but
     it is brittle to any *other* formatting drift between the gold
-    author's copy and the actual text being checked against -- e.g. a
-    reference spanning a table row-group boundary that got split across
+    author's copy and the actual text being checked against. For example,
+    a reference spanning a table row-group boundary can get split across
     two persisted chunks. This under-counts (produces false negatives on
     genuinely-supported references), never over-counts a coincidental
     match into a false positive at this excerpt length in practice, but is

@@ -32,7 +32,7 @@ _INJECTION_PATTERNS = (
     re.compile(r"new instructions\s*:", re.I),
     re.compile(r"forget (everything|all) (you were told|above)", re.I),
     # Letter-spaced/hyphenated obfuscation of "ignore" (e.g. "i-g-n-o-r-e",
-    # "i g n o r e") followed eventually by "instructions" -- a targeted,
+    # "i g n o r e") followed eventually by "instructions". A targeted,
     # bounded allowance for inter-letter separators, not a general
     # fuzzy-match engine.
     re.compile(r"i[\s\-_.]*g[\s\-_.]*n[\s\-_.]*o[\s\-_.]*r[\s\-_.]*e.{0,20}instructions?", re.I),

@@ -2,7 +2,7 @@
 
 Every infra choice (embedding model, vector backend, chunker, reranker, LLM)
 lives in the YAML file as a "provider" field; secrets and connection details
-are never hardcoded here — fields named `*_env_var` name an environment
+are never hardcoded here. Fields named `*_env_var` name an environment
 variable that is resolved on demand from the process environment.
 """
 
@@ -144,7 +144,7 @@ class OllamaJudgeConfig(BaseModel):
 class JudgeConfig(BaseModel):
     """RAGAS judge LLM provider selection, independent of `generation`.
 
-    Never defaults to the generation models (qwen2.5:1.5b/3b) — hosted
+    Never defaults to the generation models (qwen2.5:1.5b/3b). Hosted
     providers are the primary supported path; `ollama` is offered for
     free local experimentation only, with a different, non-default model.
     """
@@ -182,7 +182,7 @@ class MetricsConfig(BaseModel):
         exposition and every request/agent metric is recorded. Harmless
         on by default: purely in-process counters/histograms, no
         external service required for this to be a no-op in practice
-        unless something actually scrapes the endpoint -- same
+        unless something actually scrapes the endpoint. Same
         "default-on, no external dependency" precedent as `MLflowConfig`.
     path : str
         The mount path for the metrics endpoint.
@@ -202,7 +202,7 @@ class TracingConfig(BaseModel):
         own built-in no-op `TracerProvider` stays in place, so every
         `start_span` call in the codebase is free. `True` requires an
         OTLP endpoint actually listening (see `AppConfig.otlp_endpoint`,
-        resolved from `OTEL_EXPORTER_OTLP_ENDPOINT`) -- default off so a
+        resolved from `OTEL_EXPORTER_OTLP_ENDPOINT`). Default off so a
         fresh checkout never produces background exporter connection
         errors with nothing running to receive them.
     service_name : str
@@ -224,7 +224,7 @@ class LiveEventsConfig(BaseModel):
     ----------
     enabled : bool
         When `True` (the default), the streaming endpoint is mounted.
-        Adds a route only -- no external dependency, no cost unless a
+        Adds a route only. No external dependency, no cost unless a
         caller actually opens a stream.
     """
 
@@ -234,7 +234,7 @@ class LiveEventsConfig(BaseModel):
 class ObservabilityConfig(BaseModel):
     """Root config block for operational telemetry: metrics, tracing, live events.
 
-    Deliberately independent of `MLflowConfig` -- operational telemetry
+    Deliberately independent of `MLflowConfig`. Operational telemetry
     (this block) and experiment tracking (`MLflowConfig`) have different
     responsibilities and neither replaces the other (see
     `docs/architecture.md`'s "Observability" section).
@@ -337,7 +337,7 @@ class FieldRedactionConfig(BaseModel):
     ----------
     enabled : bool
         When `False` (the default), a no-op. Independent of
-        `AuthorizationConfig.enabled` — document ACL and field
+        `AuthorizationConfig.enabled`. Document ACL and field
         disclosure are separate controls.
 
     Notes
@@ -466,7 +466,7 @@ class EgressPolicyConfig(BaseModel):
     Parameters
     ----------
     enabled : bool
-        When `False` (the default), a no-op — retrieved context reaches
+        When `False` (the default), a no-op. Retrieved context reaches
         the configured hosted judge unchecked.
     block_unredacted_sensitive_fields : bool
         Block a source whose tagged sensitive fields were not fully
@@ -513,7 +513,7 @@ class AgentConfig(BaseModel):
     ----------
     enabled : bool
         When `False` (the default), `POST /agent/query` still exists but
-        `classify_query` always routes to `classic_rag` -- a coarse
+        `classify_query` always routes to `classic_rag`. A coarse
         kill-switch matching `AuthorizationConfig`/`FieldRedactionConfig`'s
         convention.
     max_agent_steps : int
@@ -529,14 +529,14 @@ class AgentConfig(BaseModel):
     max_tool_top_k : int
         Server ceiling clamped onto `search_knowledge_base`'s `top_k`
         argument, independent of that argument's own Pydantic `le` bound
-        -- a config change, not just the schema literal, is always the
+        A config change, not just the schema literal, is always the
         true final ceiling.
     max_chunks_per_document_fetch : int
         Final chunk count `get_document`/`get_latest_document` keep after
         relevance-selecting against the current query.
     max_chunks_per_document_fetch_hard_ceiling : int
         SQL-level `LIMIT` applied to `get_document`/`get_latest_document`'s
-        underlying fetch, before relevance selection -- bounds the read
+        underlying fetch, before relevance selection. Bounds the read
         itself regardless of a document's actual size. Neither this nor
         `max_chunks_per_document_fetch` is exposed to the LLM in any tool
         schema.

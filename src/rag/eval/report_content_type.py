@@ -1,6 +1,6 @@
 """Break down a rag.eval.run_eval report by structured-content type.
 
-Calls `rag.eval.run_eval.run` directly -- one retrieval(+generation) pass
+Calls `rag.eval.run_eval.run` directly. One retrieval(+generation) pass
 feeds both the top-line report and this breakdown, so running this never
 re-retrieves or re-generates anything. Buckets `per_example` rows via
 `eval.content_type.classify_example` and re-aggregates Recall@5/10, Hit

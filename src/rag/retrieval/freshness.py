@@ -94,7 +94,7 @@ def resolve_current_document_source(
     """Resolve any family member's `source` to its currently-effective member's `source`.
 
     A version family's members each have their own, distinct `source`
-    path (e.g. `policy-v1.md` superseded by `policy-v2.md`) — unlike
+    path (e.g. `policy-v1.md` superseded by `policy-v2.md`). Unlike
     `resolve_excluded_document_ids`, which only reports which
     `document_id`s to exclude, this answers "if a caller names an
     arbitrary (possibly superseded) family member, what path should be
@@ -121,7 +121,7 @@ def resolve_current_document_source(
         `source` unchanged if it matches no known document, if the
         matched document belongs to no `supersedes_source` family, or if
         resolution can't determine a winner (e.g. no family member is
-        `status="active"` and `as_of` is `None`) — never guesses.
+        `status="active"` and `as_of` is `None`). Never guesses.
     """
     matched = next((v for v in versions if source_matches_relevant(v.source, source)), None)
     if matched is None:

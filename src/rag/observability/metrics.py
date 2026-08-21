@@ -1,15 +1,15 @@
 """Prometheus metrics: bounded label sets, a dedicated registry, defensive recording.
 
 A dedicated `CollectorRegistry` (never `prometheus_client`'s process-wide
-default) so re-importing this module -- which happens routinely across
-`pytest`'s test collection -- never hits prometheus_client's "Duplicated
+default) so re-importing this module. Which happens routinely across
+`pytest`'s test collection. Never hits prometheus_client's "Duplicated
 timeseries in CollectorRegistry" error the default registry is prone to.
 
 Every metric here has an explicitly bounded label set (checked against
 this milestone's requirement directly): `tool_name` (4 literal tools),
 `node` (6 literal graph nodes), `route` (`classic_rag`/`agent`), `reason`
 (5 literal termination reasons), `method`/`path`/`status_code` (a fixed
-set of registered HTTP routes -- never the raw request URL). Never a
+set of registered HTTP routes. Never the raw request URL). Never a
 query string, tenant id, document id, chunk id, or arbitrary tool
 argument.
 """

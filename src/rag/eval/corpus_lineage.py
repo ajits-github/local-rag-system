@@ -6,7 +6,7 @@ gold-file digest/a deterministic corpus digest, so two experiments
 claiming to run against the same dataset can be checked for whether they
 actually scored the same corpus and gold file. Read-only against
 `VectorStore`; never mutates anything. `corpus_version` is a free-form
-string the caller supplies -- no version-numbering scheme is invented
+string the caller supplies. No version-numbering scheme is invented
 here.
 """
 
@@ -20,11 +20,11 @@ from rag.vectorstore.base import VectorStore
 
 
 def _corpus_digest(checksums: dict[str, str]) -> str:
-    """sha256 over sorted "{source}:{checksum}" lines -- a corpus-content fingerprint.
+    """sha256 over sorted "{source}:{checksum}" lines. A corpus-content fingerprint.
 
     Deterministic regardless of ingestion order (sorted by source) and
     independent of chunking parameters (built from `documents.checksum`,
-    the raw file's sha256, not chunk content) -- two experiments with the
+    the raw file's sha256, not chunk content). Two experiments with the
     same `corpus_digest` ingested byte-identical source files, even if
     chunking/embedding differed between them.
     """
@@ -59,7 +59,7 @@ def compute_corpus_lineage(
         "tenant_count", "gold_record_count", "gold_file_sha256",
         "corpus_digest"}``. `active_document_count`/`superseded_document_count`
         only count documents with a `status` of exactly `"active"`/
-        `"superseded"` -- documents with no `status` at all (untenanted
+        `"superseded"`. Documents with no `status` at all (untenanted
         legacy content) are counted in neither. `tenant_count` counts
         distinct non-null `tenant_id` values.
     """

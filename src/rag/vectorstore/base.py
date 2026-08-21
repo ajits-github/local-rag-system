@@ -1,6 +1,6 @@
 """Vector store interface: persists embedded chunks and serves similarity search.
 
-pgvector.py is the v1 implementation — new backends (Chroma, FAISS, ...)
+pgvector.py is the v1 implementation. New backends (Chroma, FAISS, ...)
 plug in by implementing this class, so pipeline code never depends on a
 specific backend.
 """
@@ -40,7 +40,7 @@ ALLOWED_FILTER_FIELDS = {
 class VectorStore(ABC):
     """Persists embedded chunks and serves similarity search over them.
 
-    pgvector.py is the v1 implementation — new backends (Chroma, FAISS,
+    pgvector.py is the v1 implementation. New backends (Chroma, FAISS,
     ...) plug in by implementing this class, so pipeline code never
     depends on a specific backend.
     """
@@ -78,7 +78,7 @@ class VectorStore(ABC):
         -------
         tuple[str, bool]
             ``(document_id, changed)`` where `changed` is True when this is
-            a new source or its checksum differs from what's on record —
+            a new source or its checksum differs from what's on record.
             i.e. the writer stage should replace that document's chunks.
         """
 
@@ -100,7 +100,7 @@ class VectorStore(ABC):
     def delete_document(self, document_id: str) -> None:
         """Fully remove a document's `documents` row (cascading to all its chunks).
 
-        For test teardown / dataset cleanup — never called during normal
+        For test teardown / dataset cleanup. Never called during normal
         re-ingestion of an unchanged-identity document.
 
         Parameters

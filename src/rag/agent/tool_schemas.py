@@ -1,8 +1,8 @@
 """Validated argument schemas for the agent's four tools.
 
-Every model is `extra="forbid"` -- a deliberate deviation from this
+Every model is `extra="forbid"`. A deliberate deviation from this
 codebase's usual `extra="ignore"` default (see `QueryRequest`,
-`GoldExample`, `AuthorizationContext`) -- so an LLM attempting to smuggle a
+`GoldExample`, `AuthorizationContext`). So an LLM attempting to smuggle a
 `tenant_id`/`roles`/`auth`-shaped key into a tool call produces a loud,
 auditable `ValidationError` rather than silently being dropped. Every
 LLM-writable numeric field also carries a hard `Field(ge=..., le=...)`

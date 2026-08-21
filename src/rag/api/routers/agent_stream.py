@@ -1,7 +1,7 @@
 """`POST /agent/query/stream`: Server-Sent Events for live agent progress.
 
 Additional to, never a replacement for, `POST /agent/query`
-(`agent_query.py`, untouched by this module -- both routes share the same
+(`agent_query.py`, untouched by this module. Both routes share the same
 JWT-precedence/DoS-limit logic via `rag.api.request_auth` and the same DI
 singletons).
 
@@ -15,7 +15,7 @@ Two deliberate choices, documented here rather than left implicit:
   shape (query/filters/tenant_id/roles/as_of/require_trust_level). This
   project has no browser frontend, so trading away the browser's native
   `EventSource` API (GET-only) for a consistent request shape across both
-  endpoints is the right tradeoff -- consume this endpoint via `curl -N`
+  endpoints is the right tradeoff. Consume this endpoint via `curl -N`
   or an HTTP client's streaming mode, not `EventSource`.
 
 `run_agent` is synchronous; it runs in Starlette's worker threadpool
@@ -23,7 +23,7 @@ Two deliberate choices, documented here rather than left implicit:
 they arrive, via an `asyncio.Queue` bridged across the thread boundary
 with `call_soon_threadsafe`. A client disconnect stops this endpoint from
 yielding further data, but cannot cancel the already-running agent turn
-(it finishes in its worker thread regardless) -- a documented limitation,
+(it finishes in its worker thread regardless). A documented limitation,
 not a crash risk.
 """
 
@@ -71,7 +71,7 @@ _QUEUE_DONE = object()
 def _agent_rate_limit_string() -> str:
     """Return the current `requests_per_minute` config value as a slowapi limit string.
 
-    Same shared budget as `/agent/query` -- see that router's identical
+    Same shared budget as `/agent/query`. See that router's identical
     helper for the reasoning.
     """
     return f"{get_config().security.rate_limit.requests_per_minute}/minute"
@@ -190,7 +190,7 @@ async def _stream_agent_query(
                 if item.event_type in ("completed", "terminated"):
                     # Superseded by the richer AgentRunResult-based terminal event
                     # below (same event_type, but the full /agent/query response
-                    # shape) -- never emit both.
+                    # shape). Never emit both.
                     continue
                 yield _sse_message(item.event_type, item.model_dump_json())
             elif isinstance(item, Exception):

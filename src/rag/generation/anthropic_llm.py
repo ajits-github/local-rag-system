@@ -1,6 +1,6 @@
 """`LLM` backed by the Anthropic messages API.
 
-Not used as a `generation.provider` (still `ollama`-only) — wired in only
+Not used as a `generation.provider` (still `ollama`-only). Wired in only
 via `factory.build_judge_llm` for RAGAS judging. Requires the `anthropic`
 extra: pip install .[anthropic]
 """

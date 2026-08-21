@@ -1,7 +1,7 @@
 """Buckets gold questions and KB documents by structured-content type.
 
 Document content types are derived by running the *configured* chunker
-over each referenced file (self-updating -- a newly added table/code/chart
+over each referenced file (self-updating. A newly added table/code/chart
 document is picked up the next time this runs, not a hardcoded lookup
 table), reusing the same loader -> cleaner -> chunker chain
 `IngestionPipeline.ingest_file` runs, minus embed/write.
@@ -85,7 +85,7 @@ def classify_example(example: GoldExample, document_content_types: Mapping[str, 
     real TechFusion documents do), a keyword check on the question text
     (`chart`/`caption`/`trend`) prefers the `chart` bucket; otherwise
     `_BUCKET_PRIORITY` breaks the tie deterministically. This is a
-    documented judgment call, not a semantic guarantee -- a table-focused
+    documented judgment call, not a semantic guarantee. A table-focused
     question about one of those two documents could still land in the
     wrong bucket.
 

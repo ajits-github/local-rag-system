@@ -93,9 +93,9 @@ def source_dict(result: SearchResult) -> dict[str, Any]:
     """Render one `SearchResult` as `answer()`'s per-source dict shape.
 
     Public so any caller needing the same `chunk_id`/`content`/governance-
-    metadata shape `answer()`'s `"sources"` list already produces -- e.g.
+    metadata shape `answer()`'s `"sources"` list already produces. E.g.
     RAGAS context-building or egress-policy checks over agent-gathered
-    evidence, which never goes through `answer()` -- can reuse it instead
+    evidence, which never goes through `answer()`. Can reuse it instead
     of re-deriving the same field list.
     """
     return {
@@ -281,16 +281,16 @@ class RetrievalPipeline:
         The same two steps `_retrieve_timed` already applies to every
         `retrieve()`/`answer()` result, exposed as one public entry point
         so any other caller that assembles `SearchResult`s outside the
-        normal search path -- specifically the agent tool layer
+        normal search path. Specifically the agent tool layer
         (`rag/agent/tools.py`'s `get_document`/`get_latest_document`,
         which fetch chunks directly via `VectorStore.get_chunks_by_source`
-        rather than `retrieve()`) -- gets identical treatment. There is no
+        rather than `retrieve()`). Gets identical treatment. There is no
         other, tool-specific sanitization path; this is the single place
         it happens, so no tool can bypass it by construction.
 
         Idempotent: results already sanitized by `_retrieve_timed` (e.g.
         `search_knowledge_base` tool results) are unaffected by a second
-        pass -- already-redacted content matches no further sensitive-field
+        pass. Already-redacted content matches no further sensitive-field
         pattern, and `detect_injection` is a pure function of content.
 
         Parameters
@@ -681,7 +681,7 @@ class RetrievalPipeline:
         """Retrieve context for `query` and generate an answer from it.
 
         Always reflects production config (no `reranker_top_n`/
-        `generation_context_top_n` override — see `retrieve`).
+        `generation_context_top_n` override. See `retrieve`).
 
         Parameters
         ----------

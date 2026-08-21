@@ -2,7 +2,7 @@
 
 Disabled by default (`config.observability.tracing.enabled=False`): the
 OpenTelemetry API's own no-op `TracerProvider` stays in place, so every
-`start_span` call anywhere in this codebase is free -- no "is tracing
+`start_span` call anywhere in this codebase is free. No "is tracing
 enabled" branching needed at any instrumentation call site.
 `configure_tracing` is the only place that ever imports
 `opentelemetry.sdk`/the OTLP exporter; every other module only depends on
@@ -70,7 +70,7 @@ def configure_tracing(config: AppConfig) -> None:
 
 
 def reset_tracing_for_tests() -> None:
-    """Reset the module-level configured flag and tracer -- test-only helper."""
+    """Reset the module-level configured flag and tracer. Test-only helper."""
     global _tracer, _configured
     _tracer = trace.get_tracer("rag")
     _configured = False
@@ -84,7 +84,7 @@ def start_span(name: str, attributes: Mapping[str, Any] | None = None) -> Iterat
     tracing is disabled this is the OpenTelemetry API's own no-op span
     (near-zero cost), and any unexpected error from span creation,
     attribute-setting, or teardown is caught and logged rather than
-    propagated -- a broken exporter/SDK can never turn into a 500 on
+    propagated. A broken exporter/SDK can never turn into a 500 on
     `/query` or `/agent/query`. An exception raised by the *caller's* code
     inside the `with` block is never swallowed here; it propagates
     normally after the span is closed (and recorded as an error on the
@@ -142,7 +142,7 @@ def set_attributes(span: Span, attributes: Mapping[str, Any]) -> None:
         The span to annotate.
     attributes : Mapping[str, Any]
         Attribute key/value pairs. Never pass raw retrieved content,
-        credentials, or model reasoning text here -- see
+        credentials, or model reasoning text here. See
         `docs/architecture.md`'s "Observability" section for the full
         never-attach list.
     """

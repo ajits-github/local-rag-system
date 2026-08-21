@@ -2,7 +2,7 @@
 
 Python instead of a static .sql file so schema setup can grow conditional
 logic later (e.g. vector dimension driven by config, future migrations)
-without switching tooling. Safe to re-run — every statement is idempotent.
+without switching tooling. Safe to re-run. Every statement is idempotent.
 
 Usage:
     python scripts/init_db.py [--config config/default.yaml]

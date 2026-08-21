@@ -1,10 +1,10 @@
 """Register a rag.eval.run_agent_eval (+ optional run_agent_ragas_eval) report.
 
 Distinct from scripts/record_experiment.py: the agent report's metric
-shape (routing_accuracy/tool_selection_accuracy/... at the top level, no
+shape (routing_accuracy/tool_selection_accuracy/... At the top level, no
 retrieval@k/hit_rate@k nesting) doesn't fit record_experiment.py's flat
-schema, so -- following the same precedent as
-scripts/record_attribution_experiment.py -- this writes its own
+schema, so. Following the same precedent as
+scripts/record_attribution_experiment.py. This writes its own
 experiments/results/agentic/<id>.json, a subdirectory
 compare_experiments.py's non-recursive glob never sees, leaving the
 standard comparison table untouched. It still reuses
@@ -16,7 +16,7 @@ script to work.
 
 `--ragas-output`, if given, merges rag.eval.run_agent_ragas_eval's
 aggregate scores into the same record's ragas_* fields (its `judge`
-provider/model too) -- optional, since a deterministic-only run has
+provider/model too). Optional, since a deterministic-only run has
 nothing to merge.
 
 Records every agent-specific prompt's id/version/path/sha256 checksum
@@ -100,7 +100,7 @@ def build_agent_experiment_record(
     dict[str, Any]
         Flat record. Fields absent from the agent report's metric shape
         (recall@k, hit_rate@k, and other classic-only fields) are simply
-        omitted -- this record is never read by compare_experiments.py's
+        omitted. This record is never read by compare_experiments.py's
         standard table.
     """
     corpus_lineage = agent_report.get("corpus_lineage", {})

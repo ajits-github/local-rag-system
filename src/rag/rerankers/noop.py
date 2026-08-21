@@ -9,7 +9,7 @@ from rag.schemas import SearchResult
 class NoOpReranker(Reranker):
     """Default reranker: a true identity, zero added latency.
 
-    Ignores `top_n` entirely -- does not reorder, rescore, or truncate.
+    Ignores `top_n` entirely. Does not reorder, rescore, or truncate.
     The final number of chunks reaching generation is controlled solely by
     `retrieval.generation_context_top_n` in `RetrievalPipeline.retrieve()`,
     not by this reranker.

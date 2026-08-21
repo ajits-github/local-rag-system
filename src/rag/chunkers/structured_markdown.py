@@ -12,7 +12,7 @@ directly.
 priority order:
 
 1. An open fence (```` ``` ```` ... ```` ``` ````) always wins first and is
-   consumed verbatim — a `|a|b|`-looking line or a `#` comment *inside* a
+   consumed verbatim. A `|a|b|`-looking line or a `#` comment *inside* a
    code sample is never reinterpreted, because the fence scanner never
    hands those lines to the table/header detectors.
 2. Outside a fence, `#`, `|`, ```` ``` ````, and a standalone `![...](...)`
@@ -23,12 +23,12 @@ priority order:
    image: a ```` ```text ```` fence only becomes `content_type="chart"`,
    and a standalone image line only picks up a `content_type="image"`
    caption, when immediately followed (at most one blank line) by a
-   paragraph wholly wrapped in `*...*`/`_..._` emphasis -- both cases share
+   paragraph wholly wrapped in `*...*`/`_..._` emphasis. Both cases share
    the same caption-lookahead helper (`_peek_caption`); otherwise a fence is
    `code`/`configuration` per its language tag, and a bare image line is
    still its own `content_type="image"` span, just without a caption.
 4. An image link *embedded inline within a prose paragraph* (not alone on
-   its own line) does not create a block boundary — that's still just
+   its own line) does not create a block boundary. That's still just
    attachment tagging, a property layered onto whichever prose sub-chunk(s)
    literally contain the link, computed after normal prose splitting.
 """
@@ -52,7 +52,7 @@ _MARKDOWN_LINK_RE = re.compile(r"!?\[([^\]\[]*)\]\(([^()\s]+)\)")
 # embedded inline within a prose paragraph, which `_tag_attachments` still
 # handles). Matches the consistent pattern in the multimodal KB documents:
 # an image markdown line on its own, optionally followed by an
-# emphasis-wrapped caption paragraph -- the same shape `_consume_fence`
+# emphasis-wrapped caption paragraph. The same shape `_consume_fence`
 # already recognizes for chart fence+caption.
 _IMAGE_LINE_RE = re.compile(r"^!\[([^\]\[]*)\]\(([^()\s]+)\)\s*$")
 _ATTACHMENT_EXTENSIONS = {
@@ -113,7 +113,7 @@ class StructuredMarkdownChunker(Chunker):
             20.
         max_atomic_block_chars : int, optional
             Maximum characters a fenced code/config block or a table
-            row-group may reach before being split, by default 2000 —
+            row-group may reach before being split, by default 2000.
             deliberately decoupled from `chunk_size`, since real fenced
             blocks can exceed a prose-tuned `chunk_size` while still
             being "small" in row/line-count terms.
@@ -307,7 +307,7 @@ class StructuredMarkdownChunker(Chunker):
         """Return the paragraph at `start` (skipping one leading blank line) and its end index.
 
         Shared by `_consume_fence` (chart captions) and `_consume_image`
-        (image captions) -- a pure lookahead that never mutates state.
+        (image captions). A pure lookahead that never mutates state.
         Callers decide whether the returned text qualifies as a caption
         (via `_is_emphasis_wrapped`); if it doesn't, they ignore the
         returned end index and let normal prose flow pick the lines back up.

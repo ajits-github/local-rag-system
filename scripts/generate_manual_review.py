@@ -32,7 +32,7 @@ def select_rows(report: dict[str, Any], num_rows: int) -> list[dict[str, Any]]:
 
     First-N per answerable/unanswerable bucket (in original question
     order, no randomness), proportional to each bucket's share of the
-    scored pool -- guarantees at least one unanswerable row when any
+    scored pool. Guarantees at least one unanswerable row when any
     exist and `num_rows` allows it.
 
     Parameters

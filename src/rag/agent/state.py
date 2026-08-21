@@ -1,7 +1,7 @@
 """Agent run state: only what the bounded graph driver needs, nothing more.
 
 Deliberately excludes raw JWT tokens and any other unrestricted sensitive
-data (see `docs/architecture.md`'s "Agentic RAG" section) -- identity is
+data (see `docs/architecture.md`'s "Agentic RAG" section). Identity is
 carried only as an already-verified `AuthorizationContext`, never a
 `VerifiedIdentity`/raw `sub` claim.
 """
@@ -36,7 +36,7 @@ class NodeInvocationTiming(BaseModel):
     """One graph-node call's timing, split into LLM-inference time and everything else.
 
     `llm_ms`/`overhead_ms` are `None` for a node that makes no direct LLM
-    call (`execute_tool`) -- deliberately not `0.0`, which would misread
+    call (`execute_tool`). Deliberately not `0.0`, which would misread
     as "an LLM call happened and took no time."
 
     Parameters
@@ -46,7 +46,7 @@ class NodeInvocationTiming(BaseModel):
     llm_ms : float | None
         The portion of `total_ms` spent inside `LLM.generate()` calls
         (summed across any JSON-parse retries `run_decision` made this
-        invocation) -- see `rag.agent.graph._TimingLLM`.
+        invocation). See `rag.agent.graph._TimingLLM`.
     overhead_ms : float | None
         `total_ms - llm_ms`: JSON parsing/validation, prompt-template
         rendering, and any other node-local work that isn't the model
@@ -62,7 +62,7 @@ class ToolCallRecord(BaseModel):
     """One tool dispatch's outcome, for observability and bounding.
 
     `args` holds only the validated, LLM-writable fields actually passed
-    to the tool (see `rag.agent.tool_schemas`) -- never `auth`/`tenant_id`/
+    to the tool (see `rag.agent.tool_schemas`). Never `auth`/`tenant_id`/
     `roles`, which are never LLM-writable in the first place.
     """
 
@@ -86,7 +86,7 @@ class AgentState(BaseModel):
     authorization_context : AuthorizationContext | None
         The caller's verified identity/date context, set once by the API
         router before the graph runs and never reconstructed from
-        anything LLM-derived. Safe to hold here -- it carries no raw
+        anything LLM-derived. Safe to hold here. It carries no raw
         credential (see `rag.retrieval.authorization.AuthorizationContext`).
     filters : dict[str, Any] | None
         Exact-match retrieval filters (notably `dataset_id`, the hard
@@ -97,7 +97,7 @@ class AgentState(BaseModel):
     subquestions : list[str]
         `decompose`'s output, bounded to a small number.
     current_query : str
-        The query text the next tool call/decision should use -- starts
+        The query text the next tool call/decision should use. Starts
         as `original_query` or the first subquestion, and may be replaced
         by a reformulated query after an insufficient-evidence decision.
     retrieved_evidence : list[SearchResult]
@@ -107,24 +107,24 @@ class AgentState(BaseModel):
     tool_call_history : list[ToolCallRecord]
         One record per tool dispatch, in order.
     retrieval_attempts : int
-        Count of `search_knowledge_base` dispatches specifically -- the
+        Count of `search_knowledge_base` dispatches specifically. The
         counter `max_retrieval_attempts` bounds.
     tool_call_count : int
-        Count of all tool dispatches (any tool) -- the counter
+        Count of all tool dispatches (any tool). The counter
         `max_tool_calls` bounds.
     step_count : int
-        Count of graph node executions -- the counter `max_agent_steps`
+        Count of graph node executions. The counter `max_agent_steps`
         bounds.
     prompt_tokens, completion_tokens : int
         Best-effort accumulated token usage across every LLM call this
         run made (every decision call plus synthesis). Read via
         `getattr(llm, "last_prompt_tokens"/"last_completion_tokens",
         None)` after each call, the same pattern
-        `RetrievalPipeline.answer()` uses -- `0` for an `LLM`
+        `RetrievalPipeline.answer()` uses. `0` for an `LLM`
         implementation that doesn't track them. On a retried decision
         call (`rag.agent.decisions.run_decision`), only the last attempt's
         tokens are counted, since the LLM instance's own tracking
-        attribute is overwritten per call, not accumulated -- a
+        attribute is overwritten per call, not accumulated. A
         documented undercount, not a crash risk.
     evidence_sufficient : bool | None
         `evaluate_evidence`'s most recent decision.
@@ -139,7 +139,7 @@ class AgentState(BaseModel):
         `decompose`/`tool_select`/`execute_tool`/`evidence_sufficiency`/
         `synthesize`). A list, not a single value, because
         `tool_select`/`execute_tool`/`evidence_sufficiency` can run more
-        than once per request (the bounded retry loop) -- both individual
+        than once per request (the bounded retry loop). Both individual
         invocation timing and aggregate-across-invocations timing are
         derivable from this, never just the aggregate. Populated by
         `rag.agent.graph`'s node-timing wrapper, not by node functions

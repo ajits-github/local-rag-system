@@ -30,7 +30,7 @@ app.add_middleware(RequestIDMiddleware)
 
 @app.get("/")
 def root(config: AppConfig = Depends(get_config)) -> dict[str, Any]:
-    """Lightweight service/navigation info. No dependency checks -- see `GET /health` for that.
+    """Lightweight service/navigation info. No dependency checks. See `GET /health` for that.
 
     Parameters
     ----------
@@ -65,7 +65,7 @@ def _handle_rate_limit_exceeded(request: Request, exc: Exception) -> JSONRespons
     request : Request
         The rate-limited HTTP request.
     exc : Exception
-        The `RateLimitExceeded` raised by `slowapi` -- typed as the base
+        The `RateLimitExceeded` raised by `slowapi`. Typed as the base
         `Exception` to match `Starlette.add_exception_handler`'s expected
         handler signature.
 

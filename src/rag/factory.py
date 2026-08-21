@@ -180,7 +180,7 @@ def build_vision_provider(config: AppConfig) -> VisionProvider | None:
 def build_judge_llm(config: AppConfig) -> LLM:
     """Construct the RAGAS judge `LLM` selected by `config.judge.provider`.
 
-    Independent of `build_llm`/`config.generation` — the judge is never
+    Independent of `build_llm`/`config.generation`. The judge is never
     the same model used for generation.
 
     Parameters

@@ -53,7 +53,7 @@ class PromptTemplate(BaseModel):
         Parameters
         ----------
         **variables : str
-            Must supply exactly the names in `required_variables` — no
+            Must supply exactly the names in `required_variables`. No
             more, no fewer.
 
         Returns

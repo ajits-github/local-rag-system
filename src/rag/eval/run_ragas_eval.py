@@ -4,7 +4,7 @@ Opt-in and additive: reuses `run_eval.evaluate()` (sliced to
 `--sample-size` examples) for the standard report, then adds a `"ragas"`
 key with faithfulness/answer_relevancy/context_precision/context_recall/
 answer_correctness scores from an independently configured judge LLM
-(`config.judge` — never defaults to the generation models). Requires the
+(`config.judge`. Never defaults to the generation models). Requires the
 `ragas` extra (`pip install .[ragas]`, plus `.[anthropic]` for that hosted
 provider).
 
@@ -159,7 +159,7 @@ def run_ragas(
         Namespace to restrict every retrieval to.
     sample_size : int, optional
         Number of gold examples (from the start of the file) to score, by
-        default 15 — validate cost/latency/quality before scaling up.
+        default 15. Validate cost/latency/quality before scaling up.
 
     Returns
     -------

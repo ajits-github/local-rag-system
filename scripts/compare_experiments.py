@@ -35,7 +35,7 @@ def load_records(results_dir: Path, exclude: set[str] | None = None) -> list[dic
     results_dir : Path
         Directory containing `*.json` records written by `record_experiment.py`.
     exclude : set[str] | None, optional
-        `experiment_id`s to omit -- for records that exist (e.g. a small
+        `experiment_id`s to omit. For records that exist (e.g. a small
         pilot subset) but aren't comparable to the rest of the table, by
         default None.
 

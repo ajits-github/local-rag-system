@@ -2,7 +2,7 @@
 
 Extracted from `routers/query.py` so `routers/agent_query.py` reuses the
 exact same, already-tested JWT-precedence and DoS-limit logic rather than
-re-implementing it -- both routers call these functions, never duplicate
+re-implementing it. Both routers call these functions, never duplicate
 their behavior.
 """
 
@@ -45,7 +45,7 @@ def build_authorization_context(
         The verified caller identity, or `None`.
     tenant_id, roles : str | None, list[str] | None
         Caller-supplied identity claims (only trusted when `identity` is
-        `None` -- see above).
+        `None`. See above).
     as_of : date | None
         Freshness resolution date; always honored (a query parameter,
         not an identity claim).

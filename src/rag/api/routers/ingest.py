@@ -17,7 +17,7 @@ router = APIRouter()
 
 # Uploads land here under their original filename (path components stripped,
 # see `_safe_upload_path`), so re-uploading the same file keeps the same
-# `source` identity (and therefore the same document_id) — checksum
+# `source` identity (and therefore the same document_id). Checksum
 # comparison decides whether it needs re-indexing.
 UPLOAD_DIR = Path("data/uploads")
 
@@ -65,7 +65,7 @@ async def _save_upload_bounded(upload: UploadFile, dest: Path, max_bytes: int) -
     Raises
     ------
     HTTPException
-        413, once the streamed byte count exceeds `max_bytes` -- the
+        413, once the streamed byte count exceeds `max_bytes`. The
         partial file is removed rather than left on disk.
     """
     size = 0
@@ -87,7 +87,7 @@ def _enforce_ingest_authorization(identity: VerifiedIdentity | None, config: App
     """Reject an ingest request whose verified roles aren't allow-listed.
 
     A no-op unless `security.auth.enabled=True` **and** a verified
-    identity was actually supplied -- ingestion stays wide-open by default
+    identity was actually supplied. Ingestion stays wide-open by default
     when auth is disabled or when `insecure_dev_mode` let an
     unauthenticated caller through.
 

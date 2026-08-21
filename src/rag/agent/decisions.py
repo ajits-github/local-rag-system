@@ -3,8 +3,8 @@
 Every decision point renders a versioned prompt template instructing
 JSON-only output, calls the existing, unmodified `LLM.generate(system,
 user) -> str`, and parses/validates the response against a Pydantic model
-here. This is **agentic structured tool dispatch** -- `LLM JSON decision ->
-Pydantic validation -> trusted Python dispatcher -> tool execution` -- and
+here. This is **agentic structured tool dispatch**. `LLM JSON decision ->
+Pydantic validation -> trusted Python dispatcher -> tool execution`. And
 explicitly *not* provider-native function/tool calling (i.e. not
 `ollama.Client.chat(tools=[...])`, even though the installed client
 supports that parameter). The LLM only ever produces text; Python is the
@@ -43,7 +43,7 @@ class DecomposeDecision(BaseModel):
 class ToolSelectionDecision(BaseModel):
     """`select_tool` node's output: which tool to dispatch, and its raw arguments.
 
-    `tool_args` is intentionally untyped here -- it is validated against
+    `tool_args` is intentionally untyped here. It is validated against
     the matching `rag.agent.tool_schemas` model (`extra="forbid"`) by the
     graph driver immediately after this decision is parsed, never trusted
     as-is.
@@ -70,7 +70,7 @@ def _extract_json(raw: str) -> str:
     """Extract the first `{...}` substring from `raw`.
 
     Tolerates a model wrapping its JSON in prose or a markdown code fence
-    without attempting to repair malformed JSON itself -- that still fails
+    without attempting to repair malformed JSON itself. That still fails
     as a parse error in `parse_llm_json`.
     """
     match = _JSON_OBJECT_RE.search(raw)
@@ -119,9 +119,9 @@ def run_decision(
     """Render `template`, call `llm.generate`, and parse the result as `model`.
 
     On a parse/validation failure, issues up to `max_retries` bounded
-    reparse nudges appended to the user turn -- still plain
+    reparse nudges appended to the user turn. Still plain
     `LLM.generate(system, user) -> str` calls, never a
-    structured-output-forcing or native tool-calling API -- before giving
+    structured-output-forcing or native tool-calling API. Before giving
     up.
 
     Parameters
@@ -142,7 +142,7 @@ def run_decision(
     -------
     T | None
         The validated decision, or `None` if every attempt failed.
-        Callers must handle `None` with a safe default -- never crash the
+        Callers must handle `None` with a safe default. Never crash the
         request on a decision-parsing failure.
     """
     system, user = template.render(**variables)

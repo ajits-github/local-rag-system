@@ -67,7 +67,7 @@ def hit_rate_at_k(
     """Return 1.0 if any relevant id appears in the top-k, else 0.0.
 
     Unlike `recall_at_k`, this doesn't average over multiple relevant ids
-    per query — it only asks whether retrieval found *at least one*.
+    per query. It only asks whether retrieval found *at least one*.
 
     Parameters
     ----------

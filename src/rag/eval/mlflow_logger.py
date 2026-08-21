@@ -15,7 +15,7 @@ from typing import Any, cast
 from rag.config import MLflowConfig
 
 # Config-derived fields in the record schema (MLflow "params"), as opposed
-# to measured outcomes ("metrics") -- see _METRIC_FIELDS below.
+# to measured outcomes ("metrics"). See _METRIC_FIELDS below.
 _PARAM_FIELDS = [
     "generation_model",
     "embedding_model",
@@ -182,7 +182,7 @@ def log_experiment(
     """Log one `experiments/results/*.json`-shaped record as an MLflow run.
 
     Fields with a `None` value are skipped rather than logged as
-    ``"None"``/``0`` -- MLflow's `log_param`/`log_metric` reject `None`
+    ``"None"``/``0``. MLflow's `log_param`/`log_metric` reject `None`
     outright, and a pre-RAGAS record's `ragas_*` fields simply shouldn't
     appear as metrics on that run, matching how they render as ``"-"`` in
     `scripts/compare_experiments.py`'s table.

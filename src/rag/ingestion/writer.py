@@ -36,7 +36,7 @@ class Writer:
             When set, a vision-generated sibling chunk is added for every
             image span (see `_with_vision_siblings`). `None` (the default,
             and the only mode exercised so far) means text-only image
-            handling -- no image bytes are ever read, no network call is
+            handling. No image bytes are ever read, no network call is
             possible.
         """
         self._embedder = embedder
@@ -131,7 +131,7 @@ class Writer:
         One linear pass over `chunk_spans` in document order (they're
         already ordered that way by the chunker). A table/code/
         configuration/chart/image span's `parent_chunk_id` is the id of the
-        most recently seen prose chunk sharing its `section_path` -- the
+        most recently seen prose chunk sharing its `section_path`. The
         explanatory paragraph introducing that section, standing in for
         "surrounding context" without needing a full parse tree. Prose
         spans get `None`: reconstructing a section's full prose is already
@@ -174,7 +174,7 @@ class Writer:
         sha256 checksum (so an unchanged image is never reprocessed across
         documents/ingestion runs), calls `VisionProvider.describe_image` on
         a cache miss, and appends a second span carrying the description as
-        its own embeddable `text` -- the original caption/alt-text span is
+        its own embeddable `text`. The original caption/alt-text span is
         never modified.
 
         Parameters

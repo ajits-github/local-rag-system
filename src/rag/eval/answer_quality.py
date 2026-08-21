@@ -2,7 +2,7 @@
 
 KeywordOverlapScorer is a cheap placeholder so the eval CLI has something to
 report today. Swap in an LLM-judge (e.g. via the same Ollama LLM used for
-generation) by implementing AnswerQualityScorer — see README Roadmap.
+generation) by implementing AnswerQualityScorer. See README Roadmap.
 """
 
 from __future__ import annotations

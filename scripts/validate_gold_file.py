@@ -4,18 +4,18 @@ Loaded like the other scripts/*.py modules (not a package) via a sys.path
 insert onto src/, matching init_db.py/record_experiment.py's pattern.
 
 Checks, in order:
-  1. record count vs --expect-count (warning only -- the file may grow).
-  2. every relevant_documents entry resolves to a real file (hard fail).
-  3. answerable questions' expected_answer keyword-overlaps its referenced
-     content (warning only -- KeywordOverlapScorer is a crude heuristic,
+  1. Record count vs --expect-count (warning only; the file may grow).
+  2. Every relevant_documents entry resolves to a real file (hard fail).
+  3. Answerable questions' expected_answer keyword-overlaps its referenced
+     content (warning only; KeywordOverlapScorer is a crude heuristic,
      see eval/answer_quality.py's own documented caveat).
-  4. every structured-content bucket (table/code_configuration/chart) has
-     at least one example (hard fail -- proves buckets are "clearly
+  4. Every structured-content bucket (table/code_configuration/chart) has
+     at least one example (hard fail; proves buckets are "clearly
      identifiable").
-  5. no duplicate questions, case-folded exact match (hard fail).
-  6. each reference_contexts entry resolves (verbatim, whitespace-
+  5. No duplicate questions, case-folded exact match (hard fail).
+  6. Each reference_contexts entry resolves (verbatim, whitespace-
      normalized) somewhere in its relevant_documents' raw file text
-     (warning only -- see eval.gold_schema.reference_context_is_supported's
+     (warning only; see eval.gold_schema.reference_context_is_supported's
      documented limitation). Matched against the file's raw bytes, not the
      loader-parsed/cleaned text, because a reference can legitimately come
      from YAML front-matter that TextLoader strips before chunking (e.g. an
@@ -88,7 +88,7 @@ def validate(
     examples : list[GoldExample]
         Parsed gold file rows.
     data_root : Path
-        Root that each `relevant_documents` entry is relative to -- the
+        Root that each `relevant_documents` entry is relative to. The
         parent of the knowledge-base directory, so a gold entry like
         "knowledge_base/architecture/x.md" resolves to a real file.
     config : AppConfig

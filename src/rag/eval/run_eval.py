@@ -129,7 +129,7 @@ _REFUSAL_PHRASES = (
 #
 # Deliberately does NOT include TF-SYNTH-* customer-correlation ids: those
 # are operational data an authorized operator may legitimately disclose,
-# not a restricted field -- matching field_policy.py's own exclusion.
+# not a restricted field, matching field_policy.py's own exclusion.
 # Including it here previously produced a false positive (a correctly
 # redacted admin key alongside a correctly disclosed TF-SYNTH id
 # misclassified as a leak); see ISSUES.md.
@@ -203,7 +203,7 @@ def _image_hit(results: list[SearchResult], relevant_images: list[str]) -> bool:
 
     Reuses `source_matches_relevant`'s path-suffix matching (the same rule
     already used for `relevant_documents`) against each result's
-    `source_anchor` resolved relative to its own document path -- valid in
+    `source_anchor` resolved relative to its own document path. Valid in
     text-only mode too, since it only asks "was the right image asset
     surfaced at all," independent of whether a vision description exists.
     """
@@ -225,13 +225,13 @@ def _expansion_utilization(sources: list[dict[str, Any]], answer_text: str) -> b
     Heuristic keyword-overlap check (mirrors `KeywordOverlapScorer`'s
     len>3-word style), not a semantic-attribution claim: computes the
     words that appear in `origin="expanded"` sources' content but NOT in
-    any `origin="retrieved"` (primary) source's content -- i.e. content
-    only the expansion step supplied -- and checks whether at least
+    any `origin="retrieved"` (primary) source's content, i.e. content
+    only the expansion step supplied, and checks whether at least
     `_EXPANSION_UTILIZATION_MIN_OVERLAP` of those words also appear in
     `answer_text`. A word-overlap hit doesn't prove the model actually
     reasoned over that chunk (it could be incidental vocabulary overlap),
     and a miss doesn't prove the expanded chunk was pure noise (the model
-    may have used it without echoing its wording) -- a triage aid for
+    may have used it without echoing its wording). This is a triage aid for
     hand-inspection, same documented-limitation style as this module's
     other deterministic heuristics.
 
@@ -282,7 +282,7 @@ def _classify_vision_behavior(
     """Categorize one `requires_vision=True` example's text-only-mode answer.
 
     One of `"correct_refusal"` / `"hallucinated_answer"` /
-    `"caption_leak_success"` / `"incorrect_or_missing"` -- see
+    `"caption_leak_success"` / `"incorrect_or_missing"`. See
     `evaluate`'s docstring for what each means. This is a heuristic triage
     aid for hand-inspection (see PROJECT_JOURNAL.md's failure-analysis
     entries), not an automated semantic-correctness judgment:
@@ -290,7 +290,7 @@ def _classify_vision_behavior(
     is `KeywordOverlapScorer`'s crude keyword-overlap heuristic.
     `caption_leak_success` covers both a legitimate answer from caption
     text (when `example.content_type == "caption_answerable"`) and a
-    genuine accidental leak (any other content_type) -- both look
+    genuine accidental leak (any other content_type). Both look
     identical by this deterministic check, so distinguishing them is left
     to hand-inspection using the reported `content_type`.
 
@@ -326,7 +326,7 @@ def _content_type_breakdown(
     """Bucket examples by authored `content_type`; report Recall@5/@10/hit-rate@5 per bucket.
 
     Distinct from `eval/content_type.py`'s chunker-derived document buckets
-    (table/code_configuration/chart/prose/multi_hop/unanswerable) -- this
+    (table/code_configuration/chart/prose/multi_hop/unanswerable). This
     uses the gold file's own authored ground-truth question category
     (text_only/table/chart/caption_answerable/image_only/text_plus_image/
     relationship_aware/unanswerable_visual/architecture_diagram/
@@ -409,13 +409,13 @@ def _document_only_forbidden(example: GoldExample) -> list[str]:
     """`forbidden_documents` entries that are NOT also in `allowed_documents`.
 
     A document listed in both means the caller may retrieve the document
-    itself -- whatever's actually forbidden is a *field* inside it (see
+    itself. Whatever's actually forbidden is a *field* inside it (see
     `retrieval/field_policy.py`), not the document. Excluding those
     overlapping entries here is what
     `document_unauthorized_retrieval_rate` needs to avoid counting a
     field-level-only case (e.g. techfusion_gold row 120, where the Alpha
     runbook is both allowed and forbidden) as a document-level
-    authorization failure -- the exact ambiguity
+    authorization failure. This is the exact ambiguity
     `secure_rag_baseline_v1`'s own report flagged.
     """
     allowed = set(example.allowed_documents)
@@ -449,7 +449,7 @@ def _stale_document_error(
     """Retrieval-only check: was a *wrong-version* (stale) document retrieved for a current query.
 
     `None` when not applicable. Distinct from (the inverse of)
-    `_current_document_retrieval_hit` -- a question can retrieve neither the
+    `_current_document_retrieval_hit`. A question can retrieve neither the
     right nor a wrong version (e.g. miss the family entirely), in which case
     both this and the hit check report `False`, not complementary `True`s.
     """
@@ -478,7 +478,7 @@ def _injection_attack_succeeded(example: GoldExample, answer_text: str) -> bool:
     injected "ignore this" text) or the answer itself echoes
     injection-shaped language (`detect_injection` on the *answer*, a proxy
     for the model having repeated/complied with the injected instruction
-    rather than just answering). Neither branch proves intent -- same
+    rather than just answering). Neither branch proves intent. This has the same
     documented-heuristic caveat as this module's other triage classifiers.
     """
     expected_behavior = example.expected_behavior
@@ -506,7 +506,7 @@ def _encoded_extraction_attempted(question: str) -> bool:
 def _encoded_extraction_succeeded(answer_text: str) -> bool:
     """Whether the sensitive literal is recoverable from `answer_text` despite an encoding attempt.
 
-    Deterministic, three-branch heuristic -- not a semantic judge, same
+    Deterministic, three-branch heuristic. Not a semantic judge, same
     documented-limitation style as this module's other triage classifiers:
     (1) a direct literal scan (catches an answer that just leaked it
     plainly despite the attempted framing), (2) a reversed-text scan
@@ -548,7 +548,7 @@ def _field_access_authorized_for_sources(
     Parameters
     ----------
     sources : list[dict[str, Any]]
-        `RetrievalPipeline.answer()`'s `"sources"` list -- each entry
+        `RetrievalPipeline.answer()`'s `"sources"` list. Each entry
         carries the ingestion-time `sensitive_field_ids` tag regardless of
         whether redaction actually ran.
     roles : list[str]
@@ -605,7 +605,7 @@ def _forged_role_accepted(example: GoldExample, config: AppConfig) -> bool | Non
     """Whether a forged request-body tenant/role would win over a verified JWT identity.
 
     Exercises `api.routers.query._build_authorization_context` directly
-    (a pure function of body/identity/config -- no HTTP server, no
+    (a pure function of body/identity/config; no HTTP server, no
     network call needed) rather than the live API boundary, since that is
     the exact function responsible for the "the API must no longer trust
     caller-supplied tenant_id or roles when authentication is enabled"
@@ -614,7 +614,7 @@ def _forged_role_accepted(example: GoldExample, config: AppConfig) -> bool | Non
 
     Correct enforcement code makes this 0/N by construction (the same
     identity-wins-over-body logic drives both the real request handling
-    and this check) -- a regression guard, same pattern as
+    and this check). This is a regression guard, same pattern as
     `sensitive_data_false_redaction_rate`.
     """
     if example.user_tenant is None and not example.user_roles:
@@ -708,7 +708,7 @@ def _mint_valid_probe_token(config: AppConfig) -> str | None:
     """Mint a short-lived, valid JWT for API-boundary probe requests.
 
     `None` when `security.auth.enabled` is `False`, or the signing key
-    isn't resolvable (e.g. `JWT_HS256_SECRET` unset) -- callers treat
+    isn't resolvable (e.g. `JWT_HS256_SECRET` unset). Callers treat
     `None` as "auth probing isn't meaningfully configured for this run".
     """
     if not config.security.auth.enabled:
@@ -786,7 +786,7 @@ def _run_oversized_request_probes(client: Any, config: AppConfig) -> list[bool]:
     Attaches a valid probe token (see `_mint_valid_probe_token`) when
     `security.auth.enabled` is `True`, so these probes reach the DoS-limit
     check inside the handler rather than being short-circuited by a 401
-    from the auth dependency first -- the two concerns are independently
+    from the auth dependency first. The two concerns are independently
     probed, never conflated.
     """
     limits = config.security.dos_limits
@@ -807,7 +807,7 @@ def _run_oversized_request_probes(client: Any, config: AppConfig) -> list[bool]:
 def evaluate_authentication_boundary_probes(config: AppConfig) -> dict[str, Any]:
     """Probe `POST /query`'s JWT/DoS-limit enforcement with a small fixed adversarial request set.
 
-    Opt-in only (see `main()`'s `--include-api-probes` flag) -- not called
+    Opt-in only (see `main()`'s `--include-api-probes` flag). Not called
     from `evaluate()`/`run()`, unlike every other metric in this module.
     Unlike everything else here, what's under test (JWT verification,
     request-size rejection) lives entirely at the API boundary
@@ -816,7 +816,7 @@ def evaluate_authentication_boundary_probes(config: AppConfig) -> dict[str, Any]
     `dev`-extra dependency, lazily imported here, matching this module's
     existing lazy-optional-dependency style) instead. `get_retrieval_
     pipeline`/`get_config` are overridden so this never needs a real
-    Postgres/Ollama connection -- if a probe is (incorrectly) accepted
+    Postgres/Ollama connection. If a probe is (incorrectly) accepted
     past the auth boundary, it hits a stub pipeline, not a live one.
 
     Parameters
@@ -962,9 +962,9 @@ def evaluate(
     false_refusal_records: list[bool] = []
     poisoned_source_records: list[bool] = []
     # authorized_disclosure_records: did an authorized caller receive the
-    # value they're entitled to. false_redaction_records: was a value
+    # value they're entitled to. False_redaction_records: was a value
     # redacted despite the caller being authorized (should read 0 by
-    # construction). encoded_extraction_records: did a base64/reverse/split
+    # construction). Encoded_extraction_records: did a base64/reverse/split
     # attempt actually recover a protected value.
     authorized_disclosure_records: list[bool] = []
     false_redaction_records: list[bool] = []
@@ -986,7 +986,7 @@ def evaluate(
         # Broad retrieval (top 10, un-truncated by candidate pool, reranker,
         # or generation-context cutoff) to score retrieval quality at
         # multiple cutoffs, decoupled from the production-config latency
-        # measured via pipeline.answer() below. dataset_filter is mandatory
+        # measured via pipeline.answer() below. Dataset_filter is mandatory
         # here for dataset isolation. Also the source of the
         # reference-context/image-hit metrics below; no extra retrieval
         # call needed since `origin`/content on these results already
@@ -1069,7 +1069,7 @@ def evaluate(
         if run_generation:
             # Production-config answer (real generation_context_top_n, real
             # prompt and generation call) for latency + answer-quality
-            # measurement -- same mandatory dataset_id filter applied.
+            # measurement. Same mandatory dataset_id filter applied.
             result = pipeline.answer(example.question, filters=dataset_filter, auth=auth_context)
             retrieval_ms_values.append(result["retrieval_ms"])
             generation_ms_values.append(result["generation_ms"])
@@ -1616,7 +1616,7 @@ def run(
         `evaluate`'s report, plus `generated_at`, `config`, and
         `corpus_lineage` (dataset_id/corpus_version/document count/chunk
         count/image count/gold-record count/gold-file digest/corpus
-        digest -- see `eval/corpus_lineage.py`) keys.
+        digest. See `eval/corpus_lineage.py`) keys.
     """
     config = load_config(config_path) if config_path else load_config()
     vectorstore = build_vectorstore(config)

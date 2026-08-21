@@ -1,6 +1,6 @@
 """`POST /agent/query`: answer a question via the bounded agentic RAG workflow.
 
-A separate endpoint from `POST /query` (not a mode flag) -- see
+A separate endpoint from `POST /query` (not a mode flag). See
 `docs/architecture.md`'s "Agentic RAG" section for the tradeoff. Reuses,
 rather than reimplements, `/query`'s exact JWT-precedence and DoS-limit
 logic (`rag.api.request_auth`) and the same DI singletons

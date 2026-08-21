@@ -23,7 +23,7 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
     Also the one place HTTP-level observability lives: opens a root
     OpenTelemetry span per request (so agent-graph spans opened deeper in
     the call stack nest under it) and records
-    `rag_http_requests_total`/`rag_http_request_duration_seconds` -- this
+    `rag_http_requests_total`/`rag_http_request_duration_seconds`. This
     method already computes `duration_ms` and has `method`/route in
     scope, so it's the natural single place for both, rather than a
     second middleware duplicating the same bookkeeping.

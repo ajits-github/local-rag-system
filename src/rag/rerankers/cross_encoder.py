@@ -11,7 +11,7 @@ from rag.schemas import SearchResult
 class CrossEncoderReranker(Reranker):
     """Local reranker via sentence-transformers CrossEncoder.
 
-    Adds CPU latency per query — swap in via config when relevance
+    Adds CPU latency per query. Swap in via config when relevance
     matters more than speed.
     """
 

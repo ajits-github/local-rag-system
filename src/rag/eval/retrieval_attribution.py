@@ -32,7 +32,7 @@ from rag.eval.metrics import mean_hit_rate_at_k, mean_recall_at_k, mean_reciproc
 from rag.retrieval.pipeline import RetrievalPipeline
 from rag.schemas import SearchResult
 
-# Broad, fixed cutoff fetched per retriever -- matches run_eval.py's
+# Broad, fixed cutoff fetched per retriever. Matches run_eval.py's
 # RETRIEVAL_K, so dense/BM25/hybrid attribution and the production
 # Recall@10 measurement are all "at the target cutoff" in the same sense.
 RETRIEVAL_K = 10
@@ -110,10 +110,10 @@ def classify_rrf_impact(
     rank of the first relevant document within that ranking's
     `RETRIEVAL_K`-sized fetch, or `None` if not found there at all):
 
-    - ``"not_applicable"``: neither dense nor BM25 found it -- there is
+    - ``"not_applicable"``: neither dense nor BM25 found it. There is
       nothing for fusion to have rescued, improved, or degraded.
     - ``"rescued"``: exactly one of dense/BM25 missed it entirely, but the
-      fused ranking still found it -- fusion recovered evidence one
+      fused ranking still found it. Fusion recovered evidence one
       retriever alone would have missed at this cutoff.
     - ``"still_missed"``: exactly one of dense/BM25 missed it, and fusion
       missed it too.
@@ -212,8 +212,8 @@ def evaluate_attribution(
 
     Every retrieval call is restricted to `dataset_id` via a mandatory
     filter (same isolation guarantee as `run_eval.evaluate`). Uses
-    `RetrievalPipeline.retrieve_attribution` exclusively -- never
-    `retrieve()`/`answer()` -- so nothing here goes through the reranker
+    `RetrievalPipeline.retrieve_attribution` exclusively. Never
+    `retrieve()`/`answer()`. So nothing here goes through the reranker
     or relationship expansion.
 
     Parameters

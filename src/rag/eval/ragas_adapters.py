@@ -6,7 +6,7 @@ RAGAS's `LangchainLLMWrapper`/`LangchainEmbeddingsWrapper` need a
 thin adapters wrap this project's own `LLM`/`Embedder` ABCs directly.
 `langchain_core` is already an available dependency (transitively via
 `langchain`/`langchain-community`, used today by the recursive-character
-chunker) — nothing new is required for this module itself; only its
+chunker). Nothing new is required for this module itself; only its
 caller (`ragas_scorer.py`) needs the optional `ragas` extra.
 """
 
@@ -44,7 +44,7 @@ class LangchainLLMAdapter(LangchainLLMBase):
         """Delegate to `self.rag_llm.generate`; `stop`/`run_manager` are unsupported and ignored.
 
         RAGAS renders its own single, already-complete prompt string with
-        no system/user split of its own -- passed through as the `user`
+        no system/user split of its own. Passed through as the `user`
         turn with an empty `system`, matching every other `LLM.generate`
         caller's two-argument signature.
         """

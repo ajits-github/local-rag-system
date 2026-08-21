@@ -46,7 +46,7 @@ class OllamaLLM(LLM):
             Fixed sampling seed passed through to Ollama's `options.seed`
             for reproducible generation, by default `None` (omitted from
             `options` entirely, matching prior non-deterministic
-            behavior -- not passed as a literal `0`, which is itself a
+            behavior. Not passed as a literal `0`, which is itself a
             valid, distinct seed value).
         """
         self._client = ollama.Client(host=base_url)

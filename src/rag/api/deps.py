@@ -1,7 +1,7 @@
 """Builds pipeline objects once from config and shares them across requests.
 
 Every getter is `lru_cache`d with no arguments, so each is a process-wide
-singleton — important on an 8GB-RAM CPU-only box where we don't want two
+singleton. Important on an 8GB-RAM CPU-only box where we don't want two
 copies of the embedding model or two separate DB connection pools.
 """
 
