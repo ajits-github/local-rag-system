@@ -2099,3 +2099,420 @@ agent decision logic changed.
   auto-instrumentation version coupling -- consistent with this project's
   "no infrastructure without a demonstrated requirement" pattern (already
   applied to Redis, MCP, and LangGraph).
+
+## Layout-Aware Document Ingestion and Vision
+
+Extends ingestion beyond Markdown so PDF/DOCX source documents preserve
+real structure -- headings/sections, tables, code/config blocks, images,
+page numbers, and prose-image relationships -- instead of being flattened
+to plain concatenated text, and adds the first real (local, offline)
+`VisionProvider`. Deliberately does not redesign the established
+classic/agentic RAG architecture: every extracted structural element is
+serialized into the *same* Markdown-equivalent grammar `structured_
+markdown.py` already parses (see "Multimodal + Relationship-Aware
+Ingestion" above), rather than building a second, parallel element/chunk
+model that would need its own relationship-expansion, redaction, and
+authorization handling to stay consistent with the first.
+
+### Why serialize into existing syntax rather than a new element model
+
+The alternative design considered was a typed intermediate representation
+(`DocElement(kind, text, page, section_path, ...)`) produced by the
+loaders and consumed by a new layout-aware chunker. That was rejected
+because it would duplicate -- and risk silently diverging from --
+`structured_markdown.py`'s already-correct table/image/code/caption/
+relationship-expansion logic, and every downstream consumer of
+`ChunkSpan`/`ChunkMetadata` (the `Writer`, field-redaction, injection
+detection, relationship expansion, authorization) would need no changes
+at all under the chosen design, since a PDF/DOCX-derived `ChunkSpan` is
+byte-identical in shape to a Markdown-derived one.
+
+Concretely: `PDFLoader`/`DocxLoader` still implement the unchanged
+`Loader.load(path) -> RawDocument` interface, returning a single
+`content: str` -- just one built from headings (`#`/`##`), pipe tables,
+fenced code/config blocks, and `![alt](path)` image lines instead of
+being copied verbatim from the source file. `Chunker.split(text,
+source_type)`'s interface is also unchanged; `structured_markdown.py`'s
+gating changed from `source_type == "markdown"` to `source_type in
+{"markdown", "pdf", "docx"}`, and that is the *only* change to the
+chunker's own structural-parsing logic. The one genuinely new piece of
+syntax is a `<!--page:N-->` sentinel line: emitted once per PDF page or
+DOCX manual page break, parsed and stripped by `structured_markdown.
+split()` (never appearing in persisted chunk text), and used to set the
+new `ChunkSpan.page`/`ChunkMetadata.page: int | None` field on every span
+until the next marker. Markdown/text/HTML documents never emit this
+sentinel, so `page` stays `None` for them -- fully backward compatible.
+
+### PDF extraction: `pdfplumber`, a font-size heuristic, not a layout model
+
+`config.ingestion.layout_parsing.pdf_parser` (`Literal["pdfplumber"]`,
+the only implementation) is the declared swap point for a future parser;
+the choice was `pdfplumber` over PyMuPDF (dual AGPL-3.0/commercial
+license -- a real concern for a repo that may be shared or open-sourced)
+and over plain `pypdf` alone (no font-size/table/position signal at all).
+`pypdf` is still used, alongside `pdfplumber`, for document-info metadata
+(title/author, unchanged from before this milestone) and as the
+raw-embedded-image-byte source for the asset-extraction fallback path
+(`page.images[i].data`, much simpler than reconstructing bytes from
+pdfplumber's lower-level stream objects).
+
+`PDFLoader._render_page` builds three lists per page -- paragraph/heading/
+code groups (from `page.extract_words(extra_attrs=["size", "fontname"])`,
+excluding words inside a `page.find_tables()` bounding box), tables, and
+images -- and merges them by vertical (`top`) position into one reading-
+order sequence before rendering. Heading detection
+(`_group_paragraphs`) is a font-size-ratio heuristic, not a real layout
+model: a line whose dominant word size is `>= body_size *
+heading_font_size_ratio` (default 1.15) and short enough
+(`max_heading_words`, default 12) becomes a heading; a second, higher
+ratio tier (`title_font_size_ratio`, default 1.8) distinguishes a
+document title (`#`) from a section heading (`##`) -- anything
+structurally deeper collapses to `##`, so a PDF's `section_path` is at
+most two levels deep even where the source visually nests further. Both
+ratios were calibrated against the real 8-document eval corpus (body text
+~10.5pt, section headings ~16pt, the document title ~23pt -- comfortably
+separated by the default thresholds) and are configurable per-deployment
+if a different corpus's typography doesn't fit.
+
+Code/config detection reuses the same per-word `fontname` signal: a line
+whose words are entirely a monospace family (Courier/Consolas/Lucida
+Console/Monaco/Menlo, after stripping a PDF subset-tag prefix like
+`ABCDEF+Courier-Bold`) is grouped into a fenced block instead of prose.
+`loaders/markdown_render.py`'s `sniff_code_language` then does a light,
+honest shape-guess (starts with `{`/`[` -> `json`; starts with `<` ->
+`xml`; a majority of lines matching `key: value` -> `yaml`; otherwise no
+language tag at all, rendering as a plain untagged `code` fence rather
+than falsely claiming `configuration`). This is a real, measured
+improvement over the milestone's first working version: a PDF's inline
+`retry_lock_ttl_seconds: 600` / `ocr_timeout_seconds: 90` block
+originally fell into a nearby image's caption paragraph (both were
+"large, black-ish text that isn't a heading") until the monospace-font
+check was added to separate them, at which point the same content
+correctly became its own `content_type="configuration"`,
+`code_language="yaml"` chunk (verified against the real corpus, not just
+asserted).
+
+Image captions ("Figure 1. ...") are detected as the paragraph
+immediately following an image (matched against a
+`^(figure|table)\s+\d+[.:)]` pattern) and folded into the same span,
+mirroring the exact caption-lookahead convention `structured_markdown.py`
+already established for Markdown chart fences and images (`_peek_caption`,
+requiring the caption to be wholly emphasis-wrapped -- PDF captions,
+which are plain text, are wrapped in `*...*` at render time specifically
+so this pre-existing detection logic recognizes them without any change).
+
+### DOCX extraction: a linear body walk, not a geometry problem
+
+Unlike a PDF, a `.docx` body (`document.element.body`'s children) is
+already an ordered, flat sequence of paragraphs and tables -- no reading-
+order reconstruction is needed, only a single linear walk
+(`DocxLoader._render_body`). Three structural signals come from the raw
+OOXML tree rather than `python-docx`'s higher-level, paragraph-text-only
+API:
+
+- **Page numbers**: an explicit manual page break
+  (`<w:br w:type="page"/>`) is the *only* reliable page signal
+  `python-docx` exposes. Word's own reflow-based pagination is not
+  computable without a rendering engine, so this was checked directly
+  against the real corpus's DOCX XML (confirmed: each of the four DOCX
+  eval documents has exactly two manual `w:br type="page"` elements,
+  producing three pages each, matching the gold file's authored
+  `relevant_pages` values) rather than assumed. A DOCX with no manual
+  page breaks stays `page=1` throughout its whole content -- an honest,
+  documented limitation, never a silently wrong guess.
+- **Inline images**: found via `.//a:blip` on each paragraph's XML (the
+  standard OOXML image-reference element), with the relationship id
+  resolved to raw bytes through `document.part.related_parts[rId].blob`.
+- **Code/config blocks**: no dedicated Word paragraph style is used
+  anywhere in this project's corpus (a `kubectl ...` command sits in a
+  plain "Normal"-styled paragraph, distinguishable only by its run-level
+  `Consolas` font), so detection is by `_is_monospace_paragraph` (every
+  non-empty run's font name in the same monospace set PDF uses) rather
+  than `paragraph.style.name`. A multi-line config block authored as one
+  paragraph with manual `<w:br/>` line breaks is preserved correctly:
+  `python-docx`'s `Paragraph.text` already translates `<w:br/>` to `\n`.
+
+Heading detection is by paragraph style name (`_heading_marker`):
+`"Title"` -> `#`, any `"Heading N"` -> `##` (the same two-tier collapse
+as PDF, for the same reason -- consistency between the two loaders'
+`section_path` depth).
+
+### Image-asset resolution: a shared-folder bug found by integration testing
+
+`loaders/base.py`'s `resolve_image_asset(document_path, image_index,
+image_bytes_factory)` is the one helper both loaders call for every
+embedded image, in document order. It prefers an existing sibling
+`assets/` folder next to the source document -- this project's
+evaluation-corpus convention for pre-supplied figures -- over extracting
+and writing the image's own bytes.
+
+The first working version paired images purely positionally: the Nth
+embedded image (document order) resolved to the Nth file (sorted) in the
+sibling `assets/` folder. This is correct when a folder holds exactly one
+document's images, but three of the eight real corpus documents
+(`api-performance-brief.pdf`, `incident-084-visual-review.pdf`,
+`ingestion-capacity-analysis.docx`) all live in the `operations/` category
+and share *one* `operations/assets/` folder holding all three documents'
+images together (6 files). Under pure positional pairing, all three
+documents independently asked for "the 0th and 1st sorted file in this
+folder" and all three got the *first* document's two images -- silently
+wrong for two of the three, caught only by manually comparing every
+resolved `source_anchor` against the gold file's `relevant_images` field
+for all 9 images across the real corpus, not by any unit test run
+against a single-document fixture.
+
+The fix, `_matching_assets`: narrow a shared folder's candidates to the
+ones whose own filename shares a non-stopword word with the source
+document's filename (e.g. `ingestion-capacity-analysis.docx` and
+`capacity-view-01.png` share `"capacity"`), falling back to every
+candidate in the folder, in sorted order, when no word matches at all --
+the common single-document-per-folder case, and the honest degrade for a
+future document whose asset-naming convention this heuristic doesn't
+recognize (better than resolving zero images). A small stopword list
+(`view`, `figure`, `fig`, `image`, `review`, `report`, `guide`,
+`analysis`, `brief`, `notes`) excludes generic suffix words that would
+otherwise cause false cross-document matches. This was deliberately not
+solved by reverse-engineering the exact per-document naming rule (no
+single positional/suffix rule was found to hold across all 8 real
+filenames -- checked directly, not assumed) since a hardcoded lookup
+table would only ever work for this one fixed corpus.
+
+When no `assets/` folder exists at all (the general case for a future
+PDF/DOCX with no pre-supplied figures), `resolve_image_asset` extracts
+the image's own bytes via the caller-supplied factory and writes
+`<document-stem>-figure-{n:02d}<ext>` into a newly created `assets/`
+folder. This write happens on every ingestion of the document (the
+checksum-unchanged short-circuit in `IngestionPipeline.ingest_file` runs
+*after* `Loader.load()`), but is idempotent by construction: the same
+index always resolves to the same deterministic filename with the same
+bytes, just re-written.
+
+### A second, more serious bug: the `page` column was silently dropped
+
+The `page` field was added correctly at every layer up through
+`ChunkMetadata` -- `ChunkSpan.page` (chunker), `Writer.write` copying
+`span.page` onto `ChunkMetadata` -- but `PgVectorStore.add_chunks`'s
+`INSERT` column list and the single shared `_METADATA_COLUMNS`/
+`_row_to_metadata` SELECT-and-deserialize path (reused by every read
+method: `search`, `search_keyword`, `get_chunks_by_ids`,
+`get_chunks_by_source`, `get_chunks_by_section`) never had `page` added
+to either. The column silently persisted as `NULL` for every chunk on
+every write, and every read returned `page=None` regardless of what the
+in-memory `ChunkMetadata` object actually held -- no exception anywhere,
+since psycopg2 binds INSERT values positionally and a short column list
+just omits the last value rather than erroring.
+
+This was only caught because the milestone's own new deterministic
+metric, `page_localization_accuracy`, was run against a real ingested
+corpus through real Postgres rather than only against in-memory fakes: it
+read a flat `0.0` across all 28 gold questions despite `recall@10` at
+93%, which is the signature of "the document is found, but a specific
+per-chunk field always reads as unset." Fixed by adding `page` to all
+three of `_METADATA_COLUMNS`, `_row_to_metadata`'s unpacking, and
+`add_chunks`'s column list/row tuple/`ON CONFLICT DO UPDATE SET` clause.
+After the fix and a forced re-ingestion, `page_localization_accuracy`
+read `0.82`, with every other metric unchanged, confirming the bug was
+isolated to this one column. See `ISSUES.md` for the full writeup --
+included here as a concrete illustration of why this milestone's own
+manual smoke-testing step (ingesting the real corpus, not just
+constructing `ChunkSpan`/`ChunkMetadata` objects in a test) was load-
+bearing, not a formality.
+
+### Vision: `OllamaVisionProvider`, a local model, and a real cache-key gap
+
+`vision/ollama_vision.py`'s `OllamaVisionProvider` is the first concrete
+`VisionProvider` subclass in this codebase's history (`config.vision.
+provider: "none" | "ollama"`, `"none"` stays the default no-op). It calls
+Ollama's `chat()` endpoint with the image's raw bytes in the message's
+`images` field (default model `moondream`, chosen over `llava:7b` for
+this project's CPU-only 8GB-RAM development box -- `moondream` is ~1.7GB
+versus `llava:7b`'s ~4.7GB, and the model must be pulled by the operator,
+`ollama pull moondream`, never installed automatically). It reuses
+`config.ollama_base_url()`, the same native-host Ollama server `OllamaLLM`
+already talks to for generation -- vision and generation are the same
+trust domain and the same offline server, just different models, so no
+`security.egress_policy` gate applies to this provider at all (that gate
+exists specifically for the one confirmed hosted-egress point in this
+codebase, RAGAS's judge LLM -- see "Authenticated API Boundary" above --
+and a local Ollama call is not hosted egress).
+
+Implementing a second real provider surfaced a real, pre-existing gap in
+the vision-scaffolding milestone's cache design:
+`image_description_cache`'s primary key was `image_checksum` alone, with
+`provider`/`model_name` stored as plain columns but never part of the
+lookup. Switching provider or model would have silently served a
+description generated by a *different* model under different
+instructions, with no error and no visible signal. `VisionProvider`
+gained an abstract `prompt_version: str` property (every concrete
+subclass must declare it; `OllamaVisionProvider`'s default tracks its own
+`_PROMPT` constant's actual wording) so the cache key could be widened to
+a full `(image_checksum, provider, model_name, prompt_version)` tuple --
+`scripts/init_db.py` migrates this idempotently (`ADD COLUMN IF NOT
+EXISTS prompt_version`, then a `DO $$ ... DROP CONSTRAINT ... ADD
+CONSTRAINT ...` block matching the same pattern already used for the
+`documents.source` -> `(source, dataset_id)` uniqueness migration), and
+`PgVectorStore.get_cached_image_description`/`cache_image_description`
+both take the three identity fields explicitly rather than relying on
+checksum alone. `Writer._with_vision_siblings` times each real (cache-
+miss) `describe_image` call and accumulates `Writer.vision_stats`
+(`schemas.VisionCallStats`: images processed, cache hits/misses, total
+latency) -- surfaced through `IngestionStats.vision_stats` for the
+ingestion CLI to print, deliberately kept as an ingestion-time concern
+separate from `eval/run_eval.py`'s retrieval/generation-time report.
+
+`OllamaVisionProvider` is unit-tested against a mocked `ollama.Client`
+only (the same class-boundary-mocking convention `OllamaLLM`'s own tests
+already use) -- `moondream` has never actually been pulled or exercised
+against a real image anywhere in this codebase's history. Confirming it
+end-to-end against a real image, and running the controlled A (text-only)
+vs. B (layout-aware, no vision) vs. C (layout-aware + vision) comparison
+this milestone's instructions explicitly deferred, is a separate,
+not-yet-run follow-up.
+
+### Agent `content_type` filtering: bounded, not a free-text field
+
+`SearchKnowledgeBaseArgs` (`agent/tool_schemas.py`) gained an optional
+`content_type: Literal["prose", "table", "code", "configuration",
+"image", "chart"] | None` field -- the exact same closed set of values
+`ChunkMetadata.content_type` can actually hold, not a free string the LLM
+could use to try naming an arbitrary column. `tools.search_knowledge_base`
+merges it into the caller-supplied (server-controlled) `filters` dict
+only when set, and that dict is already validated against `VectorStore.
+ALLOWED_FILTER_FIELDS` before any SQL is built -- exactly the same
+mechanism `dataset_id`/`category`/every other filter already goes
+through. The LLM can select *which* allowed value to filter by; it can
+never add, remove, or override any other key the caller's `filters`
+already carries (e.g. `dataset_id`, the hard tenant-namespace boundary).
+`agent_tool_select_v2.yaml` (new; `v1` stays on disk unused, per this
+project's established prompt-versioning convention -- never overwritten)
+describes the new argument to the model; `config.agent.
+tool_select_prompt_path` now points at `v2` in `config/default.yaml`.
+
+### API metadata: additive, no new sensitive surface
+
+`api.routers.query.SourceItem` and `agent.state.Citation` (which already
+mirrored each other's shape) both gained `content_type`/`section_path`/
+`page`/`attachment_name`/`source_anchor`/`vision_generated`. All six are
+already-computed, non-sensitive structural metadata that was, in five of
+the six cases, already present in `retrieval/pipeline.py:source_dict()`'s
+internal dict (used by `answer()`'s `sources` and by
+`eval`/`run_ragas_eval.py`) but simply never surfaced through the public
+response models; `page` was the one field genuinely missing from
+`source_dict()` itself, added alongside the others. `source`/
+`attachment_name`/`source_anchor` are the same relative, dataset-root-
+scoped paths already exposed before this milestone -- never an absolute
+local filesystem path. `retrieval/pipeline.py:source_label()` (the
+`[Source N: ...]` provenance string rendered into the generation LLM's
+own prompt context) now includes `page N` when set, so a model answering
+from a PDF/DOCX chunk can cite a page number in its answer text, not just
+in the API's structured `sources` list.
+
+### New deterministic metrics (`eval/run_eval.py`'s `layout_vision` section)
+
+All computed from the same broad top-10 `retrieve()` call `run_eval.py`
+already makes for Recall@10/Hit-Rate/MRR -- no extra retrieval or
+generation calls, matching every prior milestone's metric-addition
+pattern:
+
+- **`table_retrieval_hit_rate`** / **`visual_retrieval_hit_rate`**: among
+  gold examples whose `expected_content_types` (or, for the visual
+  metric, `requires_vision`) calls for a table/image/chart, whether a
+  retrieved chunk from a `relevant_documents`-matching source actually
+  has that `content_type` -- not just "was the right document found,"
+  but "was the right *kind of element within it* surfaced."
+- **`page_localization_accuracy`**: among gold examples with a non-empty
+  `relevant_pages`, whether a retrieved chunk from a matching source also
+  has `ChunkMetadata.page` in `relevant_pages`. Markdown/text/HTML
+  chunks (`page=None`) never contribute a hit, so this metric only has
+  signal for PDF/DOCX evidence, by construction.
+- **`section_localization_accuracy`**: substring match (`gold_section in
+  section_path`), not exact equality -- a short authored gold label like
+  `"Review Purpose"` is expected to match a full derived breadcrumb like
+  `"DocuFlow Processing Architecture Review > 1. Review Purpose"`. A
+  documented heuristic, not a semantic-similarity claim, mirroring
+  `reference_context_is_supported`'s substring-match precedent from the
+  multimodal-ingestion milestone.
+- **`visual_evidence_support_rate`**: among `requires_vision=true`
+  examples, whether a retrieved chunk from a matching source has
+  `vision_generated=true` -- distinct from `visual_retrieval_hit_rate`,
+  which only checks that *some* image/chart element was surfaced. Reads
+  `0.0` by construction whenever `config.vision.provider="none"` (no
+  chunk can ever have `vision_generated=True`), which is the intended
+  behavior: this is exactly the metric the later A/B/C comparison is
+  meant to isolate on, to separate "layout preservation helped" from
+  "vision understanding helped."
+- **`multimodal_answer_quality`** (generation runs only): the existing
+  `answer_quality` (`KeywordOverlapScorer` against `expected_answer`)
+  restricted to the `requires_vision`/`requires_layout_awareness`/
+  `requires_relationship_expansion` subset of examples, as a separate
+  figure from the top-level `answer_quality`, which spans every example
+  including plain-text ones.
+
+`GoldExample` (`eval/gold_schema.py`) gained the fixed gold file's new
+fields as additive-optional (`requires_layout_awareness`,
+`expected_content_types`, `relevant_pages: list[int]`,
+`visual_question_type`, `evidence_mode`, `source_format`) -- the same
+"old gold files keep parsing unchanged" pattern every prior gold-schema
+extension used; no field on `GoldExample` is required beyond `question`.
+
+### MLflow: closing a param that was already computed but never logged
+
+`scripts/record_experiment.py`'s `build_experiment_record` gained
+`layout_parser`, `vision_model`, `vision_prompt_version` (the latter two
+`None` whenever `vision.provider != "ollama"`) and the six `layout_vision`
+report metrics, flattened the same way every other report section already
+is. `eval/mlflow_logger.py`'s `_PARAM_FIELDS`/`_METRIC_FIELDS` lists
+gained the matching entries -- and, while doing so, a second small
+pre-existing gap was found and closed: `vision_provider` was already
+being computed into every experiment record by `build_experiment_record`
+(added during the multimodal-ingestion milestone, predating this one) but
+had never actually been added to `mlflow_logger.py`'s loggable-fields
+list, so it was silently never logged as an MLflow param on any run to
+date. Both gaps are closed together, not treated as separate follow-ups.
+
+### Fixed evaluation corpus and a directory-nesting mismatch
+
+`data/eval/techfusion_layout_vision_extension_gold.jsonl` (28 questions,
+fixed, immutable per this milestone's instructions -- never modified to
+accommodate the implementation) references its 8 new PDF/DOCX + 1
+Markdown source documents, and their pre-supplied image assets, under
+`data/knowledge_base/layout_vision_extension/<category>/`. On first
+inspection, the actual files sat flat under the existing category folders
+(`architecture/`, `operations/`, etc.), not nested -- the exact same
+directory-layout-mismatch failure mode already documented for
+`security_evaluation/` in the safety/freshness milestone (see
+"Authorization, Freshness, and Trust" above): `path_matching.
+source_matches_relevant`'s trailing-segment matching would have silently
+failed every one of this gold file's 28 `relevant_documents` checks had
+the mismatch gone uncorrected, reading as a retrieval-quality regression
+rather than what it actually was. Confirmed via `grep` that all 9 new
+files (8 documents + their asset folders) are referenced by no other gold
+file under their old, flat path before moving them, so no other gold
+set's path-suffix matching was affected by the move.
+
+### Known limitations (deliberate, not hidden)
+
+- No controlled A/B/C evaluation or RAGAS run has been performed as part
+  of this milestone -- explicitly deferred to a separate session by the
+  milestone's own instructions, so no new baseline is established or
+  named here.
+- `moondream` has never been pulled or exercised against a real image;
+  `OllamaVisionProvider` is verified only against a mocked `ollama.
+  Client`. Real-image description quality, latency, and failure modes
+  (e.g. a corrupt/unsupported image file) are unverified.
+- PDF heading detection is a font-size-ratio heuristic collapsed to two
+  levels (title/section); a PDF with genuinely deeper visual heading
+  nesting (H3+) will have all of it flattened into `##`-level
+  `section_path` segments, same limitation as `structured_markdown.py`'s
+  pre-existing Markdown heading handling has never needed to solve either
+  (Markdown headings map 1:1 to `#`-count, so this is a PDF-specific
+  simplification, not a regression from Markdown's behavior).
+- DOCX page numbers require explicit manual page breaks in the source
+  document; a DOCX relying purely on Word's reflow pagination reports
+  `page=1` for its entire content -- a real, documented gap, not silently
+  guessed at.
+- The PDF/pdfplumber-to-pypdf image-index correspondence
+  (`_pypdf_page_images`) assumes both libraries enumerate a page's
+  embedded images in the same stream order -- true for the real corpus's
+  simple, single-column documents (verified directly), not a guarantee
+  for an arbitrarily complex PDF with overlapping or z-ordered images.

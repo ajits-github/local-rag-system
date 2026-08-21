@@ -97,6 +97,9 @@ The details live in [`docs/architecture.md`](docs/architecture.md)'s
   serving with `ollama list` (or `curl http://localhost:11434/api/version`).
   If it's installed but not on your PATH, invoke it by its full path (e.g.
   on Windows: `C:\Users\<you>\AppData\Local\Programs\Ollama\ollama.exe`).
+  Optional: pull `moondream` (`ollama pull moondream`) only if you plan to
+  set `vision.provider: ollama` in config -- the default `vision.provider:
+  none` needs no extra model.
 - **`make`**: optional shortcut for `up`/`ingest`/`query`/`test`.
   **Not installed by default on Windows** (neither Git Bash nor PowerShell
   ship it). Install it via `choco install make`, `scoop install make`, or
@@ -346,6 +349,9 @@ regenerate it instead (see "Recording a new experiment").
 | 26 | secure_rag_baseline_v1 | hybrid | qwen2.5:3b | all-MiniLM-L6-v2 | none | v3 | on | 0.788 | 0.832 | 0.865 | 0.753 | 0.390 | 0.781 | 0.842 | - | - | 28.5s | techfusion | 2026-08-14 |
 | 27 | secure_rag_baseline_v1_field_redaction | hybrid | qwen2.5:3b | all-MiniLM-L6-v2 | none | v3 | on | 0.788 | 0.832 | 0.865 | 0.753 | 0.405 | 0.781 | 0.842 | - | - | 21.7s | techfusion | 2026-08-15 |
 | 28 | secure_rag_baseline_v2_jwt_auth | hybrid | qwen2.5:3b | all-MiniLM-L6-v2 | none | v3 | on | 0.788 | 0.832 | 0.865 | 0.753 | 0.420 | 0.781 | 0.842 | - | - | 20.6s | techfusion | 2026-08-15 |
+| 29 | layout_vision_a_text_only | hybrid | qwen2.5:3b | all-MiniLM-L6-v2 | none | v2 | on | 0.946 | 1.000 | 1.000 | 0.896 | 0.264 | 0.938 | 0.000 | - | - | 7.9s | layout_vision_text_baseline | 2026-08-21 |
+| 30 | layout_vision_b_structured | hybrid | qwen2.5:3b | all-MiniLM-L6-v2 | none | v2 | on | 1.000 | 1.000 | 1.000 | 0.936 | 0.310 | 0.938 | 0.958 | - | - | 8.8s | layout_vision_structured | 2026-08-21 |
+| 31 | layout_vision_c_vision | hybrid | qwen2.5:3b | all-MiniLM-L6-v2 | none | v2 | on | 1.000 | 1.000 | 1.000 | 0.948 | 0.298 | 0.938 | 0.958 | - | - | 6.8s | layout_vision_structured_vision | 2026-08-21 |
 <!-- EXPERIMENTS_TABLE_END -->
 
 *Total latency is the mean retrieval plus generation time per question.
@@ -501,3 +507,19 @@ Done, not deferred: **Observability** (OpenTelemetry tracing, Prometheus
 metrics, a Grafana dashboard, and a live-progress SSE stream) shipped in
 the observability milestone. See the [Observability](#observability)
 section above and `docs/architecture.md`'s "Observability" section.
+
+Also done: **layout-aware PDF/DOCX ingestion** (headings, tables,
+code/config blocks, images, page numbers via `pdfplumber`) and a real
+local vision provider (`vision.provider: ollama`, default model
+`moondream`) -- see `CLAUDE.md`'s "Layout-aware document ingestion and
+vision" section and `docs/architecture.md`'s matching section. The
+controlled text-only vs. layout-aware-no-vision vs.
+layout-aware-with-vision comparison (Benchmarks rows 29-31 above) is now
+done too -- layout preservation alone (A -> B) was a clear, broad win
+(Recall@5 0.946 -> 1.000, page/section localization 0.0 -> ~0.93-0.96);
+adding moondream vision (B -> C) improved MRR slightly and correctly
+reduced hallucinations on unanswerable-visual questions, but did not
+improve answer quality on answerable vision-required questions -- see
+`PROJECT_JOURNAL.md`'s 2026-08-21 evaluation entry and `ISSUES.md` for
+the full breakdown and the concrete moondream-captioning-quality finding
+behind it.
