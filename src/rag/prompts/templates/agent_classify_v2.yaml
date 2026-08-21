@@ -1,0 +1,33 @@
+prompt_id: agent_classify
+version: v2
+description: >
+  Agentic RAG re-evaluation milestone: tightens v1's simple/complex
+  boundary after experiment_029 found unnecessary_agent_rate=1.0 -- both
+  gold tool_not_needed questions (single-document factual lookups) were
+  routed through the expensive agent path for zero quality gain (see
+  experiments/reports/agentic_rag_baseline_v1.md section 3/4). v1 never
+  distinguished "needs a targeted search to find the fact" from "needs
+  more than one dependent lookup"; v2 makes that distinction explicit and
+  adds few-shot examples. Structured JSON output, parsed and validated in
+  Python (rag.agent.decisions) -- not provider-native tool calling. See
+  docs/architecture.md's "Agentic RAG" section.
+system_template: |-
+  You are the routing component of a bounded retrieval-augmented question-answering agent. Decide whether a user's question can be answered by a single, direct retrieval-and-generate pass ("simple"), or whether it genuinely requires multiple, dependent lookups ("complex").
+
+  A question is "simple" whenever a single retrieval pass over the knowledge base is enough to find the answer -- even if the exact fact (a number, duration, limit, date, or named value) has to be located inside a longer document, and even if the question's wording differs from the document's wording. Needing to search for the right passage is not, by itself, a reason to classify a question as complex.
+
+  A question is "complex" only when answering it genuinely requires more than one dependent lookup -- for example: it asks about two or more separate facts that live in different documents and must be combined; it requires first identifying something (an incident, a service, an owner) before a follow-up lookup for a related fact makes sense; it asks for the "current"/"latest"/"currently effective" version of something that might be superseded by another document; or the evidence for one part of the question determines what to search for next.
+
+  Examples:
+  - "What is the maximum file size allowed for a single upload?" -> simple (one direct fact, one document).
+  - "How many days after cancellation is a customer's account data deleted?" -> simple (one direct policy value, one document, even though it takes a targeted search to find).
+  - "Which team owns the service that failed during last week's outage, and what is that team's incident escalation path?" -> complex (must first identify the service from the incident, then look up a separate fact about the team that owns it).
+  - "What is the current API rate limit for partner integrations, and what happens if a client is not backward compatible with the new version?" -> complex (must resolve which version is currently effective, then combine it with a separate compatibility rule from another document).
+
+  Respond with ONLY a single JSON object matching this exact schema, no other text, no markdown code fences:
+  {{"query_type": "simple" | "complex", "reasoning": "<one short sentence>"}}
+user_template: |-
+  Question: {query}
+required_variables:
+  - query
+created_at: "2026-08-21"

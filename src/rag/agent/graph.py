@@ -1,27 +1,27 @@
 """Hand-rolled, explicitly-bounded agent graph driver.
 
-Deliberately not LangGraph -- see `docs/architecture.md`'s "Agentic RAG"
-section for the full rationale and the explicit, written threshold for
-reconsidering that decision. The graph is a plain Python `while` loop over
-node functions, each taking/returning an `AgentState`, with three
+Deliberately not LangGraph. See `docs/architecture.md`'s "Agentic RAG"
+section for the full rationale and the threshold for reconsidering that
+decision. The graph is a plain Python `while` loop over node functions,
+each taking/returning an `AgentState`, with three
 independent, plainly-inspectable integer bounds
 (`max_agent_steps`/`max_retrieval_attempts`/`max_tool_calls`) rather than
 one blended framework `recursion_limit`.
 
-    START -> classify_query -> simple? --yes--> classic_rag -> final
-                             --no--> decompose -> select_tool -> execute_tool
+    START -> classify_query -> simple? yes -> classic_rag -> final
+                             no -> decompose -> select_tool -> execute_tool
                                         -> evaluate_evidence
-                                           -- sufficient --> synthesize -> final
-                                           -- insufficient (bounded) --> reformulate
+                                           sufficient -> synthesize -> final
+                                           insufficient (bounded) -> reformulate
                                                                           -> select_tool (loop)
 
 Every tool call's evidence passes through `RetrievalPipeline.sanitize_evidence`
-before it is appended to state -- applied uniformly here, in
+before it is appended to state. This is applied uniformly here, in
 `_execute_tool`, regardless of which tool produced it, so no tool can
 bypass field redaction/injection detection by construction.
 
 Observability (node timing, OpenTelemetry spans, Prometheus metrics, and
-safe live-progress events -- see `docs/architecture.md`'s "Observability"
+safe live-progress events; see `docs/architecture.md`'s "Observability"
 section) is added by wrapping existing node calls, not by changing any
 node function's internal decision logic. `_TimingLLM` and `_call_node`
 are the two pieces that do this centrally: every node call in `run_agent`
@@ -107,7 +107,7 @@ class AgentRunResult(BaseModel):
     own breakdown) on the `"classic_rag"` route. On the `"agent"` route
     they are an approximation kept for backward compatibility:
     `retrieval_ms` sums every tool call's own latency, and `generation_ms`
-    is everything else added together -- every LLM decision call
+    is everything else added together: every LLM decision call
     (classify/decompose/select_tool/evaluate_evidence/synthesize)
     collapsed into one number, since they all go through the same `LLM`
     instance. This is *not* a single generation call's duration; for a
@@ -121,13 +121,22 @@ class AgentRunResult(BaseModel):
         Per-node-type aggregate timing (`classify`/`decompose`/
         `tool_select`/`tool_execute`/`evidence_sufficiency`/`synthesize`),
         empty on the `"classic_rag"` route (that route has no per-node
-        structure -- see `pipeline.answer()`'s own `latency_breakdown_ms`
+        structure; see `pipeline.answer()`'s own `latency_breakdown_ms`
         instead).
     llm_call_count : int
         Total `LLM.generate()` calls made this run (including JSON-parse
         retries). `1` on the `"classic_rag"` route.
     node_token_usage : dict[str, dict[str, int]]
         Per-node-type `{"prompt": int, "completion": int}` token totals.
+    classic_sources : list[dict[str, Any]]
+        `pipeline.answer()`'s raw `source_dict`-shaped `"sources"` list,
+        populated only on the `"classic_rag"` route (empty on `"agent"`,
+        where the same content already lives in
+        `state.retrieved_evidence`). `state.citations` alone can't stand
+        in for this: it's a lossy `Citation` (id/source/category/score),
+        with no `content` field, so a caller needing the actual retrieved
+        text for the classic route (e.g. RAGAS context-building) needs
+        this instead of re-deriving it from citations.
     """
 
     state: AgentState
@@ -138,12 +147,13 @@ class AgentRunResult(BaseModel):
     node_timings_ms: dict[str, NodeTimingStats] = Field(default_factory=dict)
     llm_call_count: int = 0
     node_token_usage: dict[str, dict[str, int]] = Field(default_factory=dict)
+    classic_sources: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class _TimingLLM(LLM):
     """Wraps an `LLM`, accumulating wall-clock time spent in `generate()`.
 
-    Never changes what's generated -- every call is forwarded to the
+    Never changes what's generated. Every call is forwarded to the
     wrapped instance unchanged, including retries (`run_decision` may
     call `generate()` more than once per node invocation; `total_llm_ms`
     accumulates across all of them so retries are never undercounted, the
@@ -329,7 +339,7 @@ def _emit_event(
 ) -> None:
     """Emit one safe live-progress event, if a sink is set.
 
-    Never raises -- a broken consumer callback can never crash the run.
+    Never raises. A broken consumer callback can never crash the run.
     Carries only bounded, already-safe metadata (see `AgentEvent`'s own
     docstring); never chain-of-thought, raw prompts, retrieved content,
     or credentials.
@@ -353,15 +363,33 @@ def _emit_event(
         logger.warning("on_event callback raised; continuing", exc_info=True)
 
 
-def _step_or_stop(state: AgentState, agent_cfg: AgentConfig) -> bool:
-    """Increment `step_count` after a node ran; return True if the run must stop now."""
+def _increment_step(state: AgentState) -> None:
+    """Count one graph-node execution toward `max_agent_steps`."""
     state.step_count += 1
+
+
+def _check_step_bound(state: AgentState, agent_cfg: AgentConfig) -> bool:
+    """Return True and label `max_steps` (if not already labeled) once the step ceiling is hit.
+
+    Does not increment `step_count`. Callers must call `_increment_step`
+    first. Split from step-incrementing so a terminal condition reached on
+    the very last allowed step (e.g. `evidence_sufficient=True`) can be
+    checked *before* this bound-driven label is applied; see the
+    `evidence_sufficiency` call site in `run_agent`'s loop, the one place
+    this ordering matters.
+    """
     if state.step_count >= agent_cfg.max_agent_steps:
         if state.termination_reason is None:
             state.termination_reason = "max_steps"
             log_audit_event("agent_max_steps_reached", steps=state.step_count)
         return True
     return False
+
+
+def _step_or_stop(state: AgentState, agent_cfg: AgentConfig) -> bool:
+    """Increment `step_count` after a node ran; return True if the run must stop now."""
+    _increment_step(state)
+    return _check_step_bound(state, agent_cfg)
 
 
 def _classify_query(
@@ -418,7 +446,7 @@ def _dispatch_tool(
     """Call the matching `rag.agent.tools` function and wrap its output as `SearchResult`s.
 
     `search_knowledge_base`'s `top_k` is clamped to `agent_cfg.max_tool_top_k`
-    here -- belt-and-suspenders on top of `SearchKnowledgeBaseArgs`'s own
+    here, as belt-and-suspenders on top of `SearchKnowledgeBaseArgs`'s own
     `Field(le=...)` bound, so a config change (not just the schema
     literal) is always the true final ceiling.
     """
@@ -474,8 +502,8 @@ def _execute_tool(
     """`execute_tool` node: validate arguments, dispatch, sanitize, and record the outcome.
 
     Every tool's output passes through `RetrievalPipeline.sanitize_evidence`
-    here -- the single, universal sanitization point (see module
-    docstring) -- before being appended to `state.retrieved_evidence`. A
+    here, the single, universal sanitization point (see module
+    docstring), before being appended to `state.retrieved_evidence`. A
     validation failure or any tool-execution error is recorded as a
     failed `ToolCallRecord` and returned safely; it never propagates and
     never crashes the request.
@@ -588,9 +616,34 @@ def _evaluate_evidence(
     return state
 
 
+def _order_evidence_for_synthesis(evidence: list[SearchResult]) -> list[SearchResult]:
+    """Stable-sort so authoritative/untagged evidence precedes untrusted evidence.
+
+    Synthesis-time-only reordering: `state.retrieved_evidence` itself
+    (read by every earlier decision prompt, and by `run_agent_eval.py`'s
+    evidence-summary logging) is left untouched. Without this, an
+    untrusted source that happened to be gathered first could outrank an
+    authoritative source addressing the same fact merely because of
+    retrieval/tool-call order. The concrete Q17 regression documented in
+    experiments/reports/agentic_rag_baseline_v1.md section 3. A stable
+    sort preserves relative order within each group, so this never drops
+    or adds a source, only its `[Source N]` numbering.
+    """
+    return sorted(
+        evidence, key=lambda r: (r.chunk.metadata.trust_level or "").lower() == "untrusted"
+    )
+
+
 def _synthesize(state: AgentState, llm: LLM, template: PromptTemplate) -> AgentState:
-    """`synthesize` node: render accumulated evidence into a cited final answer."""
-    context = build_context(state.retrieved_evidence)
+    """`synthesize` node: render accumulated evidence into a cited final answer.
+
+    Evidence is reordered (see `_order_evidence_for_synthesis`) so an
+    authoritative source is always presented, and numbered, ahead of
+    any conflicting untrusted source, reinforcing `agent_synthesize_v2`'s
+    explicit authoritative-vs-untrusted rule with matching evidence order.
+    """
+    ordered_evidence = _order_evidence_for_synthesis(state.retrieved_evidence)
+    context = build_context(ordered_evidence)
     system, user = template.render(context=context, query=state.original_query)
     state.final_answer = llm.generate(system, user)
     _accumulate_tokens(state, llm, "synthesize")
@@ -602,7 +655,7 @@ def _synthesize(state: AgentState, llm: LLM, template: PromptTemplate) -> AgentS
             category=r.chunk.metadata.category,
             score=r.score,
         )
-        for r in state.retrieved_evidence
+        for r in ordered_evidence
     ]
     if state.termination_reason is None:
         state.termination_reason = "synthesized"
@@ -677,6 +730,7 @@ def _classic_result(state: AgentState, pipeline: RetrievalPipeline) -> AgentRunR
         retrieval_ms=result["retrieval_ms"],
         generation_ms=result["generation_ms"],
         total_ms=result["total_ms"],
+        classic_sources=result["sources"],
     )
 
 
@@ -706,21 +760,21 @@ def run_agent(
     """Run the bounded agent graph for one query, or the classic-RAG fast path.
 
     When `config.agent.enabled` is `False`, always takes the
-    `"classic_rag"` route with zero extra LLM calls -- the coarse
+    `"classic_rag"` route with zero extra LLM calls. The coarse
     kill-switch matching `AuthorizationConfig`/`FieldRedactionConfig`'s
     convention. Otherwise: `classify_query` always runs first (one LLM
-    decision call, even for a question that turns out to be simple -- this
+    decision call, even for a question that turns out to be simple. This
     is the expected, documented cost of routing); a `"simple"` result (or
     a classify-step bound/parse failure) still falls through to the exact
     same `classic_rag` node. A `"complex"` result proceeds to `decompose`
     and the bounded `select_tool -> execute_tool -> evaluate_evidence`
     loop, gated by three independent counters
-    (`max_agent_steps`/`max_retrieval_attempts`/`max_tool_calls`) — see
+    (`max_agent_steps`/`max_retrieval_attempts`/`max_tool_calls`); see
     the module docstring for the full graph shape.
 
     Every node call is wrapped in `_call_node` for timing/tracing/metrics
     and, for LLM-calling nodes, given a `_TimingLLM`-wrapped `llm` so
-    inference time can be split from node overhead -- none of this
+    inference time can be split from node overhead. None of this
     changes what any node decides or how the graph routes.
 
     Parameters
@@ -888,10 +942,17 @@ def run_agent(
             timed_llm=timed_llm,
         )
         _emit_event(on_event, "evidence_evaluated", state, t_start=t_start)
-        if _step_or_stop(state, agent_cfg):
-            break
+        _increment_step(state)
 
         if state.evidence_sufficient:
+            # A terminal condition (evidence became sufficient) reached on
+            # the final allowed step is a real convergence, not a bound
+            # cutoff. Check it before _check_step_bound would otherwise
+            # mislabel this run "max_steps". See _check_step_bound's
+            # docstring and the agentic-rag-baseline-v1 report's step-
+            # budget-arithmetic finding.
+            break
+        if _check_step_bound(state, agent_cfg):
             break
         if state.retrieval_attempts >= agent_cfg.max_retrieval_attempts:
             state.termination_reason = "max_retrieval_attempts"

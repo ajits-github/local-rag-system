@@ -190,6 +190,54 @@ def test_disabled_agent_always_routes_classic_with_zero_llm_calls():
     assert len(pipeline.answer_calls) == 1
 
 
+def test_classic_route_exposes_raw_sources_for_downstream_context_building():
+    """`AgentRunResult.classic_sources` carries pipeline.answer()'s raw source_dict list.
+
+    Regression test: `state.citations` alone (id/source/category/score,
+    no `content`) can't stand in for this -- a caller needing the actual
+    retrieved text for a classic-routed question (e.g. RAGAS
+    context-building in `run_agent_ragas_eval.py`) needs the raw dicts,
+    not just citations.
+    """
+    llm = ScriptedLLM(['{"query_type": "simple"}'])
+    pipeline = FakePipeline(
+        answer_result={
+            "answer": "classic answer",
+            "sources": [
+                {
+                    "chunk_id": "c1",
+                    "document_id": "doc-1",
+                    "source": "a.md",
+                    "content": "the retrieved passage text",
+                }
+            ],
+            "retrieval_ms": 1.0,
+            "generation_ms": 2.0,
+            "total_ms": 3.0,
+        }
+    )
+    state = AgentState(original_query="a simple question")
+
+    result = run_agent(
+        state,
+        pipeline=pipeline,
+        vectorstore=FakeVectorStore(),
+        embedder=FakeEmbedder(),
+        llm=llm,
+        config=_agent_config(),
+    )
+
+    assert result.route == "classic_rag"
+    assert result.classic_sources == [
+        {
+            "chunk_id": "c1",
+            "document_id": "doc-1",
+            "source": "a.md",
+            "content": "the retrieved passage text",
+        }
+    ]
+
+
 def test_classify_parse_failure_defaults_to_simple_and_still_routes_classic():
     """A malformed classify response fails safely onto the fast, well-tested classic path."""
     llm = ScriptedLLM(["not valid json at all"])
