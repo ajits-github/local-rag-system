@@ -1,22 +1,25 @@
 """RAGAS-based scoring: faithfulness/relevancy/precision/recall/correctness/noise/factual.
 
-A sibling module to `answer_quality.py`, not an extension of it —
+A sibling module to `answer_quality.py`, not an extension of it.
 `AnswerQualityScorer`'s single-scalar `score() -> float` contract doesn't
 fit RAGAS's multi-metric, context-aware output. Optional: requires the
 `ragas` extra (`pip install .[ragas]`); every `ragas`/`datasets` import is
 lazy (inside functions) so importing this module never requires them.
 
 Scores are produced by an LLM judge and have not been validated against
-human labels — see `scripts/generate_manual_review.py` and
+human labels. See `scripts/generate_manual_review.py` and
 `scripts/compare_ragas_manual.py` before treating them as ground truth.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from rag.embedders.base import Embedder
 from rag.generation.base import LLM
+
+if TYPE_CHECKING:
+    from ragas.evaluation import EvaluationResult
 
 METRIC_NAMES = [
     "faithfulness",
@@ -41,7 +44,7 @@ _EXTRA_METRIC_CLASSES = {
 CAVEAT = (
     "RAGAS scores are produced by an LLM judge and have not been validated "
     "against human labels in this environment. Do not treat them as ground "
-    "truth for decision-making until reviewed — see "
+    "truth for decision-making until reviewed. See "
     "scripts/generate_manual_review.py and scripts/compare_ragas_manual.py."
 )
 
@@ -84,8 +87,8 @@ def _resolve_result_columns(used: list[str], df_columns: list[str]) -> dict[str,
     """Map each intended metric name to its actual column in `ragas.evaluate()`'s result frame.
 
     Most metrics' result column is their bare name (e.g. `"faithfulness"`).
-    But metrics with a `mode` parameter -- `NoiseSensitivity`/
-    `FactualCorrectness`, both added via `_EXTRA_METRIC_CLASSES` -- come
+    But metrics with a `mode` parameter (`NoiseSensitivity`/
+    `FactualCorrectness`, both added via `_EXTRA_METRIC_CLASSES`) come
     back as `"noise_sensitivity(mode=relevant)"`/
     `"factual_correctness(mode=f1)"` instead (confirmed directly against
     the pinned `ragas==0.3.9`'s `evaluate()` output, not assumed): ragas
@@ -223,7 +226,14 @@ def score(
     result = ragas_evaluate(
         dataset=dataset, metrics=metrics, llm=wrapped_llm, embeddings=wrapped_embeddings
     )
-    df = result.to_pandas()
+    # `ragas_evaluate` is typed to return `EvaluationResult | Executor`, but
+    # `Executor` is only ever returned when `return_executor=True` is passed
+    # (confirmed against the installed ragas's own `evaluate()` signature) --
+    # never the case at this call site, so this is a real static fact, not a
+    # blind assumption. `cast` (not a runtime isinstance check) since this
+    # narrows a type-checker-only ambiguity without adding any runtime cost
+    # or behavior change.
+    df = cast("EvaluationResult", result).to_pandas()
     columns = _resolve_result_columns(used, list(df.columns))
 
     per_question = [

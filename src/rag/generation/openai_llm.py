@@ -1,13 +1,18 @@
 """`LLM` backed by the OpenAI chat completions API.
 
-Not used as a `generation.provider` (still `ollama`-only) — wired in only
+Not used as a `generation.provider` (still `ollama`-only). Wired in only
 via `factory.build_judge_llm` for RAGAS judging. Requires the `ragas`
 extra (which pulls in the `openai` package transitively): pip install .[ragas]
 """
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from rag.generation.base import LLM
+
+if TYPE_CHECKING:
+    from openai.types.chat import ChatCompletionMessageParam
 
 
 class OpenAILLM(LLM):
@@ -60,7 +65,7 @@ class OpenAILLM(LLM):
 
     def generate(self, system: str, user: str) -> str:
         """See `LLM.generate`."""
-        messages: list[dict[str, str]] = []
+        messages: list[ChatCompletionMessageParam] = []
         if system:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": user})
