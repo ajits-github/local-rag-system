@@ -45,6 +45,12 @@ anthropic = [
 mlflow = [
     "mlflow>=2.14",
 ]
+docs = [
+    "mkdocs>=1.6",
+    "mkdocs-material>=9.5",
+    "mkdocstrings[python]>=0.26",
+    "mkdocs-htmlproofer-plugin>=1.2",  # validates internal links/anchors on `mkdocs build --strict`
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",

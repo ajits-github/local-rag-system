@@ -1,6 +1,6 @@
 SHELL := bash
 
-.PHONY: up down ingest query test observability-up observability-down
+.PHONY: up down ingest query test observability-up observability-down docs-serve docs-build
 
 # Bring up Postgres+pgvector and initialize the schema.
 up:
@@ -38,3 +38,13 @@ observability-up:
 # Companion teardown to observability-up.
 observability-down:
 	docker compose -f docker-compose.yml -f docker-compose.observability.yml down
+
+# Local docs server with live reload: http://127.0.0.1:8000. Requires
+# `pip install -e .[docs]`.
+docs-serve:
+	mkdocs serve
+
+# Strict docs build to site/ -- fails on broken nav references, missing
+# mkdocstrings targets, or broken internal links/anchors (htmlproofer).
+docs-build:
+	mkdocs build --strict

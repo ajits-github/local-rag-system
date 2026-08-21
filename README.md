@@ -14,6 +14,7 @@ The fastest path is: install Python dependencies, start Postgres, ingest
 
 ## Architecture
 
+<!-- --8<-- [start:docs-architecture-diagram] -->
 ```mermaid
 flowchart TD
     Docs["Documents / Knowledge Sources"] --> Ingestion["Ingestion Pipeline"]
@@ -29,6 +30,7 @@ flowchart TD
     Retrieval --> Evaluation
     LLM --> Evaluation["Evaluation<br/>Recall@k / MRR / RAGAS"]
 ```
+<!-- --8<-- [end:docs-architecture-diagram] -->
 
 For the detailed system view, see [`docs/architecture.md`](docs/architecture.md).
 
@@ -42,7 +44,10 @@ For the detailed system view, see [`docs/architecture.md`](docs/architecture.md)
 | LLM | Qwen2.5 via Ollama | swappable |
 | Prompt | versioned YAML templates | configurable |
 | Evaluation | Recall@k, MRR, RAGAS | extensible |
+| Security | JWT auth, tenant/role ACL, field redaction, rate limiting | independently toggleable, off by default |
+| Agent | bounded tool-calling workflow (`POST /agent/query`) | MCP server |
 
+<!-- --8<-- [start:docs-agentic-rag] -->
 ## Agentic RAG
 
 `POST /agent/query` is an optional bounded workflow above the classic
@@ -51,9 +56,30 @@ small tool loop for complex or multi-hop questions. The graph is bounded
 by `max_agent_steps`, `max_retrieval_attempts`, and `max_tool_calls`, and
 uses the same retrieval authorization, freshness, redaction, and injection
 checks as the classic path.
+<!-- --8<-- [end:docs-agentic-rag] -->
 
-The details live in [`docs/architecture.md`](docs/architecture.md).
+The details live in [`docs/architecture.md`](docs/architecture.md). A
+baseline is evaluated end-to-end; see
+[Agentic RAG benchmarks](#agentic-rag-benchmarks) below.
 
+<!-- --8<-- [start:docs-security] -->
+## Security
+
+Retrieval-time tenant/role authorization, document-version freshness,
+field-level sensitive-data redaction, prompt-injection detection, and an
+authenticated API boundary (JWT verification, DoS limits, rate limiting)
+all sit above both the classic and agentic RAG paths, each independently
+toggleable and off by default (`config.security.*`). Authentication
+happens at the API boundary; authorization stays enforced entirely at
+retrieval, as two structurally separate modules.
+<!-- --8<-- [end:docs-security] -->
+
+The details live in [`docs/architecture.md`](docs/architecture.md)'s
+"Authorization, Freshness, and Trust", "Field-Level Sensitive-Data
+Redaction", and "Authenticated API Boundary and Security Hardening"
+sections.
+
+<!-- --8<-- [start:docs-observability] -->
 ## Observability
 
 Operational telemetry on top of the agentic workflow: per-node timing
@@ -80,10 +106,12 @@ pre-provisioned with a dashboard) alongside the base stack, layered via
 `docker compose -f docker-compose.yml -f docker-compose.observability.yml
 up -d`, never brought up by plain `make up`. Teardown: `make
 observability-down`.
+<!-- --8<-- [end:docs-observability] -->
 
 The details live in [`docs/architecture.md`](docs/architecture.md)'s
 "Observability" section.
 
+<!-- --8<-- [start:docs-prereq-setup] -->
 ## Prerequisites
 
 - Python 3.11+
@@ -179,7 +207,9 @@ The details live in [`docs/architecture.md`](docs/architecture.md)'s
    curl -s -X POST http://localhost:8000/query -H "Content-Type: application/json" \
      -d '{"query": "What MFA methods are approved?", "filters": {"category": "security"}}'
    ```
+<!-- --8<-- [end:docs-prereq-setup] -->
 
+<!-- --8<-- [start:docs-containerized-dev] -->
 ## Containerized development
 
 Postgres+pgvector and the API can both run in containers. Ollama usually
@@ -231,6 +261,7 @@ rather than silently falling back to `config/default.yaml`.
 - The embedding model downloads from Hugging Face Hub on first use inside
   a fresh container/volume if not already cached. It needs outbound internet
   that one time, same as native.
+<!-- --8<-- [end:docs-containerized-dev] -->
 
 ## Configuration
 
@@ -305,6 +336,7 @@ python scripts/compare_ragas_manual.py --ragas-output /tmp/ragas_report.json \
 The comparison report shows where the judge agrees or disagrees with the
 human labels.
 
+<!-- --8<-- [start:docs-benchmarks] -->
 ## Benchmarks
 
 `experiments/` tracks comparable eval runs over time: `configs/` holds a
@@ -357,6 +389,7 @@ regenerate it instead (see "Recording a new experiment").
 *Total latency is the mean retrieval plus generation time per question.
 Every row is measured with `dataset_id`-isolated retrieval, so results are
 not mixed across datasets in the same vector store.*
+<!-- --8<-- [end:docs-benchmarks] -->
 
 Detailed experiment writeups live in `experiments/reports/`,
 [`docs/architecture.md`](docs/architecture.md), and `PROJECT_JOURNAL.md`.
@@ -479,6 +512,24 @@ minutes-long LLM calls that don't belong in per-PR feedback. They stay
 manual, run locally via `scripts/record_experiment.py` /
 `eval/run_ragas_eval.py` as today.
 
+## Documentation
+
+A generated docs site (MkDocs + Material + mkdocstrings) sits over this
+README, `docs/architecture.md`, `docs/metrics.md`, and every module's
+NumPy-style docstrings, without duplicating any of them:
+
+```
+pip install -e ".[docs]"
+make docs-serve   # live-reloading local server, http://127.0.0.1:8000
+make docs-build   # strict build to site/ -- fails on broken links/anchors/nav references
+```
+
+Without `make`: `mkdocs serve` / `mkdocs build --strict`. Nav covers
+architecture, ingestion/chunking, retrieval, multimodal/layout, security,
+Agentic RAG, evaluation/RAGAS, observability, deployment/runtime, and a
+full API reference generated from `src/rag/**`. Not published anywhere
+yet (`mkdocs build --strict` is the local/CI gate for now).
+
 ## Roadmap
 
 Deferred for now, tracked here rather than left as empty scaffolding:
@@ -501,25 +552,8 @@ Deferred for now, tracked here rather than left as empty scaffolding:
   before adopting it.
 - **Kubernetes deployment**: containerize the API and vector store for a
   non-local deployment target.
-- **Sphinx**: proper generated API docs, not yet started.
 
-Done, not deferred: **Observability** (OpenTelemetry tracing, Prometheus
-metrics, a Grafana dashboard, and a live-progress SSE stream) shipped in
-the observability milestone. See the [Observability](#observability)
-section above and `docs/architecture.md`'s "Observability" section.
-
-Also done: **layout-aware PDF/DOCX ingestion** (headings, tables,
-code/config blocks, images, page numbers via `pdfplumber`) and a real
-local vision provider (`vision.provider: ollama`, default model
-`moondream`) -- see `CLAUDE.md`'s "Layout-aware document ingestion and
-vision" section and `docs/architecture.md`'s matching section. The
-controlled text-only vs. layout-aware-no-vision vs.
-layout-aware-with-vision comparison (Benchmarks rows 29-31 above) is now
-done too -- layout preservation alone (A -> B) was a clear, broad win
-(Recall@5 0.946 -> 1.000, page/section localization 0.0 -> ~0.93-0.96);
-adding moondream vision (B -> C) improved MRR slightly and correctly
-reduced hallucinations on unanswerable-visual questions, but did not
-improve answer quality on answerable vision-required questions -- see
-`PROJECT_JOURNAL.md`'s 2026-08-21 evaluation entry and `ISSUES.md` for
-the full breakdown and the concrete moondream-captioning-quality finding
-behind it.
+Recently shipped features (observability, layout-aware ingestion +
+vision, security/auth, this documentation site) are covered in their own
+sections above, not repeated here -- see `CLAUDE.md` and
+`PROJECT_JOURNAL.md` for the full milestone-by-milestone history.
