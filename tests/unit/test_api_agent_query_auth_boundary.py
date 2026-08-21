@@ -65,7 +65,11 @@ def _auth_config(**overrides):
 def _token(**claim_overrides):
     """Build a signed HS256 JWT with default alice/tenant_alpha claims, overridable per test."""
     now = int(time.time())
-    claims = {"sub": "alice", "tenant_id": "tenant_alpha", "roles": ["tenant_alpha_operator"]}
+    claims: dict[str, object] = {
+        "sub": "alice",
+        "tenant_id": "tenant_alpha",
+        "roles": ["tenant_alpha_operator"],
+    }
     claims.update({"iat": now, "exp": now + 3600})
     claims.update(claim_overrides)
     return jwt.encode(claims, _SECRET, algorithm="HS256")

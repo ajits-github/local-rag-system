@@ -27,7 +27,7 @@ def _per_example_entry(
     include_latency: bool = True,
 ) -> dict:
     """Build one rag.eval.run_eval per_example row, matching evaluate()'s real shape."""
-    entry = {
+    entry: dict = {
         "question": question,
         "question_type": question_type,
         "difficulty": "easy",

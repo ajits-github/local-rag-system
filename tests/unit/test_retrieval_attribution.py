@@ -202,7 +202,7 @@ class _IdentityEmbedder:
         """Unused by attribution; not exercised by these tests."""
         return [[0.0] for _ in texts]
 
-    def embed_query(self, text: str) -> str:  # type: ignore[override]
+    def embed_query(self, text: str) -> str:
         """Pass the query text straight through, for _ScriptedVectorStore's lookup."""
         return text
 

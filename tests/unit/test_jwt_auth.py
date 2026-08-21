@@ -22,7 +22,11 @@ def _config(monkeypatch, **jwt_overrides):
 
 def _token(secret="unit-test-only-not-a-real-secret", algorithm="HS256", **claim_overrides):
     now = int(time.time())
-    claims = {"sub": "alice", "tenant_id": "tenant_alpha", "roles": ["tenant_alpha_operator"]}
+    claims: dict[str, object] = {
+        "sub": "alice",
+        "tenant_id": "tenant_alpha",
+        "roles": ["tenant_alpha_operator"],
+    }
     claims.update({"iat": now, "exp": now + 3600})
     claims.update(claim_overrides)
     return jwt.encode(claims, secret, algorithm=algorithm)
