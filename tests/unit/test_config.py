@@ -377,3 +377,17 @@ def test_all_live_config_files_migrated_to_new_cutoff_field_names():
         assert config.retrieval.candidate_k > 0
         assert config.retrieval.generation_context_top_n > 0
         assert config.reranker.top_n > 0
+
+
+def test_load_config_raises_runtime_error_for_missing_path():
+    """A nonexistent config path fails loudly, never silently loading the default."""
+    with pytest.raises(RuntimeError, match="not found"):
+        load_config("config/experiments/does-not-exist-at-all.yaml")
+
+
+def test_load_config_raises_runtime_error_for_unparseable_yaml(tmp_path):
+    """A config path that exists but isn't valid YAML fails loudly."""
+    bad_config = tmp_path / "broken.yaml"
+    bad_config.write_text("app: {name: [unterminated\n", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="not valid YAML"):
+        load_config(str(bad_config))

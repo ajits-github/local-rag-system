@@ -202,6 +202,20 @@ substitute):
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 ```
 
+**Running the API against an alternate config file**: `RAG_CONFIG_PATH`
+(unset by default) overrides which YAML the API loads instead of
+`config/default.yaml`. `config/` is already bind-mounted into the
+container at `/app/config`, so any file under `config/experiments/` is
+reachable by its in-container path. Set it in the host shell before
+bringing the stack up (`docker-compose.yml` forwards it through
+unchanged; it is never hardcoded there):
+```
+RAG_CONFIG_PATH=/app/config/experiments/agentic-rag-baseline-v1.yaml docker compose up -d
+```
+An unset or empty value preserves the default behavior exactly. A path
+that doesn't exist, or isn't valid YAML, fails loudly at config-load time
+rather than silently falling back to `config/default.yaml`.
+
 ### Windows-specific notes
 
 - `host.docker.internal` (used to reach native Ollama) is a Docker Desktop
@@ -222,7 +236,9 @@ embedding model, chunk size/overlap, reranker (`none` / `cross_encoder` /
 `cohere`), LLM, retrieval `candidate_k`, generation context size, security
 toggles, and agent bounds. Point at an alternate config with
 `--config path/to/other.yaml` on the ingestion/eval CLIs, or edit the
-default file directly for local experiments.
+default file directly for local experiments. The running API (not a CLI)
+instead reads the `RAG_CONFIG_PATH` environment variable, unset by
+default; see "Running the API against an alternate config file" above.
 
 Generation prompts are versioned YAML files under
 `src/rag/prompts/templates/` (`rag_answer_v1.yaml`, `rag_answer_v2.yaml`,

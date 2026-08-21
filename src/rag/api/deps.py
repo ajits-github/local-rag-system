@@ -7,6 +7,7 @@ copies of the embedding model or two separate DB connection pools.
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 
 from fastapi import Depends, HTTPException, Request
@@ -27,7 +28,17 @@ from rag.vectorstore.base import VectorStore
 
 @lru_cache
 def get_config() -> AppConfig:
-    """Return the process-wide `AppConfig` singleton."""
+    """Return the process-wide `AppConfig` singleton.
+
+    Loads `config/default.yaml` unless the `RAG_CONFIG_PATH` environment
+    variable is set to a non-empty value, in which case that path is
+    loaded instead. `load_config` itself fails loudly (`RuntimeError`) on
+    a missing or unparseable override path; there is no fallback to
+    `default.yaml` in that case.
+    """
+    override_path = os.environ.get("RAG_CONFIG_PATH")
+    if override_path:
+        return load_config(override_path)
     return load_config()
 
 

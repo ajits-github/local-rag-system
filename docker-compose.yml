@@ -41,6 +41,10 @@ services:
       # Container-specific Ollama URL; host runs use OLLAMA_BASE_URL.
       OLLAMA_BASE_URL: ${CONTAINER_OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # Overrides which config/*.yaml the API loads (see api/deps.py:get_config).
+      # Unset/empty preserves the default: config/default.yaml. Forwarded from
+      # the host shell; not hardcoded here, so plain `make up` is unaffected.
+      RAG_CONFIG_PATH: ${RAG_CONFIG_PATH:-}
       COHERE_API_KEY: ${COHERE_API_KEY:-}
       JWT_HS256_SECRET: ${JWT_HS256_SECRET:-}
       # Only consulted when observability.tracing.enabled is true (default false).

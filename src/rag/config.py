@@ -760,7 +760,19 @@ def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> AppConfig:
     -------
     AppConfig
         The validated, parsed configuration.
+
+    Raises
+    ------
+    RuntimeError
+        If `path` does not exist or its contents are not valid YAML. Never
+        falls back to `DEFAULT_CONFIG_PATH` on failure.
     """
     load_dotenv(override=False)
-    raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    resolved = Path(path)
+    if not resolved.is_file():
+        raise RuntimeError(f"Config file not found: {resolved}")
+    try:
+        raw = yaml.safe_load(resolved.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        raise RuntimeError(f"Config file is not valid YAML: {resolved} ({exc})") from exc
     return AppConfig.model_validate(raw)
