@@ -76,7 +76,7 @@ make observability-up
 ```
 This brings up Jaeger (traces, `http://localhost:16686`), Prometheus
 (`http://localhost:9090`), and Grafana (`http://localhost:3000`,
-pre-provisioned with a dashboard) alongside the base stack — layered via
+pre-provisioned with a dashboard) alongside the base stack, layered via
 `docker compose -f docker-compose.yml -f docker-compose.observability.yml
 up -d`, never brought up by plain `make up`. Teardown: `make
 observability-down`.
@@ -454,11 +454,9 @@ Deferred for now, tracked here rather than left as empty scaffolding:
   before adopting it.
 - **Kubernetes deployment**: containerize the API and vector store for a
   non-local deployment target.
-- **Sphinx**: proper generated API docs, deliberately deferred past
-  `agentic_rag_baseline_v1` so it doesn't delay or contaminate that
-  baseline evaluation.
+- **Sphinx**: proper generated API docs, not yet started.
 
 Done, not deferred: **Observability** (OpenTelemetry tracing, Prometheus
 metrics, a Grafana dashboard, and a live-progress SSE stream) shipped in
-the observability milestone — see the [Observability](#observability)
+the observability milestone. See the [Observability](#observability)
 section above and `docs/architecture.md`'s "Observability" section.

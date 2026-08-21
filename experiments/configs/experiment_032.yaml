@@ -1,0 +1,170 @@
+# agentic_rag_baseline_v2_fixed: the agentic-rag re-evaluation milestone's
+# candidate, re-run after fixing the three concrete issues
+# experiment_029 found (see experiments/reports/agentic_rag_baseline_v1.md
+# and .claude-prompts/7.6-AgenticRAG-re-evaluation.txt):
+#   1. classify_prompt_path -> agent_classify_v2.yaml (tightens the
+#      simple/complex boundary so tool_not_needed questions stay on the
+#      classic_rag fast path -- see that file's own description).
+#   2. synthesize_prompt_path -> agent_synthesize_v2.yaml (adds an
+#      explicit authoritative-vs-untrusted conflict-resolution rule after
+#      the Q17 regression -- see that file's own description). Paired
+#      with a code-level fix, not a config field: `rag.agent.graph`'s
+#      `_synthesize` now reorders evidence so authoritative/untagged
+#      sources are presented before untrusted ones.
+#   3. The max-step/evidence-sufficiency step-budget-arithmetic fix (a
+#      normal 2-tool-call convergence landing exactly on max_agent_steps
+#      being mislabeled "max_steps") is a `rag.agent.graph` control-flow
+#      fix, not a config field -- applies automatically, no yaml change
+#      needed for it.
+#
+# Every other field is BYTE-IDENTICAL to agentic-rag-baseline-v1.yaml
+# (experiment_029's config) -- retrieval, security, agent bounds
+# (max_agent_steps/max_retrieval_attempts/max_tool_calls), model, and
+# corpus are all held constant, per the re-evaluation task's explicit
+# "keep everything else controlled" instruction. decompose/tool_select/
+# evidence_sufficiency prompts stay v1 -- unchanged, not implicated in
+# any of the three fixes. generation.prompt stays rag_answer v3,
+# unchanged, for the classic_rag fast path (both when a question
+# classifies "simple" under this config, and for the separately-recorded
+# classic-RAG control, which reuses experiment_030 rather than being
+# re-run here).
+
+app:
+  name: local-rag-system
+  log_level: INFO
+
+embedding:
+  provider: sentence_transformers # swap point
+  model_name: sentence-transformers/all-MiniLM-L6-v2
+  device: cpu
+  batch_size: 32
+  normalize: true
+  dimension: 384 # must match model output dim; used to size the pgvector column
+
+vectorstore:
+  provider: pgvector # swap point (future: chroma, faiss, ...)
+  connection_env_var: DATABASE_URL # never hardcode host/port/credentials
+  documents_table: documents
+  chunks_table: chunks
+  distance_metric: cosine
+
+chunking:
+  provider: structured_markdown # swap point: recursive_character | structured_markdown
+  chunk_size: 500
+  chunk_overlap: 50
+  structured_markdown:
+    table_row_group_size: 20
+    max_atomic_block_chars: 2000
+
+reranker:
+  provider: none # swap point: none | cross_encoder | cohere
+  cross_encoder:
+    model_name: cross-encoder/ms-marco-MiniLM-L-6-v2
+  cohere:
+    model_name: rerank-english-v3.0
+    api_key_env_var: COHERE_API_KEY
+
+generation:
+  provider: ollama # swap point
+  model_name: qwen2.5:3b
+  base_url_env_var: OLLAMA_BASE_URL
+  temperature: 0.0 # matches secure_rag_baseline_v2_jwt_auth / experiment_029
+  max_tokens: 512
+  seed: 42 # matches secure_rag_baseline_v2_jwt_auth / experiment_029
+  prompt:
+    id: rag_answer
+    version: v3 # unchanged -- agent synthesis uses agent_synthesize_v2 (see header note)
+    path: src/rag/prompts/templates/rag_answer_v3.yaml
+
+judge:
+  provider: openai # swap point: openai | anthropic | ollama (ollama = local, for experimentation only)
+  temperature: 0.0
+  max_tokens: 1024
+  cache_enabled: true
+  cache_dir: .cache/ragas
+  openai:
+    model_name: gpt-4o-mini
+    api_key_env_var: OPENAI_API_KEY
+  anthropic:
+    model_name: claude-haiku-4-5-20251001
+    api_key_env_var: ANTHROPIC_API_KEY
+  ollama:
+    model_name: llama3.1:8b # deliberately distinct from generation.model_name
+
+mlflow:
+  enabled: true
+  tracking_uri: "sqlite:///mlflow.db" # swap point: local sqlite file | a real MLflow tracking server URL
+  experiment_name: local-rag-system
+
+retrieval:
+  provider: hybrid # matches experiment_029
+  candidate_k: 5
+  generation_context_top_n: 3
+  hybrid:
+    rrf_k: 60
+  relationship_expansion:
+    enabled: true # matches experiment_029
+    include_parent: true
+    include_neighbors: true
+    max_related_elements: 3
+
+ingestion:
+  supported_extensions: [".pdf", ".docx", ".html", ".htm", ".txt", ".md"]
+
+vision:
+  provider: none # hosted vision OFF (not this milestone)
+
+agent:
+  enabled: true # THE agentic-RAG milestone's toggle -- see src/rag/agent/graph.py
+  max_agent_steps: 8 # unchanged -- the step-budget fix is a control-flow change, not a bound change
+  max_retrieval_attempts: 2
+  max_tool_calls: 6
+  max_json_parse_retries: 1
+  max_tool_top_k: 20
+  max_chunks_per_document_fetch: 10
+  max_chunks_per_document_fetch_hard_ceiling: 50
+  classify_prompt_path: src/rag/prompts/templates/agent_classify_v2.yaml # fix 1 -- was v1
+  decompose_prompt_path: src/rag/prompts/templates/agent_decompose_v1.yaml # unchanged
+  tool_select_prompt_path: src/rag/prompts/templates/agent_tool_select_v1.yaml # unchanged
+  evidence_sufficiency_prompt_path: src/rag/prompts/templates/agent_evidence_sufficiency_v1.yaml # unchanged
+  synthesize_prompt_path: src/rag/prompts/templates/agent_synthesize_v2.yaml # fix 2 -- was v1
+
+security:
+  authorization:
+    enabled: true # unchanged from experiment_029
+    cross_tenant_support_roles: ["techfusion_support"]
+  field_redaction:
+    enabled: true # unchanged from experiment_029
+  auth:
+    enabled: true # unchanged from experiment_029
+    insecure_dev_mode: false
+    ingest_roles: ["security_admin", "system_admin", "techfusion_support"]
+    jwt:
+      algorithm: HS256
+      secret_env_var: JWT_HS256_SECRET
+      public_key_path_env_var: JWT_PUBLIC_KEY_PATH
+      issuer: null
+      audience: null
+      leeway_seconds: 30
+      required_claims: ["sub", "tenant_id", "roles"]
+  dos_limits:
+    max_query_length: 2000
+    max_top_k: 20
+    max_filters_bytes: 4096
+    max_upload_bytes: 26214400
+  rate_limit:
+    enabled: false # not the focus of this evaluation
+    requests_per_minute: 60
+    key: tenant
+  egress_policy:
+    enabled: true # ON for this config -- see agentic-rag-baseline-v1.yaml's header note
+    # (adversarial_tool_output rows reference classification: confidential tenant
+    # documents; those must never reach the hosted RAGAS judge)
+    block_unredacted_sensitive_fields: true
+    require_authoritative_trust: false
+    blocked_tenant_ids: []
+    classification_policy:
+      public: true
+      internal: true
+      confidential: false
+      restricted: false
