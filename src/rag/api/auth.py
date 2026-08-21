@@ -41,7 +41,7 @@ class AuthenticationError(Exception):
 class VerifiedIdentity(BaseModel):
     """Represent identity claims extracted from a verified JWT.
 
-    Parameters
+    Attributes
     ----------
     subject : str
         Identifier of the authenticated caller (the JWT `sub` claim).

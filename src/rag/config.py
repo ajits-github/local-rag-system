@@ -175,7 +175,7 @@ class MLflowConfig(BaseModel):
 class MetricsConfig(BaseModel):
     """Prometheus `/metrics` endpoint tunable.
 
-    Parameters
+    Attributes
     ----------
     enabled : bool
         When `True` (the default), `/metrics` serves Prometheus text
@@ -195,7 +195,7 @@ class MetricsConfig(BaseModel):
 class TracingConfig(BaseModel):
     """OpenTelemetry distributed-tracing tunable.
 
-    Parameters
+    Attributes
     ----------
     enabled : bool
         When `False` (the default), a true no-op: the OpenTelemetry API's
@@ -220,7 +220,7 @@ class TracingConfig(BaseModel):
 class LiveEventsConfig(BaseModel):
     """`POST /agent/query/stream` (SSE) tunable.
 
-    Parameters
+    Attributes
     ----------
     enabled : bool
         When `True` (the default), the streaming endpoint is mounted.
@@ -254,7 +254,7 @@ class HybridRetrievalConfig(BaseModel):
 class RelationshipExpansionConfig(BaseModel):
     """Post-rerank context-expansion tunables.
 
-    Parameters
+    Attributes
     ----------
     enabled : bool
         When `False` (the default), a no-op.
@@ -276,7 +276,7 @@ class RelationshipExpansionConfig(BaseModel):
 class RetrievalConfig(BaseModel):
     """Retrieval provider selection and result-count tuning.
 
-    Parameters
+    Attributes
     ----------
     provider : {"dense", "hybrid"}
         Retrieval strategy. `"hybrid"` adds BM25 search fused with RRF.
@@ -332,7 +332,7 @@ class IngestionConfig(BaseModel):
 class AuthorizationConfig(BaseModel):
     """Retrieval-time tenant/role/freshness enforcement tunables.
 
-    Parameters
+    Attributes
     ----------
     enabled : bool
         When `False` (the default), authorization is a no-op: chunks
@@ -351,7 +351,7 @@ class AuthorizationConfig(BaseModel):
 class FieldRedactionConfig(BaseModel):
     """Field-level sensitive-value redaction tunable.
 
-    Parameters
+    Attributes
     ----------
     enabled : bool
         When `False` (the default), a no-op. Independent of
@@ -370,7 +370,7 @@ class FieldRedactionConfig(BaseModel):
 class JWTConfig(BaseModel):
     """JWT verification tunables for `AuthConfig`.
 
-    Parameters
+    Attributes
     ----------
     algorithm : {"HS256", "RS256", "ES256"}
         Signing algorithm. `HS256` (shared-secret) is the default for
@@ -403,7 +403,7 @@ class JWTConfig(BaseModel):
 class AuthConfig(BaseModel):
     """API-boundary JWT authentication tunables.
 
-    Parameters
+    Attributes
     ----------
     enabled : bool
         When `False` (the default), `POST /query`/`POST /ingest` trust
@@ -431,7 +431,7 @@ class AuthConfig(BaseModel):
 class DoSLimitsConfig(BaseModel):
     """Bounded request-size validation for `POST /query`/`POST /ingest`.
 
-    Parameters
+    Attributes
     ----------
     max_query_length : int
         Maximum allowed `query` string length, in characters.
@@ -457,7 +457,7 @@ class DoSLimitsConfig(BaseModel):
 class RateLimitConfig(BaseModel):
     """Per-caller request-rate limiting (`slowapi`, in-memory backend).
 
-    Parameters
+    Attributes
     ----------
     enabled : bool
         When `False` (the default), a no-op.
@@ -481,7 +481,7 @@ class RateLimitConfig(BaseModel):
 class EgressPolicyConfig(BaseModel):
     """Provider-egress policy gate for hosted-judge (RAGAS) calls only.
 
-    Parameters
+    Attributes
     ----------
     enabled : bool
         When `False` (the default), a no-op. Retrieved context reaches
@@ -527,7 +527,7 @@ class SecurityConfig(BaseModel):
 class AgentConfig(BaseModel):
     """Bounded agentic-RAG workflow tunables, layered above the classic retrieval pipeline.
 
-    Parameters
+    Attributes
     ----------
     enabled : bool
         When `False` (the default), `POST /agent/query` still exists but

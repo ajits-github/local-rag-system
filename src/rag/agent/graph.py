@@ -76,7 +76,7 @@ OnAgentEvent = Callable[[AgentEvent], None]
 class NodeTimingStats(BaseModel):
     """Aggregate timing for one node type across every invocation a run made.
 
-    Parameters
+    Attributes
     ----------
     count : int
         Number of times this node ran this request.
@@ -115,7 +115,7 @@ class AgentRunResult(BaseModel):
     split within each node), use `node_timings_ms` instead. `total_ms` is
     always exact wall-clock time.
 
-    Parameters
+    Attributes
     ----------
     node_timings_ms : dict[str, NodeTimingStats]
         Per-node-type aggregate timing (`classify`/`decompose`/

@@ -14,7 +14,7 @@ from rag.path_matching import source_matches_relevant as _shared_source_matches_
 class GoldExample(BaseModel):
     """Represent one row of a gold JSONL evaluation file.
 
-    Parameters
+    Attributes
     ----------
     question : str
         The evaluation question.

@@ -34,7 +34,7 @@ EventType = Literal[
 class AgentEvent(BaseModel):
     """One safe, operational event describing agent-graph progress.
 
-    Parameters
+    Attributes
     ----------
     event_type : EventType
         Which state-machine transition this event describes.

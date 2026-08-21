@@ -45,7 +45,7 @@ class NodeInvocationTiming(BaseModel):
     call (`execute_tool`). Deliberately not `0.0`, which would misread
     as "an LLM call happened and took no time."
 
-    Parameters
+    Attributes
     ----------
     total_ms : float
         Total wall-clock time for this node invocation.
@@ -85,7 +85,7 @@ class ToolCallRecord(BaseModel):
 class AgentState(BaseModel):
     """Mutable state threaded through the hand-rolled agent graph driver.
 
-    Parameters
+    Attributes
     ----------
     original_query : str
         The user's original question, unmodified.
