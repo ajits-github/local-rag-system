@@ -3,9 +3,7 @@ site_description: Modular, config-driven local RAG system (pgvector + Ollama + s
 docs_dir: docs
 site_dir: site
 
-# Not publishing yet -- see .claude-prompts/11.0-MKDocs.txt. Setting a real
-# site_url later is required before `mkdocs gh-deploy`/social cards work.
-site_url: ""
+site_url: https://ajits-github.github.io/local-rag-system/
 
 theme:
   name: material
