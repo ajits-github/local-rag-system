@@ -357,6 +357,31 @@ Detailed experiment writeups live in `experiments/reports/`,
 The README keeps the comparison table so changes remain visible at a
 glance without turning this file into an experiment log.
 
+### Agentic RAG benchmarks
+
+The table above is classic-RAG only (Recall/MRR/answer_quality). The
+agentic evaluation (`rag.eval.run_agent_eval`, 18-question
+`data/eval/agentic_extension_gold.jsonl`) reports a different metric
+family, so it gets its own small table here instead of being forced into
+incompatible columns. Recorded by hand from
+`experiments/results/agentic/*.json`; not wired into
+`scripts/compare_experiments.py`, which targets the classic-RAG schema
+only.
+
+| # | Label | Classify prompt | Synthesize prompt | Routing accuracy | Unnecessary agent rate | Citation support | Answer correctness | RAGAS Faithful | RAGAS Correct | Mean latency | Dataset | Date |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 29 | agentic_rag_baseline_v1 | v1 | v1 | 0.833 | 1.000 | 0.111 | 0.449 | 0.443 | 0.584 | 138.5s | techfusion | 2026-08-21 |
+| 32 | agentic_rag_baseline_v2_fixed | v2 | v2 | 0.889 | 0.000 | 1.000 | 0.463 | 0.511 | 0.531 | 47.4s | techfusion | 2026-08-21 |
+
+Experiment 32 fixed the two issues experiment 29 found: `agent_classify_v2`
+makes the simple/complex routing boundary explicit (cut the unnecessary
+-agent rate to 0.0 and mean latency 2.9x, purely via routing composition),
+and `agent_synthesize_v2` plus a code-level evidence-ordering fix makes an
+authoritative source always take priority over an untrusted, conflicting
+one at synthesis time (raised citation support 0.111 to 1.000). Full
+before/after numbers and per-question trace validation:
+`experiments/reports/agentic_rag_baseline_v2_fixed.md`.
+
 ### Recording a new experiment
 
 1. Change one thing in `config/default.yaml` (reranker, model, chunk size,
