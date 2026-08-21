@@ -104,7 +104,7 @@ def test_operator_jwt_gets_redacted_field(
     """A tenant_alpha_operator JWT (not admin) never receives the raw key via POST /query.
 
     The public `QueryResponse` contract doesn't expose raw chunk `content`
-    at all (only chunk_id/document_id/source/category/score) -- so this
+    at all (only chunk_id/document_id/source/category/score). so this
     proves the stronger, structural claim: the literal never appears
     ANYWHERE in the HTTP response body, not just that a particular field
     was scrubbed.

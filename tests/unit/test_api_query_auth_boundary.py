@@ -114,7 +114,7 @@ def test_forged_body_roles_is_ignored_when_jwt_present(client_with):
 
 
 def test_invalid_jwt_never_falls_back_to_unrestricted_retrieval(client_with):
-    """An invalid-signature token is rejected with 401 -- the pipeline is never called."""
+    """An invalid-signature token is rejected with 401. the pipeline is never called."""
     client, pipeline = client_with(_auth_config())
     bad_token = jwt.encode(
         {"sub": "eve", "tenant_id": "tenant_alpha", "roles": ["tenant_alpha_admin"]},
@@ -155,7 +155,7 @@ def test_insecure_dev_mode_accepts_body_fields_only_when_no_jwt_present(client_w
 
 
 def test_insecure_dev_mode_still_rejects_an_invalid_present_token(client_with):
-    """insecure_dev_mode never overrides a present-but-invalid JWT -- still fails closed."""
+    """insecure_dev_mode never overrides a present-but-invalid JWT. still fails closed."""
     client, pipeline = client_with(_auth_config(insecure_dev_mode=True))
 
     response = client.post(
@@ -183,7 +183,7 @@ def test_auth_disabled_by_default_preserves_body_trusted_behavior(client_with):
 
 
 def test_get_current_identity_returns_none_when_auth_disabled():
-    """get_current_identity() returns None (not raise) when auth is disabled -- unit-level."""
+    """get_current_identity() returns None (not raise) when auth is disabled. unit-level."""
     from fastapi import Request
     from starlette.datastructures import Headers
 

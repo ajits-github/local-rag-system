@@ -85,7 +85,7 @@ def test_empty_structured_bucket_is_a_hard_error(tmp_path: Path):
     examples = [
         GoldExample(question="Q1", relevant_documents=["kb/table.md"]),
         GoldExample(question="Q2", relevant_documents=["kb/code.md"]),
-        # No example referencing kb/chart.md -- the 'chart' bucket stays empty.
+        # No example referencing kb/chart.md. the 'chart' bucket stays empty.
     ]
 
     errors, _warnings = validate_gold_file.validate(

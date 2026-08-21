@@ -103,7 +103,7 @@ def test_build_judge_llm_unknown_provider_raises_value_error():
 
 
 def test_build_vision_provider_none_returns_none():
-    """vision.provider='none' (the default) returns None -- no VisionProvider instantiated."""
+    """vision.provider='none' (the default) returns None. no VisionProvider instantiated."""
     config = load_config()
     assert config.vision.provider == "none"
     assert build_vision_provider(config) is None

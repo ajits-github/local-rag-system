@@ -1,7 +1,7 @@
 """Tracing disabled-by-default no-op behavior, and defensiveness against a broken exporter/span.
 
 `configure_tracing` is never called by these tests, so the module-level
-`_tracer` stays the OpenTelemetry API's own default no-op tracer -- the
+`_tracer` stays the OpenTelemetry API's own default no-op tracer. the
 same state a fresh process is in before `rag.api.main` calls
 `configure_tracing` at import time with `tracing.enabled=False`.
 """

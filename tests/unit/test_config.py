@@ -126,7 +126,7 @@ def test_default_config_relationship_expansion_disabled_by_default():
 
 
 def test_default_config_vision_provider_is_none():
-    """config/default.yaml's vision.provider defaults to 'none' -- no image bytes ever read."""
+    """config/default.yaml's vision.provider defaults to 'none'. no image bytes ever read."""
     config = load_config()
     assert config.vision.provider == "none"
 
@@ -186,7 +186,7 @@ def test_generation_context_latency_configs_isolate_one_variable_at_a_time():
     A = multimodal-v2-relationship-qwen3b.yaml (the established best
     retrieval/generation config). B changes only
     retrieval.generation_context_top_n (3 -> 2). C changes only
-    generation.max_tokens on top of B (512 -> 256) -- everything else
+    generation.max_tokens on top of B (512 -> 256). everything else
     (embeddings, chunking, retrieval strategy, prompt, model) stays fixed
     across all three, per this milestone's controlled-experiment design.
     """
@@ -220,7 +220,7 @@ def test_classic_rag_baseline_v1_changes_only_temperature_and_seed():
     """classic-rag-baseline-v1.yaml is experiment_015's config, made deterministic.
 
     Same retrieval/chunking/embedding/reranking/prompt-v2/relationship-
-    expansion/model as multimodal-v2-relationship-qwen3b.yaml -- only
+    expansion/model as multimodal-v2-relationship-qwen3b.yaml. only
     generation.temperature (0.2 -> 0.0) and generation.seed (None -> 42)
     differ, per the classic-RAG-baseline milestone's explicit
     "don't change any other experiment variable" requirement.
@@ -239,14 +239,14 @@ def test_classic_rag_baseline_v1_changes_only_temperature_and_seed():
 
 
 def test_default_config_authorization_disabled_by_default():
-    """config/default.yaml's security.authorization is off -- a no-op unless explicitly enabled."""
+    """config/default.yaml's security.authorization is off. a no-op unless explicitly enabled."""
     config = load_config()
     assert config.security.authorization.enabled is False
     assert config.security.authorization.cross_tenant_support_roles == ["techfusion_support"]
 
 
 def test_default_config_field_redaction_disabled_by_default():
-    """config/default.yaml's security.field_redaction is off -- a no-op unless enabled."""
+    """config/default.yaml's security.field_redaction is off. a no-op unless enabled."""
     config = load_config()
     assert config.security.field_redaction.enabled is False
 
@@ -309,7 +309,7 @@ def test_secure_rag_baseline_v1_changes_only_prompt_and_authorization():
     """secure-rag-baseline-v1.yaml is classic-rag-baseline-v1.yaml + prompt v3 + auth enabled.
 
     No other variable (retrieval, chunking, embedding, reranking, model,
-    temperature, seed, relationship expansion) differs -- matches this
+    temperature, seed, relationship expansion) differs. matches this
     project's established single-variable-isolation pattern for baseline
     configs (see test_classic_rag_baseline_v1_changes_only_temperature_and_seed).
     """
@@ -352,7 +352,7 @@ def test_all_live_config_files_migrated_to_new_cutoff_field_names():
     config files (config/default.yaml + config/experiments/*.yaml) were
     migrated explicitly to the new field names rather than supporting the
     old names alongside the new ones. Historical experiments/config_snapshots/*.yaml
-    snapshots are untouched, unmigrated archival copies -- they are never
+    snapshots are untouched, unmigrated archival copies. they are never
     re-parsed by AppConfig (only copied as MLflow artifacts by
     scripts/record_experiment.py), so they're deliberately excluded here.
     """
@@ -364,7 +364,7 @@ def test_all_live_config_files_migrated_to_new_cutoff_field_names():
 
     for path in config_paths:
         raw_text = path.read_text(encoding="utf-8")
-        # Exact-line checks (not a bare substring) -- the auth-boundary
+        # Exact-line checks (not a bare substring). the auth-boundary
         # milestone's `security.dos_limits.max_top_k` field legitimately
         # contains the substring "top_k:" without being the old
         # retrieval.top_k field this test guards against.

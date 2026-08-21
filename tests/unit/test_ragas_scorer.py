@@ -37,7 +37,7 @@ class FakeEmbedder(Embedder):
 
 
 class _FakeDataset(dict):
-    """Stand-in for `datasets.Dataset` -- just a dict of columns."""
+    """Stand-in for `datasets.Dataset`. just a dict of columns."""
 
     @classmethod
     def from_dict(cls, data: dict[str, list[Any]]) -> _FakeDataset:
@@ -163,7 +163,7 @@ def test_score_missing_ragas_package_raises_runtime_error(monkeypatch):
     `ImportError` regardless of whether the `ragas` extra actually happens
     to be installed in the active venv (it is, in this project's own dev
     environment, since real RAGAS runs are part of this repo's workflow --
-    see CLAUDE.md) -- this simulates the "not installed" branch
+    see CLAUDE.md). this simulates the "not installed" branch
     deterministically rather than depending on venv state.
     """
     monkeypatch.setitem(sys.modules, "ragas", None)

@@ -106,7 +106,7 @@ def test_reference_visual_contexts_never_appears_in_a_generated_prompt():
     """A distinctive reference_visual_contexts marker never leaks into RetrievalPipeline's prompt.
 
     Ground truth flows into `evaluate()` only to be *compared against*
-    retrieval/generation output after the fact -- it's never assembled
+    retrieval/generation output after the fact. it's never assembled
     into the context handed to the LLM, since `_build_context` only ever
     reads from `SearchResult`s sourced from the vector store.
     """

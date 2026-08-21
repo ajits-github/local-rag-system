@@ -2,7 +2,7 @@
 
 Metrics/live-events default on (in-process only, no external dependency,
 same "harmless default-on" precedent as MLflowConfig); tracing defaults
-off (needs an OTLP endpoint actually listening) -- see config.py's
+off (needs an OTLP endpoint actually listening). see config.py's
 `ObservabilityConfig`/`TracingConfig` docstrings for the full reasoning.
 """
 

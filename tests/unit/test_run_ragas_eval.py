@@ -150,7 +150,7 @@ def _patch_ragas_backends(monkeypatch, judge_llm: _FakeLLM, cache: Any = None) -
     """Redirect run_ragas_eval's judge/embedder/scorer/cache calls to fakes.
 
     `cache` defaults to `None` (caching disabled) so these tests never
-    touch the real on-disk RAGAS cache -- matching `tests/unit`'s "no real
+    touch the real on-disk RAGAS cache. matching `tests/unit`'s "no real
     I/O beyond what's mocked" convention. Pass a fake cache double to
     exercise the cache-enabled reporting path instead.
     """

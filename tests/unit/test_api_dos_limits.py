@@ -11,7 +11,7 @@ from rag.config import load_config
 
 
 class _RecordingPipeline:
-    """RetrievalPipeline double -- should never be reached by an oversized/invalid request."""
+    """RetrievalPipeline double. should never be reached by an oversized/invalid request."""
 
     def __init__(self) -> None:
         """Start with no recorded calls."""

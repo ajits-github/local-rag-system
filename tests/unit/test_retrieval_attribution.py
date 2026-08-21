@@ -31,7 +31,7 @@ def _make_result(chunk_id: str, content: str, source: str, score: float) -> Sear
     return SearchResult(chunk=Chunk(id=chunk_id, content=content, metadata=metadata), score=score)
 
 
-# -- classify_contribution ----------------------------------------------------
+# . classify_contribution ----------------------------------------------------
 
 
 def test_classify_contribution_both_success():
@@ -54,21 +54,21 @@ def test_classify_contribution_neither():
     assert classify_contribution(dense_hit=False, bm25_hit=False) == "neither_success"
 
 
-# -- classify_rrf_impact -------------------------------------------------------
+# . classify_rrf_impact -------------------------------------------------------
 
 
 def test_rrf_impact_not_applicable_when_neither_retriever_found_it():
-    """Neither retriever found it -- fusion has nothing to have rescued."""
+    """Neither retriever found it. fusion has nothing to have rescued."""
     assert classify_rrf_impact(None, None, None) == "not_applicable"
 
 
 def test_rrf_impact_rescued_when_one_retriever_missed_but_fusion_found_it():
-    """BM25 missed entirely; dense found it; fusion still found it -- rescued."""
+    """BM25 missed entirely; dense found it; fusion still found it. rescued."""
     assert classify_rrf_impact(dense_rank=3, bm25_rank=None, fused_rank=2) == "rescued"
 
 
 def test_rrf_impact_rescued_symmetric_for_dense_missing():
-    """Dense missed entirely; BM25 found it; fusion still found it -- rescued."""
+    """Dense missed entirely; BM25 found it; fusion still found it. rescued."""
     assert classify_rrf_impact(dense_rank=None, bm25_rank=4, fused_rank=3) == "rescued"
 
 
@@ -97,7 +97,7 @@ def test_rrf_impact_degraded_when_fusion_drops_it_entirely():
     assert classify_rrf_impact(dense_rank=2, bm25_rank=3, fused_rank=None) == "degraded"
 
 
-# -- first_relevant_rank --------------------------------------------------------
+# . first_relevant_rank --------------------------------------------------------
 
 
 def test_first_relevant_rank_finds_first_match():
@@ -111,11 +111,11 @@ def test_first_relevant_rank_none_when_no_match():
     assert first_relevant_rank(["a.md", "b.md"], ["z.md"]) is None
 
 
-# -- reference_context_bucket (gold_schema.py, shared with run_eval.py) --------
+# . reference_context_bucket (gold_schema.py, shared with run_eval.py) --------
 
 
 def test_reference_context_bucket_none_when_no_relevant_documents():
-    """No relevant_documents at all -- nothing to classify."""
+    """No relevant_documents at all. nothing to classify."""
     assert reference_context_bucket(["a.md"], ["some content"], [], ["excerpt"]) is None
 
 
@@ -147,7 +147,7 @@ def test_reference_context_bucket_b_when_context_missing():
     assert bucket == "B"
 
 
-# -- select_interesting_examples ------------------------------------------------
+# . select_interesting_examples ------------------------------------------------
 
 
 def test_select_interesting_examples_prioritizes_rescued_then_degraded():
@@ -168,13 +168,13 @@ def test_select_interesting_examples_respects_limit():
     assert len(select_interesting_examples(per_example, limit=3)) == 3
 
 
-# -- evaluate_attribution end-to-end (fake pipeline, no real I/O) --------------
+# . evaluate_attribution end-to-end (fake pipeline, no real I/O) --------------
 
 
 class _ScriptedVectorStore:
     """VectorStore double returning per-query dense/BM25 results, keyed by query text.
 
-    `search()` only receives the embedding, not the raw query text -- this
+    `search()` only receives the embedding, not the raw query text. this
     double relies on `_IdentityEmbedder.embed_query` passing the text
     through unchanged so `search()` can key off it exactly like
     `search_keyword()` (which receives the text directly) does.
@@ -289,7 +289,7 @@ def test_evaluate_attribution_reference_context_recovered_per_retriever():
 
 
 def test_evaluate_attribution_never_raises_when_relationship_expansion_enabled():
-    """Attribution is unaffected by relationship_expansion.enabled -- no expansion call is made."""
+    """Attribution is unaffected by relationship_expansion.enabled. no expansion call is made."""
     dense_hit = _make_result("d1", "Dense hit.", source="target.md", score=0.9)
     by_query = {"q": ([dense_hit], [])}
     vectorstore = _ScriptedVectorStore(by_query)

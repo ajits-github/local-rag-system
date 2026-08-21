@@ -1,6 +1,6 @@
 """Proves the agent can return a genuine insufficient-evidence response.
 
-This covers the case where nothing useful was ever gathered -- no LLM
+This covers the case where nothing useful was ever gathered. no LLM
 synthesis call, and never a fabricated answer.
 """
 
@@ -100,5 +100,5 @@ def test_zero_evidence_gathered_returns_insufficient_evidence_without_a_synthesi
     assert result.state.final_answer is not None
     assert "don't have enough" in result.state.final_answer.lower()
     assert result.state.citations == []
-    # No synthesis LLM call was made -- exactly the 4 decision calls, nothing more.
+    # No synthesis LLM call was made. exactly the 4 decision calls, nothing more.
     assert len(llm.calls) == 4

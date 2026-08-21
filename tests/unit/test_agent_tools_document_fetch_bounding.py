@@ -132,7 +132,7 @@ def test_get_document_relevance_selects_when_over_max_chunks():
 
 
 def test_get_document_requires_dataset_id():
-    """Missing dataset_id is a safe ToolExecutionError, not a crash -- caught by the graph."""
+    """Missing dataset_id is a safe ToolExecutionError, not a crash. caught by the graph."""
     vectorstore = FakeVectorStore([])
     embedder = FakeEmbedder()
 

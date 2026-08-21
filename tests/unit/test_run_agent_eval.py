@@ -225,7 +225,7 @@ def test_infer_cited_sources_matches_on_keyword_overlap():
 
 
 def test_infer_cited_sources_returns_empty_when_no_overlap_meets_threshold():
-    """Below the overlap threshold, nothing is inferred -- a genuine 'no signal' case."""
+    """Below the overlap threshold, nothing is inferred. a genuine 'no signal' case."""
     content_by_source = {
         "a.md": "Rollback to the last known-good digest immediately.",
         "b.md": "Unrelated architecture overview text about something else.",
@@ -274,7 +274,7 @@ def test_resolve_citation_attribution_falls_back_to_inference_when_uncited():
 
 
 def test_resolve_citation_attribution_reports_none_when_nothing_matches():
-    """Neither explicit citation nor content overlap -- honestly reported as unattributed."""
+    """Neither explicit citation nor content overlap. honestly reported as unattributed."""
 
     class _FakeResult:
         route = "classic_rag"
@@ -491,7 +491,7 @@ def test_tool_selection_coverage_supplements_the_strict_accuracy_gate():
     """A partial-but-sensible tool match reads 0.0 strict but > 0 on the graded metrics.
 
     Gold expects 2 tools; the agent only calls 1 (which is in the expected
-    set) -- tool_selection_accuracy is 0.0 (strict all-or-nothing), but
+    set). tool_selection_accuracy is 0.0 (strict all-or-nothing), but
     required_tool_coverage is 0.5 and expected_tool_precision is 1.0.
     """
     examples = [

@@ -2,16 +2,16 @@
 
 `experiment_029` (see experiments/reports/agentic_rag_baseline_v1.md
 section 3/4) found `unnecessary_agent_rate=1.0`: `agent_classify_v1`
-routed both gold `tool_not_needed` questions -- single-document factual
-lookups -- through the expensive agent path. That fix lives entirely in
+routed both gold `tool_not_needed` questions. single-document factual
+lookups. through the expensive agent path. That fix lives entirely in
 prompt wording (`agent_classify_v2.yaml`), not in `rag.agent.graph`'s
 control-flow code, so it can only be regression-tested against a real
 LLM, not a scripted mock (see `tests/unit/test_agent_graph_routing.py`
 for the mocked, deterministic proof that the graph correctly follows
 whatever classification it's given).
 
-Uses paraphrased, gold-analogous questions -- not the gold file's own
-question text -- so a pass here is evidence the fix generalizes, not that
+Uses paraphrased, gold-analogous questions. not the gold file's own
+question text. so a pass here is evidence the fix generalizes, not that
 the model memorized the benchmark.
 """
 

@@ -39,7 +39,7 @@ def test_load_gold_jsonl_skips_blank_lines(tmp_path: Path):
 
 
 def test_agentic_fields_default_to_false_and_empty_so_old_gold_files_still_parse():
-    """The 7 agentic-milestone fields are all optional/defaulted -- additive, not breaking."""
+    """The 7 agentic-milestone fields are all optional/defaulted. additive, not breaking."""
     example = GoldExample(question="what?")
     assert example.requires_query_decomposition is False
     assert example.requires_multiple_retrieval_calls is False

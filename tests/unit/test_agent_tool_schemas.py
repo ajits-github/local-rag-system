@@ -16,7 +16,7 @@ def test_search_knowledge_base_args_rejects_smuggled_privileged_field():
     """extra='forbid' rejects an LLM-supplied tenant_id/roles/auth-shaped key.
 
     This is the structural (not just prompted) guarantee that the LLM
-    cannot supply or override authorization -- see docs/architecture.md's
+    cannot supply or override authorization. see docs/architecture.md's
     "Agentic RAG" section.
     """
     with pytest.raises(ValidationError):
@@ -44,7 +44,7 @@ def test_get_related_context_args_rejects_extra_field():
 
 
 def test_search_knowledge_base_top_k_defaults_and_bounds():
-    """top_k has a hard Field(ge=1, le=20) range -- the LLM can request less, never more."""
+    """top_k has a hard Field(ge=1, le=20) range. the LLM can request less, never more."""
     args = SearchKnowledgeBaseArgs.model_validate({"query": "hello"})
     assert args.top_k == 5
 

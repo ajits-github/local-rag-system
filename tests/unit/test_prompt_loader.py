@@ -23,7 +23,7 @@ V1_PATH = (
 )
 
 # Byte-identical to the pre-versioning hardcoded _PROMPT_TEMPLATE constant
-# that lived in retrieval/pipeline.py -- frozen here (not imported, since
+# that lived in retrieval/pipeline.py. frozen here (not imported, since
 # that constant no longer exists) so v1's rendered output can be pinned.
 _LEGACY_PROMPT_TEMPLATE = """Answer the question using only the context below. \
 If the context doesn't contain the answer, say you don't know.

@@ -88,7 +88,7 @@ def test_tenant_cannot_retrieve_other_tenants_document(require_postgres, config,
 
 
 def test_role_mismatch_within_same_tenant_is_still_denied(require_postgres, config, tmp_path: Path):
-    """Tenant match alone is not sufficient -- the caller's role must also be on allowed_roles."""
+    """Tenant match alone is not sufficient. the caller's role must also be on allowed_roles."""
     ns = f"pytest-authz-{uuid.uuid4()}"
     secure = _secure_config(config)
     pipeline = IngestionPipeline(secure)

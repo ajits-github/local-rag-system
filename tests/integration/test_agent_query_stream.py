@@ -2,7 +2,7 @@
 
 Builds a small, isolated FastAPI app mounting only `agent_stream.router`,
 with DI singletons built directly via `rag.factory` against a config copy
-with the agent enabled -- the same workaround
+with the agent enabled. the same workaround
 `tests/unit/test_rate_limiting.py` documents for any config-derived
 singleton bound at import time: `rag.api.main.app`'s own singletons are
 already bound to the process-default (agent-disabled) config, so a fresh
@@ -144,5 +144,5 @@ def test_client_disconnecting_mid_stream_does_not_hang_or_raise(streaming_client
     ) as response:
         assert response.status_code == 200
         # Read only the first chunk, then let the `with` block close the
-        # connection early -- must not hang the test process or raise.
+        # connection early. must not hang the test process or raise.
         next(response.iter_text(), None)

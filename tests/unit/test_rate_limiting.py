@@ -15,7 +15,7 @@ from rag.api.deps import _rate_limit_key, get_rate_limiter
 
 
 def _scope(path: str = "/query") -> dict[str, Any]:
-    """Build a fresh Starlette ASGI scope dict -- never share one across two `Request`s."""
+    """Build a fresh Starlette ASGI scope dict. never share one across two `Request`s."""
     return {"type": "http", "headers": Headers({}).raw, "method": "POST", "path": path}
 
 
@@ -47,7 +47,7 @@ def test_key_falls_back_to_client_ip_when_no_identity():
 
 
 def test_disabled_by_default_limiter_never_blocks():
-    """get_rate_limiter() reads the real (rate_limit.enabled=false) default config -- a no-op.
+    """get_rate_limiter() reads the real (rate_limit.enabled=false) default config. a no-op.
 
     query.py's `_limiter` (the object its `@_limiter.limit(...)` decorator is
     actually bound to) is fixed at `rag.api.routers.query` import time --

@@ -5,7 +5,7 @@ Runs config.agent.enabled=True end to end through run_agent().
 Assertions are deliberately robust to real-LLM variability (a local 3B model's JSON-
 schema compliance and tool-selection choices aren't perfectly reproducible run to
 run): the hard requirements are that the run always completes without raising, always
-produces a non-empty final answer, and -- the actual security-critical property --
+produces a non-empty final answer, and. the actual security-critical property --
 never leaks another tenant's content into the answer regardless of which tools the
 model chose to call. Exact tool sequencing is not asserted here (see the mocked
 tests/unit/test_agent_graph_*.py files for deterministic, scripted-LLM proof of the
@@ -36,7 +36,7 @@ _VALID_TERMINATIONS = {
 def _agentic_config(config):
     """Return a copy of `config` with the agent enabled, security on, and a more capable model.
 
-    Uses qwen2.5:3b -- matching PROJECT_JOURNAL's finding that it follows
+    Uses qwen2.5:3b. matching PROJECT_JOURNAL's finding that it follows
     JSON-schema/refusal instructions substantially more reliably than 1.5b.
     """
     agentic = config.model_copy(deep=True)
@@ -183,7 +183,7 @@ def test_agent_path_never_leaks_cross_tenant_content_via_real_model(
         for source in result.state.citations:
             assert "beta-rollback" not in source.source
         # Even if the model tried a get_document/get_latest_document call against a
-        # guessed Beta path, it would come back empty at the SQL layer -- provable
+        # guessed Beta path, it would come back empty at the SQL layer. provable
         # directly (not just via the answer) since sanitized tool evidence is what
         # citations/final_answer are built from.
         for evidence in result.state.retrieved_evidence:

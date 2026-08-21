@@ -63,7 +63,7 @@ def test_get_latest_document_redirects_a_superseded_source_to_the_current_one():
 
     This is the corrected design from the plan review (adjustment 7):
     get_chunks_by_source alone on the *requested* path would silently
-    return stale content -- get_latest_document must resolve the family
+    return stale content. get_latest_document must resolve the family
     first.
     """
     versions = [
@@ -118,7 +118,7 @@ def test_get_latest_document_uses_hard_ceiling_as_limit():
 
 
 def test_get_latest_document_requires_dataset_id():
-    """Missing dataset_id is a safe ToolExecutionError, not a crash -- caught by the graph."""
+    """Missing dataset_id is a safe ToolExecutionError, not a crash. caught by the graph."""
     vectorstore = FakeVectorStore([], chunks_by_source={})
     embedder = FakeEmbedder()
 

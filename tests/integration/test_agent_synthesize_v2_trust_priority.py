@@ -12,7 +12,7 @@ be regression-tested against a real model.
 
 Also includes a normal, non-adversarial two-source case with no trust
 conflict at all, guarding against the new rule causing over-cautious
-hedging/refusal on ordinary multi-source questions -- exactly the
+hedging/refusal on ordinary multi-source questions. exactly the
 "broad refusal behavior" check the re-evaluation task asked for.
 """
 

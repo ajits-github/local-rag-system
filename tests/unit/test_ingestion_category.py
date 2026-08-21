@@ -8,7 +8,7 @@ from rag.schemas import Chunk
 
 
 class FakeVectorStore:
-    """Minimal VectorStore double -- no DB, just records what was written."""
+    """Minimal VectorStore double. no DB, just records what was written."""
 
     def __init__(self) -> None:
         """Start with no recorded chunks and a fresh document-id counter."""
@@ -44,7 +44,7 @@ class FakeVectorStore:
         return []
 
     def list_document_sources(self, dataset_id: str) -> list[str]:
-        """Report no pre-existing documents -- every ingest_path call here starts fresh."""
+        """Report no pre-existing documents. every ingest_path call here starts fresh."""
         return []
 
     def delete_documents_by_source(self, dataset_id: str, sources: list[str]) -> int:

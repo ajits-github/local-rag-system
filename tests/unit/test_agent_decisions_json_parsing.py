@@ -83,7 +83,7 @@ def test_run_decision_retries_once_then_succeeds():
 
 
 def test_run_decision_returns_none_after_exhausting_retries():
-    """Every attempt failing returns None -- callers must supply a safe default, never crash."""
+    """Every attempt failing returns None. callers must supply a safe default, never crash."""
     llm = FakeLLM(["nope", "still nope"])
     decision = run_decision(llm, _template(), ClassifyDecision, max_retries=1, query="hi")
     assert decision is None

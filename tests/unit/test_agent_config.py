@@ -36,7 +36,7 @@ def test_agent_config_none_of_the_bounds_are_llm_writable_anywhere():
 def test_default_config_loads_agent_section():
     """config/default.yaml declares an agent: section that validates against AgentConfig.
 
-    `agent.enabled` is `True` in the shipped default -- the Agentic RAG
+    `agent.enabled` is `True` in the shipped default. the Agentic RAG
     milestone made the agent the active default route, not an opt-in
     experiment overlay (see `AgentConfig()`'s own default of `False`,
     still the pydantic-model default for anyone building a config from

@@ -115,7 +115,7 @@ def test_issuer_not_checked_when_unconfigured(monkeypatch):
     A token asserting an `aud` claim is deliberately not exercised here:
     pyjwt itself requires `audience=` to be passed to `decode()` whenever
     the token carries an `aud` claim at all (regardless of this project's
-    own config) -- consistent with how `verify_jwt`/`issue_dev_token.py`
+    own config). consistent with how `verify_jwt`/`issue_dev_token.py`
     only ever add an `aud` claim when `jwt.audience` is actually configured.
     """
     config = _config(monkeypatch)

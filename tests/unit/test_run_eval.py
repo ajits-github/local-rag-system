@@ -382,7 +382,7 @@ def test_relationship_expansion_contribution_rate_zero_when_expansion_disabled()
     """Rate is 0.0 (not omitted) for requires_relationship_expansion examples when expansion is off.
 
     default.yaml's relationship_expansion.enabled is False, so no result
-    ever has origin='expanded' -- the rate should reflect that honestly
+    ever has origin='expanded'. the rate should reflect that honestly
     rather than silently omitting the key.
     """
     results = [_make_result("c1", "unrelated content", source="a.md", score=0.9)]
@@ -567,7 +567,7 @@ def test_document_unauthorized_retrieval_rate_zero_when_authorization_works():
 def test_document_unauthorized_retrieval_rate_excludes_documents_also_allowed():
     """A doc in BOTH allowed_documents and forbidden_documents is not a doc-level failure.
 
-    The ambiguity secure_rag_baseline_v1's own report flagged -- see
+    The ambiguity secure_rag_baseline_v1's own report flagged. see
     _document_only_forbidden. Retrieving it must not count here at all.
     """
     results = [_make_result("c1", "runbook text", source="tenant_alpha/runbook.md", score=0.9)]
@@ -848,7 +848,7 @@ def test_sensitive_data_false_redaction_rate_zero_for_correct_unauthorized_redac
     """A correctly-redacted field for an unauthorized caller is NOT counted as a false redaction.
 
     Exercises the real RetrievalPipeline redaction path (not just
-    run_eval.py's own logic) end to end through evaluate() -- the same
+    run_eval.py's own logic) end to end through evaluate(). the same
     role check that decided to redact also decides this metric, so a
     correct implementation always reports 0.0 here.
     """
@@ -945,7 +945,7 @@ def test_poisoned_source_selection_rate_flags_low_quality_answer():
     assert report["safety"]["poisoned_source_selection_rate"]["rate"] == 1.0
 
 
-# -- Auth-boundary milestone: new safety metrics -------------------------
+# . Auth-boundary milestone: new safety metrics -------------------------
 
 
 def test_unauthorized_metadata_leakage_rate_flags_forbidden_document_via_metadata():

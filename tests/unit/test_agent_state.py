@@ -23,7 +23,7 @@ def test_agent_state_defaults_are_empty_and_unstarted():
 
 
 def test_agent_state_holds_authorization_context_by_reference():
-    """AuthorizationContext carries no raw credential -- safe to embed directly in state.
+    """AuthorizationContext carries no raw credential. safe to embed directly in state.
 
     See docs/architecture.md's "Agentic RAG" section: VerifiedIdentity
     (which does carry the raw JWT `sub`) must never enter AgentState;

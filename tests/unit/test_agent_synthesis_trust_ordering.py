@@ -5,7 +5,7 @@ experiments/reports/agentic_rag_baseline_v1.md section 3): the agent
 retrieved both an authoritative and an untrusted, contradicting source,
 but synthesized the untrusted value as the primary answer. The fix is
 `rag.agent.graph._order_evidence_for_synthesis`, which the graph's
-`_synthesize` node now applies before rendering context -- this test
+`_synthesize` node now applies before rendering context. this test
 proves it via the observable prompt text (matching this codebase's
 existing convention of asserting through `run_agent`'s public entrypoint
 plus a recording `ScriptedLLM`, never by importing graph.py's private

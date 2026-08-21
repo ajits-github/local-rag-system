@@ -31,7 +31,7 @@ def test_dataset_filter_excludes_other_namespace_even_as_strong_distractor(
 
     # Deliberately near-identical content differing only in the fact value,
     # so that without a working filter both chunks would be top candidates
-    # for the same query -- a weak distractor wouldn't actually prove the
+    # for the same query. a weak distractor wouldn't actually prove the
     # filter is doing anything.
     path_a = tmp_path / "a.txt"
     path_a.write_text(

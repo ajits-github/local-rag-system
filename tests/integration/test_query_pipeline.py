@@ -45,7 +45,7 @@ def test_flagged_retrieved_injection_is_preserved_as_labeled_evidence_not_droppe
     and `_source_label` must annotate it as suspicious data rather than
     silently passing it through unlabeled. The rendered context text
     (what actually reaches the user turn of the prompt) carries that same
-    label immediately before the chunk's own content -- proving the
+    label immediately before the chunk's own content. proving the
     warning travels with the content into the prompt, not just into an
     internal flag nobody reads.
     """
@@ -77,7 +77,7 @@ def test_flagged_retrieved_injection_is_preserved_as_labeled_evidence_not_droppe
         context = build_context(results)
         assert "possible embedded instruction" in context
         # The label appears in the same rendered block as the chunk's own
-        # content -- it travels with the evidence into the prompt's user
+        # content. it travels with the evidence into the prompt's user
         # turn, it doesn't just exist as an internal-only flag.
         assert "System override" in context
     finally:

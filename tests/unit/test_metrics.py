@@ -60,7 +60,7 @@ def test_mean_reciprocal_rank_averages_across_queries():
 
 def test_hit_rate_at_k_is_binary_unlike_recall():
     """hit_rate_at_k is 1.0 as soon as any relevant id is found, unlike recall."""
-    # Two relevant ids, only one found -- recall is fractional, hit rate is 1.0.
+    # Two relevant ids, only one found. recall is fractional, hit rate is 1.0.
     retrieved = ["a", "b", "c"]
     relevant = {"a", "z"}
     assert recall_at_k(retrieved, relevant, k=3) == 0.5

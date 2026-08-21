@@ -8,7 +8,7 @@ a pooled connection that no `finally` block ever saw, let alone returned.
 Enough leaked connections exhausted the pool
 (`psycopg2.pool.PoolError: connection pool exhausted`), reproduced here by
 GET /health being polled repeatedly against a database whose schema
-hadn't been initialized yet -- exactly the containerized Docker smoke
+hadn't been initialized yet. exactly the containerized Docker smoke
 test's failure mode.
 
 These tests fake the pool and the psycopg2 connection/cursor rather than
@@ -76,7 +76,7 @@ class FakePool:
     """Fixed-capacity stand-in for `psycopg2.pool.ThreadedConnectionPool`.
 
     Raises the same `psycopg2.pool.PoolError` the real pool raises once
-    every connection is checked out and none remain -- so a test that
+    every connection is checked out and none remain. so a test that
     leaks connections fails the same way the real bug did in CI.
     """
 

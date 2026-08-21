@@ -183,7 +183,7 @@ def test_events_never_contain_reasoning_text_or_retrieved_content():
         payload = event.model_dump_json()
         assert _SECRET_REASONING not in payload
         assert _SECRET_CHUNK_CONTENT not in payload
-        # No free-text field exists on the model at all -- assert the field set
+        # No free-text field exists on the model at all. assert the field set
         # itself never grows a text-shaped surface beyond the documented ones.
         assert set(type(event).model_fields) == {
             "event_type",

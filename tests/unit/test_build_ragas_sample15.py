@@ -46,7 +46,7 @@ def _synthetic_rows() -> list[dict[str, Any]]:
         _row("plain unanswerable", unanswerable=True),
         _row(
             "plain extra unused", difficulty="easy"
-        ),  # not picked -- exact axes already covered above
+        ),  # not picked. exact axes already covered above
     ]
     return rows
 

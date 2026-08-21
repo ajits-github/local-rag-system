@@ -2,7 +2,7 @@
 
 Same dependency-override doubles as
 `test_api_agent_query_auth_boundary.py`; fast (mocked pipeline/LLM), no
-real Postgres/Ollama -- `tests/integration/test_agent_query_stream.py`
+real Postgres/Ollama. `tests/integration/test_agent_query_stream.py`
 covers the real-stack case.
 """
 

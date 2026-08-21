@@ -73,7 +73,7 @@ class FakeVectorStore:
         return True
 
     def get_chunks_by_source(self, source, dataset_id, auth=None, limit=None):
-        """Fail the test if reached -- these tests never supply a dataset_id."""
+        """Fail the test if reached. these tests never supply a dataset_id."""
         raise AssertionError("should not be reached: dataset_id is missing")
 
 

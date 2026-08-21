@@ -129,7 +129,7 @@ def test_max_agent_steps_terminates_the_run_and_still_answers():
 
     assert result.state.termination_reason == "max_steps"
     assert result.state.step_count >= 6
-    # It stopped -- bounded, not infinite.
+    # It stopped. bounded, not infinite.
     assert llm.calls < 1000
     assert result.state.final_answer is not None
 
@@ -181,7 +181,7 @@ def test_two_tool_call_convergence_exactly_at_step_bound_labels_synthesized():
     sufficient)]. Before the control-flow fix, `_step_or_stop` labeled this
     "max_steps" because the bound check ran before the sufficiency check;
     the fix checks `evidence_sufficient` first, so a genuine convergence on
-    the final allowed step is labeled "synthesized", not "max_steps" -- see
+    the final allowed step is labeled "synthesized", not "max_steps". see
     experiments/reports/agentic_rag_baseline_v1.md section 5's
     step-budget-arithmetic finding.
     """
@@ -214,10 +214,10 @@ def test_two_tool_call_convergence_exactly_at_step_bound_labels_synthesized():
 
 
 def test_step_bound_reached_with_genuinely_insufficient_evidence_is_still_max_steps():
-    """The fix must not turn every bound-hit into "synthesized" -- only a true convergence.
+    """The fix must not turn every bound-hit into "synthesized". only a true convergence.
 
     Same step arithmetic as the convergence test above, but the final
-    evidence_sufficiency call reports insufficient -- the bound must still
+    evidence_sufficiency call reports insufficient. the bound must still
     win and label this run "max_steps", exactly as before the fix.
     """
     llm = ScriptedLLM(

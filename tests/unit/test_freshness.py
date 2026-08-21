@@ -53,12 +53,12 @@ def test_as_of_resolves_deterministically_to_effective_version():
             supersedes_source="policy-v1.md",
         ),
     ]
-    # A date after v1 but before v2 resolves to v1 -- v2 excluded.
+    # A date after v1 but before v2 resolves to v1. v2 excluded.
     excluded = resolve_excluded_document_ids(
         versions, as_of=date(2026, 3, 15), include_superseded=False
     )
     assert excluded == {"d2"}
-    # A date after v2's effective_from resolves to v2 -- v1 excluded.
+    # A date after v2's effective_from resolves to v2. v1 excluded.
     excluded = resolve_excluded_document_ids(
         versions, as_of=date(2026, 8, 14), include_superseded=False
     )
@@ -83,7 +83,7 @@ def test_as_of_before_every_version_excludes_all_dated_members():
 
 
 def test_as_of_ignores_undated_family_members():
-    """A family member with no effective_from is never excluded -- can't be placed in time."""
+    """A family member with no effective_from is never excluded. can't be placed in time."""
     versions = [
         _v("d1", "policy-v1.md", effective_from=date(2025, 1, 1)),
         _v("d2", "policy-v2.md", effective_from=None, supersedes_source="policy-v1.md"),
@@ -176,7 +176,7 @@ def test_resolve_current_document_source_as_of_resolves_to_dated_winner():
 
 
 def test_resolve_current_document_source_unknown_source_returned_unchanged():
-    """A source matching no known document is returned unchanged -- never guesses."""
+    """A source matching no known document is returned unchanged. never guesses."""
     versions = [_v("d1", "policy-v1.md", status="active")]
     assert resolve_current_document_source("unrelated.md", versions) == "unrelated.md"
 
@@ -188,7 +188,7 @@ def test_resolve_current_document_source_no_family_returned_unchanged():
 
 
 def test_resolve_current_document_source_no_active_member_falls_back_to_requested():
-    """No active/dated-resolvable family member -- the requested source is returned unchanged."""
+    """No active/dated-resolvable family member. the requested source is returned unchanged."""
     versions = [
         _v("d1", "policy-v1.md", status="draft"),
         _v("d2", "policy-v2.md", status="draft", supersedes_source="policy-v1.md"),

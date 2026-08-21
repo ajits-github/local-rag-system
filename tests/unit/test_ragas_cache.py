@@ -1,7 +1,7 @@
 """Tests for `rag.eval.ragas_cache`: judge-identity-safe RAGAS judge-call caching.
 
 Every test here uses local, in-process doubles only (a `_CountingLLM` that
-never makes a network call, `tmp_path`-scoped disk caches) -- no hosted
+never makes a network call, `tmp_path`-scoped disk caches). no hosted
 judge API is ever reached, matching the "do not perform a paid RAGAS run
 merely to test caching" constraint this module was built under.
 """
@@ -75,7 +75,7 @@ def _wrapped_llm(cache_dir, namespace: str, counting_llm: _CountingLLM):
     return wrapper, cache
 
 
-# -- judge_fingerprint -------------------------------------------------------
+# . judge_fingerprint -------------------------------------------------------
 
 
 def test_judge_fingerprint_differs_by_model():
@@ -99,7 +99,7 @@ def test_judge_fingerprint_stable_for_identical_config():
     assert a == b
 
 
-# -- NamespacedDiskCache / cacher() integration ------------------------------
+# . NamespacedDiskCache / cacher() integration ------------------------------
 
 
 def test_identical_inputs_hit_cache_on_second_call(tmp_path):
@@ -150,7 +150,7 @@ def test_changed_judge_model_misses_cache_even_with_identical_prompt(tmp_path):
     """Namespacing by judge fingerprint means a model swap always misses.
 
     Both wrappers share the same underlying cache directory (simulating
-    `config.judge.cache_dir` staying fixed across runs) -- only the
+    `config.judge.cache_dir` staying fixed across runs). only the
     namespace (derived from `judge_fingerprint`) differs, proving the
     isolation comes from the namespace, not from separate storage.
     """
@@ -183,7 +183,7 @@ def test_build_judge_cache_uses_config_cache_dir_and_starts_empty(tmp_path):
     assert cache.stats.as_dict() == {"hits": 0, "misses": 0, "total": 0}
 
 
-# -- estimate_avoided_cost ----------------------------------------------------
+# . estimate_avoided_cost ----------------------------------------------------
 
 
 def test_estimate_avoided_cost_none_when_nothing_avoided():

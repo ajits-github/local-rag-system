@@ -2,7 +2,7 @@
 
 AgentState.prompt_tokens/completion_tokens accumulate across every LLM call
 in a run, read via the same getattr(...) pattern RetrievalPipeline.answer()
-already uses -- 0 for an LLM that doesn't track them.
+already uses. 0 for an LLM that doesn't track them.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ class TokenTrackingLLM:
 
 
 class NoTokenTrackingLLM:
-    """No last_prompt_tokens/last_completion_tokens attributes at all -- must never raise."""
+    """No last_prompt_tokens/last_completion_tokens attributes at all. must never raise."""
 
     def __init__(self, responses: list[str]) -> None:
         """Store the queued responses this double's generate() will pop from."""
@@ -123,7 +123,7 @@ def test_agent_route_accumulates_tokens_across_every_decision_call():
         config=_agent_config(enabled=True),
     )
 
-    # Only the classify call happened (routed to classic_rag) -- one LLM call's worth
+    # Only the classify call happened (routed to classic_rag). one LLM call's worth
     # of tokens (100/20) plus the classic pipeline.answer() call's own (50/10).
     assert result.state.prompt_tokens == 150
     assert result.state.completion_tokens == 30

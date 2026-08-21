@@ -354,7 +354,7 @@ def test_retrieve_hybrid_provider_fuses_dense_and_keyword_results():
     ids = [r.chunk.id for r in fused]
     assert set(ids) == {"shared", "dense-only", "keyword-only"}
     # "shared" is ranked 1st in both branches, so it must outrank either
-    # single-branch result -- the direct signature of correct RRF fusion.
+    # single-branch result. the direct signature of correct RRF fusion.
     assert ids[0] == "shared"
 
 
@@ -466,7 +466,7 @@ def test_retrieve_attribution_never_expands_relationships():
     """retrieve_attribution() never calls relationship expansion, even when enabled.
 
     FakeVectorStore doesn't implement get_chunks_by_ids/get_chunks_by_section
-    at all, so this would raise AttributeError if expansion ran -- not
+    at all, so this would raise AttributeError if expansion ran. not
     raising, plus every result staying origin="retrieved", is the proof.
     """
     dense_results = [_make_result("d1", "Dense one.", source="a.md", score=0.9)]
@@ -499,7 +499,7 @@ def test_generation_context_top_n_controls_primary_result_count():
 def test_changing_generation_context_top_n_does_not_change_recall_at_k():
     """An explicit broad retrieve() override ignores config's generation_context_top_n entirely."""
     results = _make_indexed_results(10)
-    relevant = ["d9.md"]  # ranked last -- only visible past a top-3 cutoff
+    relevant = ["d9.md"]  # ranked last. only visible past a top-3 cutoff
     small_config = load_config().model_copy(deep=True)
     small_config.retrieval.generation_context_top_n = 3
     large_config = load_config().model_copy(deep=True)
@@ -576,7 +576,7 @@ def test_authorization_disabled_by_default_ignores_caller_supplied_auth():
 
     This is the hard kill-switch: a caller-constructed AuthorizationContext
     is never even passed down to the vectorstore unless the config flag is
-    explicitly True -- so this milestone is byte-identical-behavior for
+    explicitly True. so this milestone is byte-identical-behavior for
     every pre-existing config/experiment that doesn't opt in.
     """
     from rag.retrieval.authorization import AuthorizationContext
@@ -758,7 +758,7 @@ def test_field_redaction_fails_closed_when_no_authorization_context_supplied():
     """Regression test (design-review adjustment 1): missing identity must redact, not pass through.
 
     Even with document-level authorization untouched (no `auth` passed at
-    all -- e.g. an open/unauthenticated caller, or `authorization.enabled`
+    all. e.g. an open/unauthenticated caller, or `authorization.enabled`
     itself left False), enabling `field_redaction` alone must still
     redact a tagged sensitive field rather than treating the missing
     `AuthorizationContext` as unrestricted access.

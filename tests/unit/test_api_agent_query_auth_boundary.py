@@ -31,9 +31,9 @@ class _RecordingPipeline:
     """RetrievalPipeline double recording every `answer()` call's `auth` argument.
 
     Every test in this file ends up on the classic_rag fast path (a
-    single `pipeline.answer()` call) -- either because `_StubLLM`
+    single `pipeline.answer()` call). either because `_StubLLM`
     classifies as 'simple', or because a test explicitly disables the
-    agent -- the same behavior these tests exercise for `/query`.
+    agent. the same behavior these tests exercise for `/query`.
     """
 
     def __init__(self) -> None:
@@ -100,7 +100,7 @@ class _StubLLM:
 
     `config.agent.enabled` is `True` in the shipped default, so
     `classify_query` genuinely runs (one LLM call) even on a request that
-    ends up taking the classic_rag route -- this double reports 'simple'
+    ends up taking the classic_rag route. this double reports 'simple'
     so every test here lands on classic_rag regardless of whether the
     agent happens to be enabled or disabled for a given test.
     """
@@ -199,7 +199,7 @@ def test_agent_disabled_response_shape_matches_classic_route(client_with):
 
     `config/default.yaml`'s own default is now `True` (the Agentic RAG
     milestone), so this test forces it off explicitly to exercise the
-    kill-switch path -- distinct from every other test in this file,
+    kill-switch path. distinct from every other test in this file,
     which lets `_StubLLM` classify its way to `classic_rag` regardless.
     """
     config = load_config()
@@ -218,7 +218,7 @@ def test_agent_disabled_response_shape_matches_classic_route(client_with):
 
 
 def test_query_endpoint_response_schema_is_unaffected_by_the_new_route(client_with):
-    """POST /query itself is untouched -- same 5-field response shape as before."""
+    """POST /query itself is untouched. same 5-field response shape as before."""
     config = load_config()
     client, pipeline = client_with(config)
 

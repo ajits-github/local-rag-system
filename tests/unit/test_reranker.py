@@ -24,7 +24,7 @@ def _make_result(chunk_id: str, content: str, score: float) -> SearchResult:
 
 
 def test_noop_reranker_is_a_true_identity():
-    """NoOpReranker returns every result unchanged, ignoring top_n entirely -- no truncation."""
+    """NoOpReranker returns every result unchanged, ignoring top_n entirely. no truncation."""
     results = [_make_result(f"c{i}", f"content {i}", score=1.0 - i * 0.1) for i in range(5)]
 
     reranked = NoOpReranker().rerank("any query", results, top_n=2)

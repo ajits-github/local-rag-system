@@ -36,7 +36,7 @@ def _fake_eval_report() -> dict:
 def test_build_experiment_record_reads_config_not_report():
     """Config-derived record fields come from AppConfig, not the report's own summary."""
     # Config values must come from the actual AppConfig, not the report's
-    # own (possibly incomplete/stale) embedded summary -- this is what lets
+    # own (possibly incomplete/stale) embedded summary. this is what lets
     # older eval reports (missing vector_store/reranker_model) still work.
     config = load_config()
     record = record_experiment.build_experiment_record(

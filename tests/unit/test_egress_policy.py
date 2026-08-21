@@ -25,7 +25,7 @@ def _source(**overrides) -> dict:
 
 
 def test_disabled_by_default_passes_content_through_unchanged():
-    """A no-op when egress_policy.enabled is False -- content passes through as-is."""
+    """A no-op when egress_policy.enabled is False. content passes through as-is."""
     config = load_config()
     assert config.security.egress_policy.enabled is False
 

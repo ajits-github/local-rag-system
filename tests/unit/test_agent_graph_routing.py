@@ -1,7 +1,7 @@
 """Proves the two headline routing invariants.
 
 Simple questions stay on the fast classic-RAG path with zero tool calls, and
-complex questions reach the bounded agent loop -- plus config.agent.enabled=False
+complex questions reach the bounded agent loop. plus config.agent.enabled=False
 is a true, zero-extra-call kill-switch.
 """
 
@@ -132,7 +132,7 @@ def test_simple_question_routes_to_classic_rag_with_no_tool_calls():
     assert result.state.termination_reason == "synthesized"
     assert result.state.tool_call_history == []
     assert len(pipeline.answer_calls) == 1
-    assert len(llm.calls) == 1  # only the classify call -- no decompose/tool-select/etc.
+    assert len(llm.calls) == 1  # only the classify call. no decompose/tool-select/etc.
 
 
 def test_complex_question_reaches_the_bounded_agent_loop_and_synthesizes():
@@ -171,7 +171,7 @@ def test_complex_question_reaches_the_bounded_agent_loop_and_synthesizes():
 
 
 def test_disabled_agent_always_routes_classic_with_zero_llm_calls():
-    """config.agent.enabled=False is a true kill-switch -- not even the classify call happens."""
+    """config.agent.enabled=False is a true kill-switch. not even the classify call happens."""
     llm = ScriptedLLM([])  # any call at all would raise IndexError (queue empty)
     pipeline = FakePipeline()
     state = AgentState(original_query="hello")
@@ -194,7 +194,7 @@ def test_classic_route_exposes_raw_sources_for_downstream_context_building():
     """`AgentRunResult.classic_sources` carries pipeline.answer()'s raw source_dict list.
 
     Regression test: `state.citations` alone (id/source/category/score,
-    no `content`) can't stand in for this -- a caller needing the actual
+    no `content`) can't stand in for this. a caller needing the actual
     retrieved text for a classic-routed question (e.g. RAGAS
     context-building in `run_agent_ragas_eval.py`) needs the raw dicts,
     not just citations.

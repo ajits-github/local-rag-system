@@ -48,7 +48,7 @@ def _write_doc(tmp_path: Path, name: str, frontmatter: dict, body: str) -> Path:
 def test_forbidden_document_metadata_never_appears_in_response(
     require_postgres, config, tmp_path: Path
 ):
-    """A cross-tenant caller retrieves nothing -- no chunk_id/source/category leaks either."""
+    """A cross-tenant caller retrieves nothing. no chunk_id/source/category leaks either."""
     ns = f"pytest-metadataleak-{uuid.uuid4()}"
     secure = _secure_config(config)
     pipeline = IngestionPipeline(secure)

@@ -19,7 +19,7 @@ _TARGET_TEXT = (
 )
 # Noise documents deliberately share heavy vocabulary overlap with the
 # query (voltage, power supply, continuous operation, require) but never
-# mention the exact identifier -- a weak distractor set wouldn't prove
+# mention the exact identifier. a weak distractor set wouldn't prove
 # BM25's exact-token-match strength is doing anything.
 _NOISE_TEXTS = [
     "Most industrial equipment requires a stable power supply rated for "
@@ -82,13 +82,13 @@ def test_hybrid_finds_exact_identifier_at_least_as_well_as_dense_only(
         hybrid_rank = _rank_of_target(hybrid_results)
 
         # BM25's exact-token match should always surface the identifier
-        # within a top_k=2 fused result -- a hard requirement, not a
+        # within a top_k=2 fused result. a hard requirement, not a
         # >= comparison, since this is BM25's specific strength.
         assert (
             hybrid_rank <= 2
         ), f"expected the exact-identifier chunk within hybrid's top 2, got rank {hybrid_rank}"
         # Hybrid must never rank the exact match *worse* than dense-only
-        # does on the same fixture -- >= (not strict >) since real
+        # does on the same fixture. >= (not strict >) since real
         # embedding behavior on one fixture can't be guaranteed brittle-exact.
         assert hybrid_rank <= dense_rank
     finally:

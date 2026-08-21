@@ -64,7 +64,7 @@ def test_redact_sensitive_fields_fails_closed_when_no_roles():
     """Regression test: a missing/empty identity must redact, never pass through unrestricted.
 
     `roles=[]` (no asserted identity) must never be treated as
-    "unrestricted access" -- see FieldRedactionConfig's fail-closed
+    "unrestricted access". see FieldRedactionConfig's fail-closed
     requirement. `any(role in allowed_roles for role in [])` is False for
     every policy, so this asserts that behavior explicitly rather than
     relying on it being an accidental consequence of `any()`'s semantics.
@@ -108,7 +108,7 @@ def test_is_role_authorized_for_field_false_for_no_roles():
 
 
 def test_is_role_authorized_for_field_true_for_unknown_field_id():
-    """An id not backed by any policy has nothing to restrict -- returns True."""
+    """An id not backed by any policy has nothing to restrict. returns True."""
     assert is_role_authorized_for_field("not_a_real_policy", [])
 
 
@@ -134,7 +134,7 @@ def test_custom_policies_override_defaults():
     assert field_ids2 == []
 
 
-# -- Auth-boundary milestone: redact_source_metadata --------------------------
+# . Auth-boundary milestone: redact_source_metadata --------------------------
 
 
 def test_redact_source_metadata_redacts_a_matching_field_for_unauthorized_role():
@@ -163,14 +163,14 @@ def test_redact_source_metadata_passes_through_none_values_unchanged():
     assert field_ids == []
 
 
-# -- Auth-boundary milestone: find_duplicate_sensitive_occurrences ------------
+# . Auth-boundary milestone: find_duplicate_sensitive_occurrences ------------
 
 
 def test_duplicate_secret_in_neighboring_chunk_is_also_tagged():
     """The same literal secret appearing in two separately-ingested chunks is flagged as duplicated.
 
     Requirement 7's concrete "secret appears in a neighboring/duplicate
-    chunk" scenario -- built as an in-test fixture (per the approved
+    chunk" scenario. built as an in-test fixture (per the approved
     design adjustment), not a file added to the canonical knowledge base.
     """
     chunks = [
@@ -191,7 +191,7 @@ def test_duplicate_secret_in_neighboring_chunk_is_also_tagged():
     assert finding.field_id == "synthetic_admin_credential"
     assert sorted(finding.chunk_ids) == ["c1", "c2"]
     assert finding.untagged_chunk_ids == []
-    # The report never contains the raw literal -- only a hash.
+    # The report never contains the raw literal. only a hash.
     assert _ALPHA_ADMIN_KEY not in finding.literal_value_hash
 
 

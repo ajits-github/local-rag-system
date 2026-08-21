@@ -1,8 +1,8 @@
 """Proves requirement 7 of the structured-content-ingestion milestone end to end.
 
 Self-contained by design (matching test_dataset_isolation.py's precedent):
-ingests a small synthetic Markdown document -- never the real, git-ignored
-data/knowledge_base -- into a fresh pytest-namespaced dataset_id, retrieves
+ingests a small synthetic Markdown document. never the real, git-ignored
+data/knowledge_base. into a fresh pytest-namespaced dataset_id, retrieves
 against it through a real Postgres round trip, and cleans up afterward.
 """
 

@@ -36,7 +36,7 @@ def test_text_discussing_injection_without_the_pattern_itself_is_not_flagged():
     assert detect_injection(text) is False
 
 
-# -- Auth-boundary milestone: obfuscated/less-literal phrasing ----------------
+# . Auth-boundary milestone: obfuscated/less-literal phrasing ----------------
 
 
 def test_detects_disregard_the_above_variant():

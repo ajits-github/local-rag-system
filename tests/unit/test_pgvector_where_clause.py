@@ -36,7 +36,7 @@ def test_build_where_clause_multiple_filters_joined_with_and():
 
 
 def test_build_where_clause_rejects_disallowed_key():
-    """A filter key outside ALLOWED_FILTER_FIELDS raises ValueError -- the SQL-injection guard."""
+    """A filter key outside ALLOWED_FILTER_FIELDS raises ValueError. the SQL-injection guard."""
     with pytest.raises(ValueError, match="not allowed"):
         _build_where_clause({"chunk_id": "doc-1_0"})
 
@@ -66,7 +66,7 @@ def test_tokenize_preserves_underscores_within_identifiers():
 
 
 def test_build_authorization_where_clause_none_auth_returns_empty():
-    """None auth produces no fragment and no params -- fully unrestricted."""
+    """None auth produces no fragment and no params. fully unrestricted."""
     assert build_authorization_where_clause(None, ["techfusion_support"]) == ("", [])
 
 
