@@ -1,16 +1,27 @@
 from __future__ import annotations
 
+import io
 from pathlib import Path
 
 import docx
 import pytest
+from PIL import Image
 from pypdf import PdfWriter
 
+from rag.chunkers.structured_markdown import StructuredMarkdownChunker
+from rag.loaders.base import resolve_image_asset
 from rag.loaders.docx_loader import DocxLoader
 from rag.loaders.html_loader import HTMLLoader
 from rag.loaders.pdf_loader import PDFLoader
 from rag.loaders.registry import get_loader
 from rag.loaders.text_loader import TextLoader
+
+
+def _tiny_png_bytes() -> bytes:
+    """Build a minimal valid 1x1 PNG, for tests that need a real embeddable image."""
+    buf = io.BytesIO()
+    Image.new("RGB", (1, 1), color="red").save(buf, format="PNG")
+    return buf.getvalue()
 
 
 def test_text_loader_reads_plain_text(tmp_path: Path):
@@ -164,7 +175,9 @@ def test_pdf_loader_reads_blank_page_without_error(tmp_path: Path):
     doc = PDFLoader().load(path)
 
     assert doc.source_type == "pdf"
-    assert doc.content == ""  # blank page has no extractable text
+    # A blank page still gets its `<!--page:N-->` sentinel (needed so a later
+    # page's number stays correct); no real text/structure was extracted.
+    assert doc.content.strip() == "<!--page:1-->"
 
 
 def test_registry_maps_extensions_to_loaders(tmp_path: Path):
@@ -180,3 +193,228 @@ def test_registry_raises_for_unsupported_extension(tmp_path: Path):
     """get_loader raises ValueError for an unregistered extension."""
     with pytest.raises(ValueError, match="No loader registered"):
         get_loader(tmp_path / "a.xyz")
+
+
+# --- Layout-aware DOCX extraction ------------------------------------------
+
+
+def test_docx_loader_extracts_headings_as_section_markers(tmp_path: Path):
+    """Title/Heading-styled paragraphs become #/## markers the chunker turns into section_path."""
+    path = tmp_path / "doc.docx"
+    document = docx.Document()
+    document.add_paragraph("My Report", style="Title")
+    document.add_paragraph("1. Scope", style="Heading 1")
+    document.add_paragraph("This section explains the scope.")
+    document.save(str(path))
+
+    doc = DocxLoader().load(path)
+    spans = StructuredMarkdownChunker().split(doc.content, source_type=doc.source_type)
+
+    prose = [s for s in spans if (s.content_type or "prose") == "prose"]
+    assert any(s.section_path == "My Report > 1. Scope" for s in prose)
+
+
+def test_docx_loader_extracts_table_as_pipe_markdown(tmp_path: Path):
+    """A docx table becomes a content_type='table' chunk after the chunker runs."""
+    path = tmp_path / "doc.docx"
+    document = docx.Document()
+    document.add_paragraph("Intro", style="Heading 1")
+    table = document.add_table(rows=2, cols=2)
+    table.cell(0, 0).text = "Name"
+    table.cell(0, 1).text = "Value"
+    table.cell(1, 0).text = "retries"
+    table.cell(1, 1).text = "5"
+    document.save(str(path))
+
+    doc = DocxLoader().load(path)
+    spans = StructuredMarkdownChunker().split(doc.content, source_type=doc.source_type)
+
+    table_spans = [s for s in spans if s.content_type == "table"]
+    assert len(table_spans) == 1
+    assert "retries" in table_spans[0].text
+    assert "5" in table_spans[0].text
+
+
+def test_docx_loader_tracks_page_breaks(tmp_path: Path):
+    """Manual page breaks increment ChunkSpan.page across the document."""
+    path = tmp_path / "doc.docx"
+    document = docx.Document()
+    document.add_paragraph("Page one content", style="Heading 1")
+    document.add_page_break()
+    document.add_paragraph("Page two content", style="Heading 1")
+    document.save(str(path))
+
+    doc = DocxLoader().load(path)
+    spans = StructuredMarkdownChunker().split(doc.content, source_type=doc.source_type)
+
+    pages = {s.page for s in spans if "Page one" in s.text or "Page one content" in s.text}
+    assert pages == {1}
+    pages_two = {s.page for s in spans if "Page two content" in s.text}
+    assert pages_two == {2}
+
+
+def test_docx_loader_detects_monospace_paragraph_as_code(tmp_path: Path):
+    """A paragraph whose runs are all a monospace font becomes a fenced code/config block."""
+    path = tmp_path / "doc.docx"
+    document = docx.Document()
+    document.add_paragraph("Setup", style="Heading 1")
+    code_paragraph = document.add_paragraph()
+    run = code_paragraph.add_run("retry_seconds: 30")
+    run.font.name = "Consolas"
+    document.save(str(path))
+
+    doc = DocxLoader().load(path)
+    spans = StructuredMarkdownChunker().split(doc.content, source_type=doc.source_type)
+
+    code_spans = [s for s in spans if s.content_type in ("code", "configuration")]
+    assert len(code_spans) == 1
+    assert "retry_seconds: 30" in code_spans[0].text
+
+
+def test_docx_loader_resolves_image_to_existing_asset_and_folds_caption(tmp_path: Path):
+    """An embedded image is referenced via source_anchor into a pre-existing assets/ folder."""
+    assets_dir = tmp_path / "assets"
+    assets_dir.mkdir()
+    (assets_dir / "diagram-view-01.png").write_bytes(_tiny_png_bytes())
+
+    path = tmp_path / "doc.docx"
+    document = docx.Document()
+    document.add_paragraph("Overview", style="Heading 1")
+    document.add_picture(io.BytesIO(_tiny_png_bytes()))
+    document.add_paragraph("Figure 1. Overview diagram.")
+    document.save(str(path))
+
+    doc = DocxLoader().load(path)
+    spans = StructuredMarkdownChunker().split(doc.content, source_type=doc.source_type)
+
+    image_spans = [s for s in spans if s.content_type == "image"]
+    assert len(image_spans) == 1
+    assert image_spans[0].source_anchor == "assets/diagram-view-01.png"
+    assert "Figure 1. Overview diagram." in image_spans[0].text
+
+
+def test_docx_loader_writes_fallback_asset_when_no_assets_folder_exists(tmp_path: Path):
+    """With no sibling assets/ folder, the loader extracts and writes the image itself."""
+    path = tmp_path / "standalone-report.docx"
+    document = docx.Document()
+    document.add_paragraph("Overview", style="Heading 1")
+    document.add_picture(io.BytesIO(_tiny_png_bytes()))
+    document.save(str(path))
+
+    doc = DocxLoader().load(path)
+
+    written = tmp_path / "assets" / "standalone-report-figure-01.png"
+    assert written.is_file()
+    assert "assets/standalone-report-figure-01.png" in doc.content
+
+
+# --- resolve_image_asset: shared assets/ folder disambiguation -------------
+
+
+def test_resolve_image_asset_matches_by_shared_filename_word(tmp_path: Path):
+    """Two sibling documents sharing one assets/ folder each resolve to their own images.
+
+    Regression test for a real bug found via integration testing: naive
+    positional pairing across a shared assets/ folder handed every
+    document the *first* document's images.
+    """
+    assets_dir = tmp_path / "assets"
+    assets_dir.mkdir()
+    (assets_dir / "capacity-view-01.png").touch()
+    (assets_dir / "capacity-view-02.png").touch()
+    (assets_dir / "incident-view-01.png").touch()
+
+    doc_a = tmp_path / "ingestion-capacity-analysis.docx"
+    doc_b = tmp_path / "incident-084-visual-review.pdf"
+
+    assert resolve_image_asset(doc_a, 0, lambda: (b"", ".png")) == "assets/capacity-view-01.png"
+    assert resolve_image_asset(doc_a, 1, lambda: (b"", ".png")) == "assets/capacity-view-02.png"
+    assert resolve_image_asset(doc_b, 0, lambda: (b"", ".png")) == "assets/incident-view-01.png"
+
+
+def test_resolve_image_asset_falls_back_to_all_candidates_when_no_word_matches(tmp_path: Path):
+    """A folder with no filename-word overlap still resolves positionally, not empty."""
+    assets_dir = tmp_path / "assets"
+    assets_dir.mkdir()
+    (assets_dir / "figure-01.png").touch()
+
+    doc = tmp_path / "unrelated-name.docx"
+
+    assert resolve_image_asset(doc, 0, lambda: (b"", ".png")) == "assets/figure-01.png"
+
+
+def test_resolve_image_asset_extracts_bytes_when_no_assets_dir(tmp_path: Path):
+    """With no assets/ directory at all, the factory's bytes are written to a new one."""
+    doc = tmp_path / "report.pdf"
+
+    result = resolve_image_asset(doc, 0, lambda: (b"raw-bytes", ".png"))
+
+    assert result == "assets/report-figure-01.png"
+    assert (tmp_path / "assets" / "report-figure-01.png").read_bytes() == b"raw-bytes"
+
+
+# --- Layout-aware PDF extraction: helper-level (no real PDF needed) --------
+
+
+def test_pdf_loader_group_paragraphs_detects_heading_by_font_size():
+    """A short, large-font line becomes a heading; body-sized text stays prose."""
+    loader = PDFLoader(heading_font_size_ratio=1.15, title_font_size_ratio=1.8)
+    words = [
+        {"text": "Title", "x0": 0, "x1": 10, "top": 0, "bottom": 10, "size": 24.0},
+        {"text": "Words", "x0": 12, "x1": 20, "top": 0, "bottom": 10, "size": 24.0},
+        {"text": "Regular", "x0": 0, "x1": 10, "top": 30, "bottom": 40, "size": 10.0},
+        {"text": "paragraph", "x0": 12, "x1": 25, "top": 30, "bottom": 40, "size": 10.0},
+        {"text": "text.", "x0": 27, "x1": 35, "top": 30, "bottom": 40, "size": 10.0},
+    ]
+
+    paragraphs = loader._group_paragraphs(words, body_size=10.0)
+
+    kinds = [p["kind"] for p in paragraphs]
+    assert "heading1" in kinds
+    assert "prose" in kinds
+    heading = next(p for p in paragraphs if p["kind"] == "heading1")
+    assert heading["text"] == "Title Words"
+
+
+def test_pdf_loader_group_paragraphs_detects_monospace_run_as_code():
+    """Consecutive Courier-font lines are grouped into one code paragraph, not prose."""
+    loader = PDFLoader()
+    words = [
+        {
+            "text": "retry_seconds:",
+            "x0": 0,
+            "x1": 10,
+            "top": 0,
+            "bottom": 10,
+            "size": 10.0,
+            "fontname": "Courier",
+        },
+        {
+            "text": "30",
+            "x0": 12,
+            "x1": 15,
+            "top": 0,
+            "bottom": 10,
+            "size": 10.0,
+            "fontname": "Courier",
+        },
+    ]
+
+    paragraphs = loader._group_paragraphs(words, body_size=10.0)
+
+    assert len(paragraphs) == 1
+    assert paragraphs[0]["kind"] == "code"
+    assert paragraphs[0]["text"] == "retry_seconds: 30"
+
+
+def test_pdf_loader_render_table_produces_pipe_markdown():
+    """_render_table turns a pdfplumber-Table-shaped object into a pipe table."""
+
+    class FakeTable:
+        def extract(self) -> list[list[str]]:
+            return [["Name", "Value"], ["retries", "5"]]
+
+    result = PDFLoader._render_table(FakeTable())
+
+    assert result.splitlines()[0] == "| Name | Value |"
+    assert "| retries | 5 |" in result

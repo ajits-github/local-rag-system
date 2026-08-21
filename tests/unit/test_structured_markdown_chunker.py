@@ -233,3 +233,74 @@ def test_non_asset_image_extension_is_not_treated_as_a_block():
     spans = chunker.split(text, source_type="markdown")
 
     assert all(s.content_type != "image" for s in spans)
+
+
+# --- Layout-aware-ingestion milestone: pdf/docx activation + page markers --
+
+
+def test_pdf_source_type_triggers_structural_parsing():
+    """source_type='pdf' gets the same table/heading/image structural parsing as markdown."""
+    chunker = StructuredMarkdownChunker()
+    text = "# Title\n\n| a | b |\n|---|---|\n| 1 | 2 |"
+
+    spans = chunker.split(text, source_type="pdf")
+
+    table_spans = [s for s in spans if s.content_type == "table"]
+    assert len(table_spans) == 1
+
+
+def test_docx_source_type_triggers_structural_parsing():
+    """source_type='docx' gets the same table/heading/image structural parsing as markdown."""
+    chunker = StructuredMarkdownChunker()
+    text = "# Title\n\n| a | b |\n|---|---|\n| 1 | 2 |"
+
+    spans = chunker.split(text, source_type="docx")
+
+    table_spans = [s for s in spans if s.content_type == "table"]
+    assert len(table_spans) == 1
+
+
+def test_page_marker_tags_every_span_until_the_next_marker():
+    """A <!--page:N--> sentinel sets .page on every span produced until the next one."""
+    chunker = StructuredMarkdownChunker()
+    text = (
+        "<!--page:1-->\n\nFirst page paragraph.\n\n"
+        "<!--page:2-->\n\n# Heading\n\nSecond page paragraph."
+    )
+
+    spans = chunker.split(text, source_type="pdf")
+
+    pages = {s.page for s in spans if "First page" in s.text}
+    assert pages == {1}
+    pages_two = {s.page for s in spans if "Second page" in s.text}
+    assert pages_two == {2}
+
+
+def test_page_marker_line_never_appears_in_chunk_text():
+    """The <!--page:N--> sentinel is consumed as a marker, never leaked into chunk content."""
+    chunker = StructuredMarkdownChunker()
+    text = "<!--page:1-->\n\nSome paragraph text."
+
+    spans = chunker.split(text, source_type="pdf")
+
+    assert all("page:1" not in s.text for s in spans)
+
+
+def test_markdown_without_page_markers_leaves_page_none():
+    """Plain Markdown (no page sentinels ever emitted) keeps span.page at None, unaffected."""
+    chunker = StructuredMarkdownChunker()
+    text = "# Title\n\nSome paragraph text."
+
+    spans = chunker.split(text, source_type="markdown")
+
+    assert all(s.page is None for s in spans)
+
+
+def test_page_marker_applies_to_table_and_image_spans_too():
+    """Page tagging isn't prose-only. table/image spans on a page also get .page set."""
+    chunker = StructuredMarkdownChunker()
+    text = "<!--page:3-->\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n![Diagram](images/x.png)"
+
+    spans = chunker.split(text, source_type="pdf")
+
+    assert all(s.page == 3 for s in spans)

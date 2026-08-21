@@ -1,13 +1,16 @@
-"""Adversarial proof that the agent's direct-fetch tools cannot bypass authorization.
+"""Adversarial proof that the agent's tools cannot bypass authorization.
 
-Covers get_document, get_latest_document, get_related_context -- none of
+Covers get_document, get_latest_document, get_related_context. none of
 which can bypass tenant/role authorization or field-level redaction, even
 though they call VectorStore directly rather than going through
-RetrievalPipeline.retrieve().
+RetrievalPipeline.retrieve(). plus one test for search_knowledge_base's
+LLM-selectable content_type filter (routes through retrieve(), so its ACL
+story is the well-covered one; the filter itself is the part specific to
+this tool).
 
 Mirrors tests/integration/test_authorization_isolation.py's self-contained
 pattern: ingests small synthetic documents with real governance front
-matter into a fresh namespace per test. No Ollama needed -- these tools
+matter into a fresh namespace per test. No Ollama needed. these tools
 never call the LLM.
 """
 
@@ -16,8 +19,18 @@ from __future__ import annotations
 import uuid
 from pathlib import Path
 
-from rag.agent.tool_schemas import GetDocumentArgs, GetLatestDocumentArgs, GetRelatedContextArgs
-from rag.agent.tools import get_document, get_latest_document, get_related_context
+from rag.agent.tool_schemas import (
+    GetDocumentArgs,
+    GetLatestDocumentArgs,
+    GetRelatedContextArgs,
+    SearchKnowledgeBaseArgs,
+)
+from rag.agent.tools import (
+    get_document,
+    get_latest_document,
+    get_related_context,
+    search_knowledge_base,
+)
 from rag.ingestion.pipeline import IngestionPipeline
 from rag.retrieval.authorization import AuthorizationContext
 from rag.retrieval.pipeline import RetrievalPipeline
@@ -62,7 +75,7 @@ def _write_doc(tmp_path: Path, name: str, frontmatter: dict, body: str) -> Path:
 
 
 def test_get_document_tool_cannot_bypass_tenant_isolation(require_postgres, config, tmp_path: Path):
-    """A get_document call for another tenant's document returns nothing -- SQL-level ACL holds."""
+    """A get_document call for another tenant's document returns nothing. SQL-level ACL holds."""
     ns = f"pytest-agent-tool-{uuid.uuid4()}"
     secure = _secure_config(config)
     ingestion = IngestionPipeline(secure)
@@ -153,7 +166,7 @@ def test_get_document_tool_output_still_gets_field_redacted(
         # This is the exact wrap-then-sanitize step rag.agent.graph._execute_tool performs.
         # sanitize_evidence redacts SearchResult.chunk in place (a fresh model_copy, but
         # reassigned onto the same SearchResult), so each auth context needs its own
-        # freshly-wrapped list -- reusing one across two redaction passes would just
+        # freshly-wrapped list. reusing one across two redaction passes would just
         # re-run redaction on already-redacted (no-longer-matching) text.
         from rag.schemas import SearchResult
 
@@ -212,7 +225,7 @@ def test_get_latest_document_tool_resolves_current_version_and_respects_acl(
 
     try:
         auth = AuthorizationContext(tenant_id="tenant_alpha", roles=["tenant_alpha_operator"])
-        # Ask for the OLD version's path -- must still get current (90 days) content.
+        # Ask for the OLD version's path. must still get current (90 days) content.
         chunks = get_latest_document(
             GetLatestDocumentArgs(source=str(path_v1)),
             vectorstore,
@@ -283,3 +296,64 @@ def test_get_related_context_tool_cannot_reach_an_unauthorized_seed_chunk(
         assert related == []
     finally:
         vectorstore.delete_document(result["document_id"])
+
+
+def test_search_knowledge_base_image_filter_cannot_leak_across_tenants(
+    require_postgres, config, tmp_path: Path
+):
+    """A content_type="image" filtered search cannot surface another tenant's image chunk.
+
+    Beta's image caption is written to near-verbatim match the query, so
+    it really would be the strongest semantic match with no auth scoping.
+    This proves ACL, not coincidental ranking, is what keeps it out of
+    Alpha's results.
+    """
+    ns = f"pytest-agent-tool-{uuid.uuid4()}"
+    secure = _secure_config(config)
+    ingestion = IngestionPipeline(secure)
+    query_text = "quarterly revenue breakdown by region"
+
+    (tmp_path / "assets").mkdir()
+    (tmp_path / "assets" / "alpha.png").write_bytes(b"fake-png-bytes-alpha")
+    (tmp_path / "assets" / "beta.png").write_bytes(b"fake-png-bytes-beta")
+    alpha_path = _write_doc(
+        tmp_path,
+        "alpha-diagram.md",
+        {"tenant_id": "tenant_alpha", "allowed_roles": ["tenant_alpha_operator"]},
+        "![Alpha diagram](assets/alpha.png)\n\n*Figure 1: An unrelated operational diagram.*",
+    )
+    beta_path = _write_doc(
+        tmp_path,
+        "beta-diagram.md",
+        {"tenant_id": "tenant_beta", "allowed_roles": ["tenant_beta_operator"]},
+        f"![Beta diagram](assets/beta.png)\n\n*Figure 1: {query_text}.*",
+    )
+    alpha_result = ingestion.ingest_file(alpha_path, ns)
+    beta_result = ingestion.ingest_file(beta_path, ns)
+    vectorstore = ingestion._vectorstore
+    pipeline = RetrievalPipeline(secure, vectorstore=vectorstore)
+
+    try:
+        # Sanity check: with no auth scoping, Beta's near-verbatim caption
+        # really is the top image match. otherwise this test proves nothing.
+        unscoped = search_knowledge_base(
+            SearchKnowledgeBaseArgs(query=query_text, content_type="image", top_k=5),
+            pipeline,
+            filters={"dataset_id": ns},
+            auth=None,
+        )
+        assert unscoped, "expected image results with no auth scoping"
+        assert unscoped[0].chunk.metadata.tenant_id == "tenant_beta"
+
+        alpha_auth = AuthorizationContext(tenant_id="tenant_alpha", roles=["tenant_alpha_operator"])
+        alpha_results = search_knowledge_base(
+            SearchKnowledgeBaseArgs(query=query_text, content_type="image", top_k=5),
+            pipeline,
+            filters={"dataset_id": ns},
+            auth=alpha_auth,
+        )
+        assert all(r.chunk.metadata.tenant_id != "tenant_beta" for r in alpha_results)
+        assert all(r.chunk.metadata.content_type == "image" for r in alpha_results)
+    finally:
+        vectorstore.delete_document(alpha_result["document_id"])
+        vectorstore.delete_document(beta_result["document_id"])

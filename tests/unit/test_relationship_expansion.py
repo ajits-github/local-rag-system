@@ -90,7 +90,7 @@ class FakeVectorStore:
         return self._results[:top_k]
 
     def search_keyword(self, query, top_k, filters=None, auth=None) -> list[SearchResult]:
-        """Return no keyword results -- these tests only exercise dense retrieval."""
+        """Return no keyword results. these tests only exercise dense retrieval."""
         return []
 
     def get_chunks_by_ids(self, chunk_ids: list[str], auth=None) -> list[Chunk]:
@@ -110,7 +110,7 @@ class FakeVectorStore:
         """Unused by RetrievalPipeline unless a test exercises authorization/freshness."""
         return []
 
-    def get_cached_image_description(self, image_checksum: str) -> str | None:
+    def get_cached_image_description(self, *args, **kwargs) -> str | None:
         """Unused by RetrievalPipeline; not exercised by these tests."""
         return None
 
@@ -282,8 +282,8 @@ def test_expansion_happens_after_generation_context_cutoff():
 
     Two directly-retrieved results each have their own parent; overriding
     generation_context_top_n=1 keeps only the first for generation, so
-    expansion must only ever see (and add a parent for) that first result
-    -- proving expansion runs on the already-truncated primary list, not
+    expansion must only ever see (and add a parent for) that first result.
+    This proves expansion runs on the already-truncated primary list, not
     the full candidate pool.
     """
     first = _chunk("c1", "first", parent_chunk_id="parent-1")
@@ -307,7 +307,7 @@ def test_expanded_chunks_do_not_contaminate_recall_at_k():
     """An origin='expanded' chunk appended after the primary cutoff never counts toward Recall@k.
 
     The parent chunk's source would match "relevant", but recall_at_k(k=1)
-    only looks at the first `k` entries -- since the parent is appended
+    only looks at the first `k` entries. since the parent is appended
     after the single primary result, it must not inflate recall@1, only
     recall@2 (once the cutoff reaches its position).
     """
@@ -343,7 +343,7 @@ def test_expansion_threads_authorization_context_into_relationship_lookups():
 
     Defense-in-depth (see vectorstore.base.VectorStore.get_chunks_by_ids's
     docstring): a parent/neighbor lookup shares its originating chunk's own
-    document_id, so this should never actually exclude anything -- but the
+    document_id, so this should never actually exclude anything. but the
     same AuthorizationContext must still reach these calls, not just
     search()/search_keyword().
     """
@@ -375,7 +375,7 @@ def test_field_redaction_applies_to_relationship_expanded_content():
     """Task section 7: an expanded parent/neighbor chunk is redacted under the same rules.
 
     A safe, non-sensitive chunk expands to a parent containing a
-    protected field -- the expansion step must not bypass field-level
+    protected field. the expansion step must not bypass field-level
     redaction just because the content arrived via a second lookup
     (get_chunks_by_ids) rather than the primary search() call.
     """

@@ -9,7 +9,7 @@ from rag.vision.base import VisionProvider
 
 
 class FakeVectorStore:
-    """Minimal VectorStore double -- no DB, just records what was written."""
+    """Minimal VectorStore double. no DB, just records what was written."""
 
     def __init__(self) -> None:
         """Start with no recorded chunks and an empty image-description cache."""
@@ -20,9 +20,11 @@ class FakeVectorStore:
         """Record `chunks` in `written_chunks` for assertions."""
         self.written_chunks.extend(chunks)
 
-    def get_cached_image_description(self, image_checksum: str) -> str | None:
+    def get_cached_image_description(
+        self, image_checksum: str, provider: str, model_name: str, prompt_version: str
+    ) -> str | None:
         """Return a cached description, or None on a miss."""
-        return self._image_cache.get(image_checksum)
+        return self._image_cache.get((image_checksum, provider, model_name, prompt_version))
 
     def cache_image_description(
         self,
@@ -30,10 +32,11 @@ class FakeVectorStore:
         source_path: str,
         provider: str,
         model_name: str,
+        prompt_version: str,
         description: str,
     ) -> None:
         """Record a description in the fake in-memory cache."""
-        self._image_cache[image_checksum] = description
+        self._image_cache[(image_checksum, provider, model_name, prompt_version)] = description
 
 
 class FakeVisionProvider(VisionProvider):
@@ -41,15 +44,35 @@ class FakeVisionProvider(VisionProvider):
 
     provider_name = "fake"
     model_name = "fake-model"
+    prompt_version = "v1"
 
-    def __init__(self, description: str = "A diagram showing X connected to Y.") -> None:
-        """Store the canned description and start with no recorded calls."""
+    def __init__(
+        self,
+        description: str = "A diagram showing X connected to Y.",
+        prompt_version: str = "v1",
+        provider_name: str = "fake",
+        model_name: str = "fake-model",
+        raises: Exception | None = None,
+    ) -> None:
+        """Store the canned description and start with no recorded calls.
+
+        `raises`, when set, is raised by `describe_image` instead of
+        returning `description`. simulates a provider call failure
+        (Ollama unreachable/timed out/malformed response) without a real
+        network call.
+        """
         self._description = description
+        self.prompt_version = prompt_version
+        self.provider_name = provider_name
+        self.model_name = model_name
+        self._raises = raises
         self.calls: list[tuple[Path, str | None]] = []
 
     def describe_image(self, image_path: Path, alt_text: str | None = None) -> str:
-        """Record the call and return the canned description -- never a real network call."""
+        """Record the call and return the canned description. never a real network call."""
         self.calls.append((image_path, alt_text))
+        if self._raises is not None:
+            raise self._raises
         return self._description
 
 
@@ -126,7 +149,7 @@ def test_span_matching_sensitive_pattern_is_tagged_with_field_id():
     Field-level-safety milestone: this ingestion-time tag (see
     rag.retrieval.field_policy.detect_sensitive_field_ids) is what lets
     RetrievalPipeline skip the redaction pass entirely for untagged
-    chunks -- it carries no role decision by itself.
+    chunks. it carries no role decision by itself.
     """
     vectorstore = FakeVectorStore()
     writer = Writer(FakeEmbedder(), vectorstore)
@@ -191,7 +214,7 @@ def test_parent_tracking_resets_across_sections():
 
 
 def test_no_vision_provider_leaves_image_span_untouched():
-    """Without a VisionProvider, an image span is persisted as-is -- no sibling, no file access."""
+    """Without a VisionProvider, an image span is persisted as-is. no sibling, no file access."""
     writer = Writer(FakeEmbedder(), FakeVectorStore())
     spans = [
         ChunkSpan(
@@ -211,7 +234,7 @@ def test_no_vision_provider_leaves_image_span_untouched():
 def test_vision_provider_adds_sibling_chunk_without_modifying_caption_chunk(tmp_path):
     """A configured VisionProvider adds a second, vision_generated=True chunk per image span.
 
-    The original caption/alt-text chunk is never modified -- "never
+    The original caption/alt-text chunk is never modified. "never
     overwrite captions with generated descriptions."
     """
     doc_dir = tmp_path / "knowledge_base"
@@ -256,7 +279,7 @@ def test_vision_provider_adds_sibling_chunk_without_modifying_caption_chunk(tmp_
 
 
 def test_vision_provider_is_not_called_again_on_cache_hit(tmp_path):
-    """A second write() over the same image reuses the cache -- no second describe_image call."""
+    """A second write() over the same image reuses the cache. no second describe_image call."""
     doc_dir = tmp_path / "knowledge_base"
     (doc_dir / "images").mkdir(parents=True)
     (doc_dir / "images" / "diagram.png").write_bytes(b"fake-png-bytes")
@@ -282,6 +305,209 @@ def test_vision_provider_is_not_called_again_on_cache_hit(tmp_path):
     writer.write(document, "doc-2", [span], dataset_id="ds")
 
     assert len(vision_provider.calls) == 1
+
+
+def test_vision_provider_cache_misses_on_changed_prompt_version(tmp_path):
+    """Switching prompt_version (same provider/model) invalidates the cache. no stale reuse.
+
+    Regression test for a real gap this milestone closed: the cache key
+    used to be image_checksum alone, so switching provider/model/prompt
+    would have silently served a description generated under different
+    instructions.
+    """
+    doc_dir = tmp_path / "knowledge_base"
+    (doc_dir / "images").mkdir(parents=True)
+    (doc_dir / "images" / "diagram.png").write_bytes(b"fake-png-bytes")
+
+    document = RawDocument(
+        content="irrelevant",
+        source=str(doc_dir / "doc.md"),
+        source_type="markdown",
+        created_at=datetime.now(UTC),
+        last_modified=datetime.now(UTC),
+    )
+    vectorstore = FakeVectorStore()
+    span = ChunkSpan(
+        text="![Architecture diagram](images/diagram.png)",
+        content_type="image",
+        attachment_name="diagram.png",
+        source_anchor="images/diagram.png",
+    )
+
+    provider_v1 = FakeVisionProvider(description="v1 description", prompt_version="v1")
+    Writer(FakeEmbedder(), vectorstore, provider_v1).write(
+        document, "doc-1", [span], dataset_id="ds"
+    )
+
+    provider_v2 = FakeVisionProvider(description="v2 description", prompt_version="v2")
+    chunks = Writer(FakeEmbedder(), vectorstore, provider_v2).write(
+        document, "doc-2", [span], dataset_id="ds"
+    )
+
+    assert len(provider_v2.calls) == 1  # a real call was made, not a stale cache hit
+    vision_chunk = next(c for c in chunks if c.metadata.vision_generated)
+    assert vision_chunk.metadata.vision_description == "v2 description"
+
+
+def test_vision_provider_cache_misses_on_changed_image_bytes(tmp_path):
+    """A different image at the same path (different checksum) is never served a stale description.
+
+    Same provider/model/prompt_version. only the image bytes on disk
+    changed between writes. so the cache key (keyed on the image's own
+    sha256, not its path) must miss and re-describe.
+    """
+    doc_dir = tmp_path / "knowledge_base"
+    (doc_dir / "images").mkdir(parents=True)
+    image_path = doc_dir / "images" / "diagram.png"
+    image_path.write_bytes(b"first-image-bytes")
+
+    document = RawDocument(
+        content="irrelevant",
+        source=str(doc_dir / "doc.md"),
+        source_type="markdown",
+        created_at=datetime.now(UTC),
+        last_modified=datetime.now(UTC),
+    )
+    vectorstore = FakeVectorStore()
+    span = ChunkSpan(
+        text="![Architecture diagram](images/diagram.png)",
+        content_type="image",
+        attachment_name="diagram.png",
+        source_anchor="images/diagram.png",
+    )
+
+    provider = FakeVisionProvider(description="first description")
+    Writer(FakeEmbedder(), vectorstore, provider).write(document, "doc-1", [span], dataset_id="ds")
+
+    image_path.write_bytes(b"second-image-bytes-entirely-different")
+    provider_second_call = FakeVisionProvider(description="second description")
+    chunks = Writer(FakeEmbedder(), vectorstore, provider_second_call).write(
+        document, "doc-2", [span], dataset_id="ds"
+    )
+
+    assert len(provider_second_call.calls) == 1  # new checksum. not a stale hit off the old bytes
+    vision_chunk = next(c for c in chunks if c.metadata.vision_generated)
+    assert vision_chunk.metadata.vision_description == "second description"
+
+
+def test_vision_provider_cache_misses_on_changed_model_name(tmp_path):
+    """Switching model_name (same provider/prompt_version) invalidates the cache.
+
+    No stale reuse across models.
+    """
+    doc_dir = tmp_path / "knowledge_base"
+    (doc_dir / "images").mkdir(parents=True)
+    (doc_dir / "images" / "diagram.png").write_bytes(b"fake-png-bytes")
+
+    document = RawDocument(
+        content="irrelevant",
+        source=str(doc_dir / "doc.md"),
+        source_type="markdown",
+        created_at=datetime.now(UTC),
+        last_modified=datetime.now(UTC),
+    )
+    vectorstore = FakeVectorStore()
+    span = ChunkSpan(
+        text="![Architecture diagram](images/diagram.png)",
+        content_type="image",
+        attachment_name="diagram.png",
+        source_anchor="images/diagram.png",
+    )
+
+    provider_small = FakeVisionProvider(
+        description="small-model description", model_name="moondream"
+    )
+    Writer(FakeEmbedder(), vectorstore, provider_small).write(
+        document, "doc-1", [span], dataset_id="ds"
+    )
+
+    provider_large = FakeVisionProvider(
+        description="large-model description", model_name="moondream-large"
+    )
+    chunks = Writer(FakeEmbedder(), vectorstore, provider_large).write(
+        document, "doc-2", [span], dataset_id="ds"
+    )
+
+    assert len(provider_large.calls) == 1  # a real call was made, not a stale hit off the old model
+    vision_chunk = next(c for c in chunks if c.metadata.vision_generated)
+    assert vision_chunk.metadata.vision_description == "large-model description"
+
+
+def test_vision_provider_cache_misses_on_changed_provider(tmp_path):
+    """Switching provider_name (same model/prompt_version, hypothetically) invalidates the cache."""
+    doc_dir = tmp_path / "knowledge_base"
+    (doc_dir / "images").mkdir(parents=True)
+    (doc_dir / "images" / "diagram.png").write_bytes(b"fake-png-bytes")
+
+    document = RawDocument(
+        content="irrelevant",
+        source=str(doc_dir / "doc.md"),
+        source_type="markdown",
+        created_at=datetime.now(UTC),
+        last_modified=datetime.now(UTC),
+    )
+    vectorstore = FakeVectorStore()
+    span = ChunkSpan(
+        text="![Architecture diagram](images/diagram.png)",
+        content_type="image",
+        attachment_name="diagram.png",
+        source_anchor="images/diagram.png",
+    )
+
+    provider_a = FakeVisionProvider(description="provider-a description", provider_name="ollama")
+    Writer(FakeEmbedder(), vectorstore, provider_a).write(
+        document, "doc-1", [span], dataset_id="ds"
+    )
+
+    provider_b = FakeVisionProvider(description="provider-b description", provider_name="hosted")
+    chunks = Writer(FakeEmbedder(), vectorstore, provider_b).write(
+        document, "doc-2", [span], dataset_id="ds"
+    )
+
+    assert len(provider_b.calls) == 1  # a real call was made, not a stale hit off the old provider
+    vision_chunk = next(c for c in chunks if c.metadata.vision_generated)
+    assert vision_chunk.metadata.vision_description == "provider-b description"
+
+
+def test_vision_provider_call_failure_skips_image_without_failing_document(tmp_path):
+    """A `describe_image` exception (Ollama unreachable/timeout/malformed response) is caught.
+
+    That one image gets no vision sibling. the same outcome as a
+    missing asset file. but the rest of the document still ingests
+    normally, and the caption/alt-text chunk for the failed image is
+    still written. A single vision-model hiccup must never fail an
+    entire document's ingestion.
+    """
+    doc_dir = tmp_path / "knowledge_base"
+    (doc_dir / "images").mkdir(parents=True)
+    (doc_dir / "images" / "diagram.png").write_bytes(b"fake-png-bytes")
+
+    document = RawDocument(
+        content="irrelevant",
+        source=str(doc_dir / "doc.md"),
+        source_type="markdown",
+        created_at=datetime.now(UTC),
+        last_modified=datetime.now(UTC),
+    )
+    vectorstore = FakeVectorStore()
+    vision_provider = FakeVisionProvider(raises=ConnectionError("Ollama unreachable"))
+    writer = Writer(FakeEmbedder(), vectorstore, vision_provider)
+    spans = [
+        ChunkSpan(
+            text="![Architecture diagram](images/diagram.png)",
+            content_type="image",
+            attachment_name="diagram.png",
+            source_anchor="images/diagram.png",
+        ),
+        ChunkSpan(text="Unrelated prose paragraph, elsewhere in the same document."),
+    ]
+
+    chunks = writer.write(document, "doc-1", spans, dataset_id="ds")
+
+    assert len(vision_provider.calls) == 1  # the call was attempted, and failed
+    assert len(chunks) == 2  # the image caption chunk + the prose chunk. no vision sibling
+    assert all(not c.metadata.vision_generated for c in chunks)
+    assert chunks[1].content == "Unrelated prose paragraph, elsewhere in the same document."
 
 
 def test_vision_provider_skips_image_with_missing_asset_file(tmp_path):

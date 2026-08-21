@@ -62,7 +62,7 @@ class FakeVectorStore:
 
 
 def test_search_knowledge_base_calls_pipeline_retrieve_with_top_k_as_candidate_k():
-    """search_knowledge_base is a thin wrapper -- no retrieval logic of its own."""
+    """search_knowledge_base is a thin wrapper. no retrieval logic of its own."""
     pipeline = FakePipeline(retrieve_results=[SearchResult(chunk=_chunk("c1"), score=0.9)])
     auth = AuthorizationContext(tenant_id="tenant_alpha", roles=["operator"])
     args = SearchKnowledgeBaseArgs(query="hello", top_k=7)
@@ -73,6 +73,52 @@ def test_search_knowledge_base_calls_pipeline_retrieve_with_top_k_as_candidate_k
     assert pipeline.retrieve_calls == [
         {"query": "hello", "filters": {"dataset_id": "ds1"}, "candidate_k": 7, "auth": auth}
     ]
+
+
+def test_search_knowledge_base_merges_content_type_into_filters():
+    """A content_type arg is merged into the caller-supplied filters, not sent as a bare arg."""
+    pipeline = FakePipeline(retrieve_results=[])
+    args = SearchKnowledgeBaseArgs(query="find the table", content_type="table")
+
+    search_knowledge_base(args, pipeline, {"dataset_id": "ds1"}, None)
+
+    assert pipeline.retrieve_calls == [
+        {
+            "query": "find the table",
+            "filters": {"dataset_id": "ds1", "content_type": "table"},
+            "candidate_k": 5,
+            "auth": None,
+        }
+    ]
+
+
+def test_search_knowledge_base_omitted_content_type_leaves_filters_untouched():
+    """No content_type arg. filters pass through exactly as the caller supplied them."""
+    pipeline = FakePipeline(retrieve_results=[])
+    args = SearchKnowledgeBaseArgs(query="hello")
+
+    search_knowledge_base(args, pipeline, {"dataset_id": "ds1"}, None)
+
+    assert pipeline.retrieve_calls[0]["filters"] == {"dataset_id": "ds1"}
+
+
+def test_search_knowledge_base_content_type_works_with_no_caller_filters():
+    """content_type still applies even when the caller passed no filters dict at all."""
+    pipeline = FakePipeline(retrieve_results=[])
+    args = SearchKnowledgeBaseArgs(query="find the diagram", content_type="image")
+
+    search_knowledge_base(args, pipeline, None, None)
+
+    assert pipeline.retrieve_calls[0]["filters"] == {"content_type": "image"}
+
+
+def test_search_knowledge_base_content_type_rejects_arbitrary_values():
+    """content_type is a closed Literal set. the LLM can't name an arbitrary filter value."""
+    import pydantic
+    import pytest
+
+    with pytest.raises(pydantic.ValidationError):
+        SearchKnowledgeBaseArgs(query="hello", content_type="'; DROP TABLE chunks; --")
 
 
 def test_get_related_context_expands_from_seed_chunk():
