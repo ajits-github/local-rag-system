@@ -654,6 +654,12 @@ def _synthesize(state: AgentState, llm: LLM, template: PromptTemplate) -> AgentS
             source=r.chunk.metadata.source,
             category=r.chunk.metadata.category,
             score=r.score,
+            content_type=r.chunk.metadata.content_type,
+            section_path=r.chunk.metadata.section_path,
+            page=r.chunk.metadata.page,
+            attachment_name=r.chunk.metadata.attachment_name,
+            source_anchor=r.chunk.metadata.source_anchor,
+            vision_generated=r.chunk.metadata.vision_generated,
         )
         for r in ordered_evidence
     ]
@@ -715,6 +721,12 @@ def _run_classic_rag(
             source=s["source"],
             category=s.get("category"),
             score=s.get("score"),
+            content_type=s.get("content_type"),
+            section_path=s.get("section_path"),
+            page=s.get("page"),
+            attachment_name=s.get("attachment_name"),
+            source_anchor=s.get("source_anchor"),
+            vision_generated=bool(s.get("vision_generated", False)),
         )
         for s in result["sources"]
     ]

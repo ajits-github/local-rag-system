@@ -42,13 +42,27 @@ class QueryRequest(BaseModel):
 
 
 class SourceItem(BaseModel):
-    """One retrieved-chunk citation in a `QueryResponse`."""
+    """One retrieved-chunk citation in a `QueryResponse`.
+
+    `content_type`/`section_path`/`page`/`attachment_name`/`source_anchor`/
+    `vision_generated` are the layout-aware-ingestion milestone's additions
+    -- all derived, non-sensitive structural metadata already stored on
+    the chunk (never a local filesystem path: `source`/`attachment_name`/
+    `source_anchor` are the same relative, dataset-root-scoped paths
+    already exposed before this milestone, not absolute disk paths).
+    """
 
     chunk_id: str
     document_id: str
     source: str
     category: str | None = None
     score: float
+    content_type: str | None = None
+    section_path: str | None = None
+    page: int | None = None
+    attachment_name: str | None = None
+    source_anchor: str | None = None
+    vision_generated: bool = False
 
 
 class QueryResponse(BaseModel):

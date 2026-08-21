@@ -13,16 +13,31 @@ entirely server-controlled (see `rag.config.AgentConfig` and
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
+
+ContentTypeFilter = Literal["prose", "table", "code", "configuration", "image", "chart"]
 
 
 class SearchKnowledgeBaseArgs(BaseModel):
-    """Arguments for the `search_knowledge_base` tool."""
+    """Arguments for the `search_knowledge_base` tool.
+
+    `content_type` lets the model intentionally search for a specific
+    structural kind of evidence (e.g. "find the table with these
+    numbers"). It's a closed `Literal` set, not a free string, and is
+    merged into the retrieval `filters` dict server-side
+    (`tools.search_knowledge_base`) against the same
+    `VectorStore.ALLOWED_FILTER_FIELDS` whitelist every other filter goes
+    through -- the LLM can select *which* allowed value to filter by, not
+    name arbitrary SQL/filter fields.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     query: str
     top_k: int = Field(default=5, ge=1, le=20)
+    content_type: ContentTypeFilter | None = None
 
 
 class GetDocumentArgs(BaseModel):

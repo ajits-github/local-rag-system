@@ -54,6 +54,8 @@ def source_label(result: SearchResult) -> str:
     """
     meta = result.chunk.metadata
     parts = [meta.source]
+    if meta.page is not None:
+        parts.append(f"page {meta.page}")
     if meta.section_path:
         parts.append(meta.section_path)
     content_type = meta.content_type or "prose"
@@ -107,6 +109,7 @@ def source_dict(result: SearchResult) -> dict[str, Any]:
         "content": result.chunk.content,
         "content_type": result.chunk.metadata.content_type,
         "section_path": result.chunk.metadata.section_path,
+        "page": result.chunk.metadata.page,
         "attachment_name": result.chunk.metadata.attachment_name,
         "source_anchor": result.chunk.metadata.source_anchor,
         "vision_generated": result.chunk.metadata.vision_generated,

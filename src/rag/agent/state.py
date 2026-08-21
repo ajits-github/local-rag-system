@@ -30,6 +30,12 @@ class Citation(BaseModel):
     source: str
     category: str | None = None
     score: float | None = None
+    content_type: str | None = None
+    section_path: str | None = None
+    page: int | None = None
+    attachment_name: str | None = None
+    source_anchor: str | None = None
+    vision_generated: bool = False
 
 
 class NodeInvocationTiming(BaseModel):

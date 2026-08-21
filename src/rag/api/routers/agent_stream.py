@@ -133,6 +133,12 @@ def _final_response(result: AgentRunResult) -> AgentQueryResponse:
                 source=c.source,
                 category=c.category,
                 score=c.score if c.score is not None else 0.0,
+                content_type=c.content_type,
+                section_path=c.section_path,
+                page=c.page,
+                attachment_name=c.attachment_name,
+                source_anchor=c.source_anchor,
+                vision_generated=c.vision_generated,
             )
             for c in final_state.citations
         ],

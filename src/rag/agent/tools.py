@@ -87,8 +87,19 @@ def search_knowledge_base(
 
     Preserves every tenant/role/freshness/trust control `retrieve()`
     already applies; this function adds no retrieval logic of its own.
+    When `args.content_type` is set, it's merged into the caller-supplied
+    (server-controlled) `filters` dict -- the LLM can only ever narrow to
+    one of `ContentTypeFilter`'s allowed values via the already-whitelisted
+    `content_type` filter field (`VectorStore.ALLOWED_FILTER_FIELDS`),
+    never override or add any other key `filters` already carries (e.g.
+    `dataset_id`).
     """
-    return pipeline.retrieve(args.query, filters=filters, candidate_k=args.top_k, auth=auth)
+    effective_filters = dict(filters) if filters else {}
+    if args.content_type is not None:
+        effective_filters["content_type"] = args.content_type
+    return pipeline.retrieve(
+        args.query, filters=effective_filters or None, candidate_k=args.top_k, auth=auth
+    )
 
 
 def get_document(
