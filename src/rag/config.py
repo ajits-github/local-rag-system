@@ -558,9 +558,16 @@ class AgentConfig(BaseModel):
         itself regardless of a document's actual size. Neither this nor
         `max_chunks_per_document_fetch` is exposed to the LLM in any tool
         schema.
-    classify_prompt_path, decompose_prompt_path, tool_select_prompt_path,
-    evidence_sufficiency_prompt_path, synthesize_prompt_path : str
-        Paths to each decision point's `PromptTemplate` YAML.
+    classify_prompt_path : str
+        Path to the `classify_query` decision point's `PromptTemplate` YAML.
+    decompose_prompt_path : str
+        Path to the `decompose_query` decision point's `PromptTemplate` YAML.
+    tool_select_prompt_path : str
+        Path to the `select_tool` decision point's `PromptTemplate` YAML.
+    evidence_sufficiency_prompt_path : str
+        Path to the `evidence_sufficiency` decision point's `PromptTemplate` YAML.
+    synthesize_prompt_path : str
+        Path to the `synthesize` decision point's `PromptTemplate` YAML.
     """
 
     enabled: bool = False
