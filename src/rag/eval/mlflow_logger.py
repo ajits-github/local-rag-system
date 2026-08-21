@@ -62,6 +62,14 @@ _PARAM_FIELDS = [
     "corpus_gold_record_count",
     "corpus_gold_file_sha256",
     "corpus_digest",
+    # Layout-aware-ingestion-and-vision milestone: config identity fields,
+    # not measured outcomes. vision_model/vision_prompt_version are None
+    # when vision_provider != "ollama" (vision_provider itself predates
+    # this milestone -- see the vision-scaffolding milestone).
+    "layout_parser",
+    "vision_provider",
+    "vision_model",
+    "vision_prompt_version",
 ]
 
 
@@ -171,6 +179,14 @@ _METRIC_FIELDS = [
     "agent_latency_ms",
     "agent_prompt_tokens_mean",
     "agent_completion_tokens_mean",
+    # Layout-aware-ingestion-and-vision milestone: see eval/run_eval.py's
+    # "layout_vision" report section for exact definitions.
+    "table_retrieval_hit_rate",
+    "visual_retrieval_hit_rate",
+    "page_localization_accuracy",
+    "section_localization_accuracy",
+    "visual_evidence_support_rate",
+    "multimodal_answer_quality",
 ]
 
 

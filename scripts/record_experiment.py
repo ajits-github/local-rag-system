@@ -81,6 +81,7 @@ def build_experiment_record(
     ragas_judge = ragas.get("judge", {})
     reference_context_analysis = eval_report.get("reference_context_analysis", {})
     relevant_image_hit_rate = eval_report.get("relevant_image_hit_rate", {})
+    layout_vision = eval_report.get("layout_vision", {})
     token_usage = eval_report.get("token_usage", {})
     refusal_behavior = eval_report.get("refusal_behavior", {})
     expansion_utilization = eval_report.get("relationship_expansion_utilization", {})
@@ -118,7 +119,14 @@ def build_experiment_record(
         # None for any report predating these fields (older gold schema has
         # no reference_contexts/relevant_images to compute them from).
         "relationship_expansion_enabled": config.retrieval.relationship_expansion.enabled,
+        "layout_parser": config.ingestion.layout_parsing.pdf_parser,
         "vision_provider": config.vision.provider,
+        "vision_model": (
+            config.vision.ollama.model_name if config.vision.provider == "ollama" else None
+        ),
+        "vision_prompt_version": (
+            config.vision.ollama.prompt_version if config.vision.provider == "ollama" else None
+        ),
         # None for any report predating these keys.
         "security_authorization_enabled": config.security.authorization.enabled,
         "security_field_redaction_enabled": config.security.field_redaction.enabled,
@@ -179,6 +187,25 @@ def build_experiment_record(
             "supporting_context_hit_rate"
         ),
         "relevant_image_hit_rate": relevant_image_hit_rate.get("hit_rate"),
+        # None for any report predating the layout-aware-ingestion milestone.
+        "table_retrieval_hit_rate": layout_vision.get("table_retrieval_hit_rate", {}).get(
+            "hit_rate"
+        ),
+        "visual_retrieval_hit_rate": layout_vision.get("visual_retrieval_hit_rate", {}).get(
+            "hit_rate"
+        ),
+        "page_localization_accuracy": layout_vision.get("page_localization_accuracy", {}).get(
+            "accuracy"
+        ),
+        "section_localization_accuracy": layout_vision.get("section_localization_accuracy", {}).get(
+            "accuracy"
+        ),
+        "visual_evidence_support_rate": layout_vision.get("visual_evidence_support_rate", {}).get(
+            "rate"
+        ),
+        "multimodal_answer_quality": layout_vision.get("multimodal_answer_quality", {}).get(
+            "mean_score"
+        ),
         # None for any report predating these fields.
         "prompt_tokens_mean": token_usage.get("prompt_tokens_mean"),
         "completion_tokens_mean": token_usage.get("completion_tokens_mean"),

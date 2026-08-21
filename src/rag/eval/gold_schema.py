@@ -134,6 +134,34 @@ class GoldExample(BaseModel):
         rows. Used to flag an agent run as under- or over-working a
         question, distinct from the hard `config.agent.max_tool_calls`
         ceiling.
+    requires_layout_awareness : bool
+        Layout-aware-ingestion milestone: whether answering depends on
+        structure the classic text-only pipeline would have lost (a
+        table/code/configuration block kept atomic, or a page/section
+        boundary), distinct from `requires_vision` (image understanding)
+        and `requires_relationship_expansion` (parent-prose linking).
+    expected_content_types : list[str]
+        Layout-aware-ingestion milestone: the `ChunkMetadata.content_type`
+        value(s) (e.g. `"table"`/`"code"`/`"configuration"`/`"image"`)
+        the supporting evidence is expected to carry. Distinct from
+        `content_type` (this row's own authored question-category label).
+    relevant_pages : list[int]
+        Layout-aware-ingestion milestone: source page number(s) (PDF) or
+        manual-page-break count (DOCX) the supporting evidence is
+        expected to come from -- see `ChunkMetadata.page`.
+    visual_question_type : str or None
+        Layout-aware-ingestion milestone: authored sub-category for a
+        vision-dependent question (e.g. `"chart_reading"`,
+        `"diagram_relationship"`), when `requires_vision` is true.
+    evidence_mode : str or None
+        Layout-aware-ingestion milestone: how the question's supporting
+        evidence is expected to be found -- e.g. `"text_only"`,
+        `"vision_required"`, `"layout_structure"`.
+    source_format : str or None
+        Layout-aware-ingestion milestone: the source document's file
+        format (e.g. `"pdf"`/`"docx"`/`"markdown"`), for per-format
+        metric breakdowns independent of `ChunkMetadata.source_type`
+        (which is derived from the retrieved chunk, not authored).
 
     Notes
     -----
@@ -188,6 +216,12 @@ class GoldExample(BaseModel):
     expected_reformulation: str | None = None
     minimum_expected_tool_calls: int | None = None
     maximum_expected_tool_calls: int | None = None
+    requires_layout_awareness: bool = False
+    expected_content_types: list[str] = Field(default_factory=list)
+    relevant_pages: list[int] = Field(default_factory=list)
+    visual_question_type: str | None = None
+    evidence_mode: str | None = None
+    source_format: str | None = None
 
 
 def load_gold_jsonl(path: str | Path) -> list[GoldExample]:

@@ -219,6 +219,84 @@ def _image_hit(results: list[SearchResult], relevant_images: list[str]) -> bool:
     return False
 
 
+def _content_type_hit(
+    results: list[SearchResult], relevant_documents: list[str], wanted_types: set[str]
+) -> bool:
+    """Whether any `results` chunk from a `relevant_documents`-matching source has a wanted type.
+
+    Shared by `table_retrieval_hit_rate`/`visual_retrieval_hit_rate`: asks
+    "was the *right kind* of structural element retrieved from the *right*
+    document," not just "was any chunk of that type retrieved from
+    anywhere" -- a table from the wrong document doesn't count as a hit.
+    """
+    for r in results:
+        content_type = r.chunk.metadata.content_type or "prose"
+        if content_type in wanted_types and any(
+            source_matches_relevant(r.chunk.metadata.source, doc) for doc in relevant_documents
+        ):
+            return True
+    return False
+
+
+def _page_hit(
+    results: list[SearchResult], relevant_documents: list[str], relevant_pages: list[int]
+) -> bool:
+    """Whether any `results` chunk matches both a relevant document and a relevant page number.
+
+    `ChunkMetadata.page` is `None` for Markdown/text/HTML sources, which
+    never contributes a hit here regardless of `relevant_pages` -- exactly
+    the desired behavior, since those sources have no page to localize to.
+    """
+    for r in results:
+        if r.chunk.metadata.page in relevant_pages and any(
+            source_matches_relevant(r.chunk.metadata.source, doc) for doc in relevant_documents
+        ):
+            return True
+    return False
+
+
+def _section_hit(
+    results: list[SearchResult], relevant_documents: list[str], relevant_sections: list[str]
+) -> bool:
+    """Whether any `results` chunk's section_path contains a relevant_sections entry.
+
+    Substring containment, not exact equality: an authored gold section
+    label like "Review Purpose" is expected to match a retrieved
+    `section_path` of "DocuFlow Processing Architecture Review > 1.
+    Review Purpose" -- gold authors a short, human label, not the full
+    breadcrumb/numbering a heading-derived `section_path` actually carries.
+    A documented heuristic, not a semantic-similarity claim.
+    """
+    for r in results:
+        section_path = r.chunk.metadata.section_path
+        if not section_path:
+            continue
+        if any(section in section_path for section in relevant_sections) and any(
+            source_matches_relevant(r.chunk.metadata.source, doc) for doc in relevant_documents
+        ):
+            return True
+    return False
+
+
+def _vision_generated_support(results: list[SearchResult], relevant_documents: list[str]) -> bool:
+    """Whether a vision-generated (not just caption/alt-text) image chunk was retrieved.
+
+    Distinct from `_content_type_hit(..., {"image", "chart"})`: that asks
+    "was any visual element surfaced," this asks "was actual vision-model
+    understanding available as evidence" -- reads 0.0 whenever
+    `config.vision.provider == "none"` by construction (no chunk ever has
+    `vision_generated=True`), which is the point: this metric is what
+    should move between the "layout-aware, no vision" and "layout-aware,
+    with vision" legs of this milestone's later A/B/C comparison.
+    """
+    for r in results:
+        if r.chunk.metadata.vision_generated and any(
+            source_matches_relevant(r.chunk.metadata.source, doc) for doc in relevant_documents
+        ):
+            return True
+    return False
+
+
 def _expansion_utilization(sources: list[dict[str, Any]], answer_text: str) -> bool | None:
     """Whether relationship-expanded sources appear to have contributed to the final answer.
 
@@ -938,6 +1016,12 @@ def evaluate(
     unanswerable_quality_scores: list[float] = []
     reference_context_buckets: list[str] = []
     image_hit_records: list[bool] = []
+    table_hit_records: list[bool] = []
+    visual_hit_records: list[bool] = []
+    page_localization_records: list[bool] = []
+    section_localization_records: list[bool] = []
+    visual_evidence_support_records: list[bool] = []
+    multimodal_quality_scores: list[float] = []
     expansion_contribution_records: list[bool] = []
     vision_behavior_records: list[str] = []
     stage_ms_records: list[dict[str, float]] = []
@@ -1052,6 +1136,33 @@ def evaluate(
             relevant_image_hit = _image_hit(retrieval_results, example.relevant_images)
             image_hit_records.append(relevant_image_hit)
 
+        # Layout-aware-ingestion milestone: table/visual/page/section
+        # localization all reuse the same broad top-10 retrieval_results
+        # already fetched above -- no extra retrieval call, matching the
+        # existing image-hit/reference-context metrics' pattern.
+        if "table" in example.expected_content_types:
+            table_hit_records.append(
+                _content_type_hit(retrieval_results, example.relevant_documents, {"table"})
+            )
+        if example.requires_vision or {"image", "chart"} & set(example.expected_content_types):
+            visual_hit_records.append(
+                _content_type_hit(retrieval_results, example.relevant_documents, {"image", "chart"})
+            )
+        if example.relevant_pages:
+            page_localization_records.append(
+                _page_hit(retrieval_results, example.relevant_documents, example.relevant_pages)
+            )
+        if example.relevant_sections:
+            section_localization_records.append(
+                _section_hit(
+                    retrieval_results, example.relevant_documents, example.relevant_sections
+                )
+            )
+        if example.requires_vision:
+            visual_evidence_support_records.append(
+                _vision_generated_support(retrieval_results, example.relevant_documents)
+            )
+
         entry: dict[str, Any] = {
             "question": example.question,
             "question_type": example.question_type,
@@ -1112,6 +1223,12 @@ def evaluate(
                     else answerable_quality_scores
                 )
                 bucket.append(quality)
+                if (
+                    example.requires_vision
+                    or example.requires_layout_awareness
+                    or example.requires_relationship_expansion
+                ):
+                    multimodal_quality_scores.append(quality)
             if example.requires_vision:
                 behavior = _classify_vision_behavior(example, result["answer"], quality)
                 entry["vision_behavior"] = behavior
@@ -1470,6 +1587,83 @@ def evaluate(
             "count": len(image_hit_records),
             "hit_rate": _mean([1.0 if hit else 0.0 for hit in image_hit_records]),
         }
+
+    layout_vision: dict[str, Any] = {}
+    if table_hit_records:
+        layout_vision["table_retrieval_hit_rate"] = {
+            "note": (
+                "Among gold examples whose expected_content_types includes 'table', "
+                "whether a retrieved chunk from a relevant_documents-matching source "
+                "actually has content_type='table' -- table structure was preserved "
+                "and surfaced, not just that a chunk from the right document appeared."
+            ),
+            "count": len(table_hit_records),
+            "hit_rate": _mean([1.0 if h else 0.0 for h in table_hit_records]),
+        }
+    if visual_hit_records:
+        layout_vision["visual_retrieval_hit_rate"] = {
+            "note": (
+                "Among requires_vision=true examples (or expected_content_types "
+                "including 'image'/'chart'), whether a retrieved chunk from a "
+                "relevant_documents-matching source has content_type in "
+                "{'image','chart'} -- valid in text-only mode too, since it only "
+                "checks the visual element itself was surfaced (see "
+                "visual_evidence_support_rate for whether it carried real vision "
+                "understanding, not just caption/alt-text)."
+            ),
+            "count": len(visual_hit_records),
+            "hit_rate": _mean([1.0 if h else 0.0 for h in visual_hit_records]),
+        }
+    if page_localization_records:
+        layout_vision["page_localization_accuracy"] = {
+            "note": (
+                "Among gold examples with a non-empty relevant_pages, whether a "
+                "retrieved chunk from a relevant_documents-matching source also has "
+                "ChunkMetadata.page in relevant_pages. Markdown/text/HTML chunks "
+                "(page=None) never contribute a hit -- this metric only has signal "
+                "for PDF/DOCX evidence."
+            ),
+            "count": len(page_localization_records),
+            "accuracy": _mean([1.0 if h else 0.0 for h in page_localization_records]),
+        }
+    if section_localization_records:
+        layout_vision["section_localization_accuracy"] = {
+            "note": (
+                "Among gold examples with a non-empty relevant_sections, whether a "
+                "retrieved chunk from a relevant_documents-matching source has a "
+                "section_path containing one of them (substring match -- see "
+                "_section_hit's docstring for why exact equality would under-count)."
+            ),
+            "count": len(section_localization_records),
+            "accuracy": _mean([1.0 if h else 0.0 for h in section_localization_records]),
+        }
+    if visual_evidence_support_records:
+        layout_vision["visual_evidence_support_rate"] = {
+            "note": (
+                "Among requires_vision=true examples, whether a retrieved chunk from "
+                "a relevant_documents-matching source has vision_generated=true (real "
+                "vision-model output, not just a caption/alt-text image chunk). 0.0 "
+                "by construction whenever config.vision.provider='none' -- the metric "
+                "this milestone's later text-vs-vision A/B/C comparison isolates on."
+            ),
+            "count": len(visual_evidence_support_records),
+            "rate": _mean([1.0 if h else 0.0 for h in visual_evidence_support_records]),
+        }
+    if multimodal_quality_scores:
+        layout_vision["multimodal_answer_quality"] = {
+            "note": (
+                "answer_quality (KeywordOverlapScorer against expected_answer), "
+                "restricted to examples where requires_vision, "
+                "requires_layout_awareness, or requires_relationship_expansion is "
+                "true -- the genuinely multimodal/layout-dependent subset of this "
+                "gold set, as opposed to the top-level answer_quality figure which "
+                "spans every example including plain-text ones."
+            ),
+            "count": len(multimodal_quality_scores),
+            "mean_score": _mean(multimodal_quality_scores),
+        }
+    if layout_vision:
+        report["layout_vision"] = layout_vision
 
     if expansion_contribution_records:
         report["relationship_expansion_contribution_rate"] = {
