@@ -1,0 +1,4883 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Modular, config-driven local RAG system (pgvector + Ollama + sentence-transformers)">
+      
+      
+      
+        <link rel="canonical" href="https://ajits-github.github.io/local-rag-system/reference/retrieval/">
+      
+      
+        <link rel="prev" href="../vectorstore/">
+      
+      
+        <link rel="next" href="../rerankers/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Retrieval - local-rag-system</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#retrieval" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="local-rag-system" class="md-header__button md-logo" aria-label="local-rag-system" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            local-rag-system
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Retrieval
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Overview
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../architecture/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Architecture
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../topics/ingestion/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Ingestion & Chunking
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../topics/retrieval/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Retrieval
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../topics/multimodal/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Multimodal & Layout
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../topics/security/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Security
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../topics/agentic-rag/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Agentic RAG
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../topics/evaluation/" class="md-tabs__link">
+          
+  
+  
+  Evaluation & RAGAS
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../topics/observability/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Observability
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../topics/deployment/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Deployment & Runtime
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../" class="md-tabs__link">
+          
+  
+  
+  API Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="local-rag-system" class="md-nav__button md-logo" aria-label="local-rag-system" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    local-rag-system
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../topics/ingestion/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ingestion & Chunking
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../topics/retrieval/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Retrieval
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../topics/multimodal/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multimodal & Layout
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../topics/security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../topics/agentic-rag/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agentic RAG
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8" >
+        
+          
+          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Evaluation & RAGAS
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Evaluation & RAGAS
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../topics/evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../metrics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Metrics reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../topics/observability/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Observability
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../topics/deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment & Runtime
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_11" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_11" id="__nav_11_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_11_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_11">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration & factory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../schemas/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Schemas
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../loaders/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Loaders
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../chunkers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Chunkers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../embedders/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Embedders
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../vectorstore/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Vector store
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Retrieval
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Retrieval
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#rag.retrieval.pipeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        pipeline
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="pipeline">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rag.retrieval.pipeline.RetrievalPipeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RetrievalPipeline
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="RetrievalPipeline">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rag.retrieval.pipeline.RetrievalPipeline.sanitize_evidence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        sanitize_evidence
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.retrieval.pipeline.RetrievalPipeline.retrieve" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        retrieve
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.retrieval.pipeline.RetrievalPipeline.retrieve_attribution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        retrieve_attribution
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.retrieval.pipeline.RetrievalPipeline.expand_with_relationships" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        expand_with_relationships
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.retrieval.pipeline.RetrievalPipeline.answer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        answer
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.retrieval.pipeline.source_label" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        source_label
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.retrieval.pipeline.build_context" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        build_context
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.retrieval.pipeline.source_dict" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        source_dict
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rag.retrieval.fusion" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        fusion
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="fusion">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rag.retrieval.fusion.reciprocal_rank_fusion" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        reciprocal_rank_fusion
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rag.retrieval.authorization" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        authorization
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="authorization">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rag.retrieval.authorization.AuthorizationContext" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AuthorizationContext
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rag.retrieval.freshness" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        freshness
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="freshness">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rag.retrieval.freshness.resolve_current_document_source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        resolve_current_document_source
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.retrieval.freshness.resolve_excluded_document_ids" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        resolve_excluded_document_ids
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rag.retrieval.injection_detection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        injection_detection
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="injection_detection">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rag.retrieval.injection_detection.detect_injection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        detect_injection
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rag.retrieval.field_policy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        field_policy
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="field_policy">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rag.retrieval.field_policy.SensitiveFieldPolicy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SensitiveFieldPolicy
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.retrieval.field_policy.DuplicateSensitiveOccurrence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        DuplicateSensitiveOccurrence
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.retrieval.field_policy.detect_sensitive_field_ids" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        detect_sensitive_field_ids
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.retrieval.field_policy.is_role_authorized_for_field" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        is_role_authorized_for_field
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.retrieval.field_policy.redact_sensitive_fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        redact_sensitive_fields
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.retrieval.field_policy.redact_source_metadata" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        redact_source_metadata
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.retrieval.field_policy.find_duplicate_sensitive_occurrences" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        find_duplicate_sensitive_occurrences
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../rerankers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rerankers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../generation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Generation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../prompts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Prompts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../vision/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Vision
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../agent/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ingestion/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ingestion
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../eval/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../observability/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Observability
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#rag.retrieval.pipeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        pipeline
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="pipeline">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rag.retrieval.pipeline.RetrievalPipeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RetrievalPipeline
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="RetrievalPipeline">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rag.retrieval.pipeline.RetrievalPipeline.sanitize_evidence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        sanitize_evidence
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.retrieval.pipeline.RetrievalPipeline.retrieve" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        retrieve
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.retrieval.pipeline.RetrievalPipeline.retrieve_attribution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        retrieve_attribution
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.retrieval.pipeline.RetrievalPipeline.expand_with_relationships" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        expand_with_relationships
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.retrieval.pipeline.RetrievalPipeline.answer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        answer
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.retrieval.pipeline.source_label" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        source_label
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.retrieval.pipeline.build_context" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        build_context
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.retrieval.pipeline.source_dict" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        source_dict
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rag.retrieval.fusion" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        fusion
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="fusion">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rag.retrieval.fusion.reciprocal_rank_fusion" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        reciprocal_rank_fusion
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rag.retrieval.authorization" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        authorization
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="authorization">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rag.retrieval.authorization.AuthorizationContext" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AuthorizationContext
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rag.retrieval.freshness" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        freshness
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="freshness">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rag.retrieval.freshness.resolve_current_document_source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        resolve_current_document_source
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.retrieval.freshness.resolve_excluded_document_ids" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        resolve_excluded_document_ids
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rag.retrieval.injection_detection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        injection_detection
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="injection_detection">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rag.retrieval.injection_detection.detect_injection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        detect_injection
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rag.retrieval.field_policy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        field_policy
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="field_policy">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rag.retrieval.field_policy.SensitiveFieldPolicy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SensitiveFieldPolicy
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.retrieval.field_policy.DuplicateSensitiveOccurrence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        DuplicateSensitiveOccurrence
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.retrieval.field_policy.detect_sensitive_field_ids" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        detect_sensitive_field_ids
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.retrieval.field_policy.is_role_authorized_for_field" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        is_role_authorized_for_field
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.retrieval.field_policy.redact_sensitive_fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        redact_sensitive_fields
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.retrieval.field_policy.redact_source_metadata" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        redact_source_metadata
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.retrieval.field_policy.find_duplicate_sensitive_occurrences" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        find_duplicate_sensitive_occurrences
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="retrieval">Retrieval<a class="headerlink" href="#retrieval" title="Permanent link">&para;</a></h1>
+
+
+<div class="doc doc-object doc-module">
+
+
+
+<h2 id="rag.retrieval.pipeline" class="doc doc-heading">
+            <span class="doc doc-object-name doc-module-name">pipeline</span>
+
+
+<a href="#rag.retrieval.pipeline" class="headerlink" title="Permanent link">&para;</a></h2>
+
+    <div class="doc doc-contents first">
+
+        <p>Query pipeline for retrieval-augmented generation.</p>
+<p>The pipeline embeds a query, retrieves dense or hybrid candidates, applies
+optional reranking and relationship expansion, redacts unauthorized fields,
+and builds separated system/user prompt turns for the LLM.</p>
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="rag.retrieval.pipeline.RetrievalPipeline" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">RetrievalPipeline</span>
+
+
+<a href="#rag.retrieval.pipeline.RetrievalPipeline" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">RetrievalPipeline</span><span class="p">(</span>
+    <span class="n">config</span><span class="p">:</span> <span class="n">AppConfig</span><span class="p">,</span>
+    <span class="n">vectorstore</span><span class="p">:</span> <span class="n">VectorStore</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">embedder</span><span class="p">:</span> <span class="n">Embedder</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">reranker</span><span class="p">:</span> <span class="n">Reranker</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">llm</span><span class="p">:</span> <span class="n">LLM</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">prompt_template</span><span class="p">:</span> <span class="n">PromptTemplate</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+
+
+        <p>Answers a query via embed -&gt; vectorstore.search -&gt; rerank -&gt; generate.</p>
+
+        <p>Wire up the pipeline's stages from config, or injected instances.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>config</code>
+            </td>
+            <td>
+                  <code><a class="autorefs autorefs-internal" title="AppConfig (rag.config.AppConfig)" href="../config/#rag.config.AppConfig">AppConfig</a></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Application configuration.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>vectorstore</code>
+            </td>
+            <td>
+                  <code><a class="autorefs autorefs-internal" title="VectorStore (rag.vectorstore.base.VectorStore)" href="../vectorstore/#rag.vectorstore.base.VectorStore">VectorStore</a> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Vector store to search; built from <code>config</code> if omitted.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>embedder</code>
+            </td>
+            <td>
+                  <code><a class="autorefs autorefs-internal" title="Embedder (rag.embedders.base.Embedder)" href="../embedders/#rag.embedders.base.Embedder">Embedder</a> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Embedder used for the query vector; built from <code>config</code> if omitted.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>reranker</code>
+            </td>
+            <td>
+                  <code><a class="autorefs autorefs-internal" title="Reranker (rag.rerankers.base.Reranker)" href="../rerankers/#rag.rerankers.base.Reranker">Reranker</a> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Reranker applied to search results; built from <code>config</code> if omitted.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>llm</code>
+            </td>
+            <td>
+                  <code><a class="autorefs autorefs-internal" title="LLM (rag.generation.base.LLM)" href="../generation/#rag.generation.base.LLM">LLM</a> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>LLM used for generation; built from <code>config</code> if omitted.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>prompt_template</code>
+            </td>
+            <td>
+                  <code><a class="autorefs autorefs-internal" title="PromptTemplate (rag.prompts.loader.PromptTemplate)" href="../prompts/#rag.prompts.loader.PromptTemplate">PromptTemplate</a> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Prompt template used for generation; loaded from
+<code>config.generation.prompt</code> if omitted.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="rag.retrieval.pipeline.RetrievalPipeline.sanitize_evidence" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">sanitize_evidence</span>
+
+
+<a href="#rag.retrieval.pipeline.RetrievalPipeline.sanitize_evidence" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">sanitize_evidence</span><span class="p">(</span>
+    <span class="n">results</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">SearchResult</span><span class="p">],</span>
+    <span class="n">auth</span><span class="p">:</span> <span class="n">AuthorizationContext</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">SearchResult</span><span class="p">]</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Apply field redaction and injection flagging to arbitrary results, uniformly.</p>
+<p>The same two steps <code>_retrieve_timed</code> already applies to every
+<code>retrieve()</code>/<code>answer()</code> result, exposed as one public entry point
+so any other caller that assembles <code>SearchResult</code>s outside the
+normal search path. Specifically the agent tool layer
+(<code>rag/agent/tools.py</code>'s <code>get_document</code>/<code>get_latest_document</code>,
+which fetch chunks directly via <code>VectorStore.get_chunks_by_source</code>
+rather than <code>retrieve()</code>). Gets identical treatment. There is no
+other, tool-specific sanitization path; this is the single place
+it happens, so no tool can bypass it by construction.</p>
+<p>Idempotent: results already sanitized by <code>_retrieve_timed</code> (e.g.
+<code>search_knowledge_base</code> tool results) are unaffected by a second
+pass. Already-redacted content matches no further sensitive-field
+pattern, and <code>detect_injection</code> is a pure function of content.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>results</code>
+            </td>
+            <td>
+                  <code><span title="list">list</span>[<a class="autorefs autorefs-internal" title="SearchResult (rag.schemas.SearchResult)" href="../schemas/#rag.schemas.SearchResult">SearchResult</a>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Results to sanitize, from any source.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>auth</code>
+            </td>
+            <td>
+                  <code><a class="autorefs autorefs-internal" title="AuthorizationContext (rag.retrieval.authorization.AuthorizationContext)" href="#rag.retrieval.authorization.AuthorizationContext">AuthorizationContext</a> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>The caller's resolved authorization context; <code>roles</code> drives
+field-redaction eligibility exactly as in <code>_retrieve_timed</code>
+(an absent context redacts every tagged field, fail-closed,
+when field redaction is enabled).</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    <p><span class="doc-section-title">Returns:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                  <code><span title="list">list</span>[<a class="autorefs autorefs-internal" title="SearchResult (rag.schemas.SearchResult)" href="../schemas/#rag.schemas.SearchResult">SearchResult</a>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>The same list, redacted (if enabled) and injection-flagged.</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="rag.retrieval.pipeline.RetrievalPipeline.retrieve" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">retrieve</span>
+
+
+<a href="#rag.retrieval.pipeline.RetrievalPipeline.retrieve" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">retrieve</span><span class="p">(</span>
+    <span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">filters</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">candidate_k</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">reranker_top_n</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">generation_context_top_n</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">auth</span><span class="p">:</span> <span class="n">AuthorizationContext</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">SearchResult</span><span class="p">]</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Retrieve candidates (dense-only or hybrid, per <code>config.retrieval.provider</code>), then rerank.</p>
+<p>When <code>config.retrieval.provider == "hybrid"</code>, dense (embedding)
+search and keyword (BM25) search are each run at <code>candidate_k</code>,
+then fused via Reciprocal Rank Fusion
+(<code>config.retrieval.hybrid.rrf_k</code>) before reranking. When
+<code>"dense"</code> (the default), behavior is unchanged from plain vector
+search.</p>
+<p>The candidate, reranker, and generation-context cutoffs are
+independent. Evaluation callers that need a broad ranking should
+pass explicit values for all three rather than depending on
+production context-size defaults.</p>
+<p>When <code>config.retrieval.relationship_expansion.enabled</code>, parent/
+neighbor context is appended after the generation-context cutoff
+(see <code>expand_with_relationships</code>). It is disabled by default and a no-op
+when left that way.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>query</code>
+            </td>
+            <td>
+                  <code><span title="str">str</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>The user's query text.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>filters</code>
+            </td>
+            <td>
+                  <code><span title="dict">dict</span>[<span title="str">str</span>, <span title="typing.Any">Any</span>] | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Exact-match metadata filters passed through to
+<code>VectorStore.search</code>/<code>search_keyword</code>.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>candidate_k</code>
+            </td>
+            <td>
+                  <code><span title="int">int</span> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Number of results to fetch from the vector store (from each
+branch, in hybrid mode); defaults to
+<code>config.retrieval.candidate_k</code>.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>reranker_top_n</code>
+            </td>
+            <td>
+                  <code><span title="int">int</span> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Number of candidates a real reranker retains after rescoring;
+defaults to <code>config.reranker.top_n</code>. Has no effect when
+<code>reranker.provider == "none"</code> (<code>NoOpReranker</code> ignores it).</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>generation_context_top_n</code>
+            </td>
+            <td>
+                  <code><span title="int">int</span> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Number of ranked primary chunks kept for generation; defaults
+to <code>config.retrieval.generation_context_top_n</code>. Applied
+regardless of which reranker (if any) ran.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>auth</code>
+            </td>
+            <td>
+                  <code><a class="autorefs autorefs-internal" title="AuthorizationContext (rag.retrieval.authorization.AuthorizationContext)" href="#rag.retrieval.authorization.AuthorizationContext">AuthorizationContext</a> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Caller identity/date context (see <code>retrieval/authorization.py</code>).
+<code>None</code> (the default) is fully unrestricted. Passing a context
+can only narrow results, never broaden them, and has no effect
+at all unless <code>config.security.authorization.enabled</code> is also
+<code>True</code> (see <code>_resolve_auth</code>). Applied in SQL before dense/BM25
+fetch, fusion, reranking, and relationship expansion.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    <p><span class="doc-section-title">Returns:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                  <code><span title="list">list</span>[<a class="autorefs autorefs-internal" title="SearchResult (rag.schemas.SearchResult)" href="../schemas/#rag.schemas.SearchResult">SearchResult</a>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>The generation-context-truncated primary results, best-first,
+plus any relationship-expanded results appended after them
+(see <code>origin</code>/<code>expanded_from</code> on <code>SearchResult</code>).</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="rag.retrieval.pipeline.RetrievalPipeline.retrieve_attribution" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">retrieve_attribution</span>
+
+
+<a href="#rag.retrieval.pipeline.RetrievalPipeline.retrieve_attribution" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">retrieve_attribution</span><span class="p">(</span>
+    <span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">filters</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">candidate_k</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">auth</span><span class="p">:</span> <span class="n">AuthorizationContext</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">RetrievalAttribution</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Return dense, BM25, and RRF-fused rankings independently, before rerank/expansion.</p>
+<p>An observability-only sibling to <code>retrieve()</code>, not a replacement
+for it: <code>retrieve()</code>'s own behavior (including which provider it
+uses, reranking, and relationship expansion) is completely
+unchanged by this method's existence. Always computes <em>both</em>
+dense and BM25. Unlike <code>retrieve()</code>, which only computes BM25
+when <code>config.retrieval.provider == "hybrid"</code>, attribution
+can answer "what would each retriever alone have found" even
+when production is configured for <code>"dense"</code>. Uses
+<code>config.retrieval.hybrid.rrf_k</code> for fusion regardless of
+<code>config.retrieval.provider</code>, since that value has a config
+default even when hybrid isn't the active provider.</p>
+<p>Never calls <code>self._reranker</code> or <code>expand_with_relationships</code>;
+the returned rankings are exactly what dense search, BM25 search,
+and RRF fusion produced, so neither a real reranker's rescoring
+nor relationship expansion can ever influence them.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>query</code>
+            </td>
+            <td>
+                  <code><span title="str">str</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>The user's query text.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>filters</code>
+            </td>
+            <td>
+                  <code><span title="dict">dict</span>[<span title="str">str</span>, <span title="typing.Any">Any</span>] | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Exact-match metadata filters, passed through to both
+<code>search</code>/<code>search_keyword</code> identically.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>candidate_k</code>
+            </td>
+            <td>
+                  <code><span title="int">int</span> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Number of results fetched <em>per retriever</em> (not a combined
+total); defaults to <code>config.retrieval.candidate_k</code>.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>auth</code>
+            </td>
+            <td>
+                  <code><a class="autorefs autorefs-internal" title="AuthorizationContext (rag.retrieval.authorization.AuthorizationContext)" href="#rag.retrieval.authorization.AuthorizationContext">AuthorizationContext</a> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Same semantics as <code>retrieve</code>'s <code>auth</code> parameter; applied identically here,
+so attribution reports never surface content a caller wasn't
+authorized to see either.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    <p><span class="doc-section-title">Returns:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                  <code><a class="autorefs autorefs-internal" title="RetrievalAttribution (rag.schemas.RetrievalAttribution)" href="../schemas/#rag.schemas.RetrievalAttribution">RetrievalAttribution</a></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p><code>dense</code>/<code>bm25</code>/<code>fused</code>, each independently ranked best-first.</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="rag.retrieval.pipeline.RetrievalPipeline.expand_with_relationships" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">expand_with_relationships</span>
+
+
+<a href="#rag.retrieval.pipeline.RetrievalPipeline.expand_with_relationships" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">expand_with_relationships</span><span class="p">(</span>
+    <span class="n">results</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">SearchResult</span><span class="p">],</span>
+    <span class="n">auth</span><span class="p">:</span> <span class="n">AuthorizationContext</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">SearchResult</span><span class="p">]</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Append parent/neighbor context for each result, per <code>retrieval.relationship_expansion</code>.</p>
+<p>Public so the agent <code>get_related_context</code> tool
+(<code>rag/agent/tools.py</code>) can reuse this exact expansion logic
+directly, rather than reimplementing parent/neighbor lookup.</p>
+<p>Ranking and expansion stay separate: expanded chunks are appended
+after the ranked list (<code>origin="expanded"</code>, <code>expanded_from=&lt;id&gt;</code>),
+never interleaved into it or given a freshly computed score.
+<code>.score</code> is inherited from the originating result, so <code>origin</code> (not
+<code>.score</code>) is what callers should check to tell directly-retrieved
+context from expanded context apart. A <code>parent_chunk_id</code>/section
+lookup can never cross a <code>dataset_id</code> boundary because it's always
+scoped to one already-<code>dataset_id</code>-filtered result's own
+<code>document_id</code> (see <code>VectorStore.get_chunks_by_ids</code>/
+<code>get_chunks_by_section</code>). Deduplicates against chunks already
+present in <code>results</code> and across expansions of different results,
+and caps additions at <code>max_related_elements</code> per originating result.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>results</code>
+            </td>
+            <td>
+                  <code><span title="list">list</span>[<a class="autorefs autorefs-internal" title="SearchResult (rag.schemas.SearchResult)" href="../schemas/#rag.schemas.SearchResult">SearchResult</a>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>The reranked, directly-retrieved results to expand.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    <p><span class="doc-section-title">Returns:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                  <code><span title="list">list</span>[<a class="autorefs autorefs-internal" title="SearchResult (rag.schemas.SearchResult)" href="../schemas/#rag.schemas.SearchResult">SearchResult</a>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p><code>results</code> followed by any expanded <code>SearchResult</code>s.</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="rag.retrieval.pipeline.RetrievalPipeline.answer" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">answer</span>
+
+
+<a href="#rag.retrieval.pipeline.RetrievalPipeline.answer" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">answer</span><span class="p">(</span>
+    <span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">filters</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">candidate_k</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">auth</span><span class="p">:</span> <span class="n">AuthorizationContext</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Retrieve context for <code>query</code> and generate an answer from it.</p>
+<p>Always reflects production config (no <code>reranker_top_n</code>/
+<code>generation_context_top_n</code> override. See <code>retrieve</code>).</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>query</code>
+            </td>
+            <td>
+                  <code><span title="str">str</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>The user's query text.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>filters</code>
+            </td>
+            <td>
+                  <code><span title="dict">dict</span>[<span title="str">str</span>, <span title="typing.Any">Any</span>] | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Exact-match metadata filters passed through to <code>retrieve</code>.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>candidate_k</code>
+            </td>
+            <td>
+                  <code><span title="int">int</span> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Number of results to fetch from the vector store; defaults to
+<code>config.retrieval.candidate_k</code>.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>auth</code>
+            </td>
+            <td>
+                  <code><a class="autorefs autorefs-internal" title="AuthorizationContext (rag.retrieval.authorization.AuthorizationContext)" href="#rag.retrieval.authorization.AuthorizationContext">AuthorizationContext</a> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Caller identity/date context (see <code>retrieval/authorization.py</code>
+and <code>AppConfig.security.authorization.enabled</code>); <code>None</code> (the
+default) is fully unrestricted.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    <p><span class="doc-section-title">Returns:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                  <code><span title="dict">dict</span>[<span title="str">str</span>, <span title="typing.Any">Any</span>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p><code>{"answer", "prompt_tokens", "completion_tokens", "sources",
+"retrieval_ms", "generation_ms", "total_ms",
+"latency_breakdown_ms", "query_injection_suspected"}</code>.
+<code>prompt_tokens</code>/<code>completion_tokens</code>
+are read off the LLM instance's own last-call tracking (e.g.
+<code>OllamaLLM.last_prompt_tokens</code>/<code>last_completion_tokens</code>) via
+<code>getattr</code>, so any future <code>LLM</code> implementation that doesn't
+track them just reports <code>None</code> rather than raising.
+<code>latency_breakdown_ms</code>
+splits <code>retrieval_ms</code> into its component stages (embed, dense/
+BM25 search, fusion, rerank, expansion)
+plus <code>generation_ms</code>, for latency comparisons (e.g. how much a
+real reranker adds) that <code>retrieval_ms</code>/<code>generation_ms</code> alone
+can't answer. Each <code>sources</code> entry includes the chunk's raw
+<code>content</code> alongside its metadata (including <code>content_type</code>,
+<code>attachment_name</code>/<code>source_anchor</code> for image hits,
+<code>origin</code>/<code>expanded_from</code> for relationship-expansion
+provenance, and <code>tenant_id</code>/
+<code>trust_level</code>/<code>status</code>/<code>document_version</code>/<code>injection_suspected</code>/
+<code>sensitive_field_ids</code> (ingestion-time tag, present regardless
+of redaction)/<code>redacted_field_ids</code> (only non-empty when
+<code>config.security.field_redaction.enabled</code> and a policy fired
+and <code>content</code> for such a source already has the raw value
+replaced with <code>[REDACTED:SENSITIVE_FIELD]</code>, so this list is
+observability only, never a place a raw value could hide),
+so callers (e.g. RAGAS scoring, eval's reference-context/
+image-hit/safety metrics) can reuse this retrieval without a
+redundant call. <code>query_injection_suspected</code> runs the same
+<code>detect_injection</code> heuristic against <code>query</code> itself (feeds
+<code>eval/run_eval.py</code>'s <code>prompt_injection_success_rate</code>).</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    </div>
+
+</div>
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="rag.retrieval.pipeline.source_label" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">source_label</span>
+
+
+<a href="#rag.retrieval.pipeline.source_label" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">source_label</span><span class="p">(</span><span class="n">result</span><span class="p">:</span> <span class="n">SearchResult</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Build the provenance label for a retrieved source.</p>
+<p>The label includes source metadata such as section, content type,
+trust level, injection status, and relationship-expansion origin.</p>
+<p>For image chunks, the label distinguishes caption or alt-text content
+from vision-generated descriptions so the generated answer does not
+imply visual inspection when no vision model was used.</p>
+<p>Public so the agent synthesize node (<code>rag/agent/graph.py</code>) can reuse
+this exact provenance-labeling logic for tool-fetched evidence,
+rather than reimplementing it.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>result</code>
+            </td>
+            <td>
+                  <code><a class="autorefs autorefs-internal" title="SearchResult (rag.schemas.SearchResult)" href="../schemas/#rag.schemas.SearchResult">SearchResult</a></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Retrieved result whose source metadata should be formatted.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    <p><span class="doc-section-title">Returns:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                  <code><span title="str">str</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Human-readable provenance label without the leading source number.</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="rag.retrieval.pipeline.build_context" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">build_context</span>
+
+
+<a href="#rag.retrieval.pipeline.build_context" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">build_context</span><span class="p">(</span><span class="n">results</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">SearchResult</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">str</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Join reranked chunks into a "[Source N: ...]"-labeled context block.</p>
+<p>Public so the agent synthesize node can build its prompt context from
+accumulated tool evidence using the same formatting <code>answer()</code> uses,
+rather than reimplementing it.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="rag.retrieval.pipeline.source_dict" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">source_dict</span>
+
+
+<a href="#rag.retrieval.pipeline.source_dict" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">source_dict</span><span class="p">(</span><span class="n">result</span><span class="p">:</span> <span class="n">SearchResult</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Render one <code>SearchResult</code> as <code>answer()</code>'s per-source dict shape.</p>
+<p>Public so any caller needing the same <code>chunk_id</code>/<code>content</code>/governance-
+metadata shape <code>answer()</code>'s <code>"sources"</code> list already produces. E.g.
+RAGAS context-building or egress-policy checks over agent-gathered
+evidence, which never goes through <code>answer()</code>. Can reuse it instead
+of re-deriving the same field list.</p>
+
+
+    </div>
+
+</div>
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-module">
+
+
+
+<h2 id="rag.retrieval.fusion" class="doc doc-heading">
+            <span class="doc doc-object-name doc-module-name">fusion</span>
+
+
+<a href="#rag.retrieval.fusion" class="headerlink" title="Permanent link">&para;</a></h2>
+
+    <div class="doc doc-contents first">
+
+        <p>Reciprocal Rank Fusion: merges multiple ranked SearchResult lists into one.</p>
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="rag.retrieval.fusion.reciprocal_rank_fusion" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">reciprocal_rank_fusion</span>
+
+
+<a href="#rag.retrieval.fusion.reciprocal_rank_fusion" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">reciprocal_rank_fusion</span><span class="p">(</span>
+    <span class="n">ranked_lists</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">list</span><span class="p">[</span><span class="n">SearchResult</span><span class="p">]],</span> <span class="n">k</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">60</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">SearchResult</span><span class="p">]</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Fuse multiple ranked SearchResult lists into one via Reciprocal Rank Fusion.</p>
+<p>Deduplicates by <code>SearchResult.chunk.id</code> (stable across a dense-search
+row and a keyword-search row for the same underlying chunk, since
+both are read off the same <code>chunk_id</code> column). Each list contributes
+<code>1 / (k + rank)</code> to a chunk's fused score, where <code>rank</code> starts at 1;
+scores from multiple lists for the same chunk are summed. The first
+occurrence of a chunk (in <code>ranked_lists</code> order, then within-list
+rank order) supplies the returned <code>SearchResult</code>'s <code>chunk</code>
+content/metadata; only <code>.score</code> is replaced.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>ranked_lists</code>
+            </td>
+            <td>
+                  <code><span title="list">list</span>[<span title="list">list</span>[<a class="autorefs autorefs-internal" title="SearchResult (rag.schemas.SearchResult)" href="../schemas/#rag.schemas.SearchResult">SearchResult</a>]]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Two or more ranked result lists to fuse (e.g. dense-search
+results and keyword-search results), each already sorted
+best-first.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>k</code>
+            </td>
+            <td>
+                  <code><span title="int">int</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>RRF's rank-damping constant, by default 60 (the standard value
+from the original RRF paper, also used as Elasticsearch's and
+Weaviate's default).</p>
+              </div>
+            </td>
+            <td>
+                  <code>60</code>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    <p><span class="doc-section-title">Returns:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                  <code><span title="list">list</span>[<a class="autorefs autorefs-internal" title="SearchResult (rag.schemas.SearchResult)" href="../schemas/#rag.schemas.SearchResult">SearchResult</a>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Deduplicated, fused results sorted by descending RRF score.</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    </div>
+
+</div>
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-module">
+
+
+
+<h2 id="rag.retrieval.authorization" class="doc doc-heading">
+            <span class="doc doc-object-name doc-module-name">authorization</span>
+
+
+<a href="#rag.retrieval.authorization" class="headerlink" title="Permanent link">&para;</a></h2>
+
+    <div class="doc doc-contents first">
+
+        <p>Retrieval-time authorization context.</p>
+<p><code>AuthorizationContext</code> is passed explicitly into <code>VectorStore</code> and
+<code>RetrievalPipeline</code> methods. It is never inferred from caller-supplied
+metadata filters, and this module does not verify JWTs or authenticate
+callers.</p>
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="rag.retrieval.authorization.AuthorizationContext" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">AuthorizationContext</span>
+
+
+<a href="#rag.retrieval.authorization.AuthorizationContext" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents ">
+            <p class="doc doc-class-bases">
+              Bases: <code><span title="pydantic.BaseModel">BaseModel</span></code></p>
+
+
+
+        <p>Caller identity and date context for one retrieval, or <code>None</code> for unrestricted access.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>tenant_id</code>
+            </td>
+            <td>
+                  <code><span title="str">str</span> or None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Tenant the caller belongs to. Chunks with no <code>tenant_id</code> are
+never gated, so passing a context is always additive.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>roles</code>
+            </td>
+            <td>
+                  <code><span title="list">list</span>[<span title="str">str</span>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Verified caller roles used for role-based authorization.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>as_of</code>
+            </td>
+            <td>
+                  <code><span title="datetime.date">date</span> or None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Date used for document-version freshness resolution (see
+<code>retrieval/freshness.py</code>). <code>None</code> means "current".</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>include_superseded</code>
+            </td>
+            <td>
+                  <code><span title="bool">bool</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>When <code>True</code> and <code>as_of</code> is <code>None</code>, disables freshness filtering
+entirely.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>require_trust_level</code>
+            </td>
+            <td>
+                  <code><span title="str">str</span> or None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Required document trust level, if any.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+<details class="note" open>
+  <summary>Notes</summary>
+  <p>This class represents authorization context only. Authentication is
+handled separately at the API boundary.</p>
+</details>
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-module">
+
+
+
+<h2 id="rag.retrieval.freshness" class="doc doc-heading">
+            <span class="doc doc-object-name doc-module-name">freshness</span>
+
+
+<a href="#rag.retrieval.freshness" class="headerlink" title="Permanent link">&para;</a></h2>
+
+    <div class="doc doc-contents first">
+
+        <p>Deterministic resolution of which document version was effective as of a given date.</p>
+<p>Determines which members of a document-version family (linked via
+<code>supersedes_source</code>) should be excluded from retrieval, from declared
+metadata alone rather than leaving version selection to the LLM.
+Generalizes to any chain depth via transitive-closure grouping.</p>
+
+
+<details class="note" open>
+  <summary>Notes</summary>
+  <p>Limitations, by design rather than oversight:</p>
+<ul>
+<li>Families form only via <code>supersedes_source</code> links; topically related
+  documents with no such link are never grouped.</li>
+<li>If no family member is marked <code>status="active"</code>, nothing in that
+  family is excluded, rather than guessing a version by date.</li>
+<li>A family member with no <code>effective_from</code> is never excluded by
+  <code>as_of</code>-based resolution.</li>
+</ul>
+</details>
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="rag.retrieval.freshness.resolve_current_document_source" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">resolve_current_document_source</span>
+
+
+<a href="#rag.retrieval.freshness.resolve_current_document_source" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">resolve_current_document_source</span><span class="p">(</span>
+    <span class="n">source</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">versions</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">DocumentVersionInfo</span><span class="p">],</span>
+    <span class="n">as_of</span><span class="p">:</span> <span class="n">date</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">include_superseded</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Resolve any family member's <code>source</code> to its currently-effective member's <code>source</code>.</p>
+<p>A version family's members each have their own, distinct <code>source</code>
+path (e.g. <code>policy-v1.md</code> superseded by <code>policy-v2.md</code>). Unlike
+<code>resolve_excluded_document_ids</code>, which only reports which
+<code>document_id</code>s to exclude, this answers "if a caller names an
+arbitrary (possibly superseded) family member, what path should be
+fetched instead." Used by the <code>get_latest_document</code> agent tool so
+that naming an old version's path still resolves to current content.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>source</code>
+            </td>
+            <td>
+                  <code><span title="str">str</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Any family member's <code>source</code> path, matched by suffix (see
+<code>rag.path_matching.source_matches_relevant</code>).</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>versions</code>
+            </td>
+            <td>
+                  <code><span title="list">list</span>[<a class="autorefs autorefs-internal" title="DocumentVersionInfo (rag.schemas.DocumentVersionInfo)" href="../schemas/#rag.schemas.DocumentVersionInfo">DocumentVersionInfo</a>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Every document's governance metadata for one dataset (see
+<code>VectorStore.list_document_versions</code>).</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>as_of</code>
+            </td>
+            <td>
+                  <code><span title="datetime.date">date</span> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Same semantics as <code>resolve_excluded_document_ids</code>.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>include_superseded</code>
+            </td>
+            <td>
+                  <code><span title="bool">bool</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Same semantics as <code>resolve_excluded_document_ids</code>.</p>
+              </div>
+            </td>
+            <td>
+                  <code>False</code>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    <p><span class="doc-section-title">Returns:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                  <code><span title="str">str</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>The resolved, currently-effective member's <code>source</code>. Returns
+<code>source</code> unchanged if it matches no known document, if the
+matched document belongs to no <code>supersedes_source</code> family, or if
+resolution can't determine a winner (e.g. no family member is
+<code>status="active"</code> and <code>as_of</code> is <code>None</code>). Never guesses.</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="rag.retrieval.freshness.resolve_excluded_document_ids" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">resolve_excluded_document_ids</span>
+
+
+<a href="#rag.retrieval.freshness.resolve_excluded_document_ids" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">resolve_excluded_document_ids</span><span class="p">(</span>
+    <span class="n">versions</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">DocumentVersionInfo</span><span class="p">],</span>
+    <span class="n">as_of</span><span class="p">:</span> <span class="n">date</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">include_superseded</span><span class="p">:</span> <span class="nb">bool</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">set</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Compute the set of <code>document_id</code>s a freshness policy excludes from retrieval.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>versions</code>
+            </td>
+            <td>
+                  <code><span title="list">list</span>[<a class="autorefs autorefs-internal" title="DocumentVersionInfo (rag.schemas.DocumentVersionInfo)" href="../schemas/#rag.schemas.DocumentVersionInfo">DocumentVersionInfo</a>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Every document's governance metadata for one dataset (see
+<code>VectorStore.list_document_versions</code>).</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>as_of</code>
+            </td>
+            <td>
+                  <code><span title="datetime.date">date</span> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p><code>None</code> for "current" (prefer <code>status=active</code>); an explicit date
+resolves each family to the version effective then.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>include_superseded</code>
+            </td>
+            <td>
+                  <code><span title="bool">bool</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>When <code>as_of is None</code>, <code>True</code> disables freshness filtering
+entirely. Ignored when <code>as_of</code> is set.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    <p><span class="doc-section-title">Returns:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                  <code><span title="set">set</span>[<span title="str">str</span>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p><code>document_id</code>s that should be excluded from this query's retrieval.
+Empty when there are no version families, or none are excluded.</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    </div>
+
+</div>
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-module">
+
+
+
+<h2 id="rag.retrieval.injection_detection" class="doc doc-heading">
+            <span class="doc doc-object-name doc-module-name">injection_detection</span>
+
+
+<a href="#rag.retrieval.injection_detection" class="headerlink" title="Permanent link">&para;</a></h2>
+
+    <div class="doc doc-contents first">
+
+        <p>Lightweight, deterministic prompt-injection phrase detection.</p>
+<p>Observability and prompt reinforcement only; never a retrieval gate.
+Authorization removes unauthorized content before it reaches the LLM.
+This module only flags injection-shaped language so the pipeline can label
+suspect sources and feed deterministic safety metrics.</p>
+<p>A flagged result is never dropped here. Blocking on this small literal
+pattern list would risk false refusals on legitimate content that quotes
+or discusses injection attempts.</p>
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="rag.retrieval.injection_detection.detect_injection" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">detect_injection</span>
+
+
+<a href="#rag.retrieval.injection_detection.detect_injection" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">detect_injection</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Whether <code>text</code> contains one of <code>_INJECTION_PATTERNS</code> (case-insensitive).</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>text</code>
+            </td>
+            <td>
+                  <code><span title="str">str</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>A user query, or one retrieved chunk's content.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    <p><span class="doc-section-title">Returns:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                  <code><span title="bool">bool</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>True if any pattern matches. A heuristic triage flag, not a
+semantic judgment.</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    </div>
+
+</div>
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-module">
+
+
+
+<h2 id="rag.retrieval.field_policy" class="doc doc-heading">
+            <span class="doc doc-object-name doc-module-name">field_policy</span>
+
+
+<a href="#rag.retrieval.field_policy" class="headerlink" title="Permanent link">&para;</a></h2>
+
+    <div class="doc doc-contents first">
+
+        <p>Field-level sensitive-value detection and redaction.</p>
+<p>Document-level authorization decides whether a caller may retrieve a
+chunk at all. This module decides whether a specific value inside an
+already-authorized chunk (e.g. an admin-only credential) must be redacted
+for that caller's roles.</p>
+<p>Policies are a short, hardcoded list of pattern-plus-allowed-roles
+entries, not a general-purpose secret scanner or config surface.</p>
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="rag.retrieval.field_policy.SensitiveFieldPolicy" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">SensitiveFieldPolicy</span>
+
+
+<a href="#rag.retrieval.field_policy.SensitiveFieldPolicy" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents ">
+            <p class="doc doc-class-bases">
+              Bases: <code><span title="pydantic.BaseModel">BaseModel</span></code></p>
+
+
+
+        <p>A detectable sensitive-value pattern plus who may see it unredacted.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>field_id</code>
+            </td>
+            <td>
+                  <code><span title="str">str</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Identifier used in diagnostics and <code>SearchResult.redacted_field_ids</code>.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>sensitivity_type</code>
+            </td>
+            <td>
+                  <code><span title="str">str</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Category of the value, e.g. "credential".</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>detector</code>
+            </td>
+            <td>
+                  <code>&#39;regex&#39;</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Detection method. Currently only regex matching is supported.</p>
+              </div>
+            </td>
+            <td>
+                  <code>&#34;regex&#34;</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>pattern</code>
+            </td>
+            <td>
+                  <code><span title="str">str</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Regex pattern identifying the sensitive value.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>allowed_roles</code>
+            </td>
+            <td>
+                  <code><span title="list">list</span>[<span title="str">str</span>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Roles exempt from redaction for this field.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>redaction_marker</code>
+            </td>
+            <td>
+                  <code><span title="str">str</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Text substituted for an unauthorized match.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+<details class="note" open>
+  <summary>Notes</summary>
+  <p>A policy runs only against text from a chunk the caller was already
+document-level authorized to retrieve.</p>
+</details>
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="rag.retrieval.field_policy.DuplicateSensitiveOccurrence" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">DuplicateSensitiveOccurrence</span>
+
+
+<a href="#rag.retrieval.field_policy.DuplicateSensitiveOccurrence" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents ">
+            <p class="doc doc-class-bases">
+              Bases: <code><span title="pydantic.BaseModel">BaseModel</span></code></p>
+
+
+
+        <p>One sensitive literal value found in more than one chunk, or tagged inconsistently.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>literal_value_hash</code>
+            </td>
+            <td>
+                  <code><span title="str">str</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Sha256 digest of the matched substring, not the raw literal, so
+this diagnostic's own output can never leak a secret.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>field_id</code>
+            </td>
+            <td>
+                  <code><span title="str">str</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>The <code>SensitiveFieldPolicy.field_id</code> that matched.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>chunk_ids</code>
+            </td>
+            <td>
+                  <code><span title="list">list</span>[<span title="str">str</span>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Chunks containing this literal value.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>untagged_chunk_ids</code>
+            </td>
+            <td>
+                  <code><span title="list">list</span>[<span title="str">str</span>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Subset of <code>chunk_ids</code> missing the corresponding ingestion-time tag.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="rag.retrieval.field_policy.detect_sensitive_field_ids" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">detect_sensitive_field_ids</span>
+
+
+<a href="#rag.retrieval.field_policy.detect_sensitive_field_ids" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">detect_sensitive_field_ids</span><span class="p">(</span>
+    <span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">policies</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">SensitiveFieldPolicy</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Return the policies whose pattern matches <code>text</code>.</p>
+<p>Ingestion-time tagging only; does not check roles. Persisted as
+<code>ChunkMetadata.sensitive_field_ids</code> so query-time redaction can skip
+untagged chunks without re-running every pattern.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>text</code>
+            </td>
+            <td>
+                  <code><span title="str">str</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>A chunk span's text.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>policies</code>
+            </td>
+            <td>
+                  <code><span title="list">list</span>[<a class="autorefs autorefs-internal" title="SensitiveFieldPolicy (rag.retrieval.field_policy.SensitiveFieldPolicy)" href="#rag.retrieval.field_policy.SensitiveFieldPolicy">SensitiveFieldPolicy</a>] | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Defaults to <code>DEFAULT_FIELD_POLICIES</code>.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    <p><span class="doc-section-title">Returns:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                  <code><span title="list">list</span>[<span title="str">str</span>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p><code>field_id</code>s of every policy whose pattern matches <code>text</code> at least once.</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="rag.retrieval.field_policy.is_role_authorized_for_field" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">is_role_authorized_for_field</span>
+
+
+<a href="#rag.retrieval.field_policy.is_role_authorized_for_field" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">is_role_authorized_for_field</span><span class="p">(</span>
+    <span class="n">field_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">roles</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+    <span class="n">policies</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">SensitiveFieldPolicy</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Whether any of <code>roles</code> is allowed to see <code>field_id</code> unredacted.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>field_id</code>
+            </td>
+            <td>
+                  <code><span title="str">str</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>A <code>SensitiveFieldPolicy.field_id</code>.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>roles</code>
+            </td>
+            <td>
+                  <code><span title="list">list</span>[<span title="str">str</span>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Caller roles to check.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>policies</code>
+            </td>
+            <td>
+                  <code><span title="list">list</span>[<a class="autorefs autorefs-internal" title="SensitiveFieldPolicy (rag.retrieval.field_policy.SensitiveFieldPolicy)" href="#rag.retrieval.field_policy.SensitiveFieldPolicy">SensitiveFieldPolicy</a>] | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Defaults to <code>DEFAULT_FIELD_POLICIES</code>.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    <p><span class="doc-section-title">Returns:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                  <code><span title="bool">bool</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>True if <code>field_id</code> isn't a known policy (nothing to restrict) or
+<code>roles</code> intersects that policy's <code>allowed_roles</code>.</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="rag.retrieval.field_policy.redact_sensitive_fields" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">redact_sensitive_fields</span>
+
+
+<a href="#rag.retrieval.field_policy.redact_sensitive_fields" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">redact_sensitive_fields</span><span class="p">(</span>
+    <span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">roles</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+    <span class="n">policies</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">SensitiveFieldPolicy</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]]</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Replace matched spans the caller isn't authorized for with a redaction marker.</p>
+<p>Fail-closed: an empty <code>roles</code> list matches no policy's
+<code>allowed_roles</code>, so every matching policy gets redacted rather than
+treated as unrestricted.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>text</code>
+            </td>
+            <td>
+                  <code><span title="str">str</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Chunk content to scan.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>roles</code>
+            </td>
+            <td>
+                  <code><span title="list">list</span>[<span title="str">str</span>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Caller roles asserted for this query (empty if no identity known).</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>policies</code>
+            </td>
+            <td>
+                  <code><span title="list">list</span>[<a class="autorefs autorefs-internal" title="SensitiveFieldPolicy (rag.retrieval.field_policy.SensitiveFieldPolicy)" href="#rag.retrieval.field_policy.SensitiveFieldPolicy">SensitiveFieldPolicy</a>] | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Defaults to <code>DEFAULT_FIELD_POLICIES</code>.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    <p><span class="doc-section-title">Returns:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                  <code><span title="tuple">tuple</span>[<span title="str">str</span>, <span title="list">list</span>[<span title="str">str</span>]]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>The (possibly modified) text, and the <code>field_id</code>s of every policy
+that redacted at least one match.</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="rag.retrieval.field_policy.redact_source_metadata" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">redact_source_metadata</span>
+
+
+<a href="#rag.retrieval.field_policy.redact_source_metadata" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">redact_source_metadata</span><span class="p">(</span>
+    <span class="n">fields</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">],</span>
+    <span class="n">roles</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+    <span class="n">policies</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">SensitiveFieldPolicy</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">],</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]]</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Apply the same sensitive-field redaction to metadata field values.</p>
+<p>Guards against a value leaking indirectly through metadata (e.g. an
+<code>attachment_name</code> that echoes the value) even when chunk content was
+already redacted.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>fields</code>
+            </td>
+            <td>
+                  <code><span title="dict">dict</span>[<span title="str">str</span>, <span title="str">str</span> | None]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Metadata field name -&gt; value (e.g. <code>{"attachment_name": ...,
+"section_path": ...}</code>). <code>None</code> values pass through unchanged.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>roles</code>
+            </td>
+            <td>
+                  <code><span title="list">list</span>[<span title="str">str</span>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Caller roles asserted for this query (empty if no identity known).</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>policies</code>
+            </td>
+            <td>
+                  <code><span title="list">list</span>[<a class="autorefs autorefs-internal" title="SensitiveFieldPolicy (rag.retrieval.field_policy.SensitiveFieldPolicy)" href="#rag.retrieval.field_policy.SensitiveFieldPolicy">SensitiveFieldPolicy</a>] | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Defaults to <code>DEFAULT_FIELD_POLICIES</code>.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    <p><span class="doc-section-title">Returns:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                  <code><span title="tuple">tuple</span>[<span title="dict">dict</span>[<span title="str">str</span>, <span title="str">str</span> | None], <span title="list">list</span>[<span title="str">str</span>]]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>The (possibly modified) fields dict, and the deduplicated
+<code>field_id</code>s of every policy that redacted at least one field.</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="rag.retrieval.field_policy.find_duplicate_sensitive_occurrences" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">find_duplicate_sensitive_occurrences</span>
+
+
+<a href="#rag.retrieval.field_policy.find_duplicate_sensitive_occurrences" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">find_duplicate_sensitive_occurrences</span><span class="p">(</span>
+    <span class="n">chunks</span><span class="p">:</span> <span class="n">Sequence</span><span class="p">[</span><span class="n">_ScannableChunk</span><span class="p">],</span>
+    <span class="n">policies</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">SensitiveFieldPolicy</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">DuplicateSensitiveOccurrence</span><span class="p">]</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Find sensitive literals present in multiple chunks, or missing their ingestion-time tag.</p>
+<p>Diagnostic only, not part of query-time enforcement. Catches two
+gaps: the same sensitive value copied into a second chunk that was
+never cross-checked against the first, and a chunk whose content
+matches a policy pattern but isn't tagged with that <code>field_id</code>.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>chunks</code>
+            </td>
+            <td>
+                  <code><span title="collections.abc.Sequence">Sequence</span>[<span title="rag.retrieval.field_policy._ScannableChunk">_ScannableChunk</span>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Chunks to scan.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>policies</code>
+            </td>
+            <td>
+                  <code><span title="list">list</span>[<a class="autorefs autorefs-internal" title="SensitiveFieldPolicy (rag.retrieval.field_policy.SensitiveFieldPolicy)" href="#rag.retrieval.field_policy.SensitiveFieldPolicy">SensitiveFieldPolicy</a>] | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Defaults to <code>DEFAULT_FIELD_POLICIES</code>.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    <p><span class="doc-section-title">Returns:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                  <code><span title="list">list</span>[<a class="autorefs autorefs-internal" title="DuplicateSensitiveOccurrence (rag.retrieval.field_policy.DuplicateSensitiveOccurrence)" href="#rag.retrieval.field_policy.DuplicateSensitiveOccurrence">DuplicateSensitiveOccurrence</a>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>One entry per <code>(field_id, literal_value_hash)</code> pair that either
+appears in more than one chunk, or has at least one untagged
+occurrence. Empty when the corpus is fully and uniquely tagged.</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    </div>
+
+</div>
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "toc.follow", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

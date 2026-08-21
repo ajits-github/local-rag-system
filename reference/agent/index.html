@@ -1,0 +1,4514 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Modular, config-driven local RAG system (pgvector + Ollama + sentence-transformers)">
+      
+      
+      
+        <link rel="canonical" href="https://ajits-github.github.io/local-rag-system/reference/agent/">
+      
+      
+        <link rel="prev" href="../vision/">
+      
+      
+        <link rel="next" href="../ingestion/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Agent - local-rag-system</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#agent" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="local-rag-system" class="md-header__button md-logo" aria-label="local-rag-system" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            local-rag-system
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Agent
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Overview
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../architecture/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Architecture
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../topics/ingestion/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Ingestion & Chunking
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../topics/retrieval/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Retrieval
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../topics/multimodal/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Multimodal & Layout
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../topics/security/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Security
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../topics/agentic-rag/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Agentic RAG
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../topics/evaluation/" class="md-tabs__link">
+          
+  
+  
+  Evaluation & RAGAS
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../topics/observability/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Observability
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../topics/deployment/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Deployment & Runtime
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../" class="md-tabs__link">
+          
+  
+  
+  API Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="local-rag-system" class="md-nav__button md-logo" aria-label="local-rag-system" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    local-rag-system
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../topics/ingestion/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ingestion & Chunking
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../topics/retrieval/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Retrieval
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../topics/multimodal/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multimodal & Layout
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../topics/security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../topics/agentic-rag/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agentic RAG
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8" >
+        
+          
+          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Evaluation & RAGAS
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Evaluation & RAGAS
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../topics/evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../metrics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Metrics reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../topics/observability/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Observability
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../topics/deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment & Runtime
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_11" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_11" id="__nav_11_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_11_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_11">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration & factory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../schemas/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Schemas
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../loaders/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Loaders
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../chunkers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Chunkers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../embedders/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Embedders
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../vectorstore/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Vector store
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../retrieval/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Retrieval
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../rerankers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rerankers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../generation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Generation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../prompts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Prompts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../vision/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Vision
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#rag.agent.state" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        state
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="state">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rag.agent.state.Citation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Citation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.agent.state.NodeInvocationTiming" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        NodeInvocationTiming
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.agent.state.ToolCallRecord" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ToolCallRecord
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.agent.state.AgentState" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AgentState
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rag.agent.tool_schemas" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        tool_schemas
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="tool_schemas">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rag.agent.tool_schemas.SearchKnowledgeBaseArgs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SearchKnowledgeBaseArgs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.agent.tool_schemas.GetDocumentArgs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GetDocumentArgs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.agent.tool_schemas.GetLatestDocumentArgs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GetLatestDocumentArgs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.agent.tool_schemas.GetRelatedContextArgs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GetRelatedContextArgs
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rag.agent.tools" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        tools
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="tools">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rag.agent.tools.ToolExecutionError" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ToolExecutionError
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.agent.tools.search_knowledge_base" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        search_knowledge_base
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.agent.tools.get_document" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        get_document
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.agent.tools.get_latest_document" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        get_latest_document
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.agent.tools.get_related_context" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        get_related_context
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rag.agent.decisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        decisions
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="decisions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rag.agent.decisions.ClassifyDecision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ClassifyDecision
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.agent.decisions.DecomposeDecision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        DecomposeDecision
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.agent.decisions.ToolSelectionDecision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ToolSelectionDecision
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.agent.decisions.EvidenceSufficiencyDecision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        EvidenceSufficiencyDecision
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.agent.decisions.parse_llm_json" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        parse_llm_json
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.agent.decisions.run_decision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        run_decision
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rag.agent.graph" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        graph
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="graph">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rag.agent.graph.NodeTimingStats" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        NodeTimingStats
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.agent.graph.AgentRunResult" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AgentRunResult
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.agent.graph.run_agent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        run_agent
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rag.agent.events" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        events
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="events">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rag.agent.events.AgentEvent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AgentEvent
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ingestion/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ingestion
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../eval/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../observability/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Observability
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#rag.agent.state" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        state
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="state">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rag.agent.state.Citation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Citation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.agent.state.NodeInvocationTiming" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        NodeInvocationTiming
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.agent.state.ToolCallRecord" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ToolCallRecord
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.agent.state.AgentState" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AgentState
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rag.agent.tool_schemas" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        tool_schemas
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="tool_schemas">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rag.agent.tool_schemas.SearchKnowledgeBaseArgs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SearchKnowledgeBaseArgs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.agent.tool_schemas.GetDocumentArgs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GetDocumentArgs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.agent.tool_schemas.GetLatestDocumentArgs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GetLatestDocumentArgs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.agent.tool_schemas.GetRelatedContextArgs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GetRelatedContextArgs
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rag.agent.tools" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        tools
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="tools">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rag.agent.tools.ToolExecutionError" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ToolExecutionError
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.agent.tools.search_knowledge_base" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        search_knowledge_base
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.agent.tools.get_document" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        get_document
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.agent.tools.get_latest_document" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        get_latest_document
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.agent.tools.get_related_context" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        get_related_context
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rag.agent.decisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        decisions
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="decisions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rag.agent.decisions.ClassifyDecision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ClassifyDecision
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.agent.decisions.DecomposeDecision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        DecomposeDecision
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.agent.decisions.ToolSelectionDecision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ToolSelectionDecision
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.agent.decisions.EvidenceSufficiencyDecision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        EvidenceSufficiencyDecision
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.agent.decisions.parse_llm_json" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        parse_llm_json
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.agent.decisions.run_decision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        run_decision
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rag.agent.graph" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        graph
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="graph">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rag.agent.graph.NodeTimingStats" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        NodeTimingStats
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.agent.graph.AgentRunResult" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AgentRunResult
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rag.agent.graph.run_agent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        run_agent
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rag.agent.events" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        events
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="events">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rag.agent.events.AgentEvent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AgentEvent
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="agent">Agent<a class="headerlink" href="#agent" title="Permanent link">&para;</a></h1>
+
+
+<div class="doc doc-object doc-module">
+
+
+
+<h2 id="rag.agent.state" class="doc doc-heading">
+            <span class="doc doc-object-name doc-module-name">state</span>
+
+
+<a href="#rag.agent.state" class="headerlink" title="Permanent link">&para;</a></h2>
+
+    <div class="doc doc-contents first">
+
+        <p>Agent run state: only what the bounded graph driver needs, nothing more.</p>
+<p>Deliberately excludes raw JWT tokens and any other unrestricted sensitive
+data (see <code>docs/architecture.md</code>'s "Agentic RAG" section). Identity is
+carried only as an already-verified <code>AuthorizationContext</code>, never a
+<code>VerifiedIdentity</code>/raw <code>sub</code> claim.</p>
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="rag.agent.state.Citation" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">Citation</span>
+
+
+<a href="#rag.agent.state.Citation" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents ">
+            <p class="doc doc-class-bases">
+              Bases: <code><span title="pydantic.BaseModel">BaseModel</span></code></p>
+
+
+
+        <p>One retrieved-chunk citation surfaced in an agent run's final answer.</p>
+<p>Mirrors <code>api.routers.query.SourceItem</code>'s shape so the API layer can
+convert between them without reshaping data; kept as a separate model
+here so <code>rag.agent</code> never imports from <code>rag.api</code> (agent logic sits
+below the API boundary, not beside it).</p>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="rag.agent.state.NodeInvocationTiming" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">NodeInvocationTiming</span>
+
+
+<a href="#rag.agent.state.NodeInvocationTiming" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents ">
+            <p class="doc doc-class-bases">
+              Bases: <code><span title="pydantic.BaseModel">BaseModel</span></code></p>
+
+
+
+        <p>One graph-node call's timing, split into LLM-inference time and everything else.</p>
+<p><code>llm_ms</code>/<code>overhead_ms</code> are <code>None</code> for a node that makes no direct LLM
+call (<code>execute_tool</code>). Deliberately not <code>0.0</code>, which would misread
+as "an LLM call happened and took no time."</p>
+
+
+<p><span class="doc-section-title">Attributes:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td><code><span title="rag.agent.state.NodeInvocationTiming.total_ms">total_ms</span></code></td>
+            <td>
+                  <code><span title="float">float</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Total wall-clock time for this node invocation.</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td><code><span title="rag.agent.state.NodeInvocationTiming.llm_ms">llm_ms</span></code></td>
+            <td>
+                  <code><span title="float">float</span> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>The portion of <code>total_ms</code> spent inside <code>LLM.generate()</code> calls
+(summed across any JSON-parse retries <code>run_decision</code> made this
+invocation). See <code>rag.agent.graph._TimingLLM</code>.</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td><code><span title="rag.agent.state.NodeInvocationTiming.overhead_ms">overhead_ms</span></code></td>
+            <td>
+                  <code><span title="float">float</span> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p><code>total_ms - llm_ms</code>: JSON parsing/validation, prompt-template
+rendering, and any other node-local work that isn't the model
+call itself.</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="rag.agent.state.ToolCallRecord" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">ToolCallRecord</span>
+
+
+<a href="#rag.agent.state.ToolCallRecord" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents ">
+            <p class="doc doc-class-bases">
+              Bases: <code><span title="pydantic.BaseModel">BaseModel</span></code></p>
+
+
+
+        <p>One tool dispatch's outcome, for observability and bounding.</p>
+<p><code>args</code> holds only the validated, LLM-writable fields actually passed
+to the tool (see <code>rag.agent.tool_schemas</code>). Never <code>auth</code>/<code>tenant_id</code>/
+<code>roles</code>, which are never LLM-writable in the first place.</p>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="rag.agent.state.AgentState" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">AgentState</span>
+
+
+<a href="#rag.agent.state.AgentState" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents ">
+            <p class="doc doc-class-bases">
+              Bases: <code><span title="pydantic.BaseModel">BaseModel</span></code></p>
+
+
+
+        <p>Mutable state threaded through the hand-rolled agent graph driver.</p>
+
+
+<p><span class="doc-section-title">Attributes:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td><code><span title="rag.agent.state.AgentState.original_query">original_query</span></code></td>
+            <td>
+                  <code><span title="str">str</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>The user's original question, unmodified.</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td><code><span title="rag.agent.state.AgentState.authorization_context">authorization_context</span></code></td>
+            <td>
+                  <code><a class="autorefs autorefs-internal" title="AuthorizationContext (rag.retrieval.authorization.AuthorizationContext)" href="../retrieval/#rag.retrieval.authorization.AuthorizationContext">AuthorizationContext</a> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>The caller's verified identity/date context, set once by the API
+router before the graph runs and never reconstructed from
+anything LLM-derived. Safe to hold here. It carries no raw
+credential (see <code>rag.retrieval.authorization.AuthorizationContext</code>).</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td><code><span title="rag.agent.state.AgentState.filters">filters</span></code></td>
+            <td>
+                  <code><span title="dict">dict</span>[<span title="str">str</span>, <span title="typing.Any">Any</span>] | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Exact-match retrieval filters (notably <code>dataset_id</code>, the hard
+dataset namespace boundary), set once from the request and never
+mutated by any LLM decision.</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td><code><span title="rag.agent.state.AgentState.query_type">query_type</span></code></td>
+            <td>
+                  <code>{&#39;simple&#39;, &#39;complex&#39;} or None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p><code>classify_query</code>'s routing decision.</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td><code><span title="rag.agent.state.AgentState.subquestions">subquestions</span></code></td>
+            <td>
+                  <code><span title="list">list</span>[<span title="str">str</span>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p><code>decompose</code>'s output, bounded to a small number.</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td><code><span title="rag.agent.state.AgentState.current_query">current_query</span></code></td>
+            <td>
+                  <code><span title="str">str</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>The query text the next tool call/decision should use. Starts
+as <code>original_query</code> or the first subquestion, and may be replaced
+by a reformulated query after an insufficient-evidence decision.</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td><code><span title="rag.agent.state.AgentState.retrieved_evidence">retrieved_evidence</span></code></td>
+            <td>
+                  <code><span title="list">list</span>[<a class="autorefs autorefs-internal" title="SearchResult (rag.schemas.SearchResult)" href="../schemas/#rag.schemas.SearchResult">SearchResult</a>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Accumulated evidence from every tool call so far, always passed
+through <code>RetrievalPipeline.sanitize_evidence</code> before being
+appended here (see <code>rag.agent.graph</code>).</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td><code><span title="rag.agent.state.AgentState.tool_call_history">tool_call_history</span></code></td>
+            <td>
+                  <code><span title="list">list</span>[<a class="autorefs autorefs-internal" title="ToolCallRecord (rag.agent.state.ToolCallRecord)" href="#rag.agent.state.ToolCallRecord">ToolCallRecord</a>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>One record per tool dispatch, in order.</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td><code><span title="rag.agent.state.AgentState.retrieval_attempts">retrieval_attempts</span></code></td>
+            <td>
+                  <code><span title="int">int</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Count of <code>search_knowledge_base</code> dispatches specifically. The
+counter <code>max_retrieval_attempts</code> bounds.</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td><code><span title="rag.agent.state.AgentState.tool_call_count">tool_call_count</span></code></td>
+            <td>
+                  <code><span title="int">int</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Count of all tool dispatches (any tool). The counter
+<code>max_tool_calls</code> bounds.</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td><code><span title="rag.agent.state.AgentState.step_count">step_count</span></code></td>
+            <td>
+                  <code><span title="int">int</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Count of graph node executions. The counter <code>max_agent_steps</code>
+bounds.</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td><code><span title="rag.agent.state.AgentState.prompt_tokens, completion_tokens">prompt_tokens, completion_tokens</span></code></td>
+            <td>
+                  <code><span title="int">int</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Best-effort accumulated token usage across every LLM call this
+run made (every decision call plus synthesis). Read via
+<code>getattr(llm, "last_prompt_tokens"/"last_completion_tokens",
+None)</code> after each call, the same pattern
+<code>RetrievalPipeline.answer()</code> uses. <code>0</code> for an <code>LLM</code>
+implementation that doesn't track them. On a retried decision
+call (<code>rag.agent.decisions.run_decision</code>), only the last attempt's
+tokens are counted, since the LLM instance's own tracking
+attribute is overwritten per call, not accumulated. A
+documented undercount, not a crash risk.</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td><code><span title="rag.agent.state.AgentState.evidence_sufficient">evidence_sufficient</span></code></td>
+            <td>
+                  <code><span title="bool">bool</span> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p><code>evaluate_evidence</code>'s most recent decision.</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td><code><span title="rag.agent.state.AgentState.final_answer">final_answer</span></code></td>
+            <td>
+                  <code><span title="str">str</span> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>The synthesized (or insufficient-evidence) answer text.</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td><code><span title="rag.agent.state.AgentState.citations">citations</span></code></td>
+            <td>
+                  <code><span title="list">list</span>[<a class="autorefs autorefs-internal" title="Citation (rag.agent.state.Citation)" href="#rag.agent.state.Citation">Citation</a>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Sources backing <code>final_answer</code>.</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td><code><span title="rag.agent.state.AgentState.termination_reason">termination_reason</span></code></td>
+            <td>
+                  <code><span title="str">str</span> or None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Why the run stopped; <code>None</code> only while still in progress.</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td><code><span title="rag.agent.state.AgentState.node_timings_ms">node_timings_ms</span></code></td>
+            <td>
+                  <code><span title="dict">dict</span>[<span title="str">str</span>, <span title="list">list</span>[<a class="autorefs autorefs-internal" title="NodeInvocationTiming (rag.agent.state.NodeInvocationTiming)" href="#rag.agent.state.NodeInvocationTiming">NodeInvocationTiming</a>]]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Every node invocation's timing, keyed by node name (<code>classify</code>/
+<code>decompose</code>/<code>tool_select</code>/<code>execute_tool</code>/<code>evidence_sufficiency</code>/
+<code>synthesize</code>). A list, not a single value, because
+<code>tool_select</code>/<code>execute_tool</code>/<code>evidence_sufficiency</code> can run more
+than once per request (the bounded retry loop). Both individual
+invocation timing and aggregate-across-invocations timing are
+derivable from this, never just the aggregate. Populated by
+<code>rag.agent.graph</code>'s node-timing wrapper, not by node functions
+themselves.</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td><code><span title="rag.agent.state.AgentState.node_token_usage">node_token_usage</span></code></td>
+            <td>
+                  <code><span title="dict">dict</span>[<span title="str">str</span>, <span title="dict">dict</span>[<span title="str">str</span>, <span title="int">int</span>]]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Per-node-type <code>{"prompt": int, "completion": int}</code> token totals,
+summed across every invocation of that node type this run made.
+Same best-effort/per-call-overwrite caveat as <code>prompt_tokens</code>/
+<code>completion_tokens</code> applies per invocation.</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-module">
+
+
+
+<h2 id="rag.agent.tool_schemas" class="doc doc-heading">
+            <span class="doc doc-object-name doc-module-name">tool_schemas</span>
+
+
+<a href="#rag.agent.tool_schemas" class="headerlink" title="Permanent link">&para;</a></h2>
+
+    <div class="doc doc-contents first">
+
+        <p>Validated argument schemas for the agent's four tools.</p>
+<p>Every model is <code>extra="forbid"</code>. A deliberate deviation from this
+codebase's usual <code>extra="ignore"</code> default (see <code>QueryRequest</code>,
+<code>GoldExample</code>, <code>AuthorizationContext</code>). So an LLM attempting to smuggle a
+<code>tenant_id</code>/<code>roles</code>/<code>auth</code>-shaped key into a tool call produces a loud,
+auditable <code>ValidationError</code> rather than silently being dropped. Every
+LLM-writable numeric field also carries a hard <code>Field(ge=..., le=...)</code>
+range; no schema exposes a chunk-count/limit field at all, since those are
+entirely server-controlled (see <code>rag.config.AgentConfig</code> and
+<code>rag.agent.tools</code>).</p>
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="rag.agent.tool_schemas.SearchKnowledgeBaseArgs" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">SearchKnowledgeBaseArgs</span>
+
+
+<a href="#rag.agent.tool_schemas.SearchKnowledgeBaseArgs" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents ">
+            <p class="doc doc-class-bases">
+              Bases: <code><span title="pydantic.BaseModel">BaseModel</span></code></p>
+
+
+
+        <p>Arguments for the <code>search_knowledge_base</code> tool.</p>
+<p><code>content_type</code> lets the model intentionally search for a specific
+structural kind of evidence (e.g. "find the table with these
+numbers"). It's a closed <code>Literal</code> set, not a free string, and is
+merged into the retrieval <code>filters</code> dict server-side
+(<code>tools.search_knowledge_base</code>) against the same
+<code>VectorStore.ALLOWED_FILTER_FIELDS</code> whitelist every other filter goes
+through -- the LLM can select <em>which</em> allowed value to filter by, not
+name arbitrary SQL/filter fields.</p>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="rag.agent.tool_schemas.GetDocumentArgs" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">GetDocumentArgs</span>
+
+
+<a href="#rag.agent.tool_schemas.GetDocumentArgs" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents ">
+            <p class="doc doc-class-bases">
+              Bases: <code><span title="pydantic.BaseModel">BaseModel</span></code></p>
+
+
+
+        <p>Arguments for the <code>get_document</code> tool.</p>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="rag.agent.tool_schemas.GetLatestDocumentArgs" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">GetLatestDocumentArgs</span>
+
+
+<a href="#rag.agent.tool_schemas.GetLatestDocumentArgs" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents ">
+            <p class="doc doc-class-bases">
+              Bases: <code><span title="pydantic.BaseModel">BaseModel</span></code></p>
+
+
+
+        <p>Arguments for the <code>get_latest_document</code> tool.</p>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="rag.agent.tool_schemas.GetRelatedContextArgs" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">GetRelatedContextArgs</span>
+
+
+<a href="#rag.agent.tool_schemas.GetRelatedContextArgs" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents ">
+            <p class="doc doc-class-bases">
+              Bases: <code><span title="pydantic.BaseModel">BaseModel</span></code></p>
+
+
+
+        <p>Arguments for the <code>get_related_context</code> tool.</p>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-module">
+
+
+
+<h2 id="rag.agent.tools" class="doc doc-heading">
+            <span class="doc doc-object-name doc-module-name">tools</span>
+
+
+<a href="#rag.agent.tools" class="headerlink" title="Permanent link">&para;</a></h2>
+
+    <div class="doc doc-contents first">
+
+        <p>The four agent tools: thin wrappers over existing, tested application services.</p>
+<p>No tool reimplements retrieval or security logic. Each calls
+<code>RetrievalPipeline</code>/<code>VectorStore</code>/<code>rag.retrieval.freshness</code> directly. Every
+function takes <code>auth: AuthorizationContext | None</code> as an explicit parameter
+separate from its validated <code>args</code>, always supplied by the graph driver
+from <code>AgentState.authorization_context</code>. Never constructed from parsed
+LLM JSON (see <code>rag.agent.decisions</code>).</p>
+<p><code>get_document</code>/<code>get_latest_document</code> bound how much of a document they load
+into agent state: a server-controlled hard SQL <code>LIMIT</code>
+(<code>max_chunks_hard_ceiling</code>) followed by a relevance-selection pass against
+the current query (<code>max_chunks</code>). Neither number is LLM-writable, and
+<code>rag.agent.tool_schemas.GetDocumentArgs</code>/<code>GetLatestDocumentArgs</code> expose no
+chunk-count field at all.</p>
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="rag.agent.tools.ToolExecutionError" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">ToolExecutionError</span>
+
+
+<a href="#rag.agent.tools.ToolExecutionError" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents ">
+            <p class="doc doc-class-bases">
+              Bases: <code><span title="Exception">Exception</span></code></p>
+
+
+
+        <p>Raised when a tool cannot complete its dispatch (e.g. missing dataset_id).</p>
+<p>Caught by the graph driver's <code>execute_tool</code> node and recorded as a
+failed <code>ToolCallRecord</code> rather than propagated. A tool failure must
+never crash the request (see the "tool failure is handled safely"
+invariant in <code>docs/architecture.md</code>'s "Agentic RAG" section).</p>
+
+
+
+
+
+
+
+
+
+    </div>
+
+</div>
+
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="rag.agent.tools.search_knowledge_base" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">search_knowledge_base</span>
+
+
+<a href="#rag.agent.tools.search_knowledge_base" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">search_knowledge_base</span><span class="p">(</span>
+    <span class="n">args</span><span class="p">:</span> <span class="n">SearchKnowledgeBaseArgs</span><span class="p">,</span>
+    <span class="n">pipeline</span><span class="p">:</span> <span class="n">RetrievalPipeline</span><span class="p">,</span>
+    <span class="n">filters</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">object</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">auth</span><span class="p">:</span> <span class="n">AuthorizationContext</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">SearchResult</span><span class="p">]</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Run authorized hybrid/dense retrieval via the existing <code>RetrievalPipeline</code>.</p>
+<p>Preserves every tenant/role/freshness/trust control <code>retrieve()</code>
+already applies; this function adds no retrieval logic of its own.
+When <code>args.content_type</code> is set, it's merged into the caller-supplied
+(server-controlled) <code>filters</code> dict -- the LLM can only ever narrow to
+one of <code>ContentTypeFilter</code>'s allowed values via the already-whitelisted
+<code>content_type</code> filter field (<code>VectorStore.ALLOWED_FILTER_FIELDS</code>),
+never override or add any other key <code>filters</code> already carries (e.g.
+<code>dataset_id</code>).</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="rag.agent.tools.get_document" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">get_document</span>
+
+
+<a href="#rag.agent.tools.get_document" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">get_document</span><span class="p">(</span>
+    <span class="n">args</span><span class="p">:</span> <span class="n">GetDocumentArgs</span><span class="p">,</span>
+    <span class="n">vectorstore</span><span class="p">:</span> <span class="n">VectorStore</span><span class="p">,</span>
+    <span class="n">dataset_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">current_query</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">embedder</span><span class="p">:</span> <span class="n">Embedder</span><span class="p">,</span>
+    <span class="n">auth</span><span class="p">:</span> <span class="n">AuthorizationContext</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">max_chunks</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">max_chunks_hard_ceiling</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">Chunk</span><span class="p">]</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Fetch a specific authorized document by its <code>source</code> path, bounded and relevance-selected.</p>
+
+
+<p><span class="doc-section-title">Raises:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                  <code><a class="autorefs autorefs-internal" title="ToolExecutionError (rag.agent.tools.ToolExecutionError)" href="#rag.agent.tools.ToolExecutionError">ToolExecutionError</a></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>If <code>dataset_id</code> is missing. <code>get_chunks_by_source</code> requires it,
+and there is no safe default to guess.</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="rag.agent.tools.get_latest_document" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">get_latest_document</span>
+
+
+<a href="#rag.agent.tools.get_latest_document" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">get_latest_document</span><span class="p">(</span>
+    <span class="n">args</span><span class="p">:</span> <span class="n">GetLatestDocumentArgs</span><span class="p">,</span>
+    <span class="n">vectorstore</span><span class="p">:</span> <span class="n">VectorStore</span><span class="p">,</span>
+    <span class="n">dataset_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">current_query</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">embedder</span><span class="p">:</span> <span class="n">Embedder</span><span class="p">,</span>
+    <span class="n">auth</span><span class="p">:</span> <span class="n">AuthorizationContext</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">max_chunks</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">max_chunks_hard_ceiling</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">Chunk</span><span class="p">]</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Resolve <code>args.source</code> to its currently-effective version, then fetch it.</p>
+<p>Unlike a plain <code>get_document(args.source)</code> call, this first resolves
+<code>args.source</code> through <code>resolve_current_document_source</code>. If
+<code>args.source</code> names a superseded family member, the <em>current</em> member's
+content is returned instead, which is the actual point of this tool
+(see <code>docs/architecture.md</code>'s "Agentic RAG" section on why a source
+path does not by itself identify the whole family).</p>
+
+
+<p><span class="doc-section-title">Raises:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                  <code><a class="autorefs autorefs-internal" title="ToolExecutionError (rag.agent.tools.ToolExecutionError)" href="#rag.agent.tools.ToolExecutionError">ToolExecutionError</a></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>If <code>dataset_id</code> is missing.</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="rag.agent.tools.get_related_context" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">get_related_context</span>
+
+
+<a href="#rag.agent.tools.get_related_context" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">get_related_context</span><span class="p">(</span>
+    <span class="n">args</span><span class="p">:</span> <span class="n">GetRelatedContextArgs</span><span class="p">,</span>
+    <span class="n">pipeline</span><span class="p">:</span> <span class="n">RetrievalPipeline</span><span class="p">,</span>
+    <span class="n">vectorstore</span><span class="p">:</span> <span class="n">VectorStore</span><span class="p">,</span>
+    <span class="n">auth</span><span class="p">:</span> <span class="n">AuthorizationContext</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">Chunk</span><span class="p">]</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Fetch parent/neighbor context for an already-retrieved chunk.</p>
+<p>Reuses <code>RetrievalPipeline.expand_with_relationships</code> directly rather
+than reimplementing parent/neighbor lookup; already bounded by
+<code>config.retrieval.relationship_expansion.max_related_elements</code>. A
+<code>chunk_id</code> that doesn't resolve (not found, or excluded by <code>auth</code>) is
+treated as a normal empty result, not a tool failure. Nothing
+actually errored.</p>
+
+
+    </div>
+
+</div>
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-module">
+
+
+
+<h2 id="rag.agent.decisions" class="doc doc-heading">
+            <span class="doc doc-object-name doc-module-name">decisions</span>
+
+
+<a href="#rag.agent.decisions" class="headerlink" title="Permanent link">&para;</a></h2>
+
+    <div class="doc doc-contents first">
+
+        <p>Structured LLM-driven decision points for the agentic RAG graph.</p>
+<p>Every decision point renders a versioned prompt template instructing
+JSON-only output, calls the existing, unmodified <code>LLM.generate(system,
+user) -&gt; str</code>, and parses/validates the response against a Pydantic model
+here. This is <strong>agentic structured tool dispatch</strong>. <code>LLM JSON decision -&gt;
+Pydantic validation -&gt; trusted Python dispatcher -&gt; tool execution</code>. And
+explicitly <em>not</em> provider-native function/tool calling (i.e. not
+<code>ollama.Client.chat(tools=[...])</code>, even though the installed client
+supports that parameter). The LLM only ever produces text; Python is the
+only thing that decides which real function runs and with what (validated)
+arguments. See <code>docs/architecture.md</code>'s "Agentic RAG" section for the full
+rationale.</p>
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="rag.agent.decisions.ClassifyDecision" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">ClassifyDecision</span>
+
+
+<a href="#rag.agent.decisions.ClassifyDecision" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents ">
+            <p class="doc doc-class-bases">
+              Bases: <code><span title="pydantic.BaseModel">BaseModel</span></code></p>
+
+
+
+        <p><code>classify_query</code> node's output: route a question as simple or complex.</p>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="rag.agent.decisions.DecomposeDecision" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">DecomposeDecision</span>
+
+
+<a href="#rag.agent.decisions.DecomposeDecision" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents ">
+            <p class="doc doc-class-bases">
+              Bases: <code><span title="pydantic.BaseModel">BaseModel</span></code></p>
+
+
+
+        <p><code>decompose</code> node's output: subquestions for a complex query.</p>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="rag.agent.decisions.ToolSelectionDecision" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">ToolSelectionDecision</span>
+
+
+<a href="#rag.agent.decisions.ToolSelectionDecision" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents ">
+            <p class="doc doc-class-bases">
+              Bases: <code><span title="pydantic.BaseModel">BaseModel</span></code></p>
+
+
+
+        <p><code>select_tool</code> node's output: which tool to dispatch, and its raw arguments.</p>
+<p><code>tool_args</code> is intentionally untyped here. It is validated against
+the matching <code>rag.agent.tool_schemas</code> model (<code>extra="forbid"</code>) by the
+graph driver immediately after this decision is parsed, never trusted
+as-is.</p>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="rag.agent.decisions.EvidenceSufficiencyDecision" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">EvidenceSufficiencyDecision</span>
+
+
+<a href="#rag.agent.decisions.EvidenceSufficiencyDecision" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents ">
+            <p class="doc doc-class-bases">
+              Bases: <code><span title="pydantic.BaseModel">BaseModel</span></code></p>
+
+
+
+        <p><code>evaluate_evidence</code> node's output: whether gathered evidence is enough to answer.</p>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="rag.agent.decisions.parse_llm_json" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">parse_llm_json</span>
+
+
+<a href="#rag.agent.decisions.parse_llm_json" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">parse_llm_json</span><span class="p">(</span><span class="n">raw</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">model</span><span class="p">:</span> <span class="nb">type</span><span class="p">[</span><span class="n">T</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">T</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Parse and validate <code>raw</code> LLM output as JSON matching <code>model</code>.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>raw</code>
+            </td>
+            <td>
+                  <code><span title="str">str</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>The LLM's raw text response.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>model</code>
+            </td>
+            <td>
+                  <code><span title="type">type</span>[<span title="rag.agent.decisions.T">T</span>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>The Pydantic model the parsed JSON must validate against.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    <p><span class="doc-section-title">Returns:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                  <code><span title="rag.agent.decisions.T">T</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>The validated decision.</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+<p><span class="doc-section-title">Raises:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                  <code><span title="ValueError">ValueError</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>If <code>raw</code> contains no valid JSON, or it doesn't validate against
+<code>model</code>.</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="rag.agent.decisions.run_decision" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">run_decision</span>
+
+
+<a href="#rag.agent.decisions.run_decision" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">run_decision</span><span class="p">(</span>
+    <span class="n">llm</span><span class="p">:</span> <span class="n">LLM</span><span class="p">,</span>
+    <span class="n">template</span><span class="p">:</span> <span class="n">PromptTemplate</span><span class="p">,</span>
+    <span class="n">model</span><span class="p">:</span> <span class="nb">type</span><span class="p">[</span><span class="n">T</span><span class="p">],</span>
+    <span class="n">max_retries</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="o">**</span><span class="n">variables</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">T</span> <span class="o">|</span> <span class="kc">None</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Render <code>template</code>, call <code>llm.generate</code>, and parse the result as <code>model</code>.</p>
+<p>On a parse/validation failure, issues up to <code>max_retries</code> bounded
+reparse nudges appended to the user turn. Still plain
+<code>LLM.generate(system, user) -&gt; str</code> calls, never a
+structured-output-forcing or native tool-calling API. Before giving
+up.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>llm</code>
+            </td>
+            <td>
+                  <code><a class="autorefs autorefs-internal" title="LLM (rag.generation.base.LLM)" href="../generation/#rag.generation.base.LLM">LLM</a></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>The LLM to call.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>template</code>
+            </td>
+            <td>
+                  <code><a class="autorefs autorefs-internal" title="PromptTemplate (rag.prompts.loader.PromptTemplate)" href="../prompts/#rag.prompts.loader.PromptTemplate">PromptTemplate</a></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>The decision point's prompt template.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>model</code>
+            </td>
+            <td>
+                  <code><span title="type">type</span>[<span title="rag.agent.decisions.T">T</span>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>The Pydantic model the response must validate against.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>max_retries</code>
+            </td>
+            <td>
+                  <code><span title="int">int</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Bounded number of reparse attempts after the first failure
+(<code>config.agent.max_json_parse_retries</code>).</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>**variables</code>
+            </td>
+            <td>
+                  <code><span title="str">str</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Template render variables.</p>
+              </div>
+            </td>
+            <td>
+                  <code>{}</code>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    <p><span class="doc-section-title">Returns:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                  <code><span title="rag.agent.decisions.T">T</span> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>The validated decision, or <code>None</code> if every attempt failed.
+Callers must handle <code>None</code> with a safe default. Never crash the
+request on a decision-parsing failure.</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    </div>
+
+</div>
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-module">
+
+
+
+<h2 id="rag.agent.graph" class="doc doc-heading">
+            <span class="doc doc-object-name doc-module-name">graph</span>
+
+
+<a href="#rag.agent.graph" class="headerlink" title="Permanent link">&para;</a></h2>
+
+    <div class="doc doc-contents first">
+
+        <p>Hand-rolled, explicitly-bounded agent graph driver.</p>
+<p>Deliberately not LangGraph. See <code>docs/architecture.md</code>'s "Agentic RAG"
+section for the full rationale and the threshold for reconsidering that
+decision. The graph is a plain Python <code>while</code> loop over node functions,
+each taking/returning an <code>AgentState</code>, with three
+independent, plainly-inspectable integer bounds
+(<code>max_agent_steps</code>/<code>max_retrieval_attempts</code>/<code>max_tool_calls</code>) rather than
+one blended framework <code>recursion_limit</code>.</p>
+<div class="highlight"><pre><span></span><code>START -&gt; classify_query -&gt; simple? yes -&gt; classic_rag -&gt; final
+                         no -&gt; decompose -&gt; select_tool -&gt; execute_tool
+                                    -&gt; evaluate_evidence
+                                       sufficient -&gt; synthesize -&gt; final
+                                       insufficient (bounded) -&gt; reformulate
+                                                                      -&gt; select_tool (loop)
+</code></pre></div>
+<p>Every tool call's evidence passes through <code>RetrievalPipeline.sanitize_evidence</code>
+before it is appended to state. This is applied uniformly here, in
+<code>_execute_tool</code>, regardless of which tool produced it, so no tool can
+bypass field redaction/injection detection by construction.</p>
+<p>Observability (node timing, OpenTelemetry spans, Prometheus metrics, and
+safe live-progress events; see <code>docs/architecture.md</code>'s "Observability"
+section) is added by wrapping existing node calls, not by changing any
+node function's internal decision logic. <code>_TimingLLM</code> and <code>_call_node</code>
+are the two pieces that do this centrally: every node call in <code>run_agent</code>
+goes through <code>_call_node</code>, and every LLM-calling node is handed the same
+<code>_TimingLLM</code>-wrapped <code>llm</code> instance instead of the raw one, so this
+module is the only place that needs to know about instrumentation at all.</p>
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="rag.agent.graph.NodeTimingStats" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">NodeTimingStats</span>
+
+
+<a href="#rag.agent.graph.NodeTimingStats" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents ">
+            <p class="doc doc-class-bases">
+              Bases: <code><span title="pydantic.BaseModel">BaseModel</span></code></p>
+
+
+
+        <p>Aggregate timing for one node type across every invocation a run made.</p>
+
+
+<p><span class="doc-section-title">Attributes:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td><code><span title="rag.agent.graph.NodeTimingStats.count">count</span></code></td>
+            <td>
+                  <code><span title="int">int</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Number of times this node ran this request.</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td><code><span title="rag.agent.graph.NodeTimingStats.total_ms">total_ms</span></code></td>
+            <td>
+                  <code><span title="float">float</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Sum of <code>total_ms</code> across every invocation.</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td><code><span title="rag.agent.graph.NodeTimingStats.mean_ms">mean_ms</span></code></td>
+            <td>
+                  <code><span title="float">float</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p><code>total_ms / count</code>.</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td><code><span title="rag.agent.graph.NodeTimingStats.llm_ms_mean">llm_ms_mean</span></code></td>
+            <td>
+                  <code><span title="float">float</span> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Mean LLM-inference-only time per invocation, or <code>None</code> for a node
+that makes no direct LLM call (<code>execute_tool</code>).</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td><code><span title="rag.agent.graph.NodeTimingStats.overhead_ms_mean">overhead_ms_mean</span></code></td>
+            <td>
+                  <code><span title="float">float</span> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Mean non-LLM time per invocation (JSON parsing/validation/
+template rendering/tool dispatch), or <code>None</code> alongside
+<code>llm_ms_mean</code>.</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="rag.agent.graph.AgentRunResult" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">AgentRunResult</span>
+
+
+<a href="#rag.agent.graph.AgentRunResult" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents ">
+            <p class="doc doc-class-bases">
+              Bases: <code><span title="pydantic.BaseModel">BaseModel</span></code></p>
+
+
+
+        <p>The outcome of one <code>run_agent</code> call: final state plus API-facing summary fields.</p>
+<p><code>retrieval_ms</code>/<code>generation_ms</code> are exact (read from <code>pipeline.answer()</code>'s
+own breakdown) on the <code>"classic_rag"</code> route. On the <code>"agent"</code> route
+they are an approximation kept for backward compatibility:
+<code>retrieval_ms</code> sums every tool call's own latency, and <code>generation_ms</code>
+is everything else added together: every LLM decision call
+(classify/decompose/select_tool/evaluate_evidence/synthesize)
+collapsed into one number, since they all go through the same <code>LLM</code>
+instance. This is <em>not</em> a single generation call's duration; for a
+real per-node breakdown (including the LLM-inference-vs-overhead
+split within each node), use <code>node_timings_ms</code> instead. <code>total_ms</code> is
+always exact wall-clock time.</p>
+
+
+<p><span class="doc-section-title">Attributes:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td><code><span title="rag.agent.graph.AgentRunResult.node_timings_ms">node_timings_ms</span></code></td>
+            <td>
+                  <code><span title="dict">dict</span>[<span title="str">str</span>, <a class="autorefs autorefs-internal" title="NodeTimingStats (rag.agent.graph.NodeTimingStats)" href="#rag.agent.graph.NodeTimingStats">NodeTimingStats</a>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Per-node-type aggregate timing (<code>classify</code>/<code>decompose</code>/
+<code>tool_select</code>/<code>tool_execute</code>/<code>evidence_sufficiency</code>/<code>synthesize</code>),
+empty on the <code>"classic_rag"</code> route (that route has no per-node
+structure; see <code>pipeline.answer()</code>'s own <code>latency_breakdown_ms</code>
+instead).</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td><code><span title="rag.agent.graph.AgentRunResult.llm_call_count">llm_call_count</span></code></td>
+            <td>
+                  <code><span title="int">int</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Total <code>LLM.generate()</code> calls made this run (including JSON-parse
+retries). <code>1</code> on the <code>"classic_rag"</code> route.</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td><code><span title="rag.agent.graph.AgentRunResult.node_token_usage">node_token_usage</span></code></td>
+            <td>
+                  <code><span title="dict">dict</span>[<span title="str">str</span>, <span title="dict">dict</span>[<span title="str">str</span>, <span title="int">int</span>]]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Per-node-type <code>{"prompt": int, "completion": int}</code> token totals.</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td><code><span title="rag.agent.graph.AgentRunResult.classic_sources">classic_sources</span></code></td>
+            <td>
+                  <code><span title="list">list</span>[<span title="dict">dict</span>[<span title="str">str</span>, <span title="typing.Any">Any</span>]]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p><code>pipeline.answer()</code>'s raw <code>source_dict</code>-shaped <code>"sources"</code> list,
+populated only on the <code>"classic_rag"</code> route (empty on <code>"agent"</code>,
+where the same content already lives in
+<code>state.retrieved_evidence</code>). <code>state.citations</code> alone can't stand
+in for this: it's a lossy <code>Citation</code> (id/source/category/score),
+with no <code>content</code> field, so a caller needing the actual retrieved
+text for the classic route (e.g. RAGAS context-building) needs
+this instead of re-deriving it from citations.</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="rag.agent.graph.run_agent" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">run_agent</span>
+
+
+<a href="#rag.agent.graph.run_agent" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">run_agent</span><span class="p">(</span>
+    <span class="n">state</span><span class="p">:</span> <span class="n">AgentState</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">pipeline</span><span class="p">:</span> <span class="n">RetrievalPipeline</span><span class="p">,</span>
+    <span class="n">vectorstore</span><span class="p">:</span> <span class="n">VectorStore</span><span class="p">,</span>
+    <span class="n">embedder</span><span class="p">:</span> <span class="n">Embedder</span><span class="p">,</span>
+    <span class="n">llm</span><span class="p">:</span> <span class="n">LLM</span><span class="p">,</span>
+    <span class="n">config</span><span class="p">:</span> <span class="n">AppConfig</span><span class="p">,</span>
+    <span class="n">on_event</span><span class="p">:</span> <span class="n">OnAgentEvent</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">AgentRunResult</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Run the bounded agent graph for one query, or the classic-RAG fast path.</p>
+<p>When <code>config.agent.enabled</code> is <code>False</code>, always takes the
+<code>"classic_rag"</code> route with zero extra LLM calls. The coarse
+kill-switch matching <code>AuthorizationConfig</code>/<code>FieldRedactionConfig</code>'s
+convention. Otherwise: <code>classify_query</code> always runs first (one LLM
+decision call, even for a question that turns out to be simple. This
+is the expected, documented cost of routing); a <code>"simple"</code> result (or
+a classify-step bound/parse failure) still falls through to the exact
+same <code>classic_rag</code> node. A <code>"complex"</code> result proceeds to <code>decompose</code>
+and the bounded <code>select_tool -&gt; execute_tool -&gt; evaluate_evidence</code>
+loop, gated by three independent counters
+(<code>max_agent_steps</code>/<code>max_retrieval_attempts</code>/<code>max_tool_calls</code>); see
+the module docstring for the full graph shape.</p>
+<p>Every node call is wrapped in <code>_call_node</code> for timing/tracing/metrics
+and, for LLM-calling nodes, given a <code>_TimingLLM</code>-wrapped <code>llm</code> so
+inference time can be split from node overhead. None of this
+changes what any node decides or how the graph routes.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>state</code>
+            </td>
+            <td>
+                  <code><a class="autorefs autorefs-internal" title="AgentState (rag.agent.state.AgentState)" href="#rag.agent.state.AgentState">AgentState</a></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Initial state; <code>original_query</code>/<code>authorization_context</code>/<code>filters</code>
+must already be set by the caller (see
+<code>rag.api.routers.agent_query</code>).</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>pipeline</code>
+            </td>
+            <td>
+                  <code>injected singletons</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Reused, never reconstructed, from the same DI wiring
+<code>RetrievalPipeline</code>/<code>api.deps</code> already use.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>vectorstore</code>
+            </td>
+            <td>
+                  <code>injected singletons</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Reused, never reconstructed, from the same DI wiring
+<code>RetrievalPipeline</code>/<code>api.deps</code> already use.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>embedder</code>
+            </td>
+            <td>
+                  <code>injected singletons</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Reused, never reconstructed, from the same DI wiring
+<code>RetrievalPipeline</code>/<code>api.deps</code> already use.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>llm</code>
+            </td>
+            <td>
+                  <code>injected singletons</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Reused, never reconstructed, from the same DI wiring
+<code>RetrievalPipeline</code>/<code>api.deps</code> already use.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>config</code>
+            </td>
+            <td>
+                  <code><a class="autorefs autorefs-internal" title="AppConfig (rag.config.AppConfig)" href="../config/#rag.config.AppConfig">AppConfig</a></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Application configuration; <code>config.agent</code> supplies every bound.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>on_event</code>
+            </td>
+            <td>
+                  <code><span title="rag.agent.graph.OnAgentEvent">OnAgentEvent</span> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Called with a safe <code>AgentEvent</code> at each state-machine transition
+(see <code>rag.agent.events</code>), if set. Used by
+<code>POST /agent/query/stream</code> to stream live progress; <code>/agent/query</code>
+itself never sets this. Never raises out of <code>run_agent</code> even if
+the callback itself raises.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    <p><span class="doc-section-title">Returns:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                  <code><a class="autorefs autorefs-internal" title="AgentRunResult (rag.agent.graph.AgentRunResult)" href="#rag.agent.graph.AgentRunResult">AgentRunResult</a></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>The final state plus route/timing summary fields.</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    </div>
+
+</div>
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-module">
+
+
+
+<h2 id="rag.agent.events" class="doc doc-heading">
+            <span class="doc doc-object-name doc-module-name">events</span>
+
+
+<a href="#rag.agent.events" class="headerlink" title="Permanent link">&para;</a></h2>
+
+    <div class="doc doc-contents first">
+
+        <p>Safe, structured live-progress events for a running agent query.</p>
+<p><code>AgentEvent</code> deliberately has no free-text field at all. Not
+<code>reasoning</code>, not a message string, not evidence content. This is a
+structural guarantee, not a policy one: there is nowhere on the model for
+chain-of-thought, raw prompts, retrieved chunk text, or credentials to
+end up, so no future call site can accidentally leak them into a stream
+just by passing more data through. See <code>docs/architecture.md</code>'s
+"Observability" section for the full design.</p>
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="rag.agent.events.AgentEvent" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">AgentEvent</span>
+
+
+<a href="#rag.agent.events.AgentEvent" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents ">
+            <p class="doc doc-class-bases">
+              Bases: <code><span title="pydantic.BaseModel">BaseModel</span></code></p>
+
+
+
+        <p>One safe, operational event describing agent-graph progress.</p>
+
+
+<p><span class="doc-section-title">Attributes:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td><code><span title="rag.agent.events.AgentEvent.event_type">event_type</span></code></td>
+            <td>
+                  <code><span title="rag.agent.events.EventType">EventType</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Which state-machine transition this event describes.</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td><code><span title="rag.agent.events.AgentEvent.step">step</span></code></td>
+            <td>
+                  <code><span title="int">int</span> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p><code>AgentState.step_count</code> at the time of this event, if applicable.</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td><code><span title="rag.agent.events.AgentEvent.tool_name">tool_name</span></code></td>
+            <td>
+                  <code><span title="str">str</span> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>The bounded tool name (one of the four literal tools), if this
+event concerns a tool dispatch.</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td><code><span title="rag.agent.events.AgentEvent.elapsed_ms">elapsed_ms</span></code></td>
+            <td>
+                  <code><span title="float">float</span> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Milliseconds elapsed since the run started, if applicable.</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td><code><span title="rag.agent.events.AgentEvent.retrieved_chunk_count">retrieved_chunk_count</span></code></td>
+            <td>
+                  <code><span title="int">int</span> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Count only. Never chunk ids or content.</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td><code><span title="rag.agent.events.AgentEvent.evidence_sufficient">evidence_sufficient</span></code></td>
+            <td>
+                  <code><span title="bool">bool</span> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p><code>evaluate_evidence</code>'s outcome, if this event concerns it.</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td><code><span title="rag.agent.events.AgentEvent.termination_reason">termination_reason</span></code></td>
+            <td>
+                  <code><span title="str">str</span> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Set only on a <code>terminated</code>/<code>completed</code> event.</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td><code><span title="rag.agent.events.AgentEvent.route">route</span></code></td>
+            <td>
+                  <code><span title="str">str</span> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p><code>"classic_rag"</code> or <code>"agent"</code>, set only on <code>route_selected</code>/
+<code>completed</code>/<code>terminated</code>.</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "toc.follow", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

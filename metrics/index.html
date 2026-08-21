@@ -1,0 +1,2155 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Modular, config-driven local RAG system (pgvector + Ollama + sentence-transformers)">
+      
+      
+      
+        <link rel="canonical" href="https://ajits-github.github.io/local-rag-system/metrics/">
+      
+      
+        <link rel="prev" href="../topics/evaluation/">
+      
+      
+        <link rel="next" href="../topics/observability/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Metrics reference - local-rag-system</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#metrics-inventory" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="local-rag-system" class="md-header__button md-logo" aria-label="local-rag-system" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            local-rag-system
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Metrics reference
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href=".." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Overview
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../architecture/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Architecture
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../topics/ingestion/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Ingestion & Chunking
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../topics/retrieval/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Retrieval
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../topics/multimodal/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Multimodal & Layout
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../topics/security/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Security
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../topics/agentic-rag/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Agentic RAG
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../topics/evaluation/" class="md-tabs__link">
+          
+  
+  
+  Evaluation & RAGAS
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../topics/observability/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Observability
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../topics/deployment/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Deployment & Runtime
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../reference/" class="md-tabs__link">
+          
+  
+  
+  API Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="local-rag-system" class="md-nav__button md-logo" aria-label="local-rag-system" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    local-rag-system
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../topics/ingestion/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ingestion & Chunking
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../topics/retrieval/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Retrieval
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../topics/multimodal/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multimodal & Layout
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../topics/security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../topics/agentic-rag/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agentic RAG
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Evaluation & RAGAS
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Evaluation & RAGAS
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../topics/evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Metrics reference
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Metrics reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-embedding-layer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Embedding layer
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-retrieval-layer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Retrieval layer
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Retrieval layer">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#retrieval-attribution-evalretrieval_attributionpy-attribution-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Retrieval attribution (eval/retrieval_attribution.py, --attribution path)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-generation-layer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Generation layer
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Generation layer">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#3a-ragas-llm-judge-hosted-api-optional-evalrun_ragas_evalpy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3a. RAGAS (LLM-judge, hosted API, optional — eval/run_ragas_eval.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-safety-security-layer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Safety / security layer
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-agentic-rag-layer-evalrun_agent_evalpy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Agentic RAG layer (eval/run_agent_eval.py)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-corpus-experiment-lineage-not-a-quality-metric-provenance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Corpus / experiment lineage (not a quality metric — provenance)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-experiment-tracking-mlflow-experimentsresultsjson" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Experiment tracking (MLflow / experiments/results/*.json)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#whats-not-covered" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What's not covered
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../topics/observability/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Observability
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../topics/deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment & Runtime
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_11" >
+        
+          
+          <label class="md-nav__link" for="__nav_11" id="__nav_11_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_11_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_11">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration & factory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/schemas/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Schemas
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/loaders/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Loaders
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/chunkers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Chunkers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/embedders/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Embedders
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/vectorstore/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Vector store
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/retrieval/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Retrieval
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/rerankers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rerankers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/generation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Generation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/prompts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Prompts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/vision/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Vision
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/agent/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/ingestion/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ingestion
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/eval/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/observability/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Observability
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-embedding-layer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Embedding layer
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-retrieval-layer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Retrieval layer
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Retrieval layer">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#retrieval-attribution-evalretrieval_attributionpy-attribution-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Retrieval attribution (eval/retrieval_attribution.py, --attribution path)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-generation-layer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Generation layer
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Generation layer">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#3a-ragas-llm-judge-hosted-api-optional-evalrun_ragas_evalpy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3a. RAGAS (LLM-judge, hosted API, optional — eval/run_ragas_eval.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-safety-security-layer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Safety / security layer
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-agentic-rag-layer-evalrun_agent_evalpy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Agentic RAG layer (eval/run_agent_eval.py)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-corpus-experiment-lineage-not-a-quality-metric-provenance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Corpus / experiment lineage (not a quality metric — provenance)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-experiment-tracking-mlflow-experimentsresultsjson" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Experiment tracking (MLflow / experiments/results/*.json)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#whats-not-covered" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What's not covered
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="metrics-inventory">Metrics Inventory<a class="headerlink" href="#metrics-inventory" title="Permanent link">&para;</a></h1>
+<p>A reference map of every metric this codebase computes, grouped by the
+pipeline layer it measures. Sourced directly from <code>src/rag/eval/</code> (mainly
+<code>run_eval.py</code>, <code>retrieval_attribution.py</code>, <code>run_agent_eval.py</code>,
+<code>ragas_scorer.py</code>, <code>corpus_lineage.py</code>) — this file doesn't introduce any
+new metric, it indexes what's already computed and where.</p>
+<p>None of this runs automatically. <code>eval/run_eval.py --gold ... --dataset-id
+...</code> is the main entrypoint; flags/other scripts are noted per section.</p>
+<h2 id="1-embedding-layer">1. Embedding layer<a class="headerlink" href="#1-embedding-layer" title="Permanent link">&para;</a></h2>
+<p>There is no metric that scores the embedding model in isolation (e.g. no
+intrinsic embedding-quality benchmark). Embedding quality is only
+observable indirectly, through retrieval-layer metrics (section 2) — a
+worse embedding model shows up as lower Recall@k/MRR, not as a
+standalone number.</p>
+<h2 id="2-retrieval-layer">2. Retrieval layer<a class="headerlink" href="#2-retrieval-layer" title="Permanent link">&para;</a></h2>
+<p>Computed by <code>eval/run_eval.py:evaluate()</code> from a broad, fixed
+<code>candidate_k=10</code> retrieval per gold question (see <code>eval/metrics.py</code>):</p>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Direction</th>
+<th>What it measures</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>recall@5</code>, <code>recall@10</code></td>
+<td>higher better</td>
+<td>Fraction of gold <code>relevant_documents</code> found in the top-k, path-suffix matched</td>
+</tr>
+<tr>
+<td><code>hit_rate@5</code>, <code>hit_rate@10</code></td>
+<td>higher better</td>
+<td>Whether <em>any</em> relevant document was found in the top-k (0/1 per question, unlike recall which averages over multiple relevant docs)</td>
+</tr>
+<tr>
+<td><code>mrr</code></td>
+<td>higher better</td>
+<td>Mean reciprocal rank of the first relevant document</td>
+</tr>
+<tr>
+<td><code>content_type_breakdown</code></td>
+<td>—</td>
+<td>Recall@5/@10 + hit_rate@5, bucketed by the gold file's <em>authored</em> <code>content_type</code> (e.g. <code>text_only</code>, <code>table</code>, <code>image_only</code>, <code>relationship_aware</code>)</td>
+</tr>
+<tr>
+<td><code>reference_context_analysis.supporting_context_hit_rate</code></td>
+<td>higher better</td>
+<td>Among questions where the right <em>document</em> was retrieved, how often the specific supporting passage (verbatim substring match against <code>reference_contexts</code>) was too — buckets A (doc+passage), B (doc only), C (missed)</td>
+</tr>
+<tr>
+<td><code>relevant_image_hit_rate</code></td>
+<td>higher better</td>
+<td>Among gold rows with <code>relevant_images</code>, whether a retrieved chunk's resolved image asset matched one</td>
+</tr>
+<tr>
+<td><code>relationship_expansion_contribution_rate</code></td>
+<td>—</td>
+<td>Among <code>requires_relationship_expansion=true</code> rows, fraction where an <code>origin="expanded"</code> chunk supplied supporting context the pre-expansion set alone didn't. Always 0.0 when <code>relationship_expansion.enabled=false</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="retrieval-attribution-evalretrieval_attributionpy-attribution-path">Retrieval attribution (<code>eval/retrieval_attribution.py</code>, <code>--attribution</code> path)<a class="headerlink" href="#retrieval-attribution-evalretrieval_attributionpy-attribution-path" title="Permanent link">&para;</a></h3>
+<p>Observability-only — independently fetches dense and BM25 rankings (never
+reranked, never expanded) and fuses them via RRF, regardless of
+<code>config.retrieval.provider</code>. Run via
+<code>python -m rag.eval.retrieval_attribution</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>What it measures</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>metrics_by_retriever</code></td>
+<td>Recall@5/@10, Hit Rate@5/@10, MRR computed separately for <code>dense</code>, <code>bm25</code>, and <code>hybrid</code> (RRF-fused) rankings, over the identical gold set</td>
+</tr>
+<tr>
+<td><code>contribution_buckets</code></td>
+<td>Per-question classification: <code>both_success</code> / <code>dense_only_success</code> / <code>bm25_only_success</code> / <code>neither_success</code></td>
+</tr>
+<tr>
+<td><code>rrf_impact</code></td>
+<td>Per-question classification of what fusion did to the first-relevant-doc rank: <code>rescued</code> / <code>improved</code> / <code>unchanged</code> / <code>degraded</code> / <code>still_missed</code> / <code>not_applicable</code></td>
+</tr>
+<tr>
+<td><code>reference_context_by_retriever</code></td>
+<td>Same A/B/C supporting-passage bucket as section 2's table, computed per retriever</td>
+</tr>
+<tr>
+<td><code>breakdowns</code></td>
+<td><code>contribution_buckets</code>/<code>rrf_impact</code>/retriever metrics bucketed by <code>content_type</code>/<code>question_type</code>/<code>difficulty</code>/relationship-awareness</td>
+</tr>
+</tbody>
+</table>
+<h2 id="3-generation-layer">3. Generation layer<a class="headerlink" href="#3-generation-layer" title="Permanent link">&para;</a></h2>
+<p>Computed by <code>eval/run_eval.py:evaluate()</code> when <code>run_generation=True</code>
+(the default; <code>--skip-generation</code> disables this whole section):</p>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Direction</th>
+<th>What it measures</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>answer_quality.mean_overall</code> / <code>mean_answerable</code> / <code>mean_unanswerable</code></td>
+<td>higher better</td>
+<td><code>KeywordOverlapScorer</code> — fraction of reference-answer keywords (len&gt;3) that also appear in the generated answer. A cheap placeholder, not a faithfulness judge — see RAGAS (section 3a) for a real semantic scorer</td>
+</tr>
+<tr>
+<td><code>latency_ms.retrieval_mean</code> / <code>generation_mean</code> / <code>total_mean</code></td>
+<td>—</td>
+<td>Mean per-question latency</td>
+</tr>
+<tr>
+<td><code>latency_breakdown_ms</code></td>
+<td>—</td>
+<td>Per-stage mean latency (embed/dense_search/bm25_search/fusion/rerank/expansion/generation), from <code>RetrievalPipeline._retrieve_timed</code></td>
+</tr>
+<tr>
+<td><code>token_usage.prompt_tokens_mean</code> / <code>completion_tokens_mean</code></td>
+<td>—</td>
+<td>From Ollama's <code>prompt_eval_count</code>/<code>eval_count</code>, when present</td>
+</tr>
+<tr>
+<td><code>refusal_behavior.correct_refusal_rate</code></td>
+<td>higher better</td>
+<td>Among <code>unanswerable=true</code> gold rows, fraction whose answer matched a literal refusal-phrase heuristic</td>
+</tr>
+<tr>
+<td><code>relationship_expansion_utilization.answer_appears_to_use_expanded_content_rate</code></td>
+<td>—</td>
+<td>Among questions where an expanded chunk reached generation, whether the answer's wording echoes expanded-only content (keyword-overlap heuristic) — distinct from <code>relationship_expansion_contribution_rate</code>, which is retrieval-only and gold-annotation-gated</td>
+</tr>
+<tr>
+<td><code>vision_behavior_breakdown.counts</code></td>
+<td>—</td>
+<td>Heuristic triage of <code>requires_vision=true</code> answers in text-only mode: <code>correct_refusal</code> / <code>hallucinated_answer</code> / <code>caption_leak_success</code> / <code>incorrect_or_missing</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="3a-ragas-llm-judge-hosted-api-optional-evalrun_ragas_evalpy">3a. RAGAS (LLM-judge, hosted API, optional — <code>eval/run_ragas_eval.py</code>)<a class="headerlink" href="#3a-ragas-llm-judge-hosted-api-optional-evalrun_ragas_evalpy" title="Permanent link">&para;</a></h3>
+<p>Not run by default (costs real money against a hosted judge — <code>openai</code>/
+<code>anthropic</code> by default, see <code>config.judge</code>). <code>ragas_aggregate</code> reports:</p>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>What it measures</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>faithfulness</code></td>
+<td>Whether the answer is supported by the retrieved context</td>
+</tr>
+<tr>
+<td><code>answer_relevancy</code></td>
+<td>Whether the answer addresses the question</td>
+</tr>
+<tr>
+<td><code>context_precision</code></td>
+<td>Whether retrieved context is relevant (judged against <code>expected_answer</code>)</td>
+</tr>
+<tr>
+<td><code>context_recall</code></td>
+<td>Whether retrieved context covers what's needed to answer</td>
+</tr>
+<tr>
+<td><code>answer_correctness</code></td>
+<td>Whether the answer matches the expected answer</td>
+</tr>
+<tr>
+<td><code>noise_sensitivity</code></td>
+<td>Robustness to irrelevant retrieved content (<code>mode=relevant</code>)</td>
+</tr>
+<tr>
+<td><code>factual_correctness</code></td>
+<td>Factual overlap with reference (<code>mode=f1</code>)</td>
+</tr>
+</tbody>
+</table>
+<p>Not validated against human labels by default — see
+<code>scripts/generate_manual_review.py</code>/<code>compare_ragas_manual.py</code>.
+<code>ragas.cache</code> in the report also tracks <code>hits</code>/<code>misses</code>/
+<code>avoided_cost_estimate</code> for the judge-call cache
+(<code>eval/ragas_cache.py</code>).</p>
+<h2 id="4-safety-security-layer">4. Safety / security layer<a class="headerlink" href="#4-safety-security-layer" title="Permanent link">&para;</a></h2>
+<p>All in <code>eval/run_eval.py</code>'s <code>safety</code> dict, each shaped
+<code>{"direction", "note", "count", "rate"}</code> (or <code>"mean"</code> for the one
+quality-valued entry). Populated only when the gold set has matching
+rows (<code>if &lt;records&gt;:</code> gates), except <code>duplicate_sensitive_field_miss_rate</code>
+which always runs.</p>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Direction</th>
+<th>What it measures</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>document_unauthorized_retrieval_rate</code></td>
+<td>lower better</td>
+<td>A purely-forbidden document (not also in <code>allowed_documents</code>) appeared in auth-filtered retrieval</td>
+</tr>
+<tr>
+<td><code>cross_tenant_leakage_rate</code></td>
+<td>lower better</td>
+<td>Same check, restricted to <code>safety_category=cross_tenant_access</code></td>
+</tr>
+<tr>
+<td><code>stale_document_error_rate</code></td>
+<td>lower better</td>
+<td>Retrieved a document version other than <code>expected_document_version</code> when <code>requires_current_document=true</code></td>
+</tr>
+<tr>
+<td><code>current_document_retrieval_accuracy</code></td>
+<td>higher better</td>
+<td>Retrieved the <em>correct</em> current version when <code>requires_current_document=true</code> (retrieval-only)</td>
+</tr>
+<tr>
+<td><code>current_document_answer_quality</code></td>
+<td>higher better</td>
+<td><code>answer_quality</code> restricted to the same <code>requires_current_document=true</code> rows (generation-side, kept separate from the retrieval-only metric above)</td>
+</tr>
+<tr>
+<td><code>prompt_injection_success_rate</code></td>
+<td>lower better</td>
+<td>Among <code>injection_source=user_prompt</code> rows, whether the answer shows signs the injected instruction worked</td>
+</tr>
+<tr>
+<td><code>retrieved_prompt_injection_success_rate</code></td>
+<td>lower better</td>
+<td>Same, for <code>injection_source=retrieved_document</code></td>
+</tr>
+<tr>
+<td><code>sensitive_data_leakage_rate</code></td>
+<td>lower better</td>
+<td>A synthetic-secret literal pattern leaked into an answer that should have refused</td>
+</tr>
+<tr>
+<td><code>refusal_accuracy</code></td>
+<td>higher better</td>
+<td>Among rows expected to refuse, fraction actually detected as refusals</td>
+</tr>
+<tr>
+<td><code>false_refusal_rate</code></td>
+<td>lower better</td>
+<td>Among rows <em>not</em> expected to refuse, fraction refused anyway (over-aggressive safety layer)</td>
+</tr>
+<tr>
+<td><code>poisoned_source_selection_rate</code></td>
+<td>lower better</td>
+<td>Among <code>safety_category=knowledge_base_poisoning</code> rows, whether answer quality dropped below threshold (proxy for being swayed by an untrusted claim)</td>
+</tr>
+<tr>
+<td><code>sensitive_data_authorized_disclosure_accuracy</code></td>
+<td>higher better</td>
+<td>An <em>authorized</em> caller's answer still discloses a value it's entitled to see (catches over-redaction)</td>
+</tr>
+<tr>
+<td><code>sensitive_data_false_redaction_rate</code></td>
+<td>lower better</td>
+<td>A field was redacted even though the caller's role was actually authorized for it — should be 0 by construction; non-zero is a real bug</td>
+</tr>
+<tr>
+<td><code>encoded_extraction_success_rate</code></td>
+<td>lower better</td>
+<td>A sensitive literal was still recoverable via base64/reversed/split-text extraction attempts</td>
+</tr>
+<tr>
+<td><code>unauthorized_metadata_leakage_rate</code></td>
+<td>lower better</td>
+<td>A forbidden document or sensitive value leaked via <em>metadata</em> (<code>attachment_name</code>/<code>section_path</code>), not just <code>content</code></td>
+</tr>
+<tr>
+<td><code>provider_egress_policy_violation_rate</code></td>
+<td>lower better</td>
+<td>A source with an unredacted restricted sensitive field would violate the egress policy if sent to a hosted provider (checked independent of whether the policy toggle was actually on)</td>
+</tr>
+<tr>
+<td><code>forged_role_acceptance_rate</code></td>
+<td>lower better</td>
+<td>A request body forging a more-privileged tenant/role would have won over a verified JWT identity — should be 0 by construction</td>
+</tr>
+<tr>
+<td><code>duplicate_sensitive_field_miss_rate</code></td>
+<td>lower better</td>
+<td>Corpus-level (not gold-row-driven): a sensitive literal duplicated across chunks, or missing its ingestion-time tag on at least one occurrence</td>
+</tr>
+<tr>
+<td><code>authentication_failure_acceptance_rate</code>†</td>
+<td>lower better</td>
+<td>Fraction of adversarial JWTs (missing/expired/bad-signature/malformed/wrong-issuer/wrong-audience) that <code>POST /query</code> incorrectly accepted</td>
+</tr>
+<tr>
+<td><code>oversized_request_rejection_accuracy</code>†</td>
+<td>higher better</td>
+<td>Fraction of oversized query/top_k/filters payloads correctly rejected with a 4xx</td>
+</tr>
+</tbody>
+</table>
+<p>† Only computed via <code>evaluate_authentication_boundary_probes()</code>, opt-in
+via <code>--include-api-probes</code> (exercises the live FastAPI app through a
+<code>TestClient</code>, not <code>RetrievalPipeline</code> directly) — not part of the default
+<code>evaluate()</code>/<code>run()</code> report.</p>
+<h2 id="5-agentic-rag-layer-evalrun_agent_evalpy">5. Agentic RAG layer (<code>eval/run_agent_eval.py</code>)<a class="headerlink" href="#5-agentic-rag-layer-evalrun_agent_evalpy" title="Permanent link">&para;</a></h2>
+<p>Deterministic/local only (no RAGAS, no hosted judge). Run via
+<code>python -m rag.eval.run_agent_eval</code> against
+<code>data/eval/agentic_extension_gold.jsonl</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>What it measures</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>routing_accuracy</code></td>
+<td>Whether the graph's <code>classic_rag</code> vs <code>agent</code> routing decision matched the gold-expected route</td>
+</tr>
+<tr>
+<td><code>unnecessary_agent_rate</code></td>
+<td>Among rows gold-labeled "tool not needed", fraction that still routed to the agent path</td>
+</tr>
+<tr>
+<td><code>tool_selection_accuracy</code></td>
+<td>Whether the expected tool set is a subset of the tools actually called (not exact-sequence match)</td>
+</tr>
+<tr>
+<td><code>tool_success_rate</code></td>
+<td>Fraction of individual tool calls that succeeded</td>
+</tr>
+<tr>
+<td><code>average_tool_calls</code></td>
+<td>Mean tool calls per agent-routed question</td>
+</tr>
+<tr>
+<td><code>evidence_sufficiency_accuracy</code></td>
+<td>Among rows expecting an insufficient-evidence retry, fraction where <code>retrieval_attempts &gt;= 2</code> (proxy — <code>AgentState</code> only retains the final sufficiency decision)</td>
+</tr>
+<tr>
+<td><code>retry_success_rate</code></td>
+<td>Among those retried questions, fraction that terminated via <code>synthesized</code> (succeeded after retry)</td>
+</tr>
+<tr>
+<td><code>max_step_termination_rate</code></td>
+<td>Among rows expecting step-bound termination, fraction that actually hit a bound-termination reason</td>
+</tr>
+<tr>
+<td><code>citation_support_rate</code></td>
+<td>Fraction of answers where every citation path-suffix-matches a <code>relevant_documents</code> entry (grounding, not correctness)</td>
+</tr>
+<tr>
+<td><code>agent_answer_correctness.mean_score</code></td>
+<td><code>KeywordOverlapScorer</code> against <code>expected_answer</code>, for answerable rows</td>
+</tr>
+<tr>
+<td><code>agent_latency_ms</code></td>
+<td>Mean total latency, split into overall / agent-routed / classic-routed</td>
+</tr>
+<tr>
+<td><code>agent_token_usage</code></td>
+<td>Mean prompt/completion tokens</td>
+</tr>
+<tr>
+<td>per-<code>agentic_category</code> breakdown</td>
+<td><code>routing_accuracy</code> and <code>average_tool_calls</code> bucketed by gold <code>agentic_category</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="6-corpus-experiment-lineage-not-a-quality-metric-provenance">6. Corpus / experiment lineage (not a quality metric — provenance)<a class="headerlink" href="#6-corpus-experiment-lineage-not-a-quality-metric-provenance" title="Permanent link">&para;</a></h2>
+<p><code>eval/corpus_lineage.py</code>, attached to every <code>run()</code> report under
+<code>corpus_lineage</code>: <code>document_count</code>, <code>chunk_count</code>, <code>image_count</code>,
+<code>active_document_count</code>, <code>superseded_document_count</code>, <code>tenant_count</code>,
+<code>gold_record_count</code>, <code>gold_file_sha256</code>, <code>corpus_digest</code> (sha256 over
+sorted <code>source:checksum</code> pairs — proves two experiments scored
+byte-identical source files). Used to confirm two experiment records
+claiming the same dataset actually compared the same corpus, not to
+score answer/retrieval quality itself.</p>
+<h2 id="7-experiment-tracking-mlflow-experimentsresultsjson">7. Experiment tracking (MLflow / <code>experiments/results/*.json</code>)<a class="headerlink" href="#7-experiment-tracking-mlflow-experimentsresultsjson" title="Permanent link">&para;</a></h2>
+<p><code>scripts/record_experiment.py</code> doesn't compute new metrics — it flattens
+a subset of the above (config fields + retrieval/hit-rate/MRR/
+answer_quality/RAGAS aggregates/every <code>safety_*</code> rate/corpus lineage)
+into one comparable record per experiment, logged to MLflow and written
+to <code>experiments/results/&lt;id&gt;.json</code>. <code>scripts/compare_experiments.py</code>
+renders these as a table (also what backs README's Benchmarks section).</p>
+<h2 id="whats-not-covered">What's <em>not</em> covered<a class="headerlink" href="#whats-not-covered" title="Permanent link">&para;</a></h2>
+<ul>
+<li>No intrinsic embedding-quality metric (section 1).</li>
+<li>No cost/latency SLO tracking beyond the means above (no p50/p95/p99).</li>
+<li>No RAGAS metric runs automatically or on a schedule — always a manual,
+  cost-aware invocation.</li>
+<li>No production monitoring/alerting on any of these metrics — they're
+  all offline-eval, run against a gold set, not live traffic.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "toc.follow", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
