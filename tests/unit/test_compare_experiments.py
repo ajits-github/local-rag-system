@@ -48,7 +48,7 @@ def test_render_table_includes_row_per_record():
     """render_table formats one Markdown row per experiment record."""
     table = compare_experiments.render_table([_record()])
     expected_row = (
-        "| 1 | baseline | dense | qwen2.5:1.5b | all-MiniLM-L6-v2 | none | - | - "
+        "| experiment_001 | baseline | dense | qwen2.5:1.5b | all-MiniLM-L6-v2 | none | - | - "
         "| 0.891 | 0.967 | 0.978 | 0.847 | 0.432 | - | - | - | - | 3.7s | techfusion "
         "| 2026-08-05 |"
     )
@@ -129,7 +129,7 @@ def test_render_table_handles_missing_metrics_gracefully():
     table = compare_experiments.render_table([_record(answer_quality=None, total_latency_ms=None)])
     row = table.splitlines()[-1]
     expected_row = (
-        "| 1 | baseline | dense | qwen2.5:1.5b | all-MiniLM-L6-v2 | none | - | - "
+        "| experiment_001 | baseline | dense | qwen2.5:1.5b | all-MiniLM-L6-v2 | none | - | - "
         "| 0.891 | 0.967 | 0.978 | 0.847 | - | - | - | - | - | - | techfusion "
         "| 2026-08-05 |"
     )
