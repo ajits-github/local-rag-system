@@ -10,42 +10,21 @@ A modular, config-driven local RAG system: sentence-transformers embeddings,
 Postgres+pgvector storage, Ollama generation, FastAPI serving. Every infra
 choice (embedding model, vector backend, chunker, reranker, LLM) is
 swappable via `config/default.yaml`: nothing is hardcoded, so comparative
-experiments can change one axis without touching pipeline code. Runs fully
-offline on a CPU-only, 8GB-RAM machine; no API keys required by default.
+experiments can change one axis without touching pipeline code.
+
+- Runs fully offline, CPU-only, on an 8GB-RAM machine; no API keys required
+  by default
+- Configurable retrieval (dense or hybrid dense+BM25), chunking, and
+  reranking
+- Optional, independently toggleable: JWT auth + tenant/role authorization,
+  field-level redaction, rate limiting, OpenTelemetry/Prometheus/Grafana
+  observability, and a bounded agentic (tool-calling) workflow
+- Deterministic + RAGAS evaluation with an experiment-tracking table (see
+  [Benchmarks](#benchmarks) below)
 
 The fastest path is: install Python dependencies, start Postgres, ingest
-`data/sample_docs`, start the API, and call `/query`.
-
-### Example
-
-Against the bundled `data/sample_docs` corpus (see "Setup" below to
-reproduce):
-```
-curl -s -X POST http://localhost:8000/query -H "Content-Type: application/json" \
-  -d '{"query": "What are the deployment windows for production releases?"}'
-```
-```json
-{
-  "answer": "Standard deployments are only permitted on Tuesdays and Thursdays, between 10:00 and 14:00 UTC. Deployments outside this window require sign-off from the on-call engineering manager. Emergency hotfixes for active incidents are exempt from the window restriction.",
-  "sources": [
-    {
-      "chunk_id": "3f1a...2_1",
-      "document_id": "3f1a...2",
-      "source": "deployment-process.md",
-      "category": null,
-      "score": 0.83,
-      "content_type": "prose",
-      "section_path": "Deployment Windows"
-    }
-  ],
-  "retrieval_ms": 42.1,
-  "generation_ms": 3190.4,
-  "total_ms": 3232.5
-}
-```
-(`answer` text and `score`/timing values vary by run; the shape and the
-`deployment-process.md` source are what to expect from this exact query
-against the sample corpus.)
+`data/sample_docs`, start the API, and call `/query` (see
+[Setup](#setup)).
 
 ## Table of contents
 
@@ -251,6 +230,28 @@ The details live in [`docs/architecture.md`](docs/architecture.md)'s
    Without `make`:
    ```
    curl -s -X POST http://localhost:8000/query -H "Content-Type: application/json" -d '{"query": "What are the deployment windows for production releases?"}'
+   ```
+   Response shape (`answer` text, `score`, and timing values vary by run;
+   the `deployment-process.md` source is what to expect from this exact
+   query against the sample corpus):
+   ```json
+   {
+     "answer": "Standard deployments are only permitted on Tuesdays and Thursdays, between 10:00 and 14:00 UTC. Deployments outside this window require sign-off from the on-call engineering manager. Emergency hotfixes for active incidents are exempt from the window restriction.",
+     "sources": [
+       {
+         "chunk_id": "3f1a...2_1",
+         "document_id": "3f1a...2",
+         "source": "deployment-process.md",
+         "category": null,
+         "score": 0.83,
+         "content_type": "prose",
+         "section_path": "Deployment Windows"
+       }
+     ],
+     "retrieval_ms": 42.1,
+     "generation_ms": 3190.4,
+     "total_ms": 3232.5
+   }
    ```
    Filter retrieval by the `category` metadata preserved from folder
    structure; only meaningful once you've ingested a dataset with
@@ -460,12 +461,12 @@ incompatible columns. Recorded by hand from
 `scripts/compare_experiments.py`, which targets the classic-RAG schema
 only.
 
-| # | Label | Classify prompt | Synthesize prompt | Routing accuracy | Unnecessary agent rate | Citation support | Answer correctness | RAGAS Faithful | RAGAS Correct | Mean latency | Dataset | Date |
+| Experiment | Label | Classify prompt | Synthesize prompt | Routing accuracy | Unnecessary agent rate | Citation support | Answer correctness | RAGAS Faithful | RAGAS Correct | Mean latency | Dataset | Date |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 29 | agentic_rag_baseline_v1 | v1 | v1 | 0.833 | 1.000 | 0.111 | 0.449 | 0.443 | 0.584 | 138.5s | techfusion | 2026-08-21 |
-| 32 | agentic_rag_baseline_v2_fixed | v2 | v2 | 0.889 | 0.000 | 1.000 | 0.463 | 0.511 | 0.531 | 47.4s | techfusion | 2026-08-21 |
+| experiment_029 | agentic_rag_baseline_v1 | v1 | v1 | 0.833 | 1.000 | 0.111 | 0.449 | 0.443 | 0.584 | 138.5s | techfusion | 2026-08-21 |
+| experiment_032 | agentic_rag_baseline_v2_fixed | v2 | v2 | 0.889 | 0.000 | 1.000 | 0.463 | 0.511 | 0.531 | 47.4s | techfusion | 2026-08-21 |
 
-Experiment 32 fixed the two issues experiment 29 found: `agent_classify_v2`
+`experiment_032` fixed the two issues `experiment_029` found: `agent_classify_v2`
 makes the simple/complex routing boundary explicit (cut the unnecessary
 -agent rate to 0.0 and mean latency 2.9x, purely via routing composition),
 and `agent_synthesize_v2` plus a code-level evidence-ordering fix makes an
