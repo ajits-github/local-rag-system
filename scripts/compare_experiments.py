@@ -1,10 +1,12 @@
 """Render a Markdown comparison table from every experiment record.
 
 Reads every experiments/results/*.json record (written by
-scripts/record_experiment.py), saves the table to
-experiments/reports/comparison.md, and splices it into README.md between
-the EXPERIMENTS_TABLE markers so the README never has to be hand-edited
-after a new experiment is recorded.
+scripts/record_experiment.py), saves the *full* table to
+experiments/reports/comparison.md, and splices only the most recent
+`README_HIGHLIGHT_COUNT` experiments into README.md between the
+EXPERIMENTS_TABLE markers -- the full table has grown too long to serve
+as a readable front door, so the README is deliberately kept to a
+rolling recent-history window instead of every record ever recorded.
 
 Usage:
     python scripts/compare_experiments.py
@@ -25,6 +27,10 @@ README_PATH = ROOT / "README.md"
 
 TABLE_START = "<!-- EXPERIMENTS_TABLE_START -->"
 TABLE_END = "<!-- EXPERIMENTS_TABLE_END -->"
+
+# The README shows only the most recent experiments (see module docstring);
+# the full history always lives in experiments/reports/comparison.md.
+README_HIGHLIGHT_COUNT = 7
 
 
 def load_records(results_dir: Path, exclude: set[str] | None = None) -> list[dict[str, Any]]:
@@ -89,15 +95,15 @@ def render_table(records: list[dict[str, Any]]) -> str:
         return "No experiments recorded yet -- see scripts/record_experiment.py."
 
     header = (
-        "| # | Label | Retrieval | Generation model | Embedder | Reranker | Prompt | Rel.Exp "
-        "| Recall@5 | Recall@10 "
+        "| Experiment | Label | Retrieval | Generation model | Embedder | Reranker "
+        "| Prompt | Rel.Exp | Recall@5 | Recall@10 "
         "| Hit Rate@10 | MRR | Answer quality | Supp.Ctx Hit | Img Hit "
         "| RAGAS Faithful | RAGAS Correct "
         "| Total latency | Dataset | Date |\n"
         "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"
     )
     rows = [header]
-    for i, r in enumerate(records, start=1):
+    for r in records:
         reranker = r.get("reranker_provider") or "none"
         if r.get("reranker_model"):
             reranker = f"{reranker} ({_short_model_name(r['reranker_model'])})"
@@ -112,7 +118,7 @@ def render_table(records: list[dict[str, Any]]) -> str:
         total_latency = f"{total_latency_ms / 1000:.1f}s" if total_latency_ms is not None else "-"
         date = (r.get("timestamp") or "")[:10] or "-"
         rows.append(
-            f"| {i} | {r.get('label') or r.get('experiment_id', '?')} "
+            f"| {r.get('experiment_id', '?')} | {r.get('label') or r.get('experiment_id', '?')} "
             f"| {retrieval_provider} "
             f"| {r.get('generation_model', '?')} | {_short_model_name(r.get('embedding_model'))} "
             f"| {reranker} | {prompt_version} | {rel_exp} "
@@ -170,10 +176,17 @@ def main() -> None:
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     (REPORTS_DIR / "comparison.md").write_text(table + "\n", encoding="utf-8")
 
-    updated = update_readme(table)
+    readme_table = render_table(records[-README_HIGHLIGHT_COUNT:])
+    updated = update_readme(readme_table)
     print(table)
     print()
-    print("README.md updated." if updated else "README.md not updated (markers not found).")
+    if updated:
+        print(
+            f"README.md updated (most recent {min(len(records), README_HIGHLIGHT_COUNT)} "
+            f"of {len(records)} experiments; full table in experiments/reports/comparison.md)."
+        )
+    else:
+        print("README.md not updated (markers not found).")
 
 
 if __name__ == "__main__":
