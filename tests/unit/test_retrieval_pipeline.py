@@ -225,6 +225,60 @@ def test_answer_sources_include_chunk_content():
     assert result["sources"][0]["content"] == "Alpha content."
 
 
+def test_answer_sanitizes_an_echoed_redaction_marker_in_the_generated_answer():
+    """answer() strips a literal [REDACTED:SENSITIVE_FIELD] marker the LLM echoed back.
+
+    A code-level backstop, independent of whether the generation model
+    followed the prompt's instruction not to reproduce the marker text --
+    see field_policy.sanitize_redaction_markers_in_answer.
+    """
+    results = [_make_result("c1", "Alpha content.", source="a.md", score=0.9)]
+    llm = FakeLLM(response="The synthetic test key is `[REDACTED:SENSITIVE_FIELD]`.")
+    pipeline = RetrievalPipeline(
+        load_config(),
+        vectorstore=FakeVectorStore(results),
+        embedder=FakeEmbedder(),
+        reranker=FakeReranker(),
+        llm=llm,
+    )
+
+    result = pipeline.answer("What is the test key?")
+
+    assert "[REDACTED:SENSITIVE_FIELD]" not in result["answer"]
+    assert "this value is unavailable at your access level" in result["answer"]
+
+
+def test_answer_leaves_source_content_marker_intact_only_sanitizes_answer_text():
+    """Sanitization applies only to the generated answer, not sources[i]['content'].
+
+    Retrieved source content legitimately keeps the raw
+    [REDACTED:SENSITIVE_FIELD] marker (observability of what was
+    redacted); only the caller-facing generated answer text is sanitized.
+    """
+    results = [
+        _make_result(
+            "c1",
+            "Test key: [REDACTED:SENSITIVE_FIELD].",
+            source="a.md",
+            score=0.9,
+            sensitive_field_ids=["synthetic_admin_credential"],
+        )
+    ]
+    llm = FakeLLM(response="The synthetic test key is [REDACTED:SENSITIVE_FIELD].")
+    pipeline = RetrievalPipeline(
+        load_config(),
+        vectorstore=FakeVectorStore(results),
+        embedder=FakeEmbedder(),
+        reranker=FakeReranker(),
+        llm=llm,
+    )
+
+    result = pipeline.answer("What is the test key?")
+
+    assert "[REDACTED:SENSITIVE_FIELD]" not in result["answer"]
+    assert result["sources"][0]["content"] == "Test key: [REDACTED:SENSITIVE_FIELD]."
+
+
 class FakeLLMWithTokens(FakeLLM):
     """LLM double additionally exposing OllamaLLM-style last-call token counts."""
 

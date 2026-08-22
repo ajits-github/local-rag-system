@@ -58,6 +58,7 @@ from rag.generation.base import LLM
 from rag.observability import metrics as observability_metrics
 from rag.observability import tracing
 from rag.prompts.loader import PromptTemplate, load_prompt_template
+from rag.retrieval.field_policy import sanitize_redaction_markers_in_answer
 from rag.retrieval.pipeline import RetrievalPipeline, build_context
 from rag.schemas import SearchResult
 from rag.vectorstore.base import VectorStore
@@ -641,11 +642,16 @@ def _synthesize(state: AgentState, llm: LLM, template: PromptTemplate) -> AgentS
     authoritative source is always presented, and numbered, ahead of
     any conflicting untrusted source, reinforcing `agent_synthesize_v2`'s
     explicit authoritative-vs-untrusted rule with matching evidence order.
+    The raw LLM output is passed through
+    `sanitize_redaction_markers_in_answer` before being stored, the same
+    deterministic backstop `RetrievalPipeline.answer()` applies on the
+    classic path -- this is the one node on the agentic path that
+    produces caller-facing prose, so it's the only one that needs it.
     """
     ordered_evidence = _order_evidence_for_synthesis(state.retrieved_evidence)
     context = build_context(ordered_evidence)
     system, user = template.render(context=context, query=state.original_query)
-    state.final_answer = llm.generate(system, user)
+    state.final_answer = sanitize_redaction_markers_in_answer(llm.generate(system, user))
     _accumulate_tokens(state, llm, "synthesize")
     state.citations = [
         Citation(

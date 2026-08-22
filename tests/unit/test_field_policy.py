@@ -9,6 +9,7 @@ from rag.retrieval.field_policy import (
     is_role_authorized_for_field,
     redact_sensitive_fields,
     redact_source_metadata,
+    sanitize_redaction_markers_in_answer,
 )
 from rag.schemas import Chunk, ChunkMetadata
 
@@ -90,6 +91,51 @@ def test_redact_sensitive_fields_replaces_every_match():
     assert _ALPHA_ADMIN_KEY not in redacted
     assert redacted.count("[REDACTED:SENSITIVE_FIELD]") == 2
     assert field_ids == ["synthetic_admin_credential"]
+
+
+def test_sanitize_redaction_markers_replaces_bare_marker():
+    """A bare literal marker in a generated answer is replaced with a paraphrase."""
+    text = "The synthetic test key is [REDACTED:SENSITIVE_FIELD]."
+    sanitized = sanitize_redaction_markers_in_answer(text)
+    assert "[REDACTED:SENSITIVE_FIELD]" not in sanitized
+    assert "this value is unavailable at your access level" in sanitized
+
+
+def test_sanitize_redaction_markers_replaces_backtick_wrapped_marker():
+    """A model wrapping the marker in backticks (as if it were a code value) is still caught."""
+    text = "The synthetic test key is `[REDACTED:SENSITIVE_FIELD]`."
+    sanitized = sanitize_redaction_markers_in_answer(text)
+    assert "[REDACTED:SENSITIVE_FIELD]" not in sanitized
+    assert "`" not in sanitized
+
+
+def test_sanitize_redaction_markers_replaces_every_occurrence():
+    """Multiple echoed markers in the same answer are all replaced."""
+    text = "Key A: [REDACTED:SENSITIVE_FIELD]. Key B: [REDACTED:SENSITIVE_FIELD]."
+    sanitized = sanitize_redaction_markers_in_answer(text)
+    assert sanitized.count("[REDACTED:SENSITIVE_FIELD]") == 0
+    assert sanitized.count("this value is unavailable at your access level") == 2
+
+
+def test_sanitize_redaction_markers_leaves_ordinary_text_untouched():
+    """An answer with no marker present is returned byte-identical."""
+    text = "The callback route ends in /v2 and the retry delay is 45 seconds."
+    assert sanitize_redaction_markers_in_answer(text) == text
+
+
+def test_sanitize_redaction_markers_uses_custom_policy_marker():
+    """A caller-supplied policy list's own redaction_marker is honored, not a hardcoded literal."""
+    custom_policy = SensitiveFieldPolicy(
+        field_id="custom",
+        sensitivity_type="credential",
+        pattern=r"CUSTOM_\w+",
+        allowed_roles=["admin"],
+        redaction_marker="[HIDDEN]",
+    )
+    text = "The value is [HIDDEN]."
+    sanitized = sanitize_redaction_markers_in_answer(text, policies=[custom_policy])
+    assert "[HIDDEN]" not in sanitized
+    assert "this value is unavailable at your access level" in sanitized
 
 
 def test_is_role_authorized_for_field_true_for_allowed_role():

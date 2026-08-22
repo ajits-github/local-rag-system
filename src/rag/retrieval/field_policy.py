@@ -188,6 +188,41 @@ def redact_sensitive_fields(
     return text, redacted_ids
 
 
+_REDACTION_MARKER_ECHO_REPLACEMENT = "this value is unavailable at your access level"
+
+
+def sanitize_redaction_markers_in_answer(
+    text: str, policies: Sequence[SensitiveFieldPolicy] | None = None
+) -> str:
+    """Replace any literal redaction-marker text a generation model echoed back.
+
+    `redact_sensitive_fields` removes the raw sensitive value before it
+    reaches the model, but the model can still copy the internal marker
+    into its final answer. This deterministic backstop keeps caller-facing
+    prose free of marker syntax, independent of prompt compliance.
+
+    Parameters
+    ----------
+    text : str
+        A generated answer, from either the classic or agentic path.
+    policies : Sequence[SensitiveFieldPolicy] | None, optional
+        Defaults to `DEFAULT_FIELD_POLICIES`.
+
+    Returns
+    -------
+    str
+        `text` with every literal occurrence of a configured
+        `redaction_marker` (optionally wrapped in backticks or quotes the
+        model added around it) replaced by a caller-facing paraphrase.
+    """
+    active = policies if policies is not None else DEFAULT_FIELD_POLICIES
+    markers = {p.redaction_marker for p in active}
+    for marker in markers:
+        wrapped_pattern = r"[`'\"]*" + re.escape(marker) + r"[`'\"]*"
+        text = re.sub(wrapped_pattern, _REDACTION_MARKER_ECHO_REPLACEMENT, text)
+    return text
+
+
 def redact_source_metadata(
     fields: dict[str, str | None],
     roles: list[str],

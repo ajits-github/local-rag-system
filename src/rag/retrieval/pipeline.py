@@ -20,7 +20,11 @@ from rag.observability import tracing
 from rag.prompts.loader import PromptTemplate, load_prompt_template_from_config
 from rag.rerankers.base import Reranker
 from rag.retrieval.authorization import AuthorizationContext
-from rag.retrieval.field_policy import redact_sensitive_fields, redact_source_metadata
+from rag.retrieval.field_policy import (
+    redact_sensitive_fields,
+    redact_source_metadata,
+    sanitize_redaction_markers_in_answer,
+)
 from rag.retrieval.freshness import resolve_excluded_document_ids
 from rag.retrieval.fusion import reciprocal_rank_fusion
 from rag.retrieval.injection_detection import detect_injection
@@ -730,9 +734,12 @@ class RetrievalPipeline:
             observability only, never a place a raw value could hide),
             so callers (e.g. RAGAS scoring, eval's reference-context/
             image-hit/safety metrics) can reuse this retrieval without a
-            redundant call. `query_injection_suspected` runs the same
-            `detect_injection` heuristic against `query` itself (feeds
-            `eval/run_eval.py`'s `prompt_injection_success_rate`).
+            redundant call. `answer` itself is passed through
+            `sanitize_redaction_markers_in_answer` before being returned,
+            while `sources` keep their redacted content for observability.
+            `query_injection_suspected` runs the same `detect_injection`
+            heuristic against `query` itself (feeds `eval/run_eval.py`'s
+            `prompt_injection_success_rate`).
         """
         t0 = time.perf_counter()
         results, stage_ms = self._retrieve_timed(
@@ -742,6 +749,7 @@ class RetrievalPipeline:
         context = build_context(results)
         system, user = self._prompt_template.render(context=context, query=query)
         answer_text = self._llm.generate(system, user)
+        answer_text = sanitize_redaction_markers_in_answer(answer_text)
         t2 = time.perf_counter()
         generation_ms = (t2 - t1) * 1000
         return {
