@@ -1087,7 +1087,11 @@ def test_evaluate_authentication_boundary_probes_reports_zero_acceptance_when_au
 
 
 def test_evaluate_authentication_boundary_probes_all_rejected_when_auth_enabled(monkeypatch):
-    """With auth enabled and a resolvable key, every adversarial-token probe is rejected."""
+    """With auth enabled and a resolvable key, every adversarial-token probe is rejected.
+
+    This default config has no issuer/audience checks, so those two
+    probes are excluded. A separate test covers the count=7 case.
+    """
     from rag.eval.run_eval import evaluate_authentication_boundary_probes
 
     monkeypatch.setenv("JWT_HS256_SECRET", "unit-test-only-not-a-real-secret-value")
@@ -1098,5 +1102,34 @@ def test_evaluate_authentication_boundary_probes_all_rejected_when_auth_enabled(
 
     metrics = evaluate_authentication_boundary_probes(config)
 
+    assert metrics["authentication_failure_acceptance_rate"]["count"] == 5
+    assert metrics["authentication_failure_acceptance_rate"]["rate"] == 0.0
+    # Regression test: the valid probe token must pass auth so oversized
+    # request probes reach the DoS-limit checks.
+    assert metrics["oversized_request_rejection_accuracy"]["count"] == 3
+    assert metrics["oversized_request_rejection_accuracy"]["rate"] == 1.0
+
+
+def test_evaluate_authentication_boundary_probes_includes_issuer_audience_probes_when_configured(
+    monkeypatch,
+):
+    """With issuer/audience configured, wrong_issuer/wrong_audience are meaningfully probed too."""
+    from rag.eval.run_eval import evaluate_authentication_boundary_probes
+
+    monkeypatch.setenv("JWT_HS256_SECRET", "unit-test-only-not-a-real-secret-value")
+    config = load_config()
+    jwt_config = config.security.auth.jwt.model_copy(
+        update={"issuer": "https://issuer.example", "audience": "rag-api"}
+    )
+    auth_config = config.security.auth.model_copy(update={"enabled": True, "jwt": jwt_config})
+    security = config.security.model_copy(update={"auth": auth_config})
+    config = config.model_copy(update={"security": security})
+
+    metrics = evaluate_authentication_boundary_probes(config)
+
     assert metrics["authentication_failure_acceptance_rate"]["count"] == 7
     assert metrics["authentication_failure_acceptance_rate"]["rate"] == 0.0
+    # The valid probe token also carries iss/aud, so oversized requests
+    # still reach the DoS-limit checks under this stricter config.
+    assert metrics["oversized_request_rejection_accuracy"]["count"] == 3
+    assert metrics["oversized_request_rejection_accuracy"]["rate"] == 1.0

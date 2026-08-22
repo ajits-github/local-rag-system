@@ -788,6 +788,10 @@ def _mint_valid_probe_token(config: AppConfig) -> str | None:
     `None` when `security.auth.enabled` is `False`, or the signing key
     isn't resolvable (e.g. `JWT_HS256_SECRET` unset). Callers treat
     `None` as "auth probing isn't meaningfully configured for this run".
+
+    `tenant_id` must be non-null: pyjwt treats a required claim whose
+    value is `None` as missing. If this token fails auth, oversized-body
+    probes never reach the DoS-limit checks they are meant to measure.
     """
     if not config.security.auth.enabled:
         return None
@@ -801,7 +805,7 @@ def _mint_valid_probe_token(config: AppConfig) -> str | None:
     now = int(time.time())
     claims: dict[str, Any] = {
         "sub": "eval-probe",
-        "tenant_id": None,
+        "tenant_id": "eval-probe-tenant",
         "roles": [],
         "iat": now,
         "exp": now + 3600,
@@ -818,6 +822,11 @@ def _run_auth_failure_probes(client: Any, config: AppConfig) -> list[bool]:
 
     Returns `[]` when `security.auth.enabled` is `False` or no signing
     key is resolvable, since there is nothing meaningful to probe.
+
+    The base token uses a non-null `tenant_id` so each adversarial token
+    fails for the intended reason, not because a required claim is
+    effectively missing. Issuer/audience probes are included only when
+    those checks are configured.
     """
     if not config.security.auth.enabled:
         return []
@@ -829,7 +838,11 @@ def _run_auth_failure_probes(client: Any, config: AppConfig) -> list[bool]:
         return []
     jwt_config = config.security.auth.jwt
     now = int(time.time())
-    base_claims: dict[str, Any] = {"sub": "eval-probe", "tenant_id": None, "roles": []}
+    base_claims: dict[str, Any] = {
+        "sub": "eval-probe",
+        "tenant_id": "eval-probe-tenant",
+        "roles": [],
+    }
 
     def _encode(**overrides: Any) -> str:
         claims = {**base_claims, "iat": now, "exp": now + 3600, **overrides}
@@ -847,9 +860,11 @@ def _run_auth_failure_probes(client: Any, config: AppConfig) -> list[bool]:
         "missing_claim": pyjwt.encode(
             {"iat": now, "exp": now + 3600}, key, algorithm=jwt_config.algorithm
         ),
-        "wrong_issuer": _encode(iss="untrusted-issuer"),
-        "wrong_audience": _encode(aud="untrusted-audience"),
     }
+    if jwt_config.issuer:
+        tokens["wrong_issuer"] = _encode(iss="untrusted-issuer")
+    if jwt_config.audience:
+        tokens["wrong_audience"] = _encode(aud="untrusted-audience")
     records = []
     for token in tokens.values():
         headers = {"Authorization": f"Bearer {token}"} if token else {}
@@ -940,7 +955,8 @@ def evaluate_authentication_boundary_probes(config: AppConfig) -> dict[str, Any]
             "direction": "lower_is_better",
             "note": (
                 "Fraction of a fixed adversarial-token probe set (missing/expired/"
-                "invalid-signature/malformed/missing-claim/wrong-issuer/wrong-audience) "
+                "invalid-signature/malformed/missing-claim, plus wrong-issuer/"
+                "wrong-audience when security.auth.jwt.issuer/.audience are configured) "
                 "that POST /query incorrectly accepted (did not return 401). [] when "
                 "security.auth.enabled is False or no signing key is resolvable -- "
                 "nothing meaningful to probe."
