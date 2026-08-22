@@ -3,6 +3,7 @@ name = "local-rag-system"
 version = "0.1.0"
 description = "Modular, config-driven local RAG system (pgvector + Ollama + sentence-transformers)"
 readme = "README.md"
+license = "MIT"
 requires-python = ">=3.11"
 dependencies = [
     "langchain>=0.3,<0.4",

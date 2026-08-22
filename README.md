@@ -1,6 +1,10 @@
 # local-rag-system
 
 [![CI](https://github.com/ajits-github/local-rag-system/actions/workflows/ci.yml/badge.svg)](https://github.com/ajits-github/local-rag-system/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/Python-3.11%2B-blue)
+![License](https://img.shields.io/github/license/ajits-github/local-rag-system)
+![Offline](https://img.shields.io/badge/inference-offline%20%2F%20CPU--only-informational)
+
 
 A modular, config-driven local RAG system: sentence-transformers embeddings,
 Postgres+pgvector storage, Ollama generation, FastAPI serving. Every infra
@@ -11,6 +15,55 @@ offline on a CPU-only, 8GB-RAM machine; no API keys required by default.
 
 The fastest path is: install Python dependencies, start Postgres, ingest
 `data/sample_docs`, start the API, and call `/query`.
+
+### Example
+
+Against the bundled `data/sample_docs` corpus (see "Setup" below to
+reproduce):
+```
+curl -s -X POST http://localhost:8000/query -H "Content-Type: application/json" \
+  -d '{"query": "What are the deployment windows for production releases?"}'
+```
+```json
+{
+  "answer": "Standard deployments are only permitted on Tuesdays and Thursdays, between 10:00 and 14:00 UTC. Deployments outside this window require sign-off from the on-call engineering manager. Emergency hotfixes for active incidents are exempt from the window restriction.",
+  "sources": [
+    {
+      "chunk_id": "3f1a...2_1",
+      "document_id": "3f1a...2",
+      "source": "deployment-process.md",
+      "category": null,
+      "score": 0.83,
+      "content_type": "prose",
+      "section_path": "Deployment Windows"
+    }
+  ],
+  "retrieval_ms": 42.1,
+  "generation_ms": 3190.4,
+  "total_ms": 3232.5
+}
+```
+(`answer` text and `score`/timing values vary by run; the shape and the
+`deployment-process.md` source are what to expect from this exact query
+against the sample corpus.)
+
+## Table of contents
+
+- [Architecture](#architecture)
+- [Agentic RAG](#agentic-rag)
+- [Security](#security)
+- [Observability](#observability)
+- [Prerequisites](#prerequisites)
+- [Setup](#setup)
+- [Containerized development](#containerized-development)
+- [Configuration](#configuration)
+- [Metadata & filtering](#metadata--filtering)
+- [Evaluation](#evaluation)
+- [Benchmarks](#benchmarks)
+- [Testing](#testing)
+- [Continuous Integration](#continuous-integration)
+- [Documentation](#documentation)
+- [Roadmap](#roadmap)
 
 ## Architecture
 
