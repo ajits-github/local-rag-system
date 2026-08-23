@@ -343,6 +343,24 @@ def test_secure_rag_baseline_v1_auth_disabled_variant_isolates_only_authorizatio
     assert secure_dict == disabled_dict
 
 
+def test_tracing_enabled_experiment_config_only_differs_by_tracing():
+    """tracing-enabled.yaml matches config/default.yaml except observability.tracing.enabled.
+
+    A local-development convenience for turning on OpenTelemetry export via
+    RAG_CONFIG_PATH without editing the committed default. See that file's
+    own header comment.
+    """
+    default = load_config(str(DEFAULT_CONFIG_PATH))
+    tracing = load_config("config/experiments/tracing-enabled.yaml")
+
+    assert default.observability.tracing.enabled is False
+    assert tracing.observability.tracing.enabled is True
+
+    default_dict = default.model_dump(exclude={"observability": {"tracing": {"enabled"}}})
+    tracing_dict = tracing.model_dump(exclude={"observability": {"tracing": {"enabled"}}})
+    assert default_dict == tracing_dict
+
+
 def test_all_live_config_files_migrated_to_new_cutoff_field_names():
     """Every config file AppConfig ever loads uses the new retrieval/reranker cutoff fields.
 
@@ -352,7 +370,7 @@ def test_all_live_config_files_migrated_to_new_cutoff_field_names():
     config files (config/default.yaml + config/experiments/*.yaml) were
     migrated explicitly to the new field names rather than supporting the
     old names alongside the new ones. Historical experiments/config_snapshots/*.yaml
-    snapshots are untouched, unmigrated archival copies. they are never
+    snapshots are untouched, unmigrated archival copies. They are never
     re-parsed by AppConfig (only copied as MLflow artifacts by
     scripts/record_experiment.py), so they're deliberately excluded here.
     """
@@ -364,7 +382,7 @@ def test_all_live_config_files_migrated_to_new_cutoff_field_names():
 
     for path in config_paths:
         raw_text = path.read_text(encoding="utf-8")
-        # Exact-line checks (not a bare substring). the auth-boundary
+        # Exact-line checks, not a bare substring. The auth-boundary
         # milestone's `security.dos_limits.max_top_k` field legitimately
         # contains the substring "top_k:" without being the old
         # retrieval.top_k field this test guards against.
