@@ -1,0 +1,30 @@
+# Optional local-development web UI: a React/Vite SPA served by nginx.
+#
+# Never brought up by `make up`/`docker-compose.yml` alone. Entirely
+# opt-in, layered on top:
+#   docker compose -f docker-compose.yml -f docker-compose.frontend.yml up -d
+# or: make frontend-up
+#
+# The frontend container's nginx reverse-proxies /query, /agent/*, /health,
+# /metrics, /docs to rag-api:8000 (see frontend/nginx.conf), so the browser
+# only ever talks to one origin and rag-api never needs CORS middleware
+# added to it. Combine with docker-compose.observability.yml for all three:
+#   docker compose -f docker-compose.yml -f docker-compose.frontend.yml \
+#     -f docker-compose.observability.yml up -d
+services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: local-rag-frontend
+    restart: unless-stopped
+    depends_on:
+      - rag-api
+    environment:
+      # Leave unset for the default (same-origin, proxied through this
+      # container's own nginx). Only set this to call a backend directly at
+      # a different origin. That path needs CORS enabled on that backend,
+      # which config/default.yaml does not do.
+      RAG_API_BASE_URL: ${RAG_API_BASE_URL:-}
+    ports:
+      - "${FRONTEND_HOST_PORT:-3001}:80"
