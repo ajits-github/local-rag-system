@@ -67,7 +67,7 @@ plugins:
             show_if_no_docstring: false
   # Validates internal links/anchors and nav references. External URL checks
   # are disabled so `mkdocs build --strict` stays deterministic and network-free
-  # (CI has no outbound internet by design -- see CLAUDE.md's CI section).
+  # (CI has no outbound internet by design; see CLAUDE.md's CI section).
   - htmlproofer:
       validate_external_urls: false
       raise_error_after_finish: true
@@ -79,6 +79,7 @@ plugins:
         # linked separately right next to each transclusion.
         - "docs/architecture.md"
         - "#mlflow-tracking"
+        - "frontend/README.md"
         # mkdocstrings/autorefs cross-reference links between reference/
         # pages (e.g. "Bases: LLM" -> ../generation/#rag.generation.base.LLM).
         # Verified present in the rendered HTML; htmlproofer's resolver
@@ -99,6 +100,7 @@ nav:
       - Overview: topics/evaluation.md
       - Metrics reference: metrics.md
   - Observability: topics/observability.md
+  - Web UI: topics/web-ui.md
   - Deployment & Runtime: topics/deployment.md
   - API Reference:
       - Overview: reference/index.md

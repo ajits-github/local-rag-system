@@ -32,6 +32,7 @@ The fastest path is: install Python dependencies, start Postgres, ingest
 - [Agentic RAG](#agentic-rag)
 - [Security](#security)
 - [Observability](#observability)
+- [Web UI](#web-ui)
 - [Prerequisites](#prerequisites)
 - [Setup](#setup)
 - [Containerized development](#containerized-development)
@@ -143,6 +144,37 @@ observability-down`.
 The details live in [`docs/architecture.md`](docs/architecture.md)'s
 "Observability" section.
 
+<!-- --8<-- [start:docs-web-ui] -->
+## Web UI
+
+A small React/Vite/TypeScript chat interface (`frontend/`) sits over the
+existing API: choose Classic or Agentic RAG, watch live agent progress
+(the same safe `AgentEvent` stream `POST /agent/query/stream` already
+exposes), inspect sources/citations with content-type badges, see an
+always-visible summary of the connected backend's active security/agent
+feature flags (`GET /`'s `features` block: auth/authorization/field
+redaction/rate limiting/agent/vision/tracing, booleans and provider names
+only, never a secret), and set a local-development bearer token or
+tenant/roles in a clearly marked Developer settings panel. It reuses the
+backend as-is. No RAG logic lives in the frontend, and the original
+milestone needed zero backend changes (the frontend proxies same-origin
+to the API, so no CORS middleware was needed); the one small,
+intentional follow-up backend addition is that `features` block itself.
+
+```
+make up             # backend only (Postgres + rag-api)
+make frontend-up     # backend + frontend, http://localhost:3001
+docker compose -f docker-compose.yml -f docker-compose.frontend.yml \
+  -f docker-compose.observability.yml up -d   # backend + frontend + observability
+```
+
+or for local frontend development against a native `uvicorn`/Docker
+backend: `cd frontend && npm install && npm run dev`
+(`http://localhost:5173`). See [`frontend/README.md`](frontend/README.md)
+for the full setup, authentication behavior, error/safety states, and
+known limitations.
+<!-- --8<-- [end:docs-web-ui] -->
+
 <!-- --8<-- [start:docs-prereq-setup] -->
 ## Prerequisites
 
@@ -158,7 +190,7 @@ The details live in [`docs/architecture.md`](docs/architecture.md)'s
   If it's installed but not on your PATH, invoke it by its full path (e.g.
   on Windows: `C:\Users\<you>\AppData\Local\Programs\Ollama\ollama.exe`).
   Optional: pull `moondream` (`ollama pull moondream`) only if you plan to
-  set `vision.provider: ollama` in config -- the default `vision.provider:
+  set `vision.provider: ollama` in config. The default `vision.provider:
   none` needs no extra model.
 - **`make`**: optional shortcut for `up`/`ingest`/`query`/`test`.
   **Not installed by default on Windows** (neither Git Bash nor PowerShell
@@ -555,7 +587,7 @@ NumPy-style docstrings, without duplicating any of them:
 ```
 pip install -e ".[docs]"
 make docs-serve   # live-reloading local server, http://127.0.0.1:8000
-make docs-build   # strict build to site/ -- fails on broken links/anchors/nav references
+make docs-build   # strict build to site/; fails on broken links/anchors/nav references
 ```
 
 Without `make`: `mkdocs serve` / `mkdocs build --strict`. Nav covers
@@ -589,5 +621,5 @@ Deferred for now, tracked here rather than left as empty scaffolding:
 
 Recently shipped features (observability, layout-aware ingestion +
 vision, security/auth, this documentation site) are covered in their own
-sections above, not repeated here -- see `CLAUDE.md` and
+sections above, not repeated here. See `CLAUDE.md` and
 `PROJECT_JOURNAL.md` for the full milestone-by-milestone history.
