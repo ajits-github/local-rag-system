@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
@@ -28,8 +27,66 @@ app = FastAPI(
 app.add_middleware(RequestIDMiddleware)
 
 
-@app.get("/")
-def root(config: AppConfig = Depends(get_config)) -> dict[str, Any]:
+class FeatureFlags(BaseModel):
+    """Safe, non-secret summary of which optional features are currently active.
+
+    Boolean toggles and provider names only, matching the same shape as
+    `config/default.yaml`'s own "swap point" fields. Never a model name,
+    host, connection string, JWT setting, or any other value an attacker
+    could use; every field here is already either directly observable by
+    probing the API's behavior or explicitly documented as safe-to-expose
+    in `CLAUDE.md`. Exists so a caller (in particular, this project's own
+    web UI) can render an at-a-glance "what's actually enforced right now"
+    summary instead of discovering the active security posture by
+    accident. See `CLAUDE.md`'s "Web UI" section for the incident that
+    prompted this.
+
+    Attributes
+    ----------
+    auth_enabled : bool
+        `security.auth.enabled`; whether a verified JWT is required.
+    insecure_dev_mode : bool
+        `security.auth.insecure_dev_mode`; only meaningful when
+        `auth_enabled` is `True`.
+    authorization_enabled : bool
+        `security.authorization.enabled`; retrieval-time tenant/role ACL.
+    field_redaction_enabled : bool
+        `security.field_redaction.enabled`; query-time sensitive-field
+        redaction.
+    rate_limit_enabled : bool
+        `security.rate_limit.enabled`.
+    agent_enabled : bool
+        `agent.enabled`; whether `POST /agent/query` can route to the
+        agent graph, or always takes the `classic_rag` path.
+    vision_provider : str
+        `vision.provider` (`"none"` or `"ollama"`).
+    tracing_enabled : bool
+        `observability.tracing.enabled`.
+    """
+
+    auth_enabled: bool
+    insecure_dev_mode: bool
+    authorization_enabled: bool
+    field_redaction_enabled: bool
+    rate_limit_enabled: bool
+    agent_enabled: bool
+    vision_provider: str
+    tracing_enabled: bool
+
+
+class RootResponse(BaseModel):
+    """Response body for `GET /`."""
+
+    service: str
+    status: str
+    docs: str
+    health: str
+    metrics: str | None
+    features: FeatureFlags
+
+
+@app.get("/", response_model=RootResponse)
+def root(config: AppConfig = Depends(get_config)) -> RootResponse:
     """Lightweight service/navigation info. No dependency checks. See `GET /health` for that.
 
     Parameters
@@ -41,17 +98,28 @@ def root(config: AppConfig = Depends(get_config)) -> dict[str, Any]:
 
     Returns
     -------
-    dict[str, Any]
-        Service name, status, and links to `/health`/`/docs`/`/metrics`
-        (the last only when `observability.metrics.enabled`).
+    RootResponse
+        Service name, status, links to `/health`/`/docs`/`/metrics` (the
+        last only when `observability.metrics.enabled`), and a safe
+        `FeatureFlags` summary of which optional features are active.
     """
-    return {
-        "service": config.app.name,
-        "status": "ok",
-        "docs": "/docs",
-        "health": "/health",
-        "metrics": "/metrics" if config.observability.metrics.enabled else None,
-    }
+    return RootResponse(
+        service=config.app.name,
+        status="ok",
+        docs="/docs",
+        health="/health",
+        metrics="/metrics" if config.observability.metrics.enabled else None,
+        features=FeatureFlags(
+            auth_enabled=config.security.auth.enabled,
+            insecure_dev_mode=config.security.auth.insecure_dev_mode,
+            authorization_enabled=config.security.authorization.enabled,
+            field_redaction_enabled=config.security.field_redaction.enabled,
+            rate_limit_enabled=config.security.rate_limit.enabled,
+            agent_enabled=config.agent.enabled,
+            vision_provider=config.vision.provider,
+            tracing_enabled=config.observability.tracing.enabled,
+        ),
+    )
 
 
 app.state.limiter = get_rate_limiter()
