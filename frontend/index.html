@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Local RAG Chat</title>
+    <!--
+      Runtime API base URL. Empty string means "same origin" (dev-server
+      proxy or the nginx-served Docker image both make that correct).
+      The Docker entrypoint (docker-entrypoint.sh) rewrites this file's
+      window.__RAG_API_BASE__ value at container start, so the built
+      bundle itself never bakes in a URL. See frontend/README.md.
+    -->
+    <script>
+      window.__RAG_API_BASE__ = window.__RAG_API_BASE__ ?? "";
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
