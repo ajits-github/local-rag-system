@@ -1,0 +1,195 @@
+# full-pipeline-demo: a local manual-testing config combining every
+# security control *and* the agentic path in one running instance, so the
+# full pipeline (classic RAG, agentic RAG, JWT auth, tenant/role
+# authorization, field-level redaction, live SSE streaming) can be
+# exercised in a single session through the web UI.
+#
+# Not an eval/experiment-tracking config -- no experiment_NNN result is
+# expected from this file, and it should never be treated as a
+# recommended production posture. Based on
+# secure-rag-baseline-v2-jwt-auth.yaml (the auth-boundary milestone's
+# primary candidate: auth + authorization + field_redaction all on,
+# hybrid retrieval, relationship expansion, qwen2.5:3b, prompt v3) with
+# two deliberate additions:
+#
+#   - An `agent:` section. secure-rag-baseline-v2-jwt-auth.yaml (like
+#     every experiment config predating the agentic-rag milestone) has no
+#     `agent:` key at all, so it silently falls back to `AgentConfig`'s
+#     Python-level default (`enabled: False`) rather than
+#     config/default.yaml's explicit `true` -- a real, previously-
+#     unnoticed gap confirmed directly (`grep -c '^agent:'
+#     config/experiments/*.yaml`): every non-agentic-specific experiment
+#     config in this directory has been running with the agent silently
+#     disabled the whole time. Uses the agentic-rag-reeval milestone's
+#     fixed prompts (`agent_classify_v2`/`agent_synthesize_v2` -- see
+#     `agentic-rag-baseline-v2-fixed.yaml`, "baseline now established")
+#     plus `agent_tool_select_v2` (the later layout-vision milestone's
+#     content_type-filtering addition, a strict superset, not in conflict).
+#   - `security.auth.insecure_dev_mode: true` (the base file has this
+#     `false`, deliberately, as its own "production-shaped" design choice).
+#     Flipped here purely for manual-testing convenience: an unauthenticated
+#     request still gets fully anonymous/unrestricted behavior (or
+#     body-supplied tenant_id/roles, via the web UI's Developer settings
+#     panel) without needing to mint a JWT for every click, while a real
+#     bearer token still exercises the actual JWT boundary when supplied.
+#   - `observability.tracing.enabled: true`, since this is meant to be run
+#     alongside `docker-compose.observability.yml` (Jaeger already up) so
+#     manual test traces are visible.
+#
+# Run via:
+#   RAG_CONFIG_PATH=/app/config/experiments/full-pipeline-demo.yaml \
+#     docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
+# (MSYS_NO_PATHCONV=1 prefix needed on Windows Git Bash -- see
+# CLAUDE.md's "Web UI" section for why.)
+
+app:
+  name: local-rag-system
+  log_level: INFO
+
+embedding:
+  provider: sentence_transformers
+  model_name: sentence-transformers/all-MiniLM-L6-v2
+  device: cpu
+  batch_size: 32
+  normalize: true
+  dimension: 384
+
+vectorstore:
+  provider: pgvector
+  connection_env_var: DATABASE_URL
+  documents_table: documents
+  chunks_table: chunks
+  distance_metric: cosine
+
+chunking:
+  provider: structured_markdown
+  chunk_size: 500
+  chunk_overlap: 50
+  structured_markdown:
+    table_row_group_size: 20
+    max_atomic_block_chars: 2000
+
+reranker:
+  provider: none
+  cross_encoder:
+    model_name: cross-encoder/ms-marco-MiniLM-L-6-v2
+  cohere:
+    model_name: rerank-english-v3.0
+    api_key_env_var: COHERE_API_KEY
+
+generation:
+  provider: ollama
+  model_name: qwen2.5:3b
+  base_url_env_var: OLLAMA_BASE_URL
+  temperature: 0.0
+  max_tokens: 512
+  seed: 42
+  prompt:
+    id: rag_answer
+    version: v3
+    path: src/rag/prompts/templates/rag_answer_v3.yaml
+
+judge:
+  provider: openai
+  temperature: 0.0
+  max_tokens: 1024
+  openai:
+    model_name: gpt-4o-mini
+    api_key_env_var: OPENAI_API_KEY
+  anthropic:
+    model_name: claude-haiku-4-5-20251001
+    api_key_env_var: ANTHROPIC_API_KEY
+  ollama:
+    model_name: llama3.1:8b
+
+mlflow:
+  enabled: true
+  tracking_uri: "sqlite:///mlflow.db"
+  experiment_name: local-rag-system
+
+observability:
+  metrics:
+    enabled: true
+    path: /metrics
+  tracing:
+    enabled: true # the base file has no observability: section at all (class default: false)
+    service_name: local-rag-system
+    sample_ratio: 1.0
+  live_events:
+    enabled: true
+
+retrieval:
+  provider: hybrid
+  candidate_k: 5
+  generation_context_top_n: 3
+  hybrid:
+    rrf_k: 60
+  relationship_expansion:
+    enabled: true
+    include_parent: true
+    include_neighbors: true
+    max_related_elements: 3
+
+ingestion:
+  supported_extensions: [".pdf", ".docx", ".html", ".htm", ".txt", ".md"]
+  layout_parsing:
+    pdf_parser: pdfplumber
+    heading_font_size_ratio: 1.15
+    title_font_size_ratio: 1.8
+    max_heading_words: 12
+
+vision:
+  provider: none
+
+security:
+  authorization:
+    enabled: true
+    cross_tenant_support_roles: ["techfusion_support"]
+  field_redaction:
+    enabled: true
+  auth:
+    enabled: true
+    insecure_dev_mode: true # deviation from secure-rag-baseline-v2-jwt-auth.yaml; see header note
+    ingest_roles: ["security_admin", "system_admin", "techfusion_support"]
+    jwt:
+      algorithm: HS256
+      secret_env_var: JWT_HS256_SECRET
+      public_key_path_env_var: JWT_PUBLIC_KEY_PATH
+      issuer: null
+      audience: null
+      leeway_seconds: 30
+      required_claims: ["sub", "tenant_id", "roles"]
+  dos_limits:
+    max_query_length: 2000
+    max_top_k: 20
+    max_filters_bytes: 4096
+    max_upload_bytes: 26214400
+  rate_limit:
+    enabled: false
+    requests_per_minute: 60
+    key: tenant
+  egress_policy:
+    enabled: false
+    block_unredacted_sensitive_fields: true
+    require_authoritative_trust: false
+    blocked_tenant_ids: []
+    classification_policy:
+      public: true
+      internal: true
+      confidential: false
+      restricted: false
+
+agent:
+  enabled: true # THE addition -- see header note; absent from the base file entirely
+  max_agent_steps: 8
+  max_retrieval_attempts: 2
+  max_tool_calls: 6
+  max_json_parse_retries: 1
+  max_tool_top_k: 20
+  max_chunks_per_document_fetch: 10
+  max_chunks_per_document_fetch_hard_ceiling: 50
+  classify_prompt_path: src/rag/prompts/templates/agent_classify_v2.yaml
+  decompose_prompt_path: src/rag/prompts/templates/agent_decompose_v1.yaml
+  tool_select_prompt_path: src/rag/prompts/templates/agent_tool_select_v2.yaml
+  evidence_sufficiency_prompt_path: src/rag/prompts/templates/agent_evidence_sufficiency_v1.yaml
+  synthesize_prompt_path: src/rag/prompts/templates/agent_synthesize_v2.yaml
