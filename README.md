@@ -42,6 +42,7 @@ The fastest path is: install Python dependencies, start Postgres, ingest
 ## Table of contents
 
 - [Architecture](#architecture)
+- [Multimodal & Layout-Aware Ingestion](#multimodal--layout-aware-ingestion)
 - [Agentic RAG](#agentic-rag)
 - [Security](#security)
 - [Observability](#observability)
@@ -93,6 +94,25 @@ For the detailed system view, see [`docs/architecture.md`](docs/architecture.md)
 | Security | JWT auth, tenant/role ACL, field redaction, rate limiting | independently toggleable, off by default |
 | Agent | bounded tool-calling workflow (`POST /agent/query`) | MCP server |
 
+## Multimodal & Layout-Aware Ingestion
+
+PDF and DOCX documents keep their real structure (headings, tables,
+code/config blocks, images, page numbers) instead of being flattened to
+plain text; both loaders serialize into the same Markdown-equivalent
+syntax the default chunker already parses. Layout-aware ingestion is
+production-quality: `experiment_034` vs. `experiment_033` in the
+[Benchmarks](#benchmarks) table below shows a clear win from preserving
+structure (Recall@5 0.946 → 1.000, answer quality 0.264 → 0.310).
+
+An optional local vision provider (`vision.provider: ollama`, default
+`none`) can describe images with a small offline model (`moondream`), as
+a second chunk alongside the caption/alt-text, never replacing it.
+**Vision is experimental and off by default**: `experiment_035` (vision
+on) shows no answer-quality improvement over `experiment_034`
+(layout-aware text alone, vision off) on the same 28-question set. See
+[Multimodal & Layout](docs/topics/multimodal.md) for the full design and
+evaluation.
+
 <!-- --8<-- [start:docs-agentic-rag] -->
 ## Agentic RAG
 
@@ -120,10 +140,7 @@ happens at the API boundary; authorization stays enforced entirely at
 retrieval, as two structurally separate modules.
 <!-- --8<-- [end:docs-security] -->
 
-The details live in [`docs/architecture.md`](docs/architecture.md)'s
-"Authorization, Freshness, and Trust", "Field-Level Sensitive-Data
-Redaction", and "Authenticated API Boundary and Security Hardening"
-sections.
+Full control-by-control breakdown: [Security](docs/topics/security.md).
 
 <!-- --8<-- [start:docs-observability] -->
 ## Observability
@@ -135,17 +152,16 @@ SSE stream (`POST /agent/query/stream`). Distinct from
 [MLflow tracking](#mlflow-tracking) below, which tracks experiment runs,
 not live requests.
 
-`/metrics` (Prometheus text exposition) and the SSE stream are on by
-default (`observability.metrics.enabled`/`observability.live_events.enabled`,
-both true no-ops with nothing scraping/consuming them); OpenTelemetry
-tracing is off by default (`observability.tracing.enabled: false`) since
-it needs a real OTLP endpoint to be useful.
+`/metrics` and the SSE stream are on by default (both true no-ops with
+nothing scraping/consuming them by default); OpenTelemetry tracing is off
+by default (`observability.tracing.enabled: false`) since it needs a real
+OTLP endpoint to be useful. To see traces and dashboards locally:
 
-To see traces and dashboards locally:
-```
+```bash
 # set observability.tracing.enabled: true in config/default.yaml first
 make observability-up
 ```
+
 This brings up Jaeger (traces, `http://localhost:16686`), Prometheus
 (`http://localhost:9090`), and Grafana (`http://localhost:3000`,
 pre-provisioned with a dashboard) alongside the base stack, layered via
@@ -154,38 +170,27 @@ up -d`, never brought up by plain `make up`. Teardown: `make
 observability-down`.
 <!-- --8<-- [end:docs-observability] -->
 
-The details live in [`docs/architecture.md`](docs/architecture.md)'s
-"Observability" section.
+Full design writeup: [Observability](docs/topics/observability.md).
 
 <!-- --8<-- [start:docs-web-ui] -->
 ## Web UI
 
 A small React/Vite/TypeScript chat interface (`frontend/`) sits over the
-existing API: choose Classic or Agentic RAG, watch live agent progress
-(the same safe `AgentEvent` stream `POST /agent/query/stream` already
-exposes), inspect sources/citations with content-type badges, see an
-always-visible summary of the connected backend's active security/agent
-feature flags (`GET /`'s `features` block: auth/authorization/field
-redaction/rate limiting/agent/vision/tracing, booleans and provider names
-only, never a secret), and set a local-development bearer token or
-tenant/roles in a clearly marked Developer settings panel. It reuses the
-backend as-is. No RAG logic lives in the frontend, and the original
-milestone needed zero backend changes (the frontend proxies same-origin
-to the API, so no CORS middleware was needed); the one small,
-intentional follow-up backend addition is that `features` block itself.
+existing API: choose Classic or Agentic RAG, watch live agent progress,
+inspect sources/citations, and see an always-visible summary of the
+connected backend's active security/agent feature flags (`GET /`'s
+`features` block, booleans and provider names only, never a secret). It
+reuses the backend as-is; no RAG logic lives in the frontend.
 
-```
+```bash
 make up             # backend only (Postgres + rag-api)
-make frontend-up     # backend + frontend, http://localhost:3001
-docker compose -f docker-compose.yml -f docker-compose.frontend.yml \
-  -f docker-compose.observability.yml up -d   # backend + frontend + observability
+make frontend-up    # backend + frontend, http://localhost:3001
 ```
 
 or for local frontend development against a native `uvicorn`/Docker
 backend: `cd frontend && npm install && npm run dev`
 (`http://localhost:5173`). See [`frontend/README.md`](frontend/README.md)
-for the full setup, authentication behavior, error/safety states, and
-known limitations.
+for the full setup, authentication behavior, and known limitations.
 <!-- --8<-- [end:docs-web-ui] -->
 
 <!-- --8<-- [start:docs-prereq-setup] -->
