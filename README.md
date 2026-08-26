@@ -200,7 +200,7 @@ for the full setup, authentication behavior, and known limitations.
 - [Docker](https://www.docker.com/) (for the Postgres+pgvector container)
 - [Ollama](https://ollama.com/) installed, **running**, and with
   `qwen2.5:1.5b` pulled:
-  ```
+  ```bash
   ollama pull qwen2.5:1.5b
   ```
   Ollama usually starts automatically after install; verify it's actually
@@ -221,13 +221,13 @@ for the full setup, authentication behavior, and known limitations.
 
 1. Create a virtualenv and install the project.
    PowerShell:
-   ```
+   ```powershell
    python -m venv .venv
    .\.venv\Scripts\Activate.ps1
    pip install -e ".[dev]"
    ```
    macOS/Linux:
-   ```
+   ```bash
    python -m venv .venv
    source .venv/bin/activate
    pip install -e ".[dev]"
@@ -235,30 +235,30 @@ for the full setup, authentication behavior, and known limitations.
 2. Copy `.env.example` to `.env` and adjust if needed. `DATABASE_URL` points
    at Postgres on **host port 15987** (not the default 5432) so it won't
    collide with any other local Postgres instance:
-   ```
+   ```bash
    cp .env.example .env
    ```
    Already have a Postgres+pgvector container running locally? Point
    `DATABASE_URL` at it directly instead of step 3's `docker-compose.yml`
-   (match `POSTGRES_DB` to its real name), then still run
+   (matching its real `POSTGRES_DB` name), then still run
    `python scripts/init_db.py` (idempotent) to create/migrate the schema.
 3. Bring up Postgres+pgvector and initialize the schema:
-   ```
+   ```bash
    make up
    ```
    Without `make`, run the two steps it wraps:
-   ```
+   ```bash
    docker compose up -d
    python scripts/init_db.py
    ```
    If `init_db.py` cannot connect immediately, wait until the
    `local-rag-postgres` container is healthy and run it again.
 4. Ingest the bundled smoke-test documents.
-   ```
+   ```bash
    make ingest FILE=data/sample_docs DATASET_ID=sample_docs
    ```
    Without `make`:
-   ```
+   ```bash
    python -m rag.ingestion.pipeline data/sample_docs --dataset-id sample_docs
    ```
    Any file or directory can be ingested. Use a different `--dataset-id`
@@ -268,17 +268,17 @@ for the full setup, authentication behavior, and known limitations.
    duplicate chunks); edited files are detected and re-chunked in place
    under the same `document_id`.
 5. Start the API:
-   ```
+   ```bash
    uvicorn rag.api.main:app --reload
    ```
    Then hit `GET /health`, `POST /ingest`, `POST /query`, or browse
    `/docs` / `/redoc`.
 6. Query via the Makefile once the API is running:
-   ```
+   ```bash
    make query Q="What are the deployment windows for production releases?"
    ```
    Without `make`:
-   ```
+   ```bash
    curl -s -X POST http://localhost:8000/query -H "Content-Type: application/json" -d '{"query": "What are the deployment windows for production releases?"}'
    ```
    Response shape (`answer` text, `score`, and timing values vary by run;
@@ -307,7 +307,7 @@ for the full setup, authentication behavior, and known limitations.
    structure; only meaningful once you've ingested a dataset with
    subfolders (`data/sample_docs/` is flat, so this is illustrative rather
    than directly runnable against it):
-   ```
+   ```bash
    curl -s -X POST http://localhost:8000/query -H "Content-Type: application/json" \
      -d '{"query": "What MFA methods are approved?", "filters": {"category": "security"}}'
    ```
@@ -320,7 +320,7 @@ Postgres+pgvector and the API can both run in containers. Ollama usually
 stays native on the host, and the API container reaches it through
 `host.docker.internal`. Requires **Docker Compose V2**.
 
-```
+```bash
 docker compose up -d --build          # first build pulls ~1-2GB of ML deps (PyTorch); later ones are cached
 python scripts/init_db.py             # against the containerized Postgres, via DATABASE_URL in .env
 curl http://localhost:8000/health     # {"vectorstore":"ok","llm":"ok"} confirms it reached both deps
@@ -335,7 +335,7 @@ rebuild. Only `pyproject.toml` changes require rebuilding the image.
 mounts and `--reload`, stops publishing Postgres's port, and tightens
 health-check timing (same-host "productionized," not a Kubernetes
 substitute):
-```
+```bash
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 ```
 
@@ -346,7 +346,7 @@ container at `/app/config`, so any file under `config/experiments/` is
 reachable by its in-container path. Set it in the host shell before
 bringing the stack up (`docker-compose.yml` forwards it through
 unchanged; it is never hardcoded there):
-```
+```bash
 RAG_CONFIG_PATH=/app/config/experiments/agentic-rag-baseline-v1.yaml docker compose up -d
 ```
 An unset or empty value preserves the default behavior exactly. A path
