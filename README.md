@@ -1,26 +1,39 @@
 # local-rag-system
 
 [![CI](https://github.com/ajits-github/local-rag-system/actions/workflows/ci.yml/badge.svg)](https://github.com/ajits-github/local-rag-system/actions/workflows/ci.yml)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 ![Python](https://img.shields.io/badge/Python-3.11%2B-blue)
 ![License](https://img.shields.io/github/license/ajits-github/local-rag-system)
+[![Docs](https://img.shields.io/badge/docs-mkdocs--material-blue)](#documentation)
 ![Offline](https://img.shields.io/badge/inference-offline%20%2F%20CPU--only-informational)
 
+[![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-336791?logo=postgresql&logoColor=white)](https://www.postgresql.org)
+[![pgvector](https://img.shields.io/badge/pgvector-0891B2?logo=postgresql&logoColor=white)](https://github.com/pgvector/pgvector)
+[![Ollama](https://img.shields.io/badge/Ollama-000000?logo=ollama&logoColor=white)](https://ollama.com)
+[![Docker](https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white)](https://www.docker.com)
 
-A modular, config-driven local RAG system: sentence-transformers embeddings,
-Postgres+pgvector storage, Ollama generation, FastAPI serving. Every infra
-choice (embedding model, vector backend, chunker, reranker, LLM) is
-swappable via `config/default.yaml`: nothing is hardcoded, so comparative
-experiments can change one axis without touching pipeline code.
+[![OpenTelemetry](https://img.shields.io/badge/OpenTelemetry-425CC7?logo=opentelemetry&logoColor=white)](https://opentelemetry.io)
+[![Prometheus](https://img.shields.io/badge/Prometheus-E6522C?logo=prometheus&logoColor=white)](https://prometheus.io)
+[![Grafana](https://img.shields.io/badge/Grafana-F46800?logo=grafana&logoColor=white)](https://grafana.com)
+[![MLflow](https://img.shields.io/badge/MLflow-0194E2?logo=mlflow&logoColor=white)](https://mlflow.org)
 
-- Runs fully offline, CPU-only, on an 8GB-RAM machine; no API keys required
-  by default
-- Configurable retrieval (dense or hybrid dense+BM25), chunking, and
-  reranking
+A modular, config-driven Retrieval-Augmented Generation system that runs
+fully offline on a CPU-only machine: sentence-transformers embeddings,
+Postgres+pgvector storage, Ollama generation, FastAPI serving. Every
+infrastructure choice, embedding model, vector backend, chunker,
+reranker, LLM, is a swappable "provider" selected in
+`config/default.yaml`; nothing is hardcoded, so comparative experiments
+can change one axis without touching pipeline code.
+
+- Fully offline, CPU-only, runs on 8GB RAM; no API keys required by default
+- Configurable retrieval (dense or hybrid dense+BM25), chunking, and reranking
 - Optional, independently toggleable: JWT auth + tenant/role authorization,
-  field-level redaction, rate limiting, OpenTelemetry/Prometheus/Grafana
-  observability, and a bounded agentic (tool-calling) workflow
+  field-level redaction, rate limiting, a bounded agentic (tool-calling)
+  workflow, and OpenTelemetry/Prometheus/Grafana observability
 - Deterministic + RAGAS evaluation with an experiment-tracking table (see
-  [Benchmarks](#benchmarks) below)
+  [Benchmarks](#benchmarks))
+- A React web UI (`frontend/`) for interactive testing of both RAG paths
 
 The fastest path is: install Python dependencies, start Postgres, ingest
 `data/sample_docs`, start the API, and call `/query` (see
