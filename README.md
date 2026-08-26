@@ -373,10 +373,12 @@ All provider choices and tunables live in `config/default.yaml`:
 embedding model, chunk size/overlap, reranker (`none` / `cross_encoder` /
 `cohere`), LLM, retrieval `candidate_k`, generation context size, security
 toggles, and agent bounds. Point at an alternate config with
-`--config path/to/other.yaml` on the ingestion/eval CLIs, or edit the
-default file directly for local experiments. The running API (not a CLI)
-instead reads the `RAG_CONFIG_PATH` environment variable, unset by
-default; see "Running the API against an alternate config file" above.
+`--config path/to/other.yaml` on the ingestion/eval CLIs. The running API
+(not a CLI) instead reads the `RAG_CONFIG_PATH` environment variable,
+unset by default; see "Running the API against an alternate config file"
+above. Comparable configs for experiments live under
+`config/experiments/`, each a full standalone copy rather than a partial
+override.
 
 Generation prompts are versioned YAML files under
 `src/rag/prompts/templates/` (`rag_answer_v1.yaml`, `rag_answer_v2.yaml`,
@@ -384,7 +386,8 @@ Generation prompts are versioned YAML files under
 version is selected by `config/default.yaml`'s `generation.prompt` block
 (`id`, `version`, `path`); `RetrievalPipeline` loads it once at
 construction and rejects the file if its own declared `prompt_id`/`version`
-don't match what's configured.
+don't match what's configured. API reference:
+[Configuration & factory](docs/reference/config.md).
 
 ## Metadata & filtering
 
@@ -392,48 +395,53 @@ Every chunk carries source metadata such as `document_id`, `chunk_id`,
 `source`, `source_type`, timestamps, language, `category`, governance
 fields, and structural fields. For directory ingestion, `category` is the
 file's path relative to the ingested root, such as `security` or
-`security/subteam`.
+`security/subteam`. See [Ingestion & Chunking](docs/topics/ingestion.md)
+for the full structural-metadata model.
 
-`POST /query` accepts exact-match filters for approved metadata fields.
-The most common filter is `category`.
+`POST /query` accepts exact-match filters for an explicit allow-list of
+metadata fields (never an arbitrary column). The most common filter is
+`category`.
 
 ## Evaluation
 
 `data/eval/sample_gold.jsonl` is a small smoke-test gold file for
 `data/sample_docs`. Run it after the sample dataset is ingested:
 
-```
+```bash
 python -m rag.eval.run_eval --gold data/eval/sample_gold.jsonl --dataset-id sample_docs
 ```
 `--dataset-id` is mandatory and is injected as a filter on every retrieval.
 Reports include Recall@5/10, Hit Rate@5/10, MRR, latency, and a simple
 keyword-overlap answer-quality score. Add `--verbose` for per-question
-details or `--skip-generation` for retrieval-only metrics.
+details or `--skip-generation` for retrieval-only metrics. See
+[Evaluation & RAGAS](docs/topics/evaluation.md) and the
+[metrics reference](docs/metrics.md) for the full deterministic-metric
+breakdown, including the multimodal/security-specific ones not shown here.
 
 ### RAGAS generation-quality evaluation (optional)
 
 RAGAS scoring is optional and uses a separately configured judge model.
 Install the extra only if you plan to run it:
-```
-pip install .[ragas]         # local (ollama) judge
-pip install .[ragas,anthropic]  # + hosted anthropic judge
+```bash
+pip install .[ragas]           # local (ollama) judge
+pip install .[ragas,anthropic] # + hosted anthropic judge
 ```
 The judge is selected in `config/default.yaml` under `judge:`. Hosted
 judges read API keys from environment variables; no key is hardcoded.
 
-```
+```bash
 python -m rag.eval.run_ragas_eval --gold data/eval/sample_gold.jsonl \
     --dataset-id sample_docs --verbose > /tmp/ragas_report.json
 ```
 `--sample-size` defaults to 15 so hosted judging can be tested cheaply
 before scaling up. Judge calls are cached under `.cache/ragas` by default.
 
-RAGAS scores should be checked against human labels before treating them
-as project quality gates:
-```
+RAGAS scores should be checked against human labels before being treated
+as a quality gate:
+```bash
 python scripts/generate_manual_review.py --eval-output /tmp/ragas_report.json --num-rows 10
-# ... fill in the human_faithful/human_correct/human_relevant/human_correct_refusal
-# fields in the generated JSONL by hand ...
+# fill in the human_faithful/human_correct/human_relevant/human_correct_refusal
+# fields in the generated JSONL by hand, then:
 python scripts/compare_ragas_manual.py --ragas-output /tmp/ragas_report.json \
     --manual-review data/eval/manual_review/sample_docs_manual_review.jsonl
 ```
@@ -443,19 +451,18 @@ human labels.
 <!-- --8<-- [start:docs-benchmarks] -->
 ## Benchmarks
 
-`experiments/` tracks comparable eval runs over time: `configs/` holds a
-snapshot of `config/default.yaml` per experiment, `results/` holds a flat
-JSON metrics record per experiment (schema below), and `reports/` holds
-the generated comparison table. Only aggregate metrics and config values
-are stored here, never corpus content or generated answers, so all three
-are safe to commit even though the underlying dataset isn't (per dataset
-above).
+`experiments/` tracks comparable eval runs over time: `config_snapshots/`
+holds a snapshot of the config used per experiment, `results/` holds a
+flat JSON metrics record per experiment, and `reports/` holds the
+generated comparison table. Only aggregate metrics and config values are
+stored here, never corpus content or generated answers, so all three are
+safe to commit even though the underlying corpus (`data/knowledge_base/`)
+is gitignored (only `data/sample_docs/` ships in the repo).
 
 The table below is generated, not hand-written; don't edit it directly,
 regenerate it instead (see "Recording a new experiment"). It shows only
 the most recent 7 experiments; the full, ever-growing history always
-lives in
-[`experiments/reports/comparison.md`](experiments/reports/comparison.md).
+lives in `experiments/reports/comparison.md`.
 
 <!-- EXPERIMENTS_TABLE_START -->
 | Experiment | Label | Retrieval | Generation model | Embedder | Reranker | Prompt | Rel.Exp | Recall@5 | Recall@10 | Hit Rate@10 | MRR | Answer quality | Supp.Ctx Hit | Img Hit | RAGAS Faithful | RAGAS Correct | Total latency | Dataset | Date |
@@ -474,18 +481,18 @@ Every row is measured with `dataset_id`-isolated retrieval, so results are
 not mixed across datasets in the same vector store.*
 <!-- --8<-- [end:docs-benchmarks] -->
 
-Detailed experiment writeups live in `experiments/reports/`,
-[`docs/architecture.md`](docs/architecture.md), and `PROJECT_JOURNAL.md`.
-The README keeps the comparison table so changes remain visible at a
-glance without turning this file into an experiment log.
+Detailed experiment writeups live in
+[`experiments/reports/`](experiments/reports/) and
+[`docs/architecture.md`](docs/architecture.md). The README keeps the
+comparison table so changes remain visible at a glance without turning
+this file into an experiment log.
 
 ### Agentic RAG benchmarks
 
 The table above is classic-RAG only (Recall/MRR/answer_quality). The
-agentic evaluation (`rag.eval.run_agent_eval`, 18-question
-`data/eval/agentic_extension_gold.jsonl`) reports a different metric
-family, so it gets its own small table here instead of being forced into
-incompatible columns. Recorded by hand from
+agentic evaluation (`rag.eval.run_agent_eval`, an 18-question gold set)
+reports a different metric family, so it gets its own small table here
+instead of being forced into incompatible columns. Recorded by hand from
 `experiments/results/agentic/*.json`; not wired into
 `scripts/compare_experiments.py`, which targets the classic-RAG schema
 only.
@@ -495,14 +502,15 @@ only.
 | experiment_029 | agentic_rag_baseline_v1 | v1 | v1 | 0.833 | 1.000 | 0.111 | 0.449 | 0.443 | 0.584 | 138.5s | techfusion | 2026-08-21 |
 | experiment_032 | agentic_rag_baseline_v2_fixed | v2 | v2 | 0.889 | 0.000 | 1.000 | 0.463 | 0.511 | 0.531 | 47.4s | techfusion | 2026-08-21 |
 
-`experiment_032` fixed the two issues `experiment_029` found: `agent_classify_v2`
-makes the simple/complex routing boundary explicit (cut the unnecessary
--agent rate to 0.0 and mean latency 2.9x, purely via routing composition),
-and `agent_synthesize_v2` plus a code-level evidence-ordering fix makes an
-authoritative source always take priority over an untrusted, conflicting
-one at synthesis time (raised citation support 0.111 to 1.000). Full
-before/after numbers and per-question trace validation:
-`experiments/reports/agentic_rag_baseline_v2_fixed.md`.
+`experiment_032` fixed the two issues `experiment_029` found: a revised
+classify prompt makes the simple/complex routing boundary explicit (cut
+the unnecessary-agent rate to 0.0 and mean latency 2.9x, purely via
+routing composition), and a revised synthesize prompt plus a code-level
+evidence-ordering fix makes an authoritative source always take priority
+over an untrusted, conflicting one at synthesis time (raised citation
+support 0.111 to 1.000). Full before/after numbers and per-question trace
+validation:
+[`experiments/reports/agentic_rag_baseline_v2_fixed.md`](experiments/reports/agentic_rag_baseline_v2_fixed.md).
 
 ### Recording a new experiment
 
@@ -510,13 +518,13 @@ before/after numbers and per-question trace validation:
    prompt version, ...).
 2. Run the eval and save its full report (or `rag.eval.run_ragas_eval` for
    the RAGAS-scored variant, see above):
-   ```
+   ```bash
    python -m rag.eval.run_eval --gold data/eval/sample_gold.jsonl \
      --dataset-id sample_docs --verbose > /tmp/eval_report.json
    ```
 3. Register it as an experiment (never re-runs eval, just records the
    report above):
-   ```
+   ```bash
    python scripts/record_experiment.py --eval-output /tmp/eval_report.json \
      --experiment-id experiment_002 --label "cross-encoder reranker" \
      --config config/default.yaml
@@ -528,7 +536,7 @@ before/after numbers and per-question trace validation:
 4. Regenerate the comparison table (writes the full table to
    `experiments/reports/comparison.md` and splices the most recent 7
    experiments into this README section):
-   ```
+   ```bash
    python scripts/compare_experiments.py
    ```
    Pass `--exclude experiment_id[,experiment_id...]` to leave a
@@ -540,14 +548,13 @@ before/after numbers and per-question trace validation:
 Every `scripts/record_experiment.py` call also logs an MLflow run (config
 as params, metrics, and the eval-output/record/config files as artifacts),
 under a readable run name like `experiment_015_qwen2-5-3b_v2_hybrid_rel-exp`
-(display-only; the real MLflow run UUID is unaffected) and tagged with
-`experiment_id`/`label`/`generation_model`/`prompt_version`/
+and tagged with `experiment_id`/`label`/`generation_model`/`prompt_version`/
 `retrieval_provider`/`reranker_provider`/`relationship_expansion`/
 `dataset_id` for fast filtering in the MLflow UI. Requires the `mlflow`
-extra (`pip install .[mlflow]`). It fails loudly rather than silently
+extra (`pip install .[mlflow]`); fails loudly rather than silently
 skipping if enabled but not installed. Local by default, no server
 required (`mlflow.tracking_uri: sqlite:///mlflow.db`):
-```
+```bash
 mlflow ui --backend-store-uri sqlite:///mlflow.db
 ```
 `scripts/backfill_mlflow.py` re-logs every `experiments/results/*.json`
@@ -555,7 +562,7 @@ into MLflow in one pass, useful if `mlflow.db`/`mlruns/` is ever deleted.
 
 ## Testing
 
-```
+```bash
 make test
 ```
 Without `make`: `pytest tests/ -v`.
