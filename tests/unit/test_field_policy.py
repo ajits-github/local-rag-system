@@ -77,7 +77,7 @@ def test_redact_sensitive_fields_fails_closed_when_no_roles():
     """Regression test: a missing/empty identity must redact, never pass through unrestricted.
 
     `roles=[]` (no asserted identity) must never be treated as
-    "unrestricted access". see FieldRedactionConfig's fail-closed
+    "unrestricted access". See FieldRedactionConfig's fail-closed
     requirement. `any(role in allowed_roles for role in [])` is False for
     every policy, so this asserts that behavior explicitly rather than
     relying on it being an accidental consequence of `any()`'s semantics.
@@ -166,7 +166,7 @@ def test_is_role_authorized_for_field_false_for_no_roles():
 
 
 def test_is_role_authorized_for_field_true_for_unknown_field_id():
-    """An id not backed by any policy has nothing to restrict. returns True."""
+    """An id not backed by any policy has nothing to restrict, so it returns True."""
     assert is_role_authorized_for_field("not_a_real_policy", [])
 
 
@@ -228,7 +228,7 @@ def test_duplicate_secret_in_neighboring_chunk_is_also_tagged():
     """The same literal secret appearing in two separately-ingested chunks is flagged as duplicated.
 
     Requirement 7's concrete "secret appears in a neighboring/duplicate
-    chunk" scenario. built as an in-test fixture (per the approved
+    chunk" scenario. Built as an in-test fixture (per the approved
     design adjustment), not a file added to the canonical knowledge base.
     """
     chunks = [
@@ -249,7 +249,7 @@ def test_duplicate_secret_in_neighboring_chunk_is_also_tagged():
     assert finding.field_id == "synthetic_admin_credential"
     assert sorted(finding.chunk_ids) == ["c1", "c2"]
     assert finding.untagged_chunk_ids == []
-    # The report never contains the raw literal. only a hash.
+    # The report never contains the raw literal, only a hash.
     assert _ALPHA_ADMIN_KEY not in finding.literal_value_hash
 
 
@@ -312,3 +312,36 @@ def test_combine_scannable_fields_omits_unset_fields():
     """None-valued metadata fields are skipped, not turned into a literal 'None' in the scan."""
     combined = combine_scannable_fields("body text")
     assert combined == "body text"
+
+
+def test_duplicate_detector_flags_sensitive_literal_only_in_source():
+    """A credential that lives only in a document's own source filename is caught.
+
+    `sensitive_field_ids` is left unset on both chunks so the diagnostic
+    must find the value through scannable metadata.
+    """
+    chunks = [
+        _chunk("c1", "Ordinary body text.", source=f"admin-key-{_ALPHA_ADMIN_KEY}.md"),
+        _chunk("c2", "Different ordinary body text.", source=f"backup-{_ALPHA_ADMIN_KEY}.md"),
+    ]
+
+    findings = find_duplicate_sensitive_occurrences(chunks)
+
+    assert len(findings) == 1
+    finding = findings[0]
+    assert finding.field_id == "synthetic_admin_credential"
+    assert sorted(finding.chunk_ids) == ["c1", "c2"]
+    assert finding.untagged_chunk_ids == ["c1", "c2"]  # neither chunk was ingestion-tagged
+
+
+def test_duplicate_detector_flags_sensitive_literal_only_in_section_path_or_attachment_name():
+    """Metadata-only occurrences via section_path/attachment_name are caught, not just source."""
+    chunks = [
+        _chunk("c1", "Ordinary body text.", section_path=f"Setup > {_ALPHA_ADMIN_KEY}"),
+        _chunk("c2", "Ordinary body text.", attachment_name=f"key-{_ALPHA_ADMIN_KEY}.pdf"),
+    ]
+
+    findings = find_duplicate_sensitive_occurrences(chunks)
+
+    assert len(findings) == 1
+    assert sorted(findings[0].chunk_ids) == ["c1", "c2"]
