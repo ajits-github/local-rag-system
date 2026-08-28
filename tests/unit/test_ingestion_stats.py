@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from rag.config import load_config
-from rag.ingestion.pipeline import IngestionPipeline
+from rag.ingestion.pipeline import IngestionPipeline, _source_is_under_root
 from rag.schemas import Chunk
 
 
@@ -201,3 +201,161 @@ def test_single_file_target_never_deletes_other_documents(tmp_path: Path):
 
     assert stats.deleted == 0
     assert len(vs.list_document_sources("test-dataset")) == 2  # b.md untouched
+
+
+def test_upload_style_document_outside_the_ingestion_root_survives_a_directory_ingest(
+    tmp_path: Path,
+):
+    """A document ingested via ingest_file (e.g. POST /ingest) is never treated as deleted.
+
+    Regression test for A1: deletion detection used to diff the full set of
+    a dataset's known sources against only what this directory walk
+    discovered, so a document from outside the walked root (an upload, or
+    a different root) was wrongly treated as deleted.
+    """
+    uploads_dir = tmp_path / "uploads"
+    uploads_dir.mkdir()
+    uploaded = uploads_dir / "c.md"
+    uploaded.write_text("Uploaded content.", encoding="utf-8")
+
+    kb_root = tmp_path / "kb"
+    kb_root.mkdir()
+    (kb_root / "a.md").write_text("Alpha content.", encoding="utf-8")
+
+    pipeline, vs = _pipeline()
+    pipeline.ingest_file(uploaded, "test-dataset")
+    stats = pipeline.ingest_path(kb_root, "test-dataset")
+
+    assert stats.deleted == 0
+    assert str(uploaded) in vs.list_document_sources("test-dataset")
+
+
+def test_documents_from_a_different_ingestion_root_survive_a_directory_ingest(tmp_path: Path):
+    """Ingesting root_B never deletes documents previously ingested from root_A."""
+    root_a = tmp_path / "kb_a"
+    root_a.mkdir()
+    (root_a / "a.md").write_text("Root A content.", encoding="utf-8")
+
+    root_b = tmp_path / "kb_b"
+    root_b.mkdir()
+    (root_b / "b.md").write_text("Root B content.", encoding="utf-8")
+
+    pipeline, vs = _pipeline()
+    pipeline.ingest_path(root_a, "test-dataset")
+    stats = pipeline.ingest_path(root_b, "test-dataset")
+
+    assert stats.deleted == 0
+    sources = vs.list_document_sources("test-dataset")
+    assert str(root_a / "a.md") in sources
+    assert str(root_b / "b.md") in sources
+
+
+def test_deleted_nested_file_is_still_detected_and_removed(tmp_path: Path):
+    """Deletion detection covers nested subdirectories, not just top-level files, for a root."""
+    root = tmp_path / "kb"
+    (root / "sub" / "deep").mkdir(parents=True)
+    keep_path = root / "keep.md"
+    remove_path = root / "sub" / "deep" / "remove.md"
+    keep_path.write_text("Keep this content.", encoding="utf-8")
+    remove_path.write_text("Remove this content.", encoding="utf-8")
+
+    pipeline, vs = _pipeline()
+    pipeline.ingest_path(root, "test-dataset")
+    remove_path.unlink()
+    stats = pipeline.ingest_path(root, "test-dataset")
+
+    assert stats.discovered == 1  # only keep.md discovered this run
+    assert stats.deleted == 1
+    assert vs.list_document_sources("test-dataset") == [str(keep_path)]
+
+
+def test_repeated_ingestion_of_the_same_root_causes_no_false_deletions(tmp_path: Path):
+    """Ingesting the same, unchanged root three times in a row never reports a deletion."""
+    root = tmp_path / "kb"
+    root.mkdir()
+    (root / "a.md").write_text("Alpha content.", encoding="utf-8")
+    (root / "b.md").write_text("Beta content.", encoding="utf-8")
+
+    pipeline, _vs = _pipeline()
+    pipeline.ingest_path(root, "test-dataset")
+    pipeline.ingest_path(root, "test-dataset")
+    stats = pipeline.ingest_path(root, "test-dataset")
+
+    assert stats.deleted == 0
+    assert stats.unchanged == 2
+
+
+def test_deletion_detection_stays_scoped_to_its_own_dataset(tmp_path: Path):
+    """Re-ingesting root_A for dataset X never deletes dataset Y's documents from the same root."""
+    root = tmp_path / "kb"
+    root.mkdir()
+    keep_path = root / "keep.md"
+    remove_path = root / "remove.md"
+    keep_path.write_text("Keep this content.", encoding="utf-8")
+    remove_path.write_text("Remove this content.", encoding="utf-8")
+
+    pipeline, vs = _pipeline()
+    pipeline.ingest_path(root, "dataset-x")
+    pipeline.ingest_path(root, "dataset-y")
+    remove_path.unlink()
+    stats = pipeline.ingest_path(root, "dataset-x")
+
+    assert stats.deleted == 1
+    assert vs.list_document_sources("dataset-x") == [str(keep_path)]
+    assert sorted(vs.list_document_sources("dataset-y")) == sorted(
+        [str(keep_path), str(remove_path)]
+    )
+
+
+class TestSourceIsUnderRoot:
+    """Direct coverage of the resolved-path root-membership helper the A1 fix relies on."""
+
+    def test_direct_child_is_under_root(self, tmp_path: Path):
+        """A file directly inside the root is in scope."""
+        root = tmp_path / "kb"
+        assert _source_is_under_root(str(root / "a.md"), root) is True
+
+    def test_nested_descendant_is_under_root(self, tmp_path: Path):
+        """A file several subdirectories deep is still in scope."""
+        root = tmp_path / "kb"
+        assert _source_is_under_root(str(root / "sub" / "deep" / "a.md"), root) is True
+
+    def test_sibling_directory_sharing_a_name_prefix_is_not_under_root(self, tmp_path: Path):
+        """A sibling directory whose name starts with the root's name is not a false match.
+
+        Guards against naive raw string prefix matching, which would wrongly
+        treat 'kb2' as being under 'kb'.
+        """
+        root = tmp_path / "kb"
+        sibling_source = str(tmp_path / "kb2" / "a.md")
+        assert _source_is_under_root(sibling_source, root) is False
+
+    def test_unrelated_root_is_not_under_root(self, tmp_path: Path):
+        """A document from an unrelated directory (e.g. an upload folder) is out of scope."""
+        root = tmp_path / "kb"
+        other_source = str(tmp_path / "uploads" / "a.md")
+        assert _source_is_under_root(other_source, root) is False
+
+    def test_relative_and_absolute_forms_of_the_same_file_agree(self, tmp_path: Path, monkeypatch):
+        """A relative source and its absolute equivalent both resolve to the same membership."""
+        monkeypatch.chdir(tmp_path)
+        relative_source = "kb/a.md"
+        absolute_source = str(tmp_path / "kb" / "a.md")
+        assert _source_is_under_root(relative_source, Path("kb")) is True
+        assert _source_is_under_root(absolute_source, Path("kb")) is True
+
+    def test_dot_prefixed_root_matches_its_plain_relative_equivalent(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """`./kb` and `kb` as the root resolve to the same scope for the same source."""
+        monkeypatch.chdir(tmp_path)
+        source = "kb/a.md"
+        assert _source_is_under_root(source, Path("./kb")) is True
+
+    def test_windows_style_separators_normalize_against_a_posix_root(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """A source with backslashes still compares correctly against a forward-slash root."""
+        monkeypatch.chdir(tmp_path)
+        windows_style_source = "kb\\sub\\a.md"
+        assert _source_is_under_root(windows_style_source, Path("kb")) is True
