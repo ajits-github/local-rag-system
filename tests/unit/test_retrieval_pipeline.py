@@ -1061,3 +1061,164 @@ def test_content_redaction_behavior_is_unchanged_by_the_metadata_fix():
     assert _ALPHA_ADMIN_KEY not in results[0].chunk.content
     assert "[REDACTED:SENSITIVE_FIELD]" in results[0].chunk.content
     assert results[0].redacted_field_ids == ["synthetic_admin_credential"]
+
+
+# --- `source` itself is scannable metadata too ------------------------------
+#
+# `source_label()` and `source_dict()` both surface `meta.source`, so the
+# document path or filename needs the same redaction treatment as other
+# display-facing metadata fields.
+
+
+def test_sensitive_literal_in_source_is_redacted_from_context_label_and_source_dict():
+    """A credential living only in the document's own source filename is redacted."""
+    from rag.retrieval.authorization import AuthorizationContext
+
+    result = _make_result(
+        "c1",
+        "Ordinary body text with no sensitive value at all.",
+        source=f"admin-key-{_ALPHA_ADMIN_KEY}.md",
+        score=0.9,
+    )
+    vectorstore = FakeVectorStore([result])
+    config = _config_with_field_redaction(enabled=True)
+    config.security.authorization.enabled = True
+    pipeline = RetrievalPipeline(
+        config, vectorstore=vectorstore, embedder=FakeEmbedder(), reranker=FakeReranker()
+    )
+    unauthorized = AuthorizationContext(tenant_id="tenant_alpha", roles=["tenant_alpha_operator"])
+
+    results = pipeline.retrieve(
+        "q", candidate_k=1, reranker_top_n=1, generation_context_top_n=1, auth=unauthorized
+    )
+    context = build_context(results)
+    label = source_label(results[0])
+    source = source_dict(results[0])
+
+    assert _ALPHA_ADMIN_KEY not in results[0].chunk.metadata.source
+    assert _ALPHA_ADMIN_KEY not in context
+    assert _ALPHA_ADMIN_KEY not in label
+    assert _ALPHA_ADMIN_KEY not in source["source"]
+    assert "synthetic_admin_credential" in results[0].redacted_field_ids
+
+
+def test_answer_sources_redact_a_sensitive_literal_in_source():
+    """answer()'s "sources" list also reflects source redaction."""
+    from rag.retrieval.authorization import AuthorizationContext
+
+    result = _make_result(
+        "c1",
+        "Ordinary body text with no sensitive value at all.",
+        source=f"admin-key-{_ALPHA_ADMIN_KEY}.md",
+        score=0.9,
+    )
+    vectorstore = FakeVectorStore([result])
+    config = _config_with_field_redaction(enabled=True)
+    config.security.authorization.enabled = True
+    llm = FakeLLM()
+    pipeline = RetrievalPipeline(
+        config, vectorstore=vectorstore, embedder=FakeEmbedder(), reranker=FakeReranker(), llm=llm
+    )
+    unauthorized = AuthorizationContext(tenant_id="tenant_alpha", roles=["tenant_alpha_operator"])
+
+    answer_result = pipeline.answer("q", auth=unauthorized)
+
+    assert _ALPHA_ADMIN_KEY not in llm.last_prompt
+    assert _ALPHA_ADMIN_KEY not in answer_result["sources"][0]["source"]
+    assert "synthetic_admin_credential" in answer_result["sources"][0]["redacted_field_ids"]
+
+
+def test_sensitive_literal_in_source_preserved_for_authorized_role():
+    """An authorized role still sees the raw source string, unredacted."""
+    from rag.retrieval.authorization import AuthorizationContext
+
+    result = _make_result(
+        "c1",
+        "Ordinary body text.",
+        source=f"admin-key-{_ALPHA_ADMIN_KEY}.md",
+        score=0.9,
+    )
+    vectorstore = FakeVectorStore([result])
+    config = _config_with_field_redaction(enabled=True)
+    config.security.authorization.enabled = True
+    pipeline = RetrievalPipeline(
+        config, vectorstore=vectorstore, embedder=FakeEmbedder(), reranker=FakeReranker()
+    )
+    authorized = AuthorizationContext(tenant_id="tenant_alpha", roles=["tenant_alpha_admin"])
+
+    results = pipeline.retrieve(
+        "q", candidate_k=1, reranker_top_n=1, generation_context_top_n=1, auth=authorized
+    )
+
+    assert _ALPHA_ADMIN_KEY in results[0].chunk.metadata.source
+    assert results[0].redacted_field_ids == []
+
+
+def test_source_redaction_never_touches_canonical_document_or_chunk_id():
+    """Redacting `source` leaves canonical document and chunk ids untouched.
+
+    `source` is a display-facing string; `document_id`/`chunk_id` are what
+    freshness resolution, relationship expansion, and agent document
+    lookups actually key off, and none of those read a post-redaction
+    `SearchResult` (they all run earlier in the pipeline, or against a
+    fresh DB read of their own). This test proves the redaction copy
+    itself never alters those two identity fields.
+    """
+    from rag.retrieval.authorization import AuthorizationContext
+
+    result = _make_result(
+        "c1",
+        "Ordinary body text.",
+        source=f"admin-key-{_ALPHA_ADMIN_KEY}.md",
+        score=0.9,
+    )
+    original_document_id = result.chunk.metadata.document_id
+    original_chunk_id = result.chunk.metadata.chunk_id
+    original_id = result.chunk.id
+    vectorstore = FakeVectorStore([result])
+    config = _config_with_field_redaction(enabled=True)
+    config.security.authorization.enabled = True
+    pipeline = RetrievalPipeline(
+        config, vectorstore=vectorstore, embedder=FakeEmbedder(), reranker=FakeReranker()
+    )
+    unauthorized = AuthorizationContext(tenant_id="tenant_alpha", roles=["tenant_alpha_operator"])
+
+    results = pipeline.retrieve(
+        "q", candidate_k=1, reranker_top_n=1, generation_context_top_n=1, auth=unauthorized
+    )
+
+    assert _ALPHA_ADMIN_KEY not in results[0].chunk.metadata.source  # source WAS redacted
+    assert results[0].chunk.metadata.document_id == original_document_id
+    assert results[0].chunk.metadata.chunk_id == original_chunk_id
+    assert results[0].chunk.id == original_id
+
+
+def test_redaction_does_not_mutate_a_chunk_metadata_instance_shared_across_results():
+    """Redacting one SearchResult never mutates another shared metadata reference.
+
+    Builds two independent SearchResults that both reference the exact
+    same underlying ChunkMetadata Python object (the shape relationship
+    expansion or a caching layer could produce), then redacts only the
+    first under an unauthorized role.
+    """
+    now = datetime.now(UTC)
+    shared_metadata = ChunkMetadata(
+        document_id="doc-1",
+        chunk_id="doc-1_0",
+        source=f"admin-key-{_ALPHA_ADMIN_KEY}.md",
+        source_type="text",
+        created_at=now,
+        last_modified=now,
+        chunk_index=0,
+        dataset_id="test-dataset",
+    )
+    chunk_a = Chunk(id="doc-1_0", content="text a", metadata=shared_metadata)
+    chunk_b = Chunk(id="doc-1_0", content="text b", metadata=shared_metadata)
+    result_a = SearchResult(chunk=chunk_a, score=0.9)
+    result_b = SearchResult(chunk=chunk_b, score=0.8)
+
+    RetrievalPipeline._redact_sensitive_fields([result_a], roles=["tenant_alpha_operator"])
+
+    assert _ALPHA_ADMIN_KEY not in result_a.chunk.metadata.source
+    assert _ALPHA_ADMIN_KEY in result_b.chunk.metadata.source  # untouched
+    assert _ALPHA_ADMIN_KEY in shared_metadata.source  # the original object itself is untouched
