@@ -224,9 +224,17 @@ class RetrievalPipeline:
     ) -> list[SearchResult]:
         """Replace unauthorized sensitive-field values in each result's chunk and metadata.
 
-        Skips chunks with no `sensitive_field_ids` tag. Replaces
-        `result.chunk` via `model_copy` rather than mutating in place,
-        since the same `Chunk` instance may be shared across results.
+        Content scanning uses `sensitive_field_ids` as a fast path:
+        untagged content is skipped. Metadata scanning always runs for
+        `source`, `attachment_name`, `section_path`, and `source_anchor`
+        because sensitive literals can appear only in those display-facing
+        fields.
+
+        Redaction replaces `result.chunk` with a `model_copy` instead of
+        mutating the existing `Chunk` or `ChunkMetadata`. Canonical
+        identity fields such as `document_id` and `chunk_id` are never
+        changed, and redacting one `SearchResult` cannot alter another
+        reference to the same original objects.
 
         Parameters
         ----------
@@ -243,13 +251,16 @@ class RetrievalPipeline:
         all_field_ids: list[str] = []
         redacted_chunk_count = 0
         for result in results:
-            if not result.chunk.metadata.sensitive_field_ids:
-                continue
-            redacted_text, redacted_ids = redact_sensitive_fields(result.chunk.content, roles)
+            redacted_text = result.chunk.content
+            redacted_ids: list[str] = []
+            if result.chunk.metadata.sensitive_field_ids:
+                redacted_text, redacted_ids = redact_sensitive_fields(result.chunk.content, roles)
             metadata_fields, metadata_redacted_ids = redact_source_metadata(
                 {
+                    "source": result.chunk.metadata.source,
                     "attachment_name": result.chunk.metadata.attachment_name,
                     "section_path": result.chunk.metadata.section_path,
+                    "source_anchor": result.chunk.metadata.source_anchor,
                 },
                 roles,
             )
