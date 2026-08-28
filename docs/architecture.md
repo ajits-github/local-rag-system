@@ -1507,14 +1507,23 @@ run via `egress_policy_blocked`.
 
 `DoSLimitsConfig` (`max_query_length: 2000`, `max_top_k: 20`,
 `max_filters_bytes: 4096`, `max_upload_bytes: 25 MiB`) is enforced as
-explicit router-level checks in `query.py`/`ingest.py` rather than baked
-into Pydantic field constraints on `QueryRequest`, since the bounds must
-read from *runtime* config (a value chosen at class-definition time can't
-do that). `POST /ingest`'s upload check is streamed
+explicit router-level checks (`request_auth.enforce_dos_limits`, shared
+by `query.py`/`agent_query.py`/`agent_stream.py`) rather than baked into
+Pydantic field constraints on `QueryRequest`, since the bounds must read
+from *runtime* config (a value chosen at class-definition time can't do
+that). `POST /ingest`'s upload check is streamed
 (`_save_upload_bounded`) — it rejects (413) once the running byte count
 crosses the limit, deleting the partial file, rather than buffering an
 arbitrarily large upload into memory first and rejecting only after the
 fact.
+
+`top_k` has both bounds enforced: `> max_top_k` was always rejected, but
+`top_k <= 0` originally was not — `top_k=0` silently fell back to
+`config.retrieval.candidate_k` (`RetrievalPipeline`'s `candidate_k or
+config.retrieval.candidate_k` treats `0` as falsy, same as `None`), and a
+negative value could reach Postgres's `LIMIT` clause. `enforce_dos_limits`
+now rejects any `top_k < 1` with 422 before retrieval runs at all. See
+`ISSUES.md` for the failure mode this closed.
 
 Rate limiting uses `slowapi` (new core dependency) with its default
 in-memory backend — no Redis. `RateLimitConfig.enabled: false` by
