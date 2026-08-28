@@ -151,3 +151,24 @@ class _NeverCalledLLM:
     def health_check(self) -> bool:
         """Report healthy; never actually exercised by these tests."""
         return True
+
+
+def test_stream_endpoint_oversized_query_returns_422_with_no_agent_work():
+    """A query longer than dos_limits.max_query_length is rejected 422, before any agent work.
+
+    Regression test for M4: validation used to run inside the async
+    generator handed to StreamingResponse, after the 200 status had
+    already been sent. Asserting a clean 422 here (not a 200 followed by
+    a broken/empty stream) proves the fix moved validation before
+    `StreamingResponse` is constructed.
+    """
+    config = _no_auth_config()
+    client, pipeline = _client_with(config)
+    app.dependency_overrides[get_llm] = lambda: _NeverCalledLLM()
+    try:
+        oversized_query = "x" * (config.security.dos_limits.max_query_length + 1)
+        response = client.post("/agent/query/stream", json={"query": oversized_query})
+        assert response.status_code == 422
+        assert pipeline.calls == []
+    finally:
+        _teardown()
