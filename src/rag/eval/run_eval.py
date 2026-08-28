@@ -650,15 +650,18 @@ def _metadata_leak_hit(
     """Whether any result's own metadata (not just `content`) leaks something restricted.
 
     Two checks per result: its `source` path-suffix-matches a
-    `forbidden_documents` entry, or `attachment_name`/`section_path`
-    contains a sensitive-literal pattern (catching a redacted value
-    leaking indirectly through metadata that echoes it).
+    `forbidden_documents` entry, or `source`/`attachment_name`/
+    `section_path`/`source_anchor` contains a sensitive-literal pattern
+    (catching a redacted value leaking indirectly through metadata that
+    echoes it). These are the same four fields `RetrievalPipeline.
+    _redact_sensitive_fields` redacts; a document's own filename can carry
+    a sensitive literal just like an attachment's.
     """
     for result in retrieval_results:
         meta = result.chunk.metadata
         if forbidden_documents and _matches_any(meta.source, forbidden_documents):
             return True
-        for value in (meta.attachment_name, meta.section_path):
+        for value in (meta.source, meta.attachment_name, meta.section_path, meta.source_anchor):
             if value and _sensitive_pattern_found(value):
                 return True
     return False
@@ -719,6 +722,10 @@ class _DuplicateScanChunkMetadata:
     """Minimal duck-typed stand-in for the metadata fields the detector reads."""
 
     sensitive_field_ids: list[str] | None
+    source: str | None
+    section_path: str | None
+    attachment_name: str | None
+    source_anchor: str | None
 
 
 @dataclass
@@ -731,26 +738,41 @@ class _DuplicateScanChunk:
 
 
 def _fetch_chunks_for_duplicate_scan(config: AppConfig) -> list[_DuplicateScanChunk]:
-    """Read every chunk's id/content/sensitive_field_ids directly from Postgres.
+    """Read every chunk's id/content/sensitive-scannable metadata directly from Postgres.
 
     Uses direct SQL because `VectorStore` has no "fetch every chunk"
     primitive and its search methods are query-shaped. Mirrors
     `scripts/detect_duplicate_sensitive_values.py` without introducing a
-    shared dependency between `scripts/` and `src/rag`.
+    shared dependency between `scripts/` and `src/rag`. Fetches the same
+    fields `find_duplicate_sensitive_occurrences` scans (see
+    `field_policy.SCANNABLE_METADATA_FIELDS`), not just `content`, so a
+    sensitive literal living only in metadata is caught by this corpus-wide
+    diagnostic too.
     """
     table = config.vectorstore.chunks_table
     conn = psycopg2.connect(config.database_url())
     try:
         with conn.cursor() as cur:
-            cur.execute(f"SELECT chunk_id, content, sensitive_field_ids FROM {table}")  # noqa: S608
+            cur.execute(
+                f"SELECT chunk_id, content, sensitive_field_ids, "  # noqa: S608
+                f"source, section_path, attachment_name, source_anchor FROM {table}"
+            )
             rows = cur.fetchall()
     finally:
         conn.close()
     return [
         _DuplicateScanChunk(
-            id=chunk_id, content=content, metadata=_DuplicateScanChunkMetadata(sensitive_field_ids)
+            id=row[0],
+            content=row[1],
+            metadata=_DuplicateScanChunkMetadata(
+                sensitive_field_ids=row[2],
+                source=row[3],
+                section_path=row[4],
+                attachment_name=row[5],
+                source_anchor=row[6],
+            ),
         )
-        for chunk_id, content, sensitive_field_ids in rows
+        for row in rows
     ]
 
 
