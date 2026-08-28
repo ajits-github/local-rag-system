@@ -6,7 +6,7 @@ from rag.config import load_config
 from rag.eval.metrics import mean_recall_at_k
 from rag.prompts.loader import PromptTemplate
 from rag.retrieval.fusion import reciprocal_rank_fusion
-from rag.retrieval.pipeline import RetrievalPipeline
+from rag.retrieval.pipeline import RetrievalPipeline, build_context, source_dict, source_label
 from rag.schemas import Chunk, ChunkMetadata, SearchResult
 
 
@@ -24,6 +24,9 @@ def _make_result(
     source: str,
     score: float,
     sensitive_field_ids: list[str] | None = None,
+    section_path: str | None = None,
+    attachment_name: str | None = None,
+    source_anchor: str | None = None,
 ) -> SearchResult:
     """Build a SearchResult with minimal-but-valid chunk metadata."""
     now = datetime.now(UTC)
@@ -37,6 +40,9 @@ def _make_result(
         chunk_index=0,
         dataset_id="test-dataset",
         sensitive_field_ids=sensitive_field_ids,
+        section_path=section_path,
+        attachment_name=attachment_name,
+        source_anchor=source_anchor,
     )
     return SearchResult(chunk=Chunk(id=chunk_id, content=content, metadata=metadata), score=score)
 
@@ -229,7 +235,7 @@ def test_answer_sanitizes_an_echoed_redaction_marker_in_the_generated_answer():
     """answer() strips a literal [REDACTED:SENSITIVE_FIELD] marker the LLM echoed back.
 
     A code-level backstop, independent of whether the generation model
-    followed the prompt's instruction not to reproduce the marker text --
+    followed the prompt's instruction not to reproduce the marker text.
     see field_policy.sanitize_redaction_markers_in_answer.
     """
     results = [_make_result("c1", "Alpha content.", source="a.md", score=0.9)]
@@ -809,13 +815,11 @@ def test_field_redaction_enabled_preserves_value_for_authorized_role():
 
 
 def test_field_redaction_fails_closed_when_no_authorization_context_supplied():
-    """Regression test (design-review adjustment 1): missing identity must redact, not pass through.
+    """A missing identity redacts tagged content instead of granting unrestricted access.
 
-    Even with document-level authorization untouched (no `auth` passed at
-    all. e.g. an open/unauthenticated caller, or `authorization.enabled`
-    itself left False), enabling `field_redaction` alone must still
-    redact a tagged sensitive field rather than treating the missing
-    `AuthorizationContext` as unrestricted access.
+    Even without document-level authorization, enabling
+    `field_redaction` treats an absent `AuthorizationContext` as zero
+    roles for field-level redaction.
     """
     result = _make_result(
         "c1",
@@ -838,7 +842,14 @@ def test_field_redaction_fails_closed_when_no_authorization_context_supplied():
 
 
 def test_field_redaction_skips_untagged_chunks_entirely():
-    """A chunk with no sensitive_field_ids tag is never scanned/modified."""
+    """A chunk with no sensitive_field_ids tag and no metadata match is never modified.
+
+    Content scanning is skipped by the sensitive_field_ids fast path;
+    metadata scanning always runs but finds nothing here since
+    section_path/attachment_name/source_anchor are all unset. See the
+    test_metadata_only_* tests below for the case where a metadata field
+    itself carries the sensitive value.
+    """
     result = _make_result("c1", "The retry delay is 45 seconds.", source="a.md", score=0.9)
     vectorstore = FakeVectorStore([result])
     config = _config_with_field_redaction(enabled=True)
@@ -850,3 +861,203 @@ def test_field_redaction_skips_untagged_chunks_entirely():
 
     assert results[0].chunk.content == "The retry delay is 45 seconds."
     assert results[0].redacted_field_ids == []
+
+
+# --- Metadata-only sensitive values must not bypass field redaction ----------
+#
+# `sensitive_field_ids` accelerates content redaction, but metadata fields
+# are scanned independently because sensitive values can live only in
+# source labels, section paths, attachment names, or source anchors.
+
+
+def test_metadata_only_sensitive_value_in_section_path_is_redacted_from_context_and_sources():
+    """A value present only in section_path is redacted everywhere it surfaces.
+
+    `sensitive_field_ids` is deliberately left unset to exercise the
+    metadata-only path.
+    """
+    from rag.retrieval.authorization import AuthorizationContext
+
+    result = _make_result(
+        "c1",
+        "Ordinary body text with no sensitive value at all.",
+        source="a.md",
+        score=0.9,
+        section_path=f"Admin Credentials > {_ALPHA_ADMIN_KEY}",
+    )
+    vectorstore = FakeVectorStore([result])
+    config = _config_with_field_redaction(enabled=True)
+    config.security.authorization.enabled = True
+    pipeline = RetrievalPipeline(
+        config, vectorstore=vectorstore, embedder=FakeEmbedder(), reranker=FakeReranker()
+    )
+    unauthorized = AuthorizationContext(tenant_id="tenant_alpha", roles=["tenant_alpha_operator"])
+
+    results = pipeline.retrieve(
+        "q", candidate_k=1, reranker_top_n=1, generation_context_top_n=1, auth=unauthorized
+    )
+    context = build_context(results)
+    label = source_label(results[0])
+    source = source_dict(results[0])
+
+    assert _ALPHA_ADMIN_KEY not in results[0].chunk.metadata.section_path
+    assert _ALPHA_ADMIN_KEY not in context  # what actually reaches the LLM prompt
+    assert _ALPHA_ADMIN_KEY not in label
+    assert _ALPHA_ADMIN_KEY not in source["section_path"]  # API response / citation shape
+    assert "synthetic_admin_credential" in results[0].redacted_field_ids
+
+
+def test_metadata_only_sensitive_value_in_attachment_name_is_redacted_from_context_and_sources():
+    """A value present only in attachment_name/source_anchor is redacted everywhere."""
+    from rag.retrieval.authorization import AuthorizationContext
+
+    result = _make_result(
+        "c1",
+        "Ordinary body text with no sensitive value at all.",
+        source="a.md",
+        score=0.9,
+        attachment_name=f"admin-key-{_ALPHA_ADMIN_KEY}.pdf",
+        source_anchor=f"assets/admin-key-{_ALPHA_ADMIN_KEY}.pdf",
+    )
+    vectorstore = FakeVectorStore([result])
+    config = _config_with_field_redaction(enabled=True)
+    config.security.authorization.enabled = True
+    pipeline = RetrievalPipeline(
+        config, vectorstore=vectorstore, embedder=FakeEmbedder(), reranker=FakeReranker()
+    )
+    unauthorized = AuthorizationContext(tenant_id="tenant_alpha", roles=["tenant_alpha_operator"])
+
+    results = pipeline.retrieve(
+        "q", candidate_k=1, reranker_top_n=1, generation_context_top_n=1, auth=unauthorized
+    )
+    source = source_dict(results[0])
+
+    assert _ALPHA_ADMIN_KEY not in results[0].chunk.metadata.attachment_name
+    assert _ALPHA_ADMIN_KEY not in results[0].chunk.metadata.source_anchor
+    assert _ALPHA_ADMIN_KEY not in source["attachment_name"]
+    assert _ALPHA_ADMIN_KEY not in source["source_anchor"]
+    assert "synthetic_admin_credential" in results[0].redacted_field_ids
+
+
+def test_answer_sources_redact_a_metadata_only_sensitive_value():
+    """answer()'s "sources" list also reflects metadata redaction.
+
+    A dedicated end-to-end check through answer() itself (build_context()
+    is a lower-level slice of the same path already covered by the two
+    tests above); uses its own fresh vectorstore/result so no earlier
+    test's retrieve() call has already mutated the shared SearchResult.
+    """
+    from rag.retrieval.authorization import AuthorizationContext
+
+    result = _make_result(
+        "c1",
+        "Ordinary body text with no sensitive value at all.",
+        source="a.md",
+        score=0.9,
+        section_path=f"Admin Credentials > {_ALPHA_ADMIN_KEY}",
+    )
+    vectorstore = FakeVectorStore([result])
+    config = _config_with_field_redaction(enabled=True)
+    config.security.authorization.enabled = True
+    llm = FakeLLM()
+    pipeline = RetrievalPipeline(
+        config, vectorstore=vectorstore, embedder=FakeEmbedder(), reranker=FakeReranker(), llm=llm
+    )
+    unauthorized = AuthorizationContext(tenant_id="tenant_alpha", roles=["tenant_alpha_operator"])
+
+    answer_result = pipeline.answer("q", auth=unauthorized)
+
+    assert _ALPHA_ADMIN_KEY not in llm.last_prompt
+    assert _ALPHA_ADMIN_KEY not in answer_result["sources"][0]["section_path"]
+    assert "synthetic_admin_credential" in answer_result["sources"][0]["redacted_field_ids"]
+
+
+def test_metadata_redaction_runs_even_when_sensitive_field_ids_is_none():
+    """sensitive_field_ids=None must not short-circuit metadata redaction.
+
+    An unauthorized role with a matching metadata value still gets
+    `redacted_field_ids`, even when content has no ingestion-time tag.
+    """
+    from rag.retrieval.authorization import AuthorizationContext
+
+    result = _make_result(
+        "c1",
+        "No match in the body.",
+        source="a.md",
+        score=0.9,
+        sensitive_field_ids=None,
+        section_path=f"Setup > {_ALPHA_ADMIN_KEY}",
+    )
+    vectorstore = FakeVectorStore([result])
+    config = _config_with_field_redaction(enabled=True)
+    config.security.authorization.enabled = True
+    pipeline = RetrievalPipeline(
+        config, vectorstore=vectorstore, embedder=FakeEmbedder(), reranker=FakeReranker()
+    )
+    unauthorized = AuthorizationContext(tenant_id="tenant_alpha", roles=["tenant_alpha_operator"])
+
+    results = pipeline.retrieve(
+        "q", candidate_k=1, reranker_top_n=1, generation_context_top_n=1, auth=unauthorized
+    )
+
+    assert results[0].redacted_field_ids != []
+    assert _ALPHA_ADMIN_KEY not in results[0].chunk.metadata.section_path
+
+
+def test_metadata_only_sensitive_value_preserved_for_authorized_role():
+    """An authorized role still sees the raw metadata value, unredacted."""
+    from rag.retrieval.authorization import AuthorizationContext
+
+    result = _make_result(
+        "c1",
+        "Ordinary body text.",
+        source="a.md",
+        score=0.9,
+        section_path=f"Admin Credentials > {_ALPHA_ADMIN_KEY}",
+    )
+    vectorstore = FakeVectorStore([result])
+    config = _config_with_field_redaction(enabled=True)
+    config.security.authorization.enabled = True
+    pipeline = RetrievalPipeline(
+        config, vectorstore=vectorstore, embedder=FakeEmbedder(), reranker=FakeReranker()
+    )
+    authorized = AuthorizationContext(tenant_id="tenant_alpha", roles=["tenant_alpha_admin"])
+
+    results = pipeline.retrieve(
+        "q", candidate_k=1, reranker_top_n=1, generation_context_top_n=1, auth=authorized
+    )
+
+    assert _ALPHA_ADMIN_KEY in results[0].chunk.metadata.section_path
+    assert results[0].redacted_field_ids == []
+
+
+def test_content_redaction_behavior_is_unchanged_by_the_metadata_fix():
+    """A sensitive body value with an ingestion-time tag still redacts.
+
+    This protects the existing content-redaction path while metadata
+    scanning is handled independently.
+    """
+    from rag.retrieval.authorization import AuthorizationContext
+
+    result = _make_result(
+        "c1",
+        f"The synthetic test key is {_ALPHA_ADMIN_KEY}.",
+        source="a.md",
+        score=0.9,
+        sensitive_field_ids=["synthetic_admin_credential"],
+    )
+    vectorstore = FakeVectorStore([result])
+    config = _config_with_field_redaction(enabled=True)
+    config.security.authorization.enabled = True
+    pipeline = RetrievalPipeline(
+        config, vectorstore=vectorstore, embedder=FakeEmbedder(), reranker=FakeReranker()
+    )
+    unauthorized = AuthorizationContext(tenant_id="tenant_alpha", roles=["tenant_alpha_operator"])
+
+    results = pipeline.retrieve(
+        "q", candidate_k=1, reranker_top_n=1, generation_context_top_n=1, auth=unauthorized
+    )
+
+    assert _ALPHA_ADMIN_KEY not in results[0].chunk.content
+    assert "[REDACTED:SENSITIVE_FIELD]" in results[0].chunk.content
+    assert results[0].redacted_field_ids == ["synthetic_admin_credential"]
