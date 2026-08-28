@@ -154,21 +154,26 @@ def _final_response(result: AgentRunResult) -> AgentQueryResponse:
 
 async def _stream_agent_query(
     request: Request,
-    body: AgentQueryRequest,
-    identity: VerifiedIdentity | None,
+    state: AgentState,
     pipeline: RetrievalPipeline,
     vectorstore: VectorStore,
     embedder: Embedder,
     llm: LLM,
     config: AppConfig,
 ) -> AsyncIterator[str]:
-    """Yield `text/event-stream` messages for one agent run, ending in `completed`/`terminated`."""
-    enforce_dos_limits(body.query, None, body.filters, config)
-    auth = build_authorization_context(
-        identity, body.tenant_id, body.roles, body.as_of, body.require_trust_level
-    )
-    state = AgentState(original_query=body.query, authorization_context=auth, filters=body.filters)
+    """Yield `text/event-stream` messages for one agent run, ending in `completed`/`terminated`.
 
+    `state` is fully built (including DoS-limit validation and
+    authorization-context construction) by the `_build_validated_agent_state`
+    FastAPI dependency, resolved before `agent_query_stream`'s body ever
+    runs -- before this async generator is even handed to
+    `StreamingResponse`. An async generator's body doesn't execute at all
+    until its first `__anext__()`, which happens only after Starlette has
+    already sent the `http.response.start` message (status 200) for a
+    `StreamingResponse`. Validating here would mean an invalid request
+    gets a committed 200 status before the rejection is ever raised,
+    instead of a clean 4xx.
+    """
     queue: asyncio.Queue[Any] = asyncio.Queue()
     loop = asyncio.get_running_loop()
     task = asyncio.ensure_future(
@@ -245,10 +250,26 @@ def agent_query_stream(
         `completed` or `terminated` event carrying the same payload shape
         as `/agent/query`'s JSON response. 404 when
         `config.observability.live_events.enabled` is `False`.
+
+    Raises
+    ------
+    HTTPException
+        404 when live events are disabled; 422 when `body.query`/
+        `body.filters` violate `security.dos_limits`. Both are raised
+        here, in the plain synchronous request handler, before any
+        `StreamingResponse` is constructed -- so FastAPI's normal
+        exception handling returns a clean 4xx with no response yet
+        started, and no agent/vectorstore/LLM work is ever begun for a
+        rejected request.
     """
     if not config.observability.live_events.enabled:
         raise HTTPException(status_code=404, detail="Live agent events are disabled")
+    enforce_dos_limits(body.query, None, body.filters, config)
+    auth = build_authorization_context(
+        identity, body.tenant_id, body.roles, body.as_of, body.require_trust_level
+    )
+    state = AgentState(original_query=body.query, authorization_context=auth, filters=body.filters)
     return StreamingResponse(
-        _stream_agent_query(request, body, identity, pipeline, vectorstore, embedder, llm, config),
+        _stream_agent_query(request, state, pipeline, vectorstore, embedder, llm, config),
         media_type="text/event-stream",
     )
