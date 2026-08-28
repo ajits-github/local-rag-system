@@ -9,7 +9,7 @@ from rag.vision.base import VisionProvider
 
 
 class FakeVectorStore:
-    """Minimal VectorStore double. no DB, just records what was written."""
+    """Minimal VectorStore double. No DB, just records what was written."""
 
     def __init__(self) -> None:
         """Start with no recorded chunks and an empty image-description cache."""
@@ -57,7 +57,7 @@ class FakeVisionProvider(VisionProvider):
         """Store the canned description and start with no recorded calls.
 
         `raises`, when set, is raised by `describe_image` instead of
-        returning `description`. simulates a provider call failure
+        returning `description`. It simulates a provider call failure
         (Ollama unreachable/timed out/malformed response) without a real
         network call.
         """
@@ -69,7 +69,7 @@ class FakeVisionProvider(VisionProvider):
         self.calls: list[tuple[Path, str | None]] = []
 
     def describe_image(self, image_path: Path, alt_text: str | None = None) -> str:
-        """Record the call and return the canned description. never a real network call."""
+        """Record the call and return the canned description without a network call."""
         self.calls.append((image_path, alt_text))
         if self._raises is not None:
             raise self._raises
@@ -146,10 +146,9 @@ def test_write_persists_chunks_to_vectorstore():
 def test_span_matching_sensitive_pattern_is_tagged_with_field_id():
     """A span containing the synthetic admin-key pattern is tagged at write time.
 
-    Field-level-safety milestone: this ingestion-time tag (see
-    rag.retrieval.field_policy.detect_sensitive_field_ids) is what lets
-    RetrievalPipeline skip the redaction pass entirely for untagged
-    chunks. it carries no role decision by itself.
+    This ingestion-time tag lets RetrievalPipeline skip content redaction
+    for untagged chunks. Metadata redaction still runs independently. The
+    tag carries no role decision by itself.
     """
     vectorstore = FakeVectorStore()
     writer = Writer(FakeEmbedder(), vectorstore)
@@ -277,7 +276,7 @@ def test_parent_tracking_resets_across_sections():
 
 
 def test_no_vision_provider_leaves_image_span_untouched():
-    """Without a VisionProvider, an image span is persisted as-is. no sibling, no file access."""
+    """Without a VisionProvider, an image span is persisted as-is. No sibling, no file access."""
     writer = Writer(FakeEmbedder(), FakeVectorStore())
     spans = [
         ChunkSpan(
@@ -297,8 +296,8 @@ def test_no_vision_provider_leaves_image_span_untouched():
 def test_vision_provider_adds_sibling_chunk_without_modifying_caption_chunk(tmp_path):
     """A configured VisionProvider adds a second, vision_generated=True chunk per image span.
 
-    The original caption/alt-text chunk is never modified. "never
-    overwrite captions with generated descriptions."
+    The original caption/alt-text chunk is never overwritten by the
+    generated description.
     """
     doc_dir = tmp_path / "knowledge_base"
     (doc_dir / "images").mkdir(parents=True)
@@ -342,7 +341,7 @@ def test_vision_provider_adds_sibling_chunk_without_modifying_caption_chunk(tmp_
 
 
 def test_vision_provider_is_not_called_again_on_cache_hit(tmp_path):
-    """A second write() over the same image reuses the cache. no second describe_image call."""
+    """A second write() over the same image reuses the cache without another vision call."""
     doc_dir = tmp_path / "knowledge_base"
     (doc_dir / "images").mkdir(parents=True)
     (doc_dir / "images" / "diagram.png").write_bytes(b"fake-png-bytes")
@@ -415,8 +414,8 @@ def test_vision_provider_cache_misses_on_changed_prompt_version(tmp_path):
 def test_vision_provider_cache_misses_on_changed_image_bytes(tmp_path):
     """A different image at the same path (different checksum) is never served a stale description.
 
-    Same provider/model/prompt_version. only the image bytes on disk
-    changed between writes. so the cache key (keyed on the image's own
+    Same provider/model/prompt_version. Only the image bytes on disk
+    changed between writes, so the cache key (keyed on the image's own
     sha256, not its path) must miss and re-describe.
     """
     doc_dir = tmp_path / "knowledge_base"
@@ -535,8 +534,8 @@ def test_vision_provider_cache_misses_on_changed_provider(tmp_path):
 def test_vision_provider_call_failure_skips_image_without_failing_document(tmp_path):
     """A `describe_image` exception (Ollama unreachable/timeout/malformed response) is caught.
 
-    That one image gets no vision sibling. the same outcome as a
-    missing asset file. but the rest of the document still ingests
+    That one image gets no vision sibling, the same outcome as a
+    missing asset file. The rest of the document still ingests
     normally, and the caption/alt-text chunk for the failed image is
     still written. A single vision-model hiccup must never fail an
     entire document's ingestion.
