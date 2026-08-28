@@ -1,10 +1,11 @@
 """Diagnostic: find sensitive literals duplicated across chunks, or missing their ingestion tag.
 
-Reads every chunk's `content`/`sensitive_field_ids` straight from
-Postgres and runs `field_policy.find_duplicate_sensitive_occurrences`
-against them. A diagnostic/validation tool over the real corpus, not part
-of the query-time enforcement path. Never prints a raw secret value; only
-sha256 hashes and chunk/document ids.
+Reads every chunk's `content`, scannable metadata, and
+`sensitive_field_ids` straight from Postgres, then runs
+`field_policy.find_duplicate_sensitive_occurrences` against them. A
+diagnostic/validation tool over the real corpus, not part of the
+query-time enforcement path. Never prints a raw secret value; only sha256
+hashes and chunk/document ids.
 
 Usage:
     python scripts/detect_duplicate_sensitive_values.py [--config config/default.yaml]
@@ -33,6 +34,10 @@ class _ChunkMetadataStub:
     """Minimal duck-typed stand-in for the metadata fields the detector reads."""
 
     sensitive_field_ids: list[str] | None
+    source: str | None
+    section_path: str | None
+    attachment_name: str | None
+    source_anchor: str | None
 
 
 @dataclass
@@ -45,22 +50,39 @@ class _ChunkStub:
 
 
 def _load_chunks(config) -> list[_ChunkStub]:  # noqa: ANN001
-    """Read every chunk's id/content/sensitive_field_ids directly from Postgres.
+    """Read chunk text and sensitive-scannable metadata directly from Postgres.
 
     Uses direct SQL because `VectorStore.search` is query-shaped and
     top_k-limited, and the interface has no "fetch every chunk" primitive.
+    Fetches the same fields `find_duplicate_sensitive_occurrences` scans
+    (see `field_policy.SCANNABLE_METADATA_FIELDS`), not just `content`, so
+    a sensitive literal living only in metadata is caught by this
+    diagnostic too.
     """
     table = config.vectorstore.chunks_table
     conn = psycopg2.connect(config.database_url())
     try:
         with conn.cursor() as cur:
-            cur.execute(f"SELECT chunk_id, content, sensitive_field_ids FROM {table}")  # noqa: S608
+            cur.execute(
+                f"SELECT chunk_id, content, sensitive_field_ids, "  # noqa: S608
+                f"source, section_path, attachment_name, source_anchor FROM {table}"
+            )
             rows = cur.fetchall()
     finally:
         conn.close()
     return [
-        _ChunkStub(id=chunk_id, content=content, metadata=_ChunkMetadataStub(sensitive_field_ids))
-        for chunk_id, content, sensitive_field_ids in rows
+        _ChunkStub(
+            id=row[0],
+            content=row[1],
+            metadata=_ChunkMetadataStub(
+                sensitive_field_ids=row[2],
+                source=row[3],
+                section_path=row[4],
+                attachment_name=row[5],
+                source_anchor=row[6],
+            ),
+        )
+        for row in rows
     ]
 
 
