@@ -1553,7 +1553,7 @@ def evaluate(
             "note": (
                 "Among sensitive_data_present=true, expected_behavior starting with "
                 "'refuse' examples whose question matches an encoding/transformation "
-                "attempt heuristic (base64/reverse/split/character-by-character -- see "
+                "attempt heuristic (base64/reverse/split/character-by-character; see "
                 "_ENCODING_ATTEMPT_PATTERNS), fraction where the sensitive literal was "
                 "still recoverable from the answer via a direct scan, a reversed-text "
                 "scan, or a Base64-decode-then-scan (see _encoded_extraction_succeeded). "
@@ -1571,13 +1571,14 @@ def evaluate(
                 "Auth-boundary milestone. Among examples with a purely-forbidden "
                 "document (see document_unauthorized_retrieval_rate's "
                 "_document_only_forbidden) or sensitive_data_present=true, fraction "
-                "where any retrieved result's own metadata -- not just content -- leaked "
+                "where any retrieved result's own metadata, not just content, leaked "
                 "something restricted: its source path-suffix-matched a forbidden "
-                "document, or its attachment_name/section_path contained a sensitive-"
-                "literal pattern (see _metadata_leak_hit). Citation leakage for a truly "
-                "forbidden document is already structurally impossible today (SQL-level "
-                "ACL excludes it before Python ever sees it) -- this metric's real "
-                "purpose is catching the narrower residual risk: a redacted-field value "
+                "document, or its source/attachment_name/section_path/source_anchor "
+                "contained a sensitive-literal pattern (see _metadata_leak_hit). "
+                "Citation leakage for a truly forbidden document is already "
+                "structurally impossible today because SQL-level ACL excludes it "
+                "before Python ever sees it. This metric's real purpose is catching "
+                "the narrower residual risk: a redacted-field value "
                 "echoed indirectly through a permitted document's own metadata."
             ),
             **_rate(metadata_leak_records),
@@ -1589,11 +1590,11 @@ def evaluate(
                 "Auth-boundary milestone. Among sensitive_data_present=true or "
                 "purely-forbidden-document examples, fraction where at least one "
                 "generation_sources entry has a sensitive_field_ids tag not fully "
-                "covered by redacted_field_ids (see _egress_violation) -- i.e. would "
+                "covered by redacted_field_ids (see _egress_violation). It would "
                 "violate egress_policy.py's core rule ('unredacted restricted sensitive "
                 "fields must never be sent') if this retrieval's sources were handed to "
                 "a hosted judge/provider. Independent of whether "
-                "config.security.egress_policy.enabled actually was for this run -- a "
+                "config.security.egress_policy.enabled actually was for this run; a "
                 "self-contained check of the underlying condition, not the toggle."
             ),
             **_rate(egress_violation_records),
@@ -1618,7 +1619,7 @@ def evaluate(
         report["relevant_image_hit_rate"] = {
             "note": (
                 "Among gold examples with a non-empty relevant_images, whether any "
-                "retrieved chunk's resolved image asset path matched one of them -- "
+                "retrieved chunk's resolved image asset path matched one of them. "
                 "meaningful in text-only mode too (checks the caption-based image "
                 "element was surfaced, independent of whether it was sufficient to answer)."
             ),
@@ -1632,7 +1633,7 @@ def evaluate(
             "note": (
                 "Among gold examples whose expected_content_types includes 'table', "
                 "whether a retrieved chunk from a relevant_documents-matching source "
-                "actually has content_type='table' -- table structure was preserved "
+                "actually has content_type='table'. Table structure was preserved "
                 "and surfaced, not just that a chunk from the right document appeared."
             ),
             "count": len(table_hit_records),
@@ -1644,7 +1645,7 @@ def evaluate(
                 "Among requires_vision=true examples (or expected_content_types "
                 "including 'image'/'chart'), whether a retrieved chunk from a "
                 "relevant_documents-matching source has content_type in "
-                "{'image','chart'} -- valid in text-only mode too, since it only "
+                "{'image','chart'}. Valid in text-only mode too, since it only "
                 "checks the visual element itself was surfaced (see "
                 "visual_evidence_support_rate for whether it carried real vision "
                 "understanding, not just caption/alt-text)."
@@ -1658,7 +1659,7 @@ def evaluate(
                 "Among gold examples with a non-empty relevant_pages, whether a "
                 "retrieved chunk from a relevant_documents-matching source also has "
                 "ChunkMetadata.page in relevant_pages. Markdown/text/HTML chunks "
-                "(page=None) never contribute a hit -- this metric only has signal "
+                "(page=None) never contribute a hit; this metric only has signal "
                 "for PDF/DOCX evidence."
             ),
             "count": len(page_localization_records),
@@ -1669,7 +1670,7 @@ def evaluate(
             "note": (
                 "Among gold examples with a non-empty relevant_sections, whether a "
                 "retrieved chunk from a relevant_documents-matching source has a "
-                "section_path containing one of them (substring match -- see "
+                "section_path containing one of them (substring match; see "
                 "_section_hit's docstring for why exact equality would under-count)."
             ),
             "count": len(section_localization_records),
@@ -1681,7 +1682,7 @@ def evaluate(
                 "Among requires_vision=true examples, whether a retrieved chunk from "
                 "a relevant_documents-matching source has vision_generated=true (real "
                 "vision-model output, not just a caption/alt-text image chunk). 0.0 "
-                "by construction whenever config.vision.provider='none' -- the metric "
+                "by construction whenever config.vision.provider='none'. This is the metric "
                 "this milestone's later text-vs-vision A/B/C comparison isolates on."
             ),
             "count": len(visual_evidence_support_records),
@@ -1693,7 +1694,7 @@ def evaluate(
                 "answer_quality (KeywordOverlapScorer against expected_answer), "
                 "restricted to examples where requires_vision, "
                 "requires_layout_awareness, or requires_relationship_expansion is "
-                "true -- the genuinely multimodal/layout-dependent subset of this "
+                "true. This is the genuinely multimodal/layout-dependent subset of this "
                 "gold set, as opposed to the top-level answer_quality figure which "
                 "spans every example including plain-text ones."
             ),
@@ -1709,7 +1710,7 @@ def evaluate(
                 "Among requires_relationship_expansion=True examples with authored "
                 "reference_contexts, the fraction where an origin='expanded' chunk "
                 "supplied supporting context that the pre-expansion (origin='retrieved') "
-                "set alone did not -- demonstrates expansion contributed evidence, not "
+                "set alone did not. Demonstrates expansion contributed evidence, not "
                 "just that it fired. 0.0 when relationship_expansion.enabled=false, by "
                 "construction (no chunk ever has origin='expanded')."
             ),
@@ -1732,7 +1733,7 @@ def evaluate(
                     "fusion_ms only appear for retrieval.provider='hybrid'; "
                     "expansion_ms only when relationship_expansion.enabled). rerank_ms "
                     "is NoOpReranker's near-zero identity pass when reranker.provider="
-                    "'none', or a real reranker's rescoring cost otherwise -- compare "
+                    "'none', or a real reranker's rescoring cost otherwise. Compare "
                     "this field across two reports differing only in reranker.provider "
                     "to isolate the reranker's added latency."
                 ),
@@ -1745,7 +1746,7 @@ def evaluate(
             report["token_usage"] = {
                 "note": (
                     "Read from OllamaLLM's per-call prompt_eval_count/eval_count "
-                    "(None -- and excluded from these means -- if the Ollama response "
+                    "(None, and excluded from these means, if the Ollama response "
                     "omitted either field). prompt_tokens covers the full rendered "
                     "prompt (system + context + query), not context alone."
                 ),
@@ -1759,7 +1760,7 @@ def evaluate(
                 "note": (
                     "Among gold examples with unanswerable=true, the fraction whose "
                     "generated answer matched run_eval.py's literal refusal-phrase list "
-                    "(_looks_like_refusal) -- a phrase-match heuristic, not a semantic "
+                    "(_looks_like_refusal), a phrase-match heuristic, not a semantic "
                     "judgment of whether the refusal was well-reasoned. Distinct from "
                     "vision_behavior_breakdown, which only covers requires_vision=true "
                     "examples."
@@ -1774,7 +1775,7 @@ def evaluate(
                     "generation_sources (i.e. expansion actually fired for this answer() "
                     "call), the fraction where expanded-only content also appears "
                     "(keyword-overlap heuristic, see _expansion_utilization) in the "
-                    "generated answer -- a proxy for 'was the expanded context consumed, "
+                    "generated answer. This is a proxy for 'was the expanded context consumed, "
                     "or just added as noise'. Distinct from "
                     "relationship_expansion_contribution_rate, which only covers "
                     "requires_relationship_expansion=true gold rows against authored "
@@ -1789,7 +1790,7 @@ def evaluate(
         all_quality = answerable_quality_scores + unanswerable_quality_scores
         report["answer_quality"] = {
             "note": (
-                "Keyword-overlap heuristic (eval/answer_quality.py) -- a crude "
+                "Keyword-overlap heuristic (eval/answer_quality.py), a crude "
                 "placeholder, not a faithfulness/correctness judge. Particularly "
                 "unreliable on unanswerable questions, where a correct refusal "
                 "may share few keywords with the reference 'no answer' text. "
@@ -1876,14 +1877,14 @@ def main() -> None:
     parser.add_argument(
         "--dataset-id",
         required=True,
-        help="Namespace to restrict retrieval to (e.g. 'techfusion'). Mandatory -- "
+        help="Namespace to restrict retrieval to (e.g. 'techfusion'). Mandatory; "
         "applied as a filter on every retrieval this run makes.",
     )
     parser.add_argument("--config", default=None, help="Override config/default.yaml")
     parser.add_argument(
         "--skip-generation",
         action="store_true",
-        help="Retrieval metrics only -- skips LLM generation, latency, and answer-quality scoring.",
+        help="Retrieval metrics only; skips LLM generation, latency, and answer-quality scoring.",
     )
     parser.add_argument(
         "--verbose", action="store_true", help="Include per-question detail in the printed report"
@@ -1892,14 +1893,14 @@ def main() -> None:
         "--corpus-version",
         default=None,
         help="Free-form corpus version label recorded in corpus_lineage (e.g. a date or "
-        "milestone slug). Not auto-generated -- defaults to 'unspecified' if omitted.",
+        "milestone slug). Not auto-generated; defaults to 'unspecified' if omitted.",
     )
     parser.add_argument(
         "--include-api-probes",
         action="store_true",
         help="Also run evaluate_authentication_boundary_probes (authentication_failure_"
         "acceptance_rate/oversized_request_rejection_accuracy) against the live FastAPI "
-        "app via a TestClient -- opt-in since it needs security.auth.enabled/a resolvable "
+        "app via a TestClient. Opt-in since it needs security.auth.enabled/a resolvable "
         "signing key to be meaningful, unlike every other metric in this report.",
     )
     args = parser.parse_args()
