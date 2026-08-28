@@ -188,3 +188,19 @@ def test_stream_endpoint_oversized_filters_returns_422_with_no_agent_work():
         assert pipeline.calls == []
     finally:
         _teardown()
+
+
+def test_stream_endpoint_valid_request_still_streams_normally():
+    """A within-limits request still streams a normal completed event; the fix doesn't break it."""
+    config = _no_auth_config()
+    client, pipeline = _client_with(config)
+    try:
+        with client.stream("POST", "/agent/query/stream", json={"query": "hello"}) as response:
+            assert response.status_code == 200
+            body = "".join(response.iter_text())
+    finally:
+        _teardown()
+
+    events = _parse_sse(body)
+    assert [e for e, _ in events] == ["query_received", "route_selected", "completed"]
+    assert len(pipeline.calls) == 1
