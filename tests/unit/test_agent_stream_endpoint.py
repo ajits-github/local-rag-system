@@ -134,3 +134,20 @@ def test_stream_endpoint_returns_404_when_live_events_disabled():
         assert response.status_code == 404
     finally:
         _teardown()
+
+
+class _NeverCalledLLM:
+    """`LLM` double that fails the test if the agent graph ever reaches it.
+
+    Used to prove a rejected (oversized/invalid) streaming request never
+    starts agent/LLM work -- validation must happen before `run_agent` is
+    ever invoked, not discovered partway through a stream.
+    """
+
+    def generate(self, system: str, user: str) -> str:
+        """Fail: no LLM call should happen for a request DoS limits reject."""
+        raise AssertionError("LLM.generate should never be reached for a rejected request")
+
+    def health_check(self) -> bool:
+        """Report healthy; never actually exercised by these tests."""
+        return True
