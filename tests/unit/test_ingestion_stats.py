@@ -307,6 +307,74 @@ def test_deletion_detection_stays_scoped_to_its_own_dataset(tmp_path: Path):
     )
 
 
+def test_same_root_reingested_with_a_different_spelling_replaces_without_duplicating(
+    tmp_path: Path, monkeypatch
+):
+    """Re-spelling the same root between runs churns identity but never duplicates or loses content.
+
+    Known, bounded limitation adjacent to A1, not a reintroduction of it.
+    `document_id` is keyed on the literal `source` string everywhere in
+    this system (see the project's "Document identity" docs), not just in
+    deletion detection -- a differently-spelled root produces a
+    differently-spelled `source` for the same physical file, which this
+    system already treats as a distinct identity. `_source_is_under_root`'s
+    scoping guarantees no *cross-root* document is ever wrongly deleted; it
+    does not, and given the existing string-keyed identity model safely
+    cannot, guarantee document_id continuity when the same root is spelled
+    differently across runs. Normalizing every discovered source to a
+    resolved/absolute form would avoid this specific churn but would also
+    make every already-ingested (relative-form) document in every existing
+    dataset mismatch on its very next re-ingestion, forcing a one-time mass
+    delete-and-recreate well out of proportion to this edge case, so it was
+    deliberately not done. What's verified here is the safe fallback: the
+    old spelling's document is replaced, never left as an orphaned
+    duplicate alongside the new one, and its content is never lost.
+    """
+    root = tmp_path / "kb"
+    root.mkdir()
+    (root / "a.md").write_text("Alpha content.", encoding="utf-8")
+
+    pipeline, vs = _pipeline()
+    monkeypatch.chdir(tmp_path)
+    pipeline.ingest_path(Path("kb"), "test-dataset")
+    chunks_after_first_run = len(vs.written_chunks)
+
+    absolute_root = (tmp_path / "kb").resolve()
+    stats = pipeline.ingest_path(absolute_root, "test-dataset")
+
+    assert stats.deleted == 1
+    assert stats.new == 1
+    assert len(vs.list_document_sources("test-dataset")) == 1  # never duplicated
+    assert len(vs.written_chunks) == chunks_after_first_run  # content survives, not lost
+
+
+def test_posix_style_persisted_source_vs_native_discovered_path_never_duplicates(
+    tmp_path: Path, monkeypatch
+):
+    """A source persisted with POSIX separators (e.g. a Linux container run) is safely replaced.
+
+    Simulates the cross-platform half of the same limitation described in
+    test_same_root_reingested_with_a_different_spelling_replaces_without_duplicating:
+    a document ingested elsewhere with forward-slash separators, rediscovered
+    on this host with native separators. The safe invariant holds:
+    replaced, not duplicated.
+    """
+    root = tmp_path / "kb"
+    root.mkdir()
+    (root / "a.md").write_text("Alpha content.", encoding="utf-8")
+
+    pipeline, vs = _pipeline()
+    monkeypatch.chdir(tmp_path)
+
+    posix_source = str(root / "a.md").replace("\\", "/")
+    vs._documents[(posix_source, "test-dataset")] = ("doc-preexisting", "stale-checksum")
+
+    stats = pipeline.ingest_path(Path("kb"), "test-dataset")
+
+    assert stats.deleted == 1  # the differently-separated entry is replaced, not left orphaned
+    assert len(vs.list_document_sources("test-dataset")) == 1  # never duplicated
+
+
 class TestSourceIsUnderRoot:
     """Direct coverage of the resolved-path root-membership helper the A1 fix relies on."""
 
