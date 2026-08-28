@@ -17,6 +17,7 @@ from rag.cleaners.default_cleaner import DefaultCleaner
 from rag.config import AppConfig, load_config
 from rag.embedders.base import Embedder
 from rag.factory import build_embedder, build_vectorstore, build_vision_provider
+from rag.ingestion.governance import IngestCallerContext, resolve_ingest_tenant_id
 from rag.ingestion.writer import Writer
 from rag.loaders.registry import get_loader
 from rag.schemas import IngestionStats
@@ -75,7 +76,11 @@ class IngestionPipeline:
         self._vectorstore.delete_dataset(dataset_id)
 
     def ingest_file(
-        self, path: Path, dataset_id: str, category: str | None = None
+        self,
+        path: Path,
+        dataset_id: str,
+        category: str | None = None,
+        caller: IngestCallerContext | None = None,
     ) -> dict[str, Any]:
         """Load, clean, chunk, embed, and persist a single file.
 
@@ -90,6 +95,18 @@ class IngestionPipeline:
             Namespace tag stored on every chunk.
         category : str | None, optional
             Folder-derived category tag, by default None.
+        caller : IngestCallerContext | None, optional
+            The authenticated caller's governance identity, if any. `None`
+            (the default) means no caller identity is available. The CLI
+            (`make ingest`)/`ingest_path` always pass this, and `POST
+            /ingest` passes it too whenever JWT auth is disabled or an
+            unauthenticated request was allowed through
+            (`insecure_dev_mode`). In that case the loaded document's own
+            `tenant_id` (front matter, or `None`) is persisted exactly as
+            parsed, unchanged from before this parameter existed. When set,
+            `resolve_ingest_tenant_id` resolves the effective `tenant_id`
+            before any database write happens, so a rejected upload leaves
+            no trace (no document row, no checksum).
 
         Returns
         -------
@@ -100,12 +117,21 @@ class IngestionPipeline:
         ------
         ValueError
             If `path`'s extension isn't in `config.ingestion.supported_extensions`.
+        IngestGovernanceError
+            If `caller` is set and the loaded document's `tenant_id` names a
+            different tenant than `caller.tenant_id` without `caller`
+            holding a cross-tenant support role. See
+            `rag.ingestion.governance.resolve_ingest_tenant_id`.
         """
         path = Path(path)
         if path.suffix.lower() not in self._config.ingestion.supported_extensions:
             raise ValueError(f"Unsupported extension '{path.suffix}' for {path}")
 
         raw_document = get_loader(path).load(path)
+        if caller is not None:
+            raw_document = raw_document.model_copy(
+                update={"tenant_id": resolve_ingest_tenant_id(raw_document.tenant_id, caller)}
+            )
         checksum = hashlib.sha256(path.read_bytes()).hexdigest()
         document_id, changed = self._vectorstore.get_or_create_document_id(
             source=raw_document.source, checksum=checksum, dataset_id=dataset_id
@@ -253,7 +279,7 @@ def main() -> None:
     parser.add_argument(
         "--dataset-id",
         required=True,
-        help="Namespace tag stored on every chunk (e.g. 'techfusion'). Required -- "
+        help="Namespace tag stored on every chunk (e.g. 'techfusion'). Required; "
         "isolates this ingestion from every other dataset at retrieval/eval time.",
     )
     parser.add_argument("--config", default=None, help="Override config/default.yaml")
