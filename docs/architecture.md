@@ -1525,6 +1525,35 @@ negative value could reach Postgres's `LIMIT` clause. `enforce_dos_limits`
 now rejects any `top_k < 1` with 422 before retrieval runs at all. See
 `ISSUES.md` for the failure mode this closed.
 
+**A second, related fix for `/agent/query/stream` specifically.** That
+route used to run `enforce_dos_limits`/authorization-context construction
+*inside* the async generator handed to `StreamingResponse` — but an async
+generator's body never executes before its first `__anext__()`, and
+Starlette sends `StreamingResponse`'s `http.response.start` (status 200)
+before ever pulling that first item. So an invalid streaming request got
+a committed 200 status before its own rejection was even raised, instead
+of a clean 4xx. Fixed by moving that logic into `_build_validated_agent_state`,
+a dedicated FastAPI dependency resolved (and able to raise) before
+`StreamingResponse` is ever constructed. A follow-up review then found
+that fix still incomplete: `pipeline`/`vectorstore`/`embedder`/`llm` were
+declared as top-level `Depends()` parameters on the route, and FastAPI
+resolves *every* declared dependency, in signature order, before the
+handler body runs — so even a request `_build_validated_agent_state`
+correctly rejects still triggered those `lru_cache`d singleton getters
+(cheap after the first successful request warms the cache, but real,
+unnecessary singleton construction — model load, DB pool open — on a
+cold process's very first rejected request). Verified this ordering
+behavior directly against the installed `fastapi==0.141.1` before relying
+on it (a chained-dependency test proved a later `Depends()` callable is
+never invoked once an earlier one in the signature raises), then declared
+`_build_validated_agent_state` *before* those four in
+`agent_query_stream`'s signature so a rejected request now resolves none
+of them. `/query` and `/agent/query` have this same
+Depends()-before-validation characteristic today and were deliberately
+left unchanged — out of scope for this fix, flagged rather than silently
+expanded into. See `ISSUES.md` for both the original streaming-order bug
+and this follow-up.
+
 Rate limiting uses `slowapi` (new core dependency) with its default
 in-memory backend — no Redis. `RateLimitConfig.enabled: false` by
 default. The `Limiter` is keyed by `identity.tenant_id` when a verified
