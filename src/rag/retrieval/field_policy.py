@@ -38,10 +38,62 @@ class _ScannableChunk(Protocol):
 
 
 class _ScannableChunkMetadata(Protocol):
-    """Structural type for the `.metadata.sensitive_field_ids` this module reads."""
+    """Structural type for the metadata fields `find_duplicate_sensitive_occurrences` reads."""
 
     @property
     def sensitive_field_ids(self) -> list[str] | None: ...  # noqa: D102
+
+    @property
+    def source(self) -> str | None: ...  # noqa: D102
+
+    @property
+    def section_path(self) -> str | None: ...  # noqa: D102
+
+    @property
+    def attachment_name(self) -> str | None: ...  # noqa: D102
+
+    @property
+    def source_anchor(self) -> str | None: ...  # noqa: D102
+
+
+# Single source of truth for metadata fields that can carry sensitive
+# literals. Ingestion-time tagging, query-time redaction, and corpus-level
+# duplicate/miss diagnostics all scan this same field set.
+SCANNABLE_METADATA_FIELDS: tuple[str, ...] = (
+    "source",
+    "section_path",
+    "attachment_name",
+    "source_anchor",
+)
+
+
+def combine_scannable_fields(
+    content: str,
+    source: str | None = None,
+    section_path: str | None = None,
+    attachment_name: str | None = None,
+    source_anchor: str | None = None,
+) -> str:
+    """Combine a chunk's body text with every metadata field that can carry a sensitive value.
+
+    Parameters
+    ----------
+    content : str
+        The chunk's body text.
+    source, section_path, attachment_name, source_anchor : str | None, optional
+        The same-named `ChunkMetadata` fields; see `SCANNABLE_METADATA_FIELDS`.
+
+    Returns
+    -------
+    str
+        `content` plus every non-empty metadata field, newline-joined.
+        Suitable for detection (`detect_sensitive_field_ids`) or a
+        duplicate-occurrence scan. Redaction itself must operate on each
+        field independently so marker substitution in one field cannot
+        corrupt another.
+    """
+    parts = [content, source, section_path, attachment_name, source_anchor]
+    return "\n".join(p for p in parts if p)
 
 
 class SensitiveFieldPolicy(BaseModel):
@@ -293,8 +345,9 @@ def find_duplicate_sensitive_occurrences(
 
     Diagnostic only, not part of query-time enforcement. Catches two
     gaps: the same sensitive value copied into a second chunk that was
-    never cross-checked against the first, and a chunk whose content
-    matches a policy pattern but isn't tagged with that `field_id`.
+    never cross-checked against the first, and a chunk whose content or
+    scannable metadata matches a policy pattern but isn't tagged with that
+    `field_id`.
 
     Parameters
     ----------
@@ -316,8 +369,15 @@ def find_duplicate_sensitive_occurrences(
 
     for chunk in chunks:
         tagged_ids = set(chunk.metadata.sensitive_field_ids or [])
+        scan_text = combine_scannable_fields(
+            chunk.content,
+            source=chunk.metadata.source,
+            section_path=chunk.metadata.section_path,
+            attachment_name=chunk.metadata.attachment_name,
+            source_anchor=chunk.metadata.source_anchor,
+        )
         for policy in active:
-            for match in re.finditer(policy.pattern, chunk.content):
+            for match in re.finditer(policy.pattern, scan_text):
                 value_hash = hashlib.sha256(match.group(0).encode("utf-8")).hexdigest()
                 key = (policy.field_id, value_hash)
                 chunk_ids = chunk_ids_by_key.setdefault(key, [])
