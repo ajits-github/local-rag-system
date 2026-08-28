@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 
 from rag.embedders.base import Embedder
-from rag.retrieval.field_policy import detect_sensitive_field_ids
+from rag.retrieval.field_policy import combine_scannable_fields, detect_sensitive_field_ids
 from rag.schemas import Chunk, ChunkMetadata, ChunkSpan, RawDocument, VisionCallStats
 from rag.vectorstore.base import VectorStore
 from rag.vision.base import VisionProvider
@@ -114,7 +114,16 @@ class Writer:
                     parent_chunk_id=parent_chunk_ids[i],
                     vision_generated=span.vision_generated,
                     vision_description=span.vision_description,
-                    sensitive_field_ids=detect_sensitive_field_ids(span.text) or None,
+                    sensitive_field_ids=detect_sensitive_field_ids(
+                        combine_scannable_fields(
+                            span.text,
+                            source=document.source,
+                            section_path=span.section_path,
+                            attachment_name=span.attachment_name,
+                            source_anchor=span.source_anchor,
+                        )
+                    )
+                    or None,
                     tenant_id=document.tenant_id,
                     allowed_roles=document.allowed_roles,
                     classification=document.classification,
