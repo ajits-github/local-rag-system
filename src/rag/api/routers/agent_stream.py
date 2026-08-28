@@ -218,49 +218,54 @@ async def _stream_agent_query(
         await task
 
 
-@router.post("/agent/query/stream")
-@_limiter.limit(_agent_rate_limit_string)
-def agent_query_stream(
-    request: Request,
+def _build_validated_agent_state(
     body: AgentQueryRequest,
     identity: VerifiedIdentity | None = Depends(get_current_identity),
-    pipeline: RetrievalPipeline = Depends(get_retrieval_pipeline),
-    vectorstore: VectorStore = Depends(get_vectorstore),
-    embedder: Embedder = Depends(get_embedder),
-    llm: LLM = Depends(get_llm),
     config: AppConfig = Depends(get_config),
-) -> StreamingResponse:
-    """Stream live progress for `body.query` through the bounded agent graph.
+) -> AgentState:
+    """Validate the request and build its `AgentState`, before any heavy DI resolves.
+
+    Deliberately declared as its own FastAPI dependency, listed *before*
+    `pipeline`/`vectorstore`/`embedder`/`llm` in `agent_query_stream`'s
+    signature, rather than as body-level checks in the route function.
+    FastAPI resolves a route's declared `Depends()` parameters strictly in
+    signature order and aborts the moment one of them raises, without
+    resolving the parameters after it -- confirmed directly against the
+    installed `fastapi==0.141.1`, not assumed (a chained-dependency
+    ordering test proved a later `Depends()` callable is never invoked
+    once an earlier one in the signature raises). Declaring `pipeline`/
+    `vectorstore`/`embedder`/`llm` directly on the route, as this endpoint
+    used to, meant FastAPI's `lru_cache`d singleton getters (see
+    `api/deps.py`) were still resolved for a request this function goes
+    on to reject -- cheap after the first successful request warms the
+    cache, but real, unnecessary singleton construction (model load, DB
+    pool open) on a cold process's very first rejected request. Putting
+    the 404/422/401 checks in a dependency ahead of those four closes that
+    gap without changing `/query`/`/agent/query`, which are out of this
+    fix's scope.
 
     Parameters
     ----------
-    request : Request
-        The raw HTTP request; required by `slowapi`'s rate-limit
-        decorator, `get_current_identity`, and disconnect detection.
     body : AgentQueryRequest
-        Identical request shape to `POST /agent/query`.
-    identity, pipeline, vectorstore, embedder, llm, config
-        Same injected singletons `/agent/query` uses.
+        The request body.
+    identity : VerifiedIdentity | None
+        The verified caller identity, or `None` when JWT auth is disabled
+        (see `get_current_identity`; also resolved ahead of the heavy
+        singletons as a side effect of being this dependency's own
+        sub-dependency).
+    config : AppConfig
+        Application configuration.
 
     Returns
     -------
-    StreamingResponse
-        `text/event-stream`: a safe operational event per state-machine
-        transition (see `rag.agent.events.AgentEvent`), ending in one
-        `completed` or `terminated` event carrying the same payload shape
-        as `/agent/query`'s JSON response. 404 when
-        `config.observability.live_events.enabled` is `False`.
+    AgentState
+        The initial agent state for `run_agent`.
 
     Raises
     ------
     HTTPException
-        404 when live events are disabled; 422 when `body.query`/
-        `body.filters` violate `security.dos_limits`. Both are raised
-        here, in the plain synchronous request handler, before any
-        `StreamingResponse` is constructed -- so FastAPI's normal
-        exception handling returns a clean 4xx with no response yet
-        started, and no agent/vectorstore/LLM work is ever begun for a
-        rejected request.
+        404 when `config.observability.live_events.enabled` is `False`;
+        422 when `body.query`/`body.filters` violate `security.dos_limits`.
     """
     if not config.observability.live_events.enabled:
         raise HTTPException(status_code=404, detail="Live agent events are disabled")
@@ -268,7 +273,45 @@ def agent_query_stream(
     auth = build_authorization_context(
         identity, body.tenant_id, body.roles, body.as_of, body.require_trust_level
     )
-    state = AgentState(original_query=body.query, authorization_context=auth, filters=body.filters)
+    return AgentState(original_query=body.query, authorization_context=auth, filters=body.filters)
+
+
+@router.post("/agent/query/stream")
+@_limiter.limit(_agent_rate_limit_string)
+def agent_query_stream(
+    request: Request,
+    state: AgentState = Depends(_build_validated_agent_state),
+    pipeline: RetrievalPipeline = Depends(get_retrieval_pipeline),
+    vectorstore: VectorStore = Depends(get_vectorstore),
+    embedder: Embedder = Depends(get_embedder),
+    llm: LLM = Depends(get_llm),
+    config: AppConfig = Depends(get_config),
+) -> StreamingResponse:
+    """Stream live progress for the query in `state` through the bounded agent graph.
+
+    Parameters
+    ----------
+    request : Request
+        The raw HTTP request; required by `slowapi`'s rate-limit
+        decorator and disconnect detection.
+    state : AgentState
+        The validated initial agent state, built by
+        `_build_validated_agent_state` (request-body parsing,
+        DoS-limit enforcement, and authorization-context construction all
+        happen there, ahead of the dependencies below).
+    pipeline, vectorstore, embedder, llm, config
+        Same injected singletons `/agent/query` uses. Declared *after*
+        `state` so a rejected request never resolves them -- see
+        `_build_validated_agent_state`'s docstring.
+
+    Returns
+    -------
+    StreamingResponse
+        `text/event-stream`: a safe operational event per state-machine
+        transition (see `rag.agent.events.AgentEvent`), ending in one
+        `completed` or `terminated` event carrying the same payload shape
+        as `/agent/query`'s JSON response.
+    """
     return StreamingResponse(
         _stream_agent_query(request, state, pipeline, vectorstore, embedder, llm, config),
         media_type="text/event-stream",
