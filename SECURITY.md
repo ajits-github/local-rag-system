@@ -33,12 +33,20 @@ sections for the full design and documented limitations of each.
   enforced as SQL predicates in the vector store, before any row leaves
   Postgres (`src/rag/retrieval/authorization.py`).
 - **Ingest-time tenant governance**: an authenticated `POST /ingest`
-  upload is always bound to the caller's own verified tenant (stamped when
-  the uploaded document carries no governance metadata of its own, e.g.
-  every PDF/DOCX upload; rejected if it explicitly names a different
-  tenant, unless the caller holds a cross-tenant support role), so an
-  authenticated upload can never silently become globally visible across
-  tenants (`src/rag/ingestion/governance.py`).
+  upload is always bound to the caller's own verified tenant. The system
+  stamps the caller's tenant when the uploaded document carries no
+  governance metadata of its own, such as every PDF/DOCX upload, and
+  rejects documents that explicitly name a different tenant unless the
+  caller holds a cross-tenant support role. This prevents authenticated
+  uploads from silently becoming globally visible across tenants
+  (`src/rag/ingestion/governance.py`). Upload persistence itself is
+  atomic: an upload is staged under a random directory, keeping its own
+  original filename, and only installed via an atomic rename once size
+  validation, parsing, and governance all succeed. A rejected or oversized
+  re-upload can never truncate or destroy a previously accepted file under
+  the same name, and no staging-directory fragment can leak into a
+  document's title, extracted-image filenames, or citation metadata
+  (`src/rag/api/routers/ingest.py`).
 - **Document-version freshness**: superseded/stale document versions are
   resolved and excluded per query (`src/rag/retrieval/freshness.py`).
 - **Field-level redaction**: specific sensitive fields (e.g. credentials)

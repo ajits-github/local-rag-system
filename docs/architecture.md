@@ -1224,6 +1224,97 @@ unauthenticated `POST /ingest` request remain byte-identical to before this
 fix. `allowed_roles` is deliberately untouched. Only `tenant_id` is the
 field whose absence the SQL predicate treats as globally visible.
 
+### Atomic upload persistence (post-milestone fix)
+
+A second review of the ingest-governance fix above, before it merged,
+caught that it still saved an upload to its final `UPLOAD_DIR` path
+*before* governance validation ran. If governance later rejected the
+upload (or the earlier size check rejected an oversized one), a
+previously-accepted file at that same filename had already been
+overwritten or truncated on disk. The DB row for the old, accepted
+document would then point at content that no longer existed. This is the
+same defect independently found as a Major finding (upload-replacement
+truncation) in the verification pass: a rejected or oversized re-upload
+under an existing filename destroyed the previously-accepted file, with
+no DB-level trace of what happened.
+
+The fix makes upload installation atomic. `api/routers/ingest.py`'s
+`_ingest_upload_atomically` stages every upload under a unique per-request
+directory (`_staging_dir`), a *sibling* of the eventual destination
+(never elsewhere, keeping every install step on one filesystem/
+volume, a precondition for an atomic rename). Bounded-size validation,
+loader parsing, and governance resolution all run against the staged
+file, via the existing `IngestionPipeline.ingest_file`. Only once
+ingestion fully succeeds, including the DB write, are any extracted image
+assets promoted into `UPLOAD_DIR/assets/` and the staged file installed
+via `os.replace`; `os.replace` is atomic for two paths on the same volume
+on both POSIX and Windows. Any failure before that point (oversized
+upload, unsupported extension, parse failure, cross-tenant governance
+rejection) removes the entire staging directory; an existing same-name
+accepted file and `UPLOAD_DIR/assets/` are left completely untouched.
+
+One subtlety this raised: `ingest_file` derives a document's persisted
+`source` (and therefore its `document_id` identity) from the path it
+loads content from, which is now a staged file, not the upload's real
+destination path. `ingest_file` gained a `source_override: str | None`
+parameter specifically for this: the loader still reads bytes from the
+staged path, but the `RawDocument.source` used for persistence and
+`document_id` resolution is overridden back to the stable, caller-facing
+destination path before any database write, so re-uploading the same
+filename still resolves to the same `document_id` as before this fix.
+
+#### Staged-upload metadata leak (second post-milestone fix)
+
+A second Codex pre-merge review of the fix above found `source_override`
+incomplete: it only overrides the final persisted `RawDocument.source`
+string, which is set once, at the very end of loading. It can't reach
+fields a loader computes directly from its own `path` argument earlier
+in `load()`, before that override ever runs. Two such fields exist in
+this codebase:
+
+1. `TextLoader`/`HTMLLoader`/`PDFLoader`/`DocxLoader` all fall back to
+   `title = ... or path.stem` when the document itself carries no title
+   (no front matter, no PDF/DOCX document-info title, no `<title>` tag).
+2. `PDFLoader`/`DocxLoader`'s embedded-image extraction
+   (`loaders/base.py:resolve_image_asset`) is keyed entirely off the
+   physical path it's given: `document_path.parent` for where a sibling
+   `assets/` folder is expected, and `document_path.stem` for naming a
+   newly-extracted image (`f"{document_path.stem}-figure-{n:02d}{ext}"`).
+   The relative path it returns (`"assets/<name>"`) is embedded directly
+   into the document's Markdown-equivalent `content`, and
+   `StructuredMarkdownChunker` parses it straight into
+   `ChunkMetadata.attachment_name`/`source_anchor`, persisted, returned
+   in `POST /query`'s `sources`, and used in `[Source N: ...]` citations.
+
+Loaded from a randomly-named staged file, both of these would have
+leaked the staging directory's random name into stored and user-visible
+metadata: a title of `.upload-tmp-3f2a...`, or an image cited as
+`assets/.upload-tmp-3f2a...-figure-01.png`.
+
+The fix required no changes to any loader, or to `resolve_image_asset`
+itself. `_staging_dir`'s staged file keeps `dest`'s *own filename*
+(`staging_dir / dest.name`). Only the parent *directory* is randomized,
+never the file's own name. Every `path.stem`/`path.name`-derived field a
+loader computes therefore comes out correct automatically, without
+needing to enumerate and patch each one individually. This structural fix
+also covers any future loader or path-derived field the same way, not just
+the two found this session. The one remaining piece: because
+`resolve_image_asset` resolves its `assets/` directory relative to
+whatever physical path it was given, a staged upload's newly-extracted
+images land in `staging_dir/assets/`, not the real `UPLOAD_DIR/assets/`
+a persisted `source_anchor` is later resolved against (e.g. by
+`Writer._with_vision_siblings`). `_install_staged_assets` promotes them
+with a same-volume `os.replace` per file into `UPLOAD_DIR/assets/` right
+after ingestion succeeds and before the staging directory is removed, so
+no reference is left dangling.
+
+`tests/unit/test_upload_staging_no_temp_leak.py` proves this directly
+for every registered loader (Markdown, plain text, HTML, PDF, DOCX),
+including a generic recursive scan (`_assert_no_temp_marker`) over a
+fully persisted `Chunk` asserting no `.upload-tmp-*` fragment survives
+anywhere in it, and a same-filename-through-two-different-staging-runs
+test proving `document_id` stability is unaffected.
+
 ### Metadata and citation protection
 
 Audited every field in `pipeline.answer()`'s `sources` list against "can
