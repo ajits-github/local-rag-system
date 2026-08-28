@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import os
+import uuid
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
@@ -19,10 +22,12 @@ router = APIRouter()
 # Uploads land here under their original filename (path components stripped,
 # see `_safe_upload_path`), so re-uploading the same file keeps the same
 # `source` identity (and therefore the same document_id). Checksum
-# comparison decides whether it needs re-indexing.
+# comparison decides whether it needs re-indexing. The upload itself is
+# never streamed directly to this final path -- see `_ingest_upload_atomically`.
 UPLOAD_DIR = Path("data/uploads")
 
 _UPLOAD_CHUNK_BYTES = 1024 * 1024
+_TMP_UPLOAD_PREFIX = ".upload-tmp-"
 
 
 class IngestResult(BaseModel):
@@ -119,6 +124,87 @@ def _enforce_ingest_authorization(identity: VerifiedIdentity | None, config: App
         )
 
 
+def _temp_upload_path(dest: Path) -> Path:
+    """Return a unique temp path in the same directory as `dest`.
+
+    Same directory (and therefore filesystem/volume) as `dest`, so the
+    final `os.replace` in `_ingest_upload_atomically` is a true atomic
+    rename rather than a cross-filesystem copy+delete.
+
+    Parameters
+    ----------
+    dest : Path
+        The final, stable destination path.
+
+    Returns
+    -------
+    Path
+    """
+    return dest.with_name(f"{_TMP_UPLOAD_PREFIX}{uuid.uuid4().hex}{dest.suffix}")
+
+
+async def _ingest_upload_atomically(
+    upload: UploadFile,
+    dest: Path,
+    dataset_id: str,
+    pipeline: IngestionPipeline,
+    caller: IngestCallerContext | None,
+    max_upload_bytes: int,
+) -> dict[str, Any]:
+    """Stream, ingest, and install an upload without ever writing directly to `dest`.
+
+    The upload lands at a unique temporary path in `UPLOAD_DIR` first.
+    Size-bounding, loader parsing, governance resolution, and the
+    ingestion DB write all run against that temp file (with the
+    persisted document `source` overridden back to `dest`'s stable path,
+    via `IngestionPipeline.ingest_file`'s `source_override`, so
+    re-uploading the same filename still resolves to the same
+    `document_id`). `dest` is only touched, via an atomic `os.replace`,
+    once ingestion has fully succeeded. Any failure along the way
+    (oversized upload, unsupported extension, parse failure, cross-tenant
+    governance rejection) removes only the temp file and leaves an
+    existing `dest` byte-for-byte untouched.
+
+    Parameters
+    ----------
+    upload : UploadFile
+        The incoming file upload.
+    dest : Path
+        Final, stable destination path -- the document's `source` identity.
+    dataset_id : str
+        Namespace tag stored on every chunk.
+    pipeline : IngestionPipeline
+        Ingestion pipeline to run the temp file through.
+    caller : IngestCallerContext | None
+        Governance context; see `IngestionPipeline.ingest_file`.
+    max_upload_bytes : int
+        Maximum allowed upload size, in bytes.
+
+    Returns
+    -------
+    dict[str, Any]
+        `IngestionPipeline.ingest_file`'s result dict.
+
+    Raises
+    ------
+    HTTPException
+        413, if the upload exceeds `max_upload_bytes`.
+    IngestGovernanceError
+        Propagated from `ingest_file` for the caller to map to a 403.
+    """
+    tmp_path = _temp_upload_path(dest)
+    try:
+        await _save_upload_bounded(upload, tmp_path, max_upload_bytes)
+        result = pipeline.ingest_file(
+            tmp_path, dataset_id, caller=caller, source_override=str(dest)
+        )
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
+    os.replace(tmp_path, dest)
+    return result
+
+
 def _build_ingest_caller_context(
     identity: VerifiedIdentity | None, config: AppConfig
 ) -> IngestCallerContext | None:
@@ -198,9 +284,10 @@ async def ingest(
         if not upload.filename:
             raise HTTPException(status_code=422, detail="Uploaded file is missing a filename")
         dest = _safe_upload_path(upload.filename)
-        await _save_upload_bounded(upload, dest, max_upload_bytes)
         try:
-            result = pipeline.ingest_file(dest, dataset_id, caller=caller)
+            result = await _ingest_upload_atomically(
+                upload, dest, dataset_id, pipeline, caller, max_upload_bytes
+            )
         except IngestGovernanceError as exc:
             assert identity is not None  # caller is only non-None when identity is
             log_audit_event(
