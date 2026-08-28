@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 
 from rag.retrieval.field_policy import (
     SensitiveFieldPolicy,
+    combine_scannable_fields,
     detect_sensitive_field_ids,
     find_duplicate_sensitive_occurrences,
     is_role_authorized_for_field,
@@ -16,19 +17,30 @@ from rag.schemas import Chunk, ChunkMetadata
 _ALPHA_ADMIN_KEY = "SYNTHETIC_ONLY_ALPHA_KEY_7Q4M_DO_NOT_USE"
 
 
-def _chunk(chunk_id: str, content: str, sensitive_field_ids: list[str] | None = None) -> Chunk:
+def _chunk(
+    chunk_id: str,
+    content: str,
+    sensitive_field_ids: list[str] | None = None,
+    source: str | None = None,
+    section_path: str | None = None,
+    attachment_name: str | None = None,
+    source_anchor: str | None = None,
+) -> Chunk:
     """Build a Chunk with minimal-but-valid metadata for duplicate-detection tests."""
     now = datetime.now(UTC)
     metadata = ChunkMetadata(
         document_id=f"doc-{chunk_id}",
         chunk_id=chunk_id,
-        source=f"{chunk_id}.md",
+        source=source or f"{chunk_id}.md",
         source_type="text",
         created_at=now,
         last_modified=now,
         chunk_index=0,
         dataset_id="test-dataset",
         sensitive_field_ids=sensitive_field_ids,
+        section_path=section_path,
+        attachment_name=attachment_name,
+        source_anchor=source_anchor,
     )
     return Chunk(id=chunk_id, content=content, metadata=metadata)
 
@@ -275,3 +287,28 @@ def test_single_correctly_tagged_occurrence_produces_no_finding():
     findings = find_duplicate_sensitive_occurrences(chunks)
 
     assert findings == []
+
+
+# --- `source` is scannable metadata too ------------------------------------
+
+
+def test_combine_scannable_fields_joins_content_and_every_metadata_field():
+    """combine_scannable_fields is the single source of truth for what a chunk's scan covers."""
+    combined = combine_scannable_fields(
+        "body text",
+        source="doc.md",
+        section_path="Intro",
+        attachment_name="a.png",
+        source_anchor="assets/a.png",
+    )
+    assert "body text" in combined
+    assert "doc.md" in combined
+    assert "Intro" in combined
+    assert "a.png" in combined
+    assert "assets/a.png" in combined
+
+
+def test_combine_scannable_fields_omits_unset_fields():
+    """None-valued metadata fields are skipped, not turned into a literal 'None' in the scan."""
+    combined = combine_scannable_fields("body text")
+    assert combined == "body text"
