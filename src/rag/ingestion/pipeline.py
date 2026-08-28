@@ -27,6 +27,43 @@ from rag.vision.base import VisionProvider
 logger = logging.getLogger(__name__)
 
 
+def _source_is_under_root(source: str, root: Path) -> bool:
+    """Return whether a persisted `source` path resolves to `root` or one of its descendants.
+
+    Used to scope directory-ingestion deletion detection to documents that
+    could plausibly have come from this ingestion root, so a document
+    ingested through a different root, `POST /ingest` (see `source_override`),
+    or any other equivalent-but-different source path is never mistaken for
+    a deletion just because this particular walk didn't discover it.
+
+    Comparison is resolved-path-based, not raw string prefix matching, so
+    relative vs. absolute and `./`-prefixed representations of the current
+    ROOT agree, and a sibling directory sharing a prefix (`knowledge_base`
+    vs. `knowledge_base2`) is never mistaken for a descendant. Backslashes
+    are normalized to `/` first so a source recorded with Windows-style
+    separators (native CLI ingestion) still compares correctly against a
+    POSIX root (container-native `POST /ingest`), or vice versa.
+
+    Parameters
+    ----------
+    source : str
+        A persisted document's `source` value.
+    root : Path
+        The directory currently being walked by `ingest_path`.
+
+    Returns
+    -------
+    bool
+        True if `source` lies at or under `root`.
+    """
+    try:
+        resolved_source = Path(source.replace("\\", "/")).resolve()
+        resolved_root = root.resolve()
+    except OSError:
+        return False
+    return resolved_source.is_relative_to(resolved_root)
+
+
 class IngestionPipeline:
     """Runs a document through loader -> cleaner -> chunker -> embedder -> writer."""
 
@@ -191,9 +228,13 @@ class IngestionPipeline:
         the chunk metadata's `category`.
 
         For a directory target, also detects documents deleted since the
-        last ingestion (diffing the pre-run set of known sources against
-        what's discovered this run) and deletes them via
-        `delete_documents_by_source`. Skipped for a single-file target.
+        last ingestion (diffing the pre-run set of known sources, scoped to
+        this root via `_source_is_under_root`, against what's discovered
+        this run) and deletes them via `delete_documents_by_source`. A
+        document ingested through a different root, or via `POST /ingest`,
+        is never included in that diff, so it's never mistaken for a
+        deletion just because this walk didn't discover it. Skipped for a
+        single-file target.
 
         Parameters
         ----------
@@ -227,8 +268,11 @@ class IngestionPipeline:
                 category = None if relative_dir == Path(".") else relative_dir.as_posix()
                 results.append(self.ingest_file(file_path, dataset_id, category=category))
                 discovered.append(str(file_path))
+        scoped_existing_sources = {
+            source for source in existing_sources if _source_is_under_root(source, path)
+        }
         return self._aggregate_ingestion_stats(
-            results, discovered, dataset_id, existing_sources, detect_deletions=True
+            results, discovered, dataset_id, scoped_existing_sources, detect_deletions=True
         )
 
     def _aggregate_ingestion_stats(
