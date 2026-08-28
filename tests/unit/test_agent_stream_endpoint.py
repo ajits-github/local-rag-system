@@ -172,3 +172,19 @@ def test_stream_endpoint_oversized_query_returns_422_with_no_agent_work():
         assert pipeline.calls == []
     finally:
         _teardown()
+
+
+def test_stream_endpoint_oversized_filters_returns_422_with_no_agent_work():
+    """A filters dict larger than max_filters_bytes is rejected 422, before any agent work."""
+    config = _no_auth_config()
+    client, pipeline = _client_with(config)
+    app.dependency_overrides[get_llm] = lambda: _NeverCalledLLM()
+    try:
+        huge_value = "v" * config.security.dos_limits.max_filters_bytes
+        response = client.post(
+            "/agent/query/stream", json={"query": "hello", "filters": {"k": huge_value}}
+        )
+        assert response.status_code == 422
+        assert pipeline.calls == []
+    finally:
+        _teardown()
