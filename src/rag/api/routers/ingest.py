@@ -11,6 +11,7 @@ from rag.api.auth import VerifiedIdentity
 from rag.api.deps import get_config, get_current_identity, get_ingestion_pipeline
 from rag.audit import log_audit_event, pseudonymous_subject
 from rag.config import AppConfig
+from rag.ingestion.governance import IngestCallerContext, IngestGovernanceError
 from rag.ingestion.pipeline import IngestionPipeline
 
 router = APIRouter()
@@ -118,6 +119,37 @@ def _enforce_ingest_authorization(identity: VerifiedIdentity | None, config: App
         )
 
 
+def _build_ingest_caller_context(
+    identity: VerifiedIdentity | None, config: AppConfig
+) -> IngestCallerContext | None:
+    """Build the governance context `IngestionPipeline.ingest_file` resolves `tenant_id` from.
+
+    `None` whenever there's no verified identity at all (JWT auth disabled,
+    or `insecure_dev_mode` let an unauthenticated request through) --
+    ingestion then behaves exactly as it did before this fix, matching
+    every other identity-less ingestion path (the CLI, `make ingest`).
+
+    Parameters
+    ----------
+    identity : VerifiedIdentity | None
+        The verified caller identity, or `None`.
+    config : AppConfig
+        Application configuration; reads
+        `security.authorization.cross_tenant_support_roles`, the same role
+        list retrieval-time cross-tenant access already uses.
+
+    Returns
+    -------
+    IngestCallerContext | None
+    """
+    if identity is None:
+        return None
+    privileged = bool(
+        set(identity.roles) & set(config.security.authorization.cross_tenant_support_roles)
+    )
+    return IngestCallerContext(tenant_id=identity.tenant_id, is_privileged=privileged)
+
+
 @router.post("/ingest", response_model=list[IngestResult])
 async def ingest(
     dataset_id: str = Form(
@@ -148,8 +180,17 @@ async def ingest(
     -------
     list[IngestResult]
         One result per uploaded file, in the same order.
+
+    Raises
+    ------
+    HTTPException
+        403, when an authenticated caller's document (via front matter, if
+        any) specifies a `tenant_id` different from their own verified
+        tenant and they hold no cross-tenant support role (see
+        `rag.ingestion.governance`).
     """
     _enforce_ingest_authorization(identity, config)
+    caller = _build_ingest_caller_context(identity, config)
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     max_upload_bytes = config.security.dos_limits.max_upload_bytes
     results = []
@@ -158,6 +199,16 @@ async def ingest(
             raise HTTPException(status_code=422, detail="Uploaded file is missing a filename")
         dest = _safe_upload_path(upload.filename)
         await _save_upload_bounded(upload, dest, max_upload_bytes)
-        result = pipeline.ingest_file(dest, dataset_id)
+        try:
+            result = pipeline.ingest_file(dest, dataset_id, caller=caller)
+        except IngestGovernanceError as exc:
+            assert identity is not None  # caller is only non-None when identity is
+            log_audit_event(
+                "cross_tenant_attempt",
+                subject=pseudonymous_subject(identity.subject),
+                action="ingest",
+                verified_tenant_id=identity.tenant_id,
+            )
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         results.append(IngestResult(filename=upload.filename, **result))
     return results
