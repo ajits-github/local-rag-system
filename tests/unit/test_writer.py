@@ -171,6 +171,69 @@ def test_span_with_no_sensitive_pattern_has_no_tag():
     assert chunks[0].metadata.sensitive_field_ids is None
 
 
+def test_span_with_sensitive_pattern_only_in_section_path_is_still_tagged():
+    """A credential embedded only in a heading is tagged, not just body text.
+
+    Ingestion-time detection covers scannable metadata because downstream
+    duplicate diagnostics and egress checks read `sensitive_field_ids`
+    directly.
+    """
+    vectorstore = FakeVectorStore()
+    writer = Writer(FakeEmbedder(), vectorstore)
+    spans = [
+        ChunkSpan(
+            text="See the admin setup steps below.",
+            section_path="Admin Credentials > SYNTHETIC_ONLY_ALPHA_KEY_7Q4M_DO_NOT_USE",
+        )
+    ]
+
+    chunks = writer.write(_raw_document(), "doc-1", spans, dataset_id="ds")
+
+    assert chunks[0].metadata.sensitive_field_ids == ["synthetic_admin_credential"]
+
+
+def test_span_with_sensitive_pattern_only_in_attachment_name_is_still_tagged():
+    """A credential embedded only in an attachment filename is tagged."""
+    vectorstore = FakeVectorStore()
+    writer = Writer(FakeEmbedder(), vectorstore)
+    spans = [
+        ChunkSpan(
+            text="See the attached configuration export.",
+            attachment_name="admin-key-SYNTHETIC_ONLY_ALPHA_KEY_7Q4M_DO_NOT_USE.pdf",
+            source_anchor="assets/admin-key-SYNTHETIC_ONLY_ALPHA_KEY_7Q4M_DO_NOT_USE.pdf",
+        )
+    ]
+
+    chunks = writer.write(_raw_document(), "doc-1", spans, dataset_id="ds")
+
+    assert chunks[0].metadata.sensitive_field_ids == ["synthetic_admin_credential"]
+
+
+def test_span_with_sensitive_pattern_only_in_document_source_is_still_tagged():
+    """A credential embedded only in the document's own filename is tagged.
+
+    `source` is document-level (the same for every span of a document),
+    not a per-span field, so this is scanned from `document.source`
+    rather than from the ChunkSpan itself. See Writer.write's call to
+    combine_scannable_fields.
+    """
+    vectorstore = FakeVectorStore()
+    writer = Writer(FakeEmbedder(), vectorstore)
+    now = datetime.now(UTC)
+    document = RawDocument(
+        content="irrelevant",
+        source="admin-key-SYNTHETIC_ONLY_ALPHA_KEY_7Q4M_DO_NOT_USE.md",
+        source_type="markdown",
+        created_at=now,
+        last_modified=now,
+    )
+    spans = [ChunkSpan(text="Ordinary body text with no sensitive value at all.")]
+
+    chunks = writer.write(document, "doc-1", spans, dataset_id="ds")
+
+    assert chunks[0].metadata.sensitive_field_ids == ["synthetic_admin_credential"]
+
+
 def test_non_prose_span_parent_is_nearest_preceding_prose_in_same_section():
     """A table/code/image span links to the last prose chunk seen in its section_path."""
     writer = Writer(FakeEmbedder(), FakeVectorStore())
