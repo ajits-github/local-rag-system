@@ -81,6 +81,7 @@ class IngestionPipeline:
         dataset_id: str,
         category: str | None = None,
         caller: IngestCallerContext | None = None,
+        source_override: str | None = None,
     ) -> dict[str, Any]:
         """Load, clean, chunk, embed, and persist a single file.
 
@@ -90,7 +91,9 @@ class IngestionPipeline:
         Parameters
         ----------
         path : Path
-            File to ingest.
+            File to read content and governance front matter from. Not
+            necessarily the persisted document identity; see
+            `source_override`.
         dataset_id : str
             Namespace tag stored on every chunk.
         category : str | None, optional
@@ -107,6 +110,14 @@ class IngestionPipeline:
             `resolve_ingest_tenant_id` resolves the effective `tenant_id`
             before any database write happens, so a rejected upload leaves
             no trace (no document row, no checksum).
+        source_override : str | None, optional
+            When set, overrides the loaded document's `source` (normally
+            `str(path)`) before it's persisted or used to resolve
+            `document_id`. `POST /ingest` reads upload bytes from a
+            temporary file but must persist the stable, caller-facing
+            upload path as `source`. This keeps that path's `document_id`
+            identity stable across re-uploads regardless of the temp
+            filename any single request happened to stream through.
 
         Returns
         -------
@@ -128,10 +139,13 @@ class IngestionPipeline:
             raise ValueError(f"Unsupported extension '{path.suffix}' for {path}")
 
         raw_document = get_loader(path).load(path)
+        updates: dict[str, Any] = {}
+        if source_override is not None:
+            updates["source"] = source_override
         if caller is not None:
-            raw_document = raw_document.model_copy(
-                update={"tenant_id": resolve_ingest_tenant_id(raw_document.tenant_id, caller)}
-            )
+            updates["tenant_id"] = resolve_ingest_tenant_id(raw_document.tenant_id, caller)
+        if updates:
+            raw_document = raw_document.model_copy(update=updates)
         checksum = hashlib.sha256(path.read_bytes()).hexdigest()
         document_id, changed = self._vectorstore.get_or_create_document_id(
             source=raw_document.source, checksum=checksum, dataset_id=dataset_id
