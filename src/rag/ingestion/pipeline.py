@@ -44,6 +44,22 @@ def _source_is_under_root(source: str, root: Path) -> bool:
     separators (native CLI ingestion) still compares correctly against a
     POSIX root (container-native `POST /ingest`), or vice versa.
 
+    Scope of the guarantee: this only decides membership for THIS run's
+    deletion diff, given whatever literal `source` strings are already
+    persisted. It does not make document identity itself spelling-stable:
+    `document_id` stays keyed on the literal `source` string everywhere in
+    this system (see `VectorStore.get_or_create_document_id`), so if the
+    exact same physical file is discovered under a different spelling than
+    what's stored (the ROOT itself passed relative one run and absolute the
+    next, or ingested from a different OS's separator convention), the old
+    entry is deleted and a new one created under the new spelling rather
+    than being recognized as "unchanged." That is a bounded, self-correcting
+    outcome, not data loss or duplication (see
+    test_same_root_reingested_with_a_different_spelling_replaces_without_duplicating
+    in tests/unit/test_ingestion_stats.py) -- and consistent with how this
+    codebase already treats any `source` string change as an identity
+    change everywhere else, not a new special case introduced here.
+
     Parameters
     ----------
     source : str
