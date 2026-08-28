@@ -64,6 +64,16 @@ def test_top_k_over_max_returns_422(client_and_pipeline):
     assert pipeline.calls == []
 
 
+def test_top_k_zero_returns_422(client_and_pipeline):
+    """top_k=0 is rejected with 422, not silently treated as 'use the default'."""
+    client, pipeline, _config = client_and_pipeline
+
+    response = client.post("/query", json={"query": "hi", "top_k": 0})
+
+    assert response.status_code == 422
+    assert pipeline.calls == []
+
+
 def test_oversized_filters_dict_returns_422(client_and_pipeline):
     """A filters dict serializing larger than max_filters_bytes is rejected with 422."""
     client, pipeline, config = client_and_pipeline
