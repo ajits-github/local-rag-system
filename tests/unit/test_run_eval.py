@@ -382,7 +382,7 @@ def test_relationship_expansion_contribution_rate_zero_when_expansion_disabled()
     """Rate is 0.0 (not omitted) for requires_relationship_expansion examples when expansion is off.
 
     default.yaml's relationship_expansion.enabled is False, so no result
-    ever has origin='expanded'. the rate should reflect that honestly
+    ever has origin='expanded'. The rate should reflect that honestly
     rather than silently omitting the key.
     """
     results = [_make_result("c1", "unrelated content", source="a.md", score=0.9)]
@@ -848,7 +848,7 @@ def test_sensitive_data_false_redaction_rate_zero_for_correct_unauthorized_redac
     """A correctly-redacted field for an unauthorized caller is NOT counted as a false redaction.
 
     Exercises the real RetrievalPipeline redaction path (not just
-    run_eval.py's own logic) end to end through evaluate(). the same
+    run_eval.py's own logic) end to end through evaluate(). The same
     role check that decided to redact also decides this metric, so a
     correct implementation always reports 0.0 here.
     """
@@ -972,6 +972,51 @@ def test_unauthorized_metadata_leakage_rate_flags_sensitive_literal_in_attachmen
         source="tenant_alpha/runbook.md",
         score=0.9,
         attachment_name="key-SYNTHETIC_ONLY_ALPHA_KEY_7Q4M.pdf",
+    )
+    example = GoldExample(question="tell me about the key", sensitive_data_present=True)
+
+    report = evaluate(
+        _pipeline([result]), [example], dataset_id="test-dataset", run_generation=False
+    )
+
+    assert report["safety"]["unauthorized_metadata_leakage_rate"]["rate"] == 1.0
+
+
+def test_unauthorized_metadata_leakage_rate_flags_sensitive_literal_in_source_anchor():
+    """A sensitive literal echoed only in source_anchor is caught.
+
+    source_anchor is the full link target (e.g. "assets/<filename>"), a
+    separate field from attachment_name that also surfaces in
+    source_dict(), API responses, and citations.
+    """
+    result = _make_result(
+        "c1",
+        "unrelated content",
+        source="tenant_alpha/runbook.md",
+        score=0.9,
+        source_anchor="assets/key-SYNTHETIC_ONLY_ALPHA_KEY_7Q4M.pdf",
+    )
+    example = GoldExample(question="tell me about the key", sensitive_data_present=True)
+
+    report = evaluate(
+        _pipeline([result]), [example], dataset_id="test-dataset", run_generation=False
+    )
+
+    assert report["safety"]["unauthorized_metadata_leakage_rate"]["rate"] == 1.0
+
+
+def test_unauthorized_metadata_leakage_rate_flags_sensitive_literal_in_source():
+    """A sensitive literal living only in the document's own `source` is caught.
+
+    `source` (the document's own path/filename) is a fourth field that
+    can carry a sensitive literal, just like attachment_name/section_path/
+    source_anchor. Unlike those three, it is also read by source_label().
+    """
+    result = _make_result(
+        "c1",
+        "unrelated content",
+        source="admin-key-SYNTHETIC_ONLY_ALPHA_KEY_7Q4M.md",
+        score=0.9,
     )
     example = GoldExample(question="tell me about the key", sensitive_data_present=True)
 
