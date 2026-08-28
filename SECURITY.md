@@ -32,6 +32,13 @@ sections for the full design and documented limitations of each.
 - **Retrieval-time authorization**: tenant and role-based access control
   enforced as SQL predicates in the vector store, before any row leaves
   Postgres (`src/rag/retrieval/authorization.py`).
+- **Ingest-time tenant governance**: an authenticated `POST /ingest`
+  upload is always bound to the caller's own verified tenant (stamped when
+  the uploaded document carries no governance metadata of its own, e.g.
+  every PDF/DOCX upload; rejected if it explicitly names a different
+  tenant, unless the caller holds a cross-tenant support role), so an
+  authenticated upload can never silently become globally visible across
+  tenants (`src/rag/ingestion/governance.py`).
 - **Document-version freshness**: superseded/stale document versions are
   resolved and excluded per query (`src/rag/retrieval/freshness.py`).
 - **Field-level redaction**: specific sensitive fields (e.g. credentials)

@@ -1188,10 +1188,41 @@ raw_chunk_content` assert this directly against emitted `LogRecord`s.
 excluded and why) would require `pgvector.py` to report *excluded* row
 counts back to the caller — today the SQL predicate silently filters
 before any row leaves Postgres, so `RetrievalPipeline` structurally never
-learns what was excluded, only what was returned. `cross_tenant_attempt`
-is approximated today via `forged_claim_attempt` (a caller's body
-disagreeing with their verified identity); true SQL-level denial
-telemetry is a real, acknowledged gap, not implemented in this pass.
+learns what was excluded, only what was returned. At retrieval time,
+`cross_tenant_attempt` is still only approximated via `forged_claim_attempt`
+(a caller's body disagreeing with their verified identity); true SQL-level
+denial telemetry there remains a real, acknowledged gap. It *is* now
+genuinely emitted at ingestion time (see "Ingest-time tenant governance"
+below), the first real, non-approximated use of this event.
+
+### Ingest-time tenant governance (post-milestone fix)
+
+A gap this milestone's own `ingest_roles` check didn't cover: role-gating
+*who* may call `POST /ingest` says nothing about *which tenant* the
+content they upload belongs to. PDF/DOCX/HTML loaders (and any Markdown/
+text file with no YAML front matter) never produce governance metadata at
+all, so an authenticated upload with no front matter used to persist
+`tenant_id=NULL`, which the authorization predicate above deliberately
+treats as visible to *every* tenant. This is the same rule that correctly
+makes pre-governance-metadata legacy content unrestricted. An authenticated
+tenant-alpha caller could therefore upload a document that any other
+tenant could retrieve, without ever supplying (or being asked for)
+conflicting governance metadata.
+
+`src/rag/ingestion/governance.py` (`resolve_ingest_tenant_id`) closes this
+purely at the ingestion boundary, structurally separate from
+`rag.api` (mirroring the `rag.retrieval`/`rag.api` layering rule): given an
+authenticated caller, a missing document `tenant_id` is stamped with the
+caller's own tenant; an explicit, matching `tenant_id` is left unchanged;
+an explicit *different* `tenant_id` is honored only when the caller holds a
+`security.authorization.cross_tenant_support_roles` role (the same list
+retrieval-time cross-tenant access already uses, deliberately not a
+second, parallel privilege list) and rejected (403, `IngestGovernanceError`)
+otherwise, before any database write. `IngestionPipeline.ingest_file`'s new
+`caller` parameter defaults to `None`, so the CLI/`make ingest` path and any
+unauthenticated `POST /ingest` request remain byte-identical to before this
+fix. `allowed_roles` is deliberately untouched. Only `tenant_id` is the
+field whose absence the SQL predicate treats as globally visible.
 
 ### Metadata and citation protection
 
