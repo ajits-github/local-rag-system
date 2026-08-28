@@ -761,6 +761,38 @@ never triggers deletion) and removes the difference via
 new/changed/unchanged/deleted/chunks_embedded/chunks_reused) instead of a
 bare per-file list.
 
+**Follow-up fix: scope the pre-run snapshot to the ingestion root.** The
+original diff above compared discovered-this-run sources against *every*
+known source in the dataset, not just ones that could plausibly have come
+from the root being walked — so a document ingested through a different
+root, or via `POST /ingest` (which never calls `ingest_path` at all,
+only `ingest_file`), was silently deleted the next time an unrelated
+directory was (re-)ingested into the same `dataset_id`. `ingest_path`
+now pre-filters the snapshot with `_source_is_under_root(source, root)`
+— resolved-path membership (`Path.resolve()` + `Path.is_relative_to()`),
+not raw string prefix matching, so a sibling directory sharing a name
+prefix (`knowledge_base` vs. `knowledge_base2`) is never mistaken for a
+descendant, and backslash/forward-slash separators normalize against
+each other so a source persisted by a native-Windows CLI ingestion still
+compares correctly against a POSIX root from a container-native
+`POST /ingest`, or vice versa. One residual, deliberately accepted
+limitation: `document_id` stays keyed on the literal `source` string
+everywhere in this system (see "Document identity" above), so if the
+exact same physical file is re-discovered under a *differently spelled*
+root (relative one run, absolute the next, or a different OS's separator
+convention), the old entry is deleted and a new one created under the
+new spelling rather than recognized as unchanged. This churns identity
+but never duplicates a document or loses its content — verified directly
+with two end-to-end tests, not just claimed — and normalizing every
+discovered source to a canonical resolved form to eliminate it entirely
+was deliberately not done: it would force a one-time mass
+delete-and-recreate across every already-ingested (relative-form)
+document in every existing dataset on its very next re-ingestion,
+disproportionate to the bug this fix actually needed to close. See
+`ISSUES.md`'s "Incremental directory ingestion..." entry for the full
+diagnosis and the codex-review follow-up that surfaced this residual
+case.
+
 ### Corpus lineage and MLflow dataset tracking
 
 `eval/corpus_lineage.py` snapshots, per eval run: `dataset_id`,
