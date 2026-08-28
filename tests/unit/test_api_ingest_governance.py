@@ -34,9 +34,21 @@ class _RecordingIngestionPipeline:
         self._reject = reject
 
     def ingest_file(
-        self, path, dataset_id, category=None, caller: IngestCallerContext | None = None
+        self,
+        path,
+        dataset_id,
+        category=None,
+        caller: IngestCallerContext | None = None,
+        source_override: str | None = None,
     ):
-        self.calls.append({"path": path, "dataset_id": dataset_id, "caller": caller})
+        self.calls.append(
+            {
+                "path": path,
+                "dataset_id": dataset_id,
+                "caller": caller,
+                "source_override": source_override,
+            }
+        )
         if self._reject:
             raise IngestGovernanceError("document tenant_id does not match caller's tenant")
         return {"document_id": "doc-1", "chunks_written": 1, "changed": True}

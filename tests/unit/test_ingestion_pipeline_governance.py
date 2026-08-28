@@ -143,6 +143,25 @@ def test_no_caller_preserves_pre_fix_behavior(tmp_path: Path):
     assert all(c.metadata.tenant_id is None for c in vectorstore.written_chunks)
 
 
+def test_source_override_persists_the_stable_path_not_the_loaded_path(tmp_path: Path):
+    """`source_override` replaces `raw_document.source` before it's persisted.
+
+    Mirrors what `POST /ingest`'s atomic-upload flow relies on: content is
+    read from a temp file, but the temp path must never leak into the
+    persisted document identity. [Test F]
+    """
+    tmp_upload = tmp_path / ".upload-tmp-deadbeef.md"
+    tmp_upload.write_text("Content streamed through a temp upload path.", encoding="utf-8")
+    stable_source = str(tmp_path / "report.md")
+
+    pipeline, vectorstore = _pipeline()
+    pipeline.ingest_file(tmp_upload, "test-dataset", source_override=stable_source)
+
+    assert vectorstore.written_chunks, "expected at least one chunk written"
+    assert all(c.metadata.source == stable_source for c in vectorstore.written_chunks)
+    assert all(c.metadata.source != str(tmp_upload) for c in vectorstore.written_chunks)
+
+
 def test_no_caller_preserves_explicit_front_matter_tenant_unchanged(tmp_path: Path):
     """`caller=None` never touches an already-governed document's own front-matter tenant_id.
 
