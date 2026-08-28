@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import uuid
 from pathlib import Path
 from typing import Any
@@ -23,7 +24,9 @@ router = APIRouter()
 # see `_safe_upload_path`), so re-uploading the same file keeps the same
 # `source` identity (and therefore the same document_id). Checksum
 # comparison decides whether it needs re-indexing. The upload itself is
-# never streamed directly to this final path -- see `_ingest_upload_atomically`.
+# never streamed directly to this final path; see `_ingest_upload_atomically`,
+# which stages it (under its own original filename, just a randomized
+# parent directory) and installs it here only once ingestion succeeds.
 UPLOAD_DIR = Path("data/uploads")
 
 _UPLOAD_CHUNK_BYTES = 1024 * 1024
@@ -124,12 +127,13 @@ def _enforce_ingest_authorization(identity: VerifiedIdentity | None, config: App
         )
 
 
-def _temp_upload_path(dest: Path) -> Path:
-    """Return a unique temp path in the same directory as `dest`.
+def _staging_dir(dest: Path) -> Path:
+    """Return a unique per-upload staging directory, alongside `dest`.
 
-    Same directory (and therefore filesystem/volume) as `dest`, so the
-    final `os.replace` in `_ingest_upload_atomically` is a true atomic
-    rename rather than a cross-filesystem copy+delete.
+    A sibling of `dest` (same filesystem/volume), so every install step
+    in `_ingest_upload_atomically`, including the main file and any extracted
+    image assets, is a same-volume, atomic `os.replace`, never a
+    cross-filesystem copy+delete.
 
     Parameters
     ----------
@@ -140,7 +144,38 @@ def _temp_upload_path(dest: Path) -> Path:
     -------
     Path
     """
-    return dest.with_name(f"{_TMP_UPLOAD_PREFIX}{uuid.uuid4().hex}{dest.suffix}")
+    return dest.parent / f"{_TMP_UPLOAD_PREFIX}{uuid.uuid4().hex}"
+
+
+def _install_staged_assets(staging_dir: Path, upload_dir: Path) -> None:
+    """Promote any images `resolve_image_asset` extracted during staging into place.
+
+    A PDF/DOCX loader with no pre-existing sibling `assets/` folder next
+    to the file it's reading extracts its own embedded images and writes
+    them there (`loaders/base.py:resolve_image_asset`). During a staged
+    upload, "next to the file it's reading" is `staging_dir/assets/`, not
+    the final `UPLOAD_DIR/assets/` a persisted `source_anchor` (e.g.
+    `"assets/report-figure-01.png"`, later resolved against the
+    document's stable `source`) actually points at, so those files need
+    moving into place before the staging directory is discarded, or the
+    reference would dangle. A no-op when the document had no images to
+    extract (no `assets/` subdirectory was ever created).
+
+    Parameters
+    ----------
+    staging_dir : Path
+        The per-upload staging directory ingestion just ran against.
+    upload_dir : Path
+        `UPLOAD_DIR`, where extracted assets permanently live, alongside
+        every document's own final file.
+    """
+    staged_assets = staging_dir / "assets"
+    if not staged_assets.is_dir():
+        return
+    final_assets = upload_dir / "assets"
+    final_assets.mkdir(exist_ok=True)
+    for asset_file in staged_assets.iterdir():
+        os.replace(asset_file, final_assets / asset_file.name)
 
 
 async def _ingest_upload_atomically(
@@ -153,28 +188,45 @@ async def _ingest_upload_atomically(
 ) -> dict[str, Any]:
     """Stream, ingest, and install an upload without ever writing directly to `dest`.
 
-    The upload lands at a unique temporary path in `UPLOAD_DIR` first.
+    The upload is staged under a unique per-request directory
+    (`_staging_dir`) first, at a path that keeps `dest`'s own filename
+    (`staging_dir / dest.name`). Only the *directory* is randomized, not
+    the file's own name. This matters beyond just avoiding a collision
+    with an existing accepted file: every loader (`TextLoader`/
+    `PDFLoader`/`DocxLoader`/`HTMLLoader`) derives some metadata straight
+    from the physical path it's given: a title fallback
+    (`path.stem`), and, for PDF/DOCX, the naming and directory placement
+    of any extracted embedded images (`loaders/base.py:
+    resolve_image_asset`, keyed off `document_path.stem`/`.parent`).
+    `IngestionPipeline.ingest_file`'s `source_override` only overrides
+    the final persisted `RawDocument.source` string; it can't reach back
+    into a loader's own already-computed `path.stem`-derived fields. By
+    keeping the physical filename identical to the logical one, every
+    such derivation comes out correct automatically. No loader needs to
+    know or care that it's reading a staged upload rather than `dest`
+    itself, and no `.upload-tmp-*` fragment can leak into title, asset
+    filenames, or asset directory placement.
+
     Size-bounding, loader parsing, governance resolution, and the
-    ingestion DB write all run against that temp file (with the
-    persisted document `source` overridden back to `dest`'s stable path,
-    via `IngestionPipeline.ingest_file`'s `source_override`, so
-    re-uploading the same filename still resolves to the same
-    `document_id`). `dest` is only touched, via an atomic `os.replace`,
-    once ingestion has fully succeeded. Any failure along the way
-    (oversized upload, unsupported extension, parse failure, cross-tenant
-    governance rejection) removes only the temp file and leaves an
-    existing `dest` byte-for-byte untouched.
+    ingestion DB write all run against the staged file. Only once
+    ingestion has fully succeeded are any extracted image assets promoted
+    into `UPLOAD_DIR/assets/` (`_install_staged_assets`) and the staged
+    file atomically installed as `dest` (`os.replace`). Any failure along
+    the way (oversized upload, unsupported extension, parse failure,
+    cross-tenant governance rejection) removes the entire staging
+    directory and leaves an existing `dest` and `UPLOAD_DIR/assets/`
+    byte-for-byte untouched.
 
     Parameters
     ----------
     upload : UploadFile
         The incoming file upload.
     dest : Path
-        Final, stable destination path -- the document's `source` identity.
+        Final, stable destination path; the document's `source` identity.
     dataset_id : str
         Namespace tag stored on every chunk.
     pipeline : IngestionPipeline
-        Ingestion pipeline to run the temp file through.
+        Ingestion pipeline to run the staged file through.
     caller : IngestCallerContext | None
         Governance context; see `IngestionPipeline.ingest_file`.
     max_upload_bytes : int
@@ -192,16 +244,20 @@ async def _ingest_upload_atomically(
     IngestGovernanceError
         Propagated from `ingest_file` for the caller to map to a 403.
     """
-    tmp_path = _temp_upload_path(dest)
+    staging_dir = _staging_dir(dest)
+    staging_dir.mkdir(parents=True)
+    physical_path = staging_dir / dest.name
     try:
-        await _save_upload_bounded(upload, tmp_path, max_upload_bytes)
+        await _save_upload_bounded(upload, physical_path, max_upload_bytes)
         result = pipeline.ingest_file(
-            tmp_path, dataset_id, caller=caller, source_override=str(dest)
+            physical_path, dataset_id, caller=caller, source_override=str(dest)
         )
     except Exception:
-        tmp_path.unlink(missing_ok=True)
+        shutil.rmtree(staging_dir, ignore_errors=True)
         raise
-    os.replace(tmp_path, dest)
+    _install_staged_assets(staging_dir, dest.parent)
+    os.replace(physical_path, dest)
+    shutil.rmtree(staging_dir, ignore_errors=True)
     return result
 
 
@@ -211,8 +267,8 @@ def _build_ingest_caller_context(
     """Build the governance context `IngestionPipeline.ingest_file` resolves `tenant_id` from.
 
     `None` whenever there's no verified identity at all (JWT auth disabled,
-    or `insecure_dev_mode` let an unauthenticated request through) --
-    ingestion then behaves exactly as it did before this fix, matching
+    or `insecure_dev_mode` let an unauthenticated request through).
+    Ingestion then behaves exactly as it did before this fix, matching
     every other identity-less ingestion path (the CLI, `make ingest`).
 
     Parameters
