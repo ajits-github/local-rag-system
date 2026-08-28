@@ -168,6 +168,34 @@ def _never_called_getter(name: str):
     return _raise
 
 
+def test_stream_endpoint_rejected_request_never_resolves_heavy_dependencies():
+    """An oversized request never even resolves the pipeline/vectorstore/embedder/llm getters.
+
+    Regression test for the M4 follow-up finding: declaring those as
+    top-level `Depends()` params on the route meant FastAPI resolved
+    (called) their `lru_cache`d getters before the route body's
+    validation ever ran, even though no method on the resulting objects
+    was ever called. Overriding the getters themselves with doubles that
+    raise on invocation proves resolution itself is skipped now, not just
+    downstream use.
+    """
+    config = _no_auth_config()
+    app.dependency_overrides[get_config] = lambda: config
+    app.dependency_overrides[get_retrieval_pipeline] = _never_called_getter(
+        "get_retrieval_pipeline"
+    )
+    app.dependency_overrides[get_vectorstore] = _never_called_getter("get_vectorstore")
+    app.dependency_overrides[get_embedder] = _never_called_getter("get_embedder")
+    app.dependency_overrides[get_llm] = _never_called_getter("get_llm")
+    try:
+        client = TestClient(app)
+        oversized_query = "x" * (config.security.dos_limits.max_query_length + 1)
+        response = client.post("/agent/query/stream", json={"query": oversized_query})
+        assert response.status_code == 422
+    finally:
+        _teardown()
+
+
 def test_stream_endpoint_oversized_query_returns_422_with_no_agent_work():
     """A query longer than dos_limits.max_query_length is rejected 422, before any agent work.
 
