@@ -153,6 +153,21 @@ class _NeverCalledLLM:
         return True
 
 
+def _never_called_getter(name: str):
+    """Return a dependency-override callable that fails if FastAPI ever resolves it.
+
+    Overriding at the *getter* level (not just the object it would
+    return) proves the dependency itself is never resolved for a
+    rejected request -- not just that its methods are never called. See
+    `test_stream_endpoint_rejected_request_never_resolves_heavy_dependencies`.
+    """
+
+    def _raise():
+        raise AssertionError(f"{name} dependency should never be resolved for a rejected request")
+
+    return _raise
+
+
 def test_stream_endpoint_oversized_query_returns_422_with_no_agent_work():
     """A query longer than dos_limits.max_query_length is rejected 422, before any agent work.
 
