@@ -108,7 +108,8 @@ def enforce_dos_limits(
     Raises
     ------
     HTTPException
-        422, when `query`/`top_k`/`filters` exceed their configured bound.
+        422, when `query`/`top_k`/`filters` exceed their configured bound,
+        or when `top_k` is less than 1.
     """
     limits = config.security.dos_limits
     if len(query) > limits.max_query_length:
@@ -117,6 +118,9 @@ def enforce_dos_limits(
             status_code=422,
             detail=f"query exceeds maximum length of {limits.max_query_length} characters",
         )
+    if top_k is not None and top_k < 1:
+        log_audit_event("oversized_request_rejected", field="top_k", reason="below_minimum")
+        raise HTTPException(status_code=422, detail="top_k must be >= 1")
     if top_k is not None and top_k > limits.max_top_k:
         log_audit_event("oversized_request_rejected", field="top_k", limit=limits.max_top_k)
         raise HTTPException(status_code=422, detail=f"top_k exceeds maximum of {limits.max_top_k}")
