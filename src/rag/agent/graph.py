@@ -516,10 +516,13 @@ def _execute_tool(
 
     Every tool's output passes through `RetrievalPipeline.sanitize_evidence`
     here, the single, universal sanitization point (see module
-    docstring), before being appended to `state.retrieved_evidence`. A
-    validation failure or any tool-execution error is recorded as a
-    failed `ToolCallRecord` and returned safely; it never propagates and
-    never crashes the request.
+    docstring), before being appended to `state.retrieved_evidence`.
+    `sanitize_evidence` is called with `pipeline.resolve_auth(...)`'s
+    return value, not the raw `state.authorization_context`, so field
+    redaction uses the same effective authorization context as the tool
+    retrieval. A validation failure or any tool-execution error is
+    recorded as a failed `ToolCallRecord` and returned safely; it never
+    propagates and never crashes the request.
 
     Opens a per-tool-name OpenTelemetry span (nested under the caller's
     `tool_execute` node span) and records `rag_agent_tool_calls_total`/
@@ -583,7 +586,10 @@ def _execute_tool(
         _emit_event(on_event, "tool_completed", state, tool_name=decision.tool_name, result_count=0)
         return state
 
-    sanitized = pipeline.sanitize_evidence(results, state.authorization_context)
+    effective_auth = pipeline.resolve_auth(
+        state.authorization_context, {"dataset_id": dataset_id} if dataset_id else None
+    )
+    sanitized = pipeline.sanitize_evidence(results, effective_auth)
     state.retrieved_evidence.extend(sanitized)
     if decision.tool_name == "search_knowledge_base":
         state.retrieval_attempts += 1
