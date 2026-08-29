@@ -25,14 +25,23 @@ def _chunk(chunk_id: str, content: str = "content", document_id: str = "doc-1") 
 
 
 class FakePipeline:
-    """Records retrieve()/expand_with_relationships() calls and returns fixed results."""
+    """Records retrieve()/resolve_auth()/expand_with_relationships() calls, returns fixed results.
 
-    def __init__(self, retrieve_results=None, expand_results=None) -> None:
+    `resolve_auth` defaults to identity (returns `auth` unchanged) so tests
+    that don't care about the authorization-enabled kill-switch/freshness
+    resolution keep working unmodified; pass `resolve_auth_result` to
+    prove a caller uses whatever `resolve_auth` returns rather than the
+    raw `auth` it was given.
+    """
+
+    def __init__(self, retrieve_results=None, expand_results=None, resolve_auth_result=...) -> None:
         """Store the fixed results this double's retrieve()/expand_with_relationships() returns."""
         self.retrieve_results = retrieve_results or []
         self.expand_results = expand_results or []
+        self._resolve_auth_result = resolve_auth_result
         self.retrieve_calls: list[dict] = []
         self.expand_calls: list[dict] = []
+        self.resolve_auth_calls: list[dict] = []
 
     def retrieve(self, query, filters=None, candidate_k=None, auth=None):
         """Record the call and return the fixed retrieve results."""
@@ -40,6 +49,11 @@ class FakePipeline:
             {"query": query, "filters": filters, "candidate_k": candidate_k, "auth": auth}
         )
         return self.retrieve_results
+
+    def resolve_auth(self, auth, filters=None):
+        """Record the call; return `resolve_auth_result` if set, else `auth` unchanged."""
+        self.resolve_auth_calls.append({"auth": auth, "filters": filters})
+        return auth if self._resolve_auth_result is ... else self._resolve_auth_result
 
     def expand_with_relationships(self, results, auth=None):
         """Record the call and append the fixed expand results onto the input list."""
@@ -138,6 +152,42 @@ def test_get_related_context_expands_from_seed_chunk():
     assert chunks == [related]
     assert vectorstore.get_chunks_by_ids_calls == [{"chunk_ids": ["c1"], "auth": auth}]
     assert pipeline.expand_calls[0]["auth"] == auth
+
+
+def test_get_related_context_uses_resolved_auth_not_the_raw_auth_it_was_given():
+    """The vectorstore and expansion calls receive resolve_auth's return value.
+
+    A FakePipeline that returns a *different* object from resolve_auth
+    than the auth it was given proves get_related_context forwards the
+    resolved value, not a stale reference to the raw caller-supplied auth.
+    """
+    seed = _chunk("c1")
+    vectorstore = FakeVectorStore(chunks_by_id={"c1": seed})
+    resolved = AuthorizationContext(tenant_id="tenant_alpha", roles=["operator"])
+    pipeline = FakePipeline(resolve_auth_result=resolved)
+    raw_auth = AuthorizationContext(tenant_id="tenant_beta", roles=["operator"])
+
+    get_related_context(GetRelatedContextArgs(chunk_id="c1"), pipeline, vectorstore, raw_auth)
+
+    assert vectorstore.get_chunks_by_ids_calls == [{"chunk_ids": ["c1"], "auth": resolved}]
+    assert pipeline.expand_calls[0]["auth"] == resolved
+    assert pipeline.resolve_auth_calls == [{"auth": raw_auth, "filters": None}]
+
+
+def test_get_related_context_threads_dataset_id_into_resolve_auth_filters():
+    """A supplied dataset_id reaches resolve_auth as {"dataset_id": ...}.
+
+    This lets get_related_context receive freshness-exclusion resolution
+    when a dataset is known, matching get_document and get_latest_document.
+    """
+    seed = _chunk("c1")
+    vectorstore = FakeVectorStore(chunks_by_id={"c1": seed})
+    pipeline = FakePipeline()
+    auth = AuthorizationContext(tenant_id="tenant_alpha", roles=["operator"])
+
+    get_related_context(GetRelatedContextArgs(chunk_id="c1"), pipeline, vectorstore, auth, "ds1")
+
+    assert pipeline.resolve_auth_calls == [{"auth": auth, "filters": {"dataset_id": "ds1"}}]
 
 
 def test_get_related_context_returns_empty_when_seed_not_found():
