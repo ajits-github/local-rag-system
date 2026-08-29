@@ -167,6 +167,6 @@ agent:
   max_chunks_per_document_fetch_hard_ceiling: 50
   classify_prompt_path: src/rag/prompts/templates/agent_classify_v1.yaml
   decompose_prompt_path: src/rag/prompts/templates/agent_decompose_v1.yaml
-  tool_select_prompt_path: src/rag/prompts/templates/agent_tool_select_v2.yaml
+  tool_select_prompt_path: src/rag/prompts/templates/agent_tool_select_v3.yaml
   evidence_sufficiency_prompt_path: src/rag/prompts/templates/agent_evidence_sufficiency_v1.yaml
   synthesize_prompt_path: src/rag/prompts/templates/agent_synthesize_v1.yaml
