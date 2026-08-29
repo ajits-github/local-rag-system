@@ -1947,6 +1947,86 @@ by the mocked unit tests).
   plain-function-plus-Pydantic-schema shape was chosen so a future MCP
   exposure wouldn't require rewriting the underlying business logic.
 
+### Tool chunk ids and authorization parity
+
+Two agent-tool fixes keep direct-fetch tools aligned with the rest of the
+pipeline.
+
+First, `get_related_context` requires a real `chunk_id`
+(`GetRelatedContextArgs.chunk_id: str`). The evidence summary rendered by
+`rag.agent.graph._summarize_evidence` now includes that id explicitly:
+`"[i] chunk_id=<id> source=<path>: <text>"`. No other internal metadata,
+such as `document_id`, `tenant_id`, or `sensitive_field_ids`, is exposed.
+The paired `agent_tool_select_v3.yaml` prompt tells the model to copy the
+`chunk_id=` value verbatim rather than using the bracketed display index.
+`config.agent.tool_select_prompt_path` now points at v3; v1/v2 remain on
+disk unused, per the prompt-versioning convention.
+
+Second, `get_document`, `get_latest_document`, and `get_related_context`
+call `VectorStore` directly (`get_chunks_by_source`/`get_chunks_by_ids`)
+instead of going through `RetrievalPipeline.retrieve()`. They now resolve
+their caller-supplied `AuthorizationContext` through
+`RetrievalPipeline.resolve_auth` before any `VectorStore` call, matching
+the authorization-enabled kill-switch and freshness-exclusion behavior
+that `retrieve()` already applies. `get_document` and
+`get_latest_document` pass `{"dataset_id": dataset_id}` because both
+already require a dataset. `get_related_context` accepts an optional
+`dataset_id`, threaded from the graph driver's `state.filters`, and reuses
+one resolved context for both its seed-chunk fetch and
+`expand_with_relationships`. `search_knowledge_base` needs no special
+handling because `pipeline.retrieve()` resolves auth internally.
+`resolve_auth` also accepts a pre-fetched `versions` list so
+`get_latest_document` can reuse the list it already needs for
+source-resolution.
+
+The graph's universal `_execute_tool` path also passes resolved auth, not
+the raw `state.authorization_context`, to `pipeline.sanitize_evidence`.
+That keeps field redaction using the same effective authorization context
+as the tool retrieval for every tool path.
+
+One known interaction is deliberate. Because `source` is now a redactable
+metadata field, a filename that matches a `SensitiveFieldPolicy` pattern
+is hidden from unauthorized roles in the evidence summary. A later
+`get_document` or `get_latest_document` call using that redacted value
+returns nothing instead of leaking the real path. This is fail-safe, but
+it is a functional edge case if a corpus contains sensitive literals in
+filenames; the current corpus does not.
+
+Verification covers both sides. Unit tests in
+`tests/unit/test_agent_tools_authorization_parity.py` cover all four
+tools under both `authorization.enabled` states and assert that no
+`TOOL_ARG_MODELS` schema can accept an auth-shaped field. Unit tests in
+`tests/unit/test_agent_graph_related_context_chunk_id_exposure.py` cover
+the evidence summary and a full search-then-`get_related_context`
+`run_agent()` flow with `result_count > 0`. Integration tests in
+`tests/integration/test_agent_tool_tenant_isolation.py` cover direct-fetch
+tools against a real Postgres-backed corpus, including a disabled
+authorization run with a wrong-tenant auth context.
+
+The established 18-question agentic baseline (`experiment_032`,
+`config/experiments/agentic-rag-baseline-v2-fixed.yaml`) was re-run with
+`config/experiments/agentic-rag-baseline-v3-chunk-id-fix.yaml`, recorded
+as `experiment_040`. The config is byte-identical except
+`agent.tool_select_prompt_path` moving from v1 to v3. Since the
+`_summarize_evidence` and `resolve_auth` code fixes apply regardless of
+config, this comparison reflects the combined fix set, not the prompt
+change in isolation.
+
+Stable metrics stayed unchanged from `experiment_032`: routing accuracy
+0.889, `unnecessary_agent_rate` 0.0, `tool_selection_accuracy` 0.0,
+`evidence_sufficiency_accuracy` 0.5, and `retry_success_rate` 0.0.
+`agent_answer_correctness` moved from 0.463 to 0.482, within run-to-run
+noise. `tool_success_rate` moved from 1.0 to 0.923 due to two failed
+`search_knowledge_base` calls on one question; that code path was
+untouched, so this is attributed to run conditions rather than the agent
+tool fixes. Neither run selected `get_document`, `get_latest_document`, or
+`get_related_context`; both agent-routed runs used only
+`search_knowledge_base`, so the dedicated tests above are the direct
+evidence for the fixed code paths. `citation_support_rate` is not
+comparable because its definition changed independently. Latency is also
+not a useful signal for this run: `experiment_040` ran under heavy host
+contention, and node timings show multi-hundred-second single LLM calls.
+
 ## Observability
 
 Adds operational telemetry on top of the bounded Agentic RAG workflow:
