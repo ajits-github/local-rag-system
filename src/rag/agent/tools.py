@@ -112,6 +112,7 @@ def search_knowledge_base(
 
 def get_document(
     args: GetDocumentArgs,
+    pipeline: RetrievalPipeline,
     vectorstore: VectorStore,
     dataset_id: str | None,
     current_query: str,
@@ -122,6 +123,10 @@ def get_document(
 ) -> list[Chunk]:
     """Fetch a specific authorized document by its `source` path, bounded and relevance-selected.
 
+    `auth` is resolved via `pipeline.resolve_auth` (kill-switch and
+    freshness, scoped to `dataset_id`) before reaching `VectorStore`, the
+    same as `search_knowledge_base`'s underlying `retrieve()` call.
+
     Raises
     ------
     ToolExecutionError
@@ -130,14 +135,16 @@ def get_document(
     """
     if not dataset_id:
         raise ToolExecutionError("get_document requires a dataset_id filter")
+    effective_auth = pipeline.resolve_auth(auth, {"dataset_id": dataset_id})
     chunks = vectorstore.get_chunks_by_source(
-        args.source, dataset_id, auth=auth, limit=max_chunks_hard_ceiling
+        args.source, dataset_id, auth=effective_auth, limit=max_chunks_hard_ceiling
     )
     return _select_relevant_chunks(chunks, current_query, embedder, max_chunks)
 
 
 def get_latest_document(
     args: GetLatestDocumentArgs,
+    pipeline: RetrievalPipeline,
     vectorstore: VectorStore,
     dataset_id: str | None,
     current_query: str,
@@ -155,6 +162,12 @@ def get_latest_document(
     (see `docs/architecture.md`'s "Agentic RAG" section on why a source
     path does not by itself identify the whole family).
 
+    `auth` is resolved via `pipeline.resolve_auth` (kill-switch and
+    freshness, scoped to `dataset_id`) before reaching `VectorStore`,
+    identically to `get_document`. Reuses the `versions` list already
+    fetched for source resolution rather than letting `resolve_auth`
+    fetch it a second time.
+
     Raises
     ------
     ToolExecutionError
@@ -164,8 +177,9 @@ def get_latest_document(
         raise ToolExecutionError("get_latest_document requires a dataset_id filter")
     versions = vectorstore.list_document_versions(dataset_id)
     resolved_source = resolve_current_document_source(args.source, versions)
+    effective_auth = pipeline.resolve_auth(auth, {"dataset_id": dataset_id}, versions=versions)
     chunks = vectorstore.get_chunks_by_source(
-        resolved_source, dataset_id, auth=auth, limit=max_chunks_hard_ceiling
+        resolved_source, dataset_id, auth=effective_auth, limit=max_chunks_hard_ceiling
     )
     return _select_relevant_chunks(chunks, current_query, embedder, max_chunks)
 

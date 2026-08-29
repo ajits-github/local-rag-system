@@ -456,9 +456,8 @@ def _dispatch_tool(
     """Call the matching `rag.agent.tools` function and wrap its output as `SearchResult`s.
 
     `search_knowledge_base`'s `top_k` is clamped to `agent_cfg.max_tool_top_k`
-    here, as belt-and-suspenders on top of `SearchKnowledgeBaseArgs`'s own
-    `Field(le=...)` bound, so a config change (not just the schema
-    literal) is always the true final ceiling.
+    here, in addition to `SearchKnowledgeBaseArgs`'s own `Field(le=...)`
+    bound, so the runtime config is always the final ceiling.
     """
     if tool_name == "search_knowledge_base":
         clamped_top_k = min(args.top_k, agent_cfg.max_tool_top_k)
@@ -471,6 +470,7 @@ def _dispatch_tool(
     if tool_name == "get_document":
         chunks = tools.get_document(
             args,
+            pipeline,
             vectorstore,
             dataset_id,
             state.current_query,
@@ -483,6 +483,7 @@ def _dispatch_tool(
     if tool_name == "get_latest_document":
         chunks = tools.get_latest_document(
             args,
+            pipeline,
             vectorstore,
             dataset_id,
             state.current_query,
