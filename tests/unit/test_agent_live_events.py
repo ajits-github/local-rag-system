@@ -75,6 +75,10 @@ class FakePipeline:
         """Return the fixed retrieve results."""
         return self.retrieve_results
 
+    def resolve_auth(self, auth, filters=None):
+        """Return `auth` unchanged; authorization parity is tested elsewhere."""
+        return auth
+
     def sanitize_evidence(self, results, auth):
         """Return results unchanged."""
         return results
