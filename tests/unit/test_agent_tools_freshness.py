@@ -46,6 +46,24 @@ class FakeVectorStore:
         return self._chunks_by_source.get(source, [])
 
 
+class FakePipeline:
+    """resolve_auth() double returning `auth` unchanged (identity); records every call.
+
+    Authorization parity tests exercise the real kill-switch/freshness
+    logic via a real RetrievalPipeline; this identity fake keeps these
+    version-resolution tests focused on their own concern.
+    """
+
+    def __init__(self) -> None:
+        """Start with no recorded resolve_auth() calls."""
+        self.resolve_auth_calls: list[dict] = []
+
+    def resolve_auth(self, auth, filters=None, *, versions=None):
+        """Record the call and return `auth` unchanged."""
+        self.resolve_auth_calls.append({"auth": auth, "filters": filters, "versions": versions})
+        return auth
+
+
 class FakeEmbedder:
     """Minimal Embedder double returning fixed placeholder vectors."""
 
@@ -79,10 +97,12 @@ def test_get_latest_document_redirects_a_superseded_source_to_the_current_one():
     vectorstore = FakeVectorStore(
         versions, chunks_by_source={"policy-v2.md": current_chunks, "policy-v1.md": []}
     )
+    pipeline = FakePipeline()
     embedder = FakeEmbedder()
 
     result = get_latest_document(
         GetLatestDocumentArgs(source="policy-v1.md"),
+        pipeline,
         vectorstore,
         "ds1",
         "query",
@@ -101,10 +121,12 @@ def test_get_latest_document_uses_hard_ceiling_as_limit():
     """The SQL-level fetch always uses max_chunks_hard_ceiling as its `limit`."""
     versions = [DocumentVersionInfo(document_id="doc-1", source="standalone.md", status="active")]
     vectorstore = FakeVectorStore(versions, chunks_by_source={"standalone.md": []})
+    pipeline = FakePipeline()
     embedder = FakeEmbedder()
 
     get_latest_document(
         GetLatestDocumentArgs(source="standalone.md"),
+        pipeline,
         vectorstore,
         "ds1",
         "query",
@@ -118,13 +140,15 @@ def test_get_latest_document_uses_hard_ceiling_as_limit():
 
 
 def test_get_latest_document_requires_dataset_id():
-    """Missing dataset_id is a safe ToolExecutionError, not a crash. caught by the graph."""
+    """Missing dataset_id is a safe ToolExecutionError, not a crash."""
     vectorstore = FakeVectorStore([], chunks_by_source={})
+    pipeline = FakePipeline()
     embedder = FakeEmbedder()
 
     with pytest.raises(ToolExecutionError):
         get_latest_document(
             GetLatestDocumentArgs(source="a.md"),
+            pipeline,
             vectorstore,
             None,
             "query",
