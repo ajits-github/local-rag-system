@@ -708,7 +708,7 @@ just the two-version case in the current corpus:
   not a wrong guess.
 
 The resolved exclusion set is computed once per query (`RetrievalPipeline.
-_resolve_auth`, scoped by `filters["dataset_id"]`) and folded into
+resolve_auth`, scoped by `filters["dataset_id"]`) and folded into
 `AuthorizationContext.resolved_excluded_document_ids` before reaching
 `PgVectorStore` — freshness and authorization share one predicate-building
 pass, not two independent filters that could disagree.
