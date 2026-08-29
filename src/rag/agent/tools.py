@@ -189,6 +189,7 @@ def get_related_context(
     pipeline: RetrievalPipeline,
     vectorstore: VectorStore,
     auth: AuthorizationContext | None,
+    dataset_id: str | None = None,
 ) -> list[Chunk]:
     """Fetch parent/neighbor context for an already-retrieved chunk.
 
@@ -196,12 +197,44 @@ def get_related_context(
     than reimplementing parent/neighbor lookup; already bounded by
     `config.retrieval.relationship_expansion.max_related_elements`. A
     `chunk_id` that doesn't resolve (not found, or excluded by `auth`) is
-    treated as a normal empty result, not a tool failure. Nothing
+    treated as a normal empty result, not a tool failure; nothing
     actually errored.
+
+    `auth` is resolved once, via `pipeline.resolve_auth`, and the same
+    resolved context is reused for both the seed chunk fetch and
+    `expand_with_relationships`, mirroring how `retrieve()` resolves
+    `auth` once and threads it through its own expansion call.
+
+    Parameters
+    ----------
+    args : GetRelatedContextArgs
+        Validated tool arguments (the seed chunk's `chunk_id`).
+    pipeline : RetrievalPipeline
+        Used for `resolve_auth` and `expand_with_relationships`.
+    vectorstore : VectorStore
+        Used for the seed chunk lookup.
+    auth : AuthorizationContext | None
+        Caller authorization context, resolved before use.
+    dataset_id : str | None, optional
+        The current query's dataset, when known (the graph driver's
+        `state.filters.get("dataset_id")`). Passed through to
+        `resolve_auth` so freshness-exclusion resolution applies here
+        exactly as it does for `get_document`/`get_latest_document`;
+        omitted only when no dataset scope is available, in which case
+        `resolve_auth` still enforces tenant/role, just without
+        freshness resolution (its own documented fallback).
+
+    Returns
+    -------
+    list[Chunk]
+        Related chunks (`origin == "expanded"` results only); empty if
+        the seed chunk doesn't resolve or has no related content.
     """
-    seed_chunks = vectorstore.get_chunks_by_ids([args.chunk_id], auth=auth)
+    filters = {"dataset_id": dataset_id} if dataset_id else None
+    effective_auth = pipeline.resolve_auth(auth, filters)
+    seed_chunks = vectorstore.get_chunks_by_ids([args.chunk_id], auth=effective_auth)
     if not seed_chunks:
         return []
     seed_result = SearchResult(chunk=seed_chunks[0], score=1.0, origin="tool_fetched")
-    expanded = pipeline.expand_with_relationships([seed_result], auth=auth)
+    expanded = pipeline.expand_with_relationships([seed_result], auth=effective_auth)
     return [r.chunk for r in expanded if r.origin == "expanded"]
