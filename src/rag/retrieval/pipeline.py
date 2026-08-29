@@ -28,7 +28,7 @@ from rag.retrieval.field_policy import (
 from rag.retrieval.freshness import resolve_excluded_document_ids
 from rag.retrieval.fusion import reciprocal_rank_fusion
 from rag.retrieval.injection_detection import detect_injection
-from rag.schemas import Chunk, RetrievalAttribution, SearchResult
+from rag.schemas import Chunk, DocumentVersionInfo, RetrievalAttribution, SearchResult
 from rag.vectorstore.base import VectorStore
 
 
@@ -172,24 +172,61 @@ class RetrievalPipeline:
         # zero roles (fail-closed) rather than unrestricted.
         self._field_redaction_enabled = config.security.field_redaction.enabled
 
-    def _resolve_auth(
-        self, auth: AuthorizationContext | None, filters: dict[str, Any] | None
+    def resolve_auth(
+        self,
+        auth: AuthorizationContext | None,
+        filters: dict[str, Any] | None = None,
+        *,
+        versions: list[DocumentVersionInfo] | None = None,
     ) -> AuthorizationContext | None:
         """Apply the authorization kill-switch and resolve freshness exclusions.
 
-        Returns `None` (unrestricted) when `auth` is `None` or
-        authorization is disabled. Otherwise resolves document-version
-        freshness exclusions scoped to `filters["dataset_id"]`; freshness
-        resolution is skipped if `dataset_id` is absent, though tenant and
-        role enforcement still apply.
+        Public so agent tools that call `VectorStore` directly
+        (`rag.agent.tools.get_document`/`get_latest_document`/
+        `get_related_context`) can resolve `auth` through the exact same
+        logic `retrieve()` and `retrieve_attribution()` apply internally.
+        This keeps direct tool fetches aligned with the pipeline's
+        authorization-enabled switch before any context reaches
+        `VectorStore`.
+
+        Parameters
+        ----------
+        auth : AuthorizationContext | None
+            Caller-supplied authorization context; `None` means fully
+            unrestricted and is returned unchanged.
+        filters : dict[str, Any] | None, optional
+            Exact-match retrieval filters; only `filters["dataset_id"]`
+            is read, to scope freshness-exclusion resolution. Freshness
+            resolution is skipped (but tenant/role enforcement still
+            applies) when `dataset_id` is absent.
+        versions : list[DocumentVersionInfo] | None, optional
+            Pre-fetched document versions for the `dataset_id` in
+            `filters`, to avoid a redundant `VectorStore.list_document_versions`
+            call when the caller already fetched it for another purpose
+            (e.g. `get_latest_document`'s own source-resolution step).
+            Fetched from `VectorStore` when omitted.
+
+        Returns
+        -------
+        AuthorizationContext | None
+            `None` when `auth` is `None` or authorization is disabled
+            (fully unrestricted). Otherwise `auth`, with
+            `resolved_excluded_document_ids` populated when a
+            `dataset_id` was available to resolve freshness against.
         """
         if auth is None or not self._authorization_enabled:
             return None
         dataset_id = (filters or {}).get("dataset_id")
         if dataset_id is None:
             return auth
-        versions = self._vectorstore.list_document_versions(dataset_id)
-        excluded = resolve_excluded_document_ids(versions, auth.as_of, auth.include_superseded)
+        resolved_versions = (
+            versions
+            if versions is not None
+            else self._vectorstore.list_document_versions(dataset_id)
+        )
+        excluded = resolve_excluded_document_ids(
+            resolved_versions, auth.as_of, auth.include_superseded
+        )
         if excluded:
             log_audit_event(
                 "freshness_version_selected",
@@ -379,7 +416,7 @@ class RetrievalPipeline:
             `None` (the default) is fully unrestricted. Passing a context
             can only narrow results, never broaden them, and has no effect
             at all unless `config.security.authorization.enabled` is also
-            `True` (see `_resolve_auth`). Applied in SQL before dense/BM25
+            `True` (see `resolve_auth`). Applied in SQL before dense/BM25
             fetch, fusion, reranking, and relationship expansion.
 
         Returns
@@ -461,7 +498,7 @@ class RetrievalPipeline:
         stage_ms: dict[str, float] = {}
 
         t = time.perf_counter()
-        effective_auth = self._resolve_auth(auth, filters)
+        effective_auth = self.resolve_auth(auth, filters)
         stage_ms["authorization_ms"] = (time.perf_counter() - t) * 1000
 
         t = time.perf_counter()
@@ -566,7 +603,7 @@ class RetrievalPipeline:
         RetrievalAttribution
             `dense`/`bm25`/`fused`, each independently ranked best-first.
         """
-        effective_auth = self._resolve_auth(auth, filters)
+        effective_auth = self.resolve_auth(auth, filters)
         query_embedding = self._embedder.embed_query(query)
         fetch_k = candidate_k or self._config.retrieval.candidate_k
         dense_results = self._vectorstore.search(
