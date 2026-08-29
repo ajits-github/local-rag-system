@@ -308,6 +308,90 @@ def test_get_related_context_tool_cannot_reach_an_unauthorized_seed_chunk(
         vectorstore.delete_document(result["document_id"])
 
 
+def test_direct_fetch_tools_ignore_caller_auth_when_authorization_disabled(
+    require_postgres, config, tmp_path: Path
+):
+    """authorization.enabled=False leaves direct-fetch tools unfiltered.
+
+    get_document/get_latest_document/get_related_context must never filter
+    by a caller-supplied auth context when authorization is disabled,
+    matching search_knowledge_base's retrieve()-based behavior. `config`
+    here is used unmodified (authorization stays at its default False);
+    ingestion still stamps tenant_id from front matter regardless of that
+    flag, so this is a real, non-trivial check.
+
+    The document has a prose paragraph followed by a fenced code block, so
+    it ingests as two related chunks (the code chunk's parent_chunk_id
+    points at the prose chunk), letting get_related_context prove it can
+    still reach that parent under a wrong-tenant auth, not just that an
+    empty expansion happens to look unauthorized either way.
+    """
+    assert config.security.authorization.enabled is False
+    ns = f"pytest-agent-tool-{uuid.uuid4()}"
+    ingestion = IngestionPipeline(config)
+    embedder = _NoOpEmbedder()
+
+    path = _write_doc(
+        tmp_path,
+        "beta-open.md",
+        {"tenant_id": "tenant_beta", "allowed_roles": ["tenant_beta_operator"]},
+        "Open-access content, since authorization is disabled for this test.\n\n"
+        "```yaml\nopen: true\n```",
+    )
+    result = ingestion.ingest_file(path, ns)
+    vectorstore = ingestion._vectorstore
+    pipeline = RetrievalPipeline(config, vectorstore=vectorstore, embedder=embedder)
+
+    try:
+        # A wrong-tenant auth context would exclude this document if it
+        # were enforced, proving the kill-switch keeps these tools
+        # unfiltered.
+        wrong_tenant_auth = AuthorizationContext(
+            tenant_id="tenant_alpha", roles=["tenant_alpha_operator"]
+        )
+
+        doc_chunks = get_document(
+            GetDocumentArgs(source=str(path)),
+            pipeline,
+            vectorstore,
+            ns,
+            "what is in this document",
+            embedder,
+            wrong_tenant_auth,
+            max_chunks=10,
+            max_chunks_hard_ceiling=50,
+        )
+        assert any("Open-access content" in c.content for c in doc_chunks)
+
+        latest_chunks = get_latest_document(
+            GetLatestDocumentArgs(source=str(path)),
+            pipeline,
+            vectorstore,
+            ns,
+            "what is in this document",
+            embedder,
+            wrong_tenant_auth,
+            max_chunks=10,
+            max_chunks_hard_ceiling=50,
+        )
+        assert any("Open-access content" in c.content for c in latest_chunks)
+
+        code_chunk = next(
+            c for c in doc_chunks if c.metadata.content_type in ("configuration", "code")
+        )
+        assert code_chunk.metadata.parent_chunk_id is not None
+
+        related = get_related_context(
+            GetRelatedContextArgs(chunk_id=code_chunk.metadata.chunk_id),
+            pipeline,
+            vectorstore,
+            wrong_tenant_auth,
+        )
+        assert any("Open-access content" in c.content for c in related)
+    finally:
+        vectorstore.delete_document(result["document_id"])
+
+
 def test_search_knowledge_base_image_filter_cannot_leak_across_tenants(
     require_postgres, config, tmp_path: Path
 ):
