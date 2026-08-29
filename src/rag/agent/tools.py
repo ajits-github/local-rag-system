@@ -7,6 +7,14 @@ separate from its validated `args`, always supplied by the graph driver
 from `AgentState.authorization_context`. Never constructed from parsed
 LLM JSON (see `rag.agent.decisions`).
 
+`get_document`/`get_latest_document`/`get_related_context` call
+`VectorStore` directly rather than through `RetrievalPipeline.retrieve()`,
+so each resolves `auth` via `RetrievalPipeline.resolve_auth` before passing
+it to `VectorStore`, the same authorization-enabled kill-switch and
+freshness resolution `retrieve()` already applies internally.
+`search_knowledge_base` needs no such call: `pipeline.retrieve()` already
+resolves `auth` itself.
+
 `get_document`/`get_latest_document` bound how much of a document they load
 into agent state: a server-controlled hard SQL `LIMIT`
 (`max_chunks_hard_ceiling`) followed by a relevance-selection pass against
@@ -61,7 +69,7 @@ def _select_relevant_chunks(
     If `chunks` already fits within `max_chunks`, returns it unchanged
     (still `chunk_index`-ordered, as fetched). Otherwise embeds `query`
     once and each candidate chunk's content (chunks fetched by id/section/
-    source never carry a persisted `embedding`. See
+    source never carry a persisted `embedding`; see
     `PgVectorStore._METADATA_COLUMNS`), ranks by cosine similarity, and
     keeps the top `max_chunks`. Operates only on an already-fetched,
     already-authorized, already-hard-bounded batch. This is the same
