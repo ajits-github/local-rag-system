@@ -494,7 +494,9 @@ def _dispatch_tool(
         )
         return [SearchResult(chunk=c, score=1.0, origin="tool_fetched") for c in chunks]
     if tool_name == "get_related_context":
-        chunks = tools.get_related_context(args, pipeline, vectorstore, state.authorization_context)
+        chunks = tools.get_related_context(
+            args, pipeline, vectorstore, state.authorization_context, dataset_id
+        )
         return [SearchResult(chunk=c, score=1.0, origin="tool_fetched") for c in chunks]
     raise ValueError(f"Unknown tool: {tool_name}")  # unreachable: tool_name is Literal-validated
 
