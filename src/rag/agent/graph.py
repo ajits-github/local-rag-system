@@ -215,11 +215,20 @@ def _load_templates(config: AppConfig) -> dict[str, PromptTemplate]:
 
 
 def _summarize_evidence(evidence: list[SearchResult]) -> str:
-    """Render a short, source-labeled summary of gathered evidence for a decision prompt."""
+    """Render a short, source-labeled summary of gathered evidence for a decision prompt.
+
+    Each line exposes `chunk_id` alongside `source`, since
+    `get_related_context` requires the caller to name a real chunk_id and
+    this summary is the tool-selection prompt's view of gathered evidence
+    (see `agent_tool_select_v3.yaml`). No other internal metadata, such as
+    document_id, dataset_id, tenant_id, or sensitive_field_ids, is exposed
+    here.
+    """
     if not evidence:
         return "(no evidence gathered yet)"
     lines = [
-        f"[{i}] {r.chunk.metadata.source}: {r.chunk.content[:_EVIDENCE_SUMMARY_CHARS]}"
+        f"[{i}] chunk_id={r.chunk.metadata.chunk_id} source={r.chunk.metadata.source}: "
+        f"{r.chunk.content[:_EVIDENCE_SUMMARY_CHARS]}"
         for i, r in enumerate(evidence, start=1)
     ]
     return "\n\n".join(lines)
