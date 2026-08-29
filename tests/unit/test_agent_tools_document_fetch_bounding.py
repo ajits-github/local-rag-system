@@ -45,6 +45,24 @@ class FakeVectorStore:
         return self._chunks[:limit] if limit is not None else list(self._chunks)
 
 
+class FakePipeline:
+    """resolve_auth() double returning `auth` unchanged (identity); records every call.
+
+    Authorization parity tests exercise the real kill-switch/freshness
+    logic via a real RetrievalPipeline; this identity fake keeps these
+    bounding/relevance-selection tests focused on their own concern.
+    """
+
+    def __init__(self) -> None:
+        """Start with no recorded resolve_auth() calls."""
+        self.resolve_auth_calls: list[dict] = []
+
+    def resolve_auth(self, auth, filters=None, *, versions=None):
+        """Record the call and return `auth` unchanged."""
+        self.resolve_auth_calls.append({"auth": auth, "filters": filters, "versions": versions})
+        return auth
+
+
 class FakeEmbedder:
     """Deterministic embedder: each chunk's "embedding" is a one-hot vector by its keyword."""
 
@@ -68,10 +86,12 @@ def test_get_document_returns_all_chunks_unchanged_when_within_limit():
     """When the fetch already fits max_chunks, no relevance-selection/embedding call happens."""
     chunks = [_chunk("doc-1_0", "alpha content"), _chunk("doc-1_1", "beta content")]
     vectorstore = FakeVectorStore(chunks)
+    pipeline = FakePipeline()
     embedder = FakeEmbedder()
 
     result = get_document(
         GetDocumentArgs(source="policy.md"),
+        pipeline,
         vectorstore,
         "ds1",
         "current query",
@@ -89,10 +109,12 @@ def test_get_document_returns_all_chunks_unchanged_when_within_limit():
 def test_get_document_passes_hard_ceiling_as_the_sql_limit():
     """The SQL-level fetch always uses the hard ceiling, not the smaller final chunk count."""
     vectorstore = FakeVectorStore([_chunk("doc-1_0", "content")])
+    pipeline = FakePipeline()
     embedder = FakeEmbedder()
 
     get_document(
         GetDocumentArgs(source="policy.md"),
+        pipeline,
         vectorstore,
         "ds1",
         "query",
@@ -113,10 +135,12 @@ def test_get_document_relevance_selects_when_over_max_chunks():
         _chunk("doc-1_2", "beta beta content"),
     ]
     vectorstore = FakeVectorStore(chunks)
+    pipeline = FakePipeline()
     embedder = FakeEmbedder()
 
     result = get_document(
         GetDocumentArgs(source="policy.md"),
+        pipeline,
         vectorstore,
         "ds1",
         "alpha question",
@@ -132,13 +156,15 @@ def test_get_document_relevance_selects_when_over_max_chunks():
 
 
 def test_get_document_requires_dataset_id():
-    """Missing dataset_id is a safe ToolExecutionError, not a crash. caught by the graph."""
+    """Missing dataset_id is a safe ToolExecutionError, not a crash."""
     vectorstore = FakeVectorStore([])
+    pipeline = FakePipeline()
     embedder = FakeEmbedder()
 
     with pytest.raises(ToolExecutionError):
         get_document(
             GetDocumentArgs(source="policy.md"),
+            pipeline,
             vectorstore,
             None,
             "query",
