@@ -1,0 +1,167 @@
+# agentic_rag_baseline_v3_chunk_id_fix: re-run of
+# agentic-rag-baseline-v2-fixed.yaml (experiment_032, the established
+# agentic-rag baseline) after the agent-tool fixes documented in
+# .claude-prompts/Bugs/B1+B2-Agentic.txt:
+#
+#   B1, code + prompt: `get_related_context` requires a real chunk_id, but
+#      the evidence summary shown to the tool-selection model never exposed
+#      one. Fixed in `rag.agent.graph._summarize_evidence` (now renders
+#      "[N] chunk_id=<id> source=<path>: <text>" per evidence line), a
+#      code-level fix that applies automatically regardless of which
+#      tool-select prompt template is loaded, same as this baseline's own
+#      prior code-level fixes. The ONE field this config changes from
+#      experiment_032's config: tool_select_prompt_path -> v3, the new
+#      prompt version that tells the model explicitly to copy the
+#      chunk_id= value verbatim rather than the bracketed index.
+#   B2, code only, no config field: get_document/get_latest_document/
+#      get_related_context used to pass a caller AuthorizationContext
+#      straight to VectorStore, bypassing RetrievalPipeline.resolve_auth.
+#      Since this config has security.authorization.enabled: true (matches
+#      experiment_029/032, unchanged here), get_document/get_latest_document
+#      previously never got freshness-exclusion resolution; now they do,
+#      automatically, no yaml change needed.
+#
+# Every other field is BYTE-IDENTICAL to agentic-rag-baseline-v2-fixed.yaml.
+# Because both code fixes apply automatically, this run's diff against
+# experiment_032 reflects their combined effect, not B1 in isolation; a
+# three-way split (baseline / code-fixes-with-v1-prompt /
+# code-fixes-with-v3-prompt) was judged out of scope for this bug-fix
+# task's requested re-evaluation.
+
+app:
+  name: local-rag-system
+  log_level: INFO
+
+embedding:
+  provider: sentence_transformers # swap point
+  model_name: sentence-transformers/all-MiniLM-L6-v2
+  device: cpu
+  batch_size: 32
+  normalize: true
+  dimension: 384 # must match model output dim; used to size the pgvector column
+
+vectorstore:
+  provider: pgvector # swap point (future: chroma, faiss, ...)
+  connection_env_var: DATABASE_URL # never hardcode host/port/credentials
+  documents_table: documents
+  chunks_table: chunks
+  distance_metric: cosine
+
+chunking:
+  provider: structured_markdown # swap point: recursive_character | structured_markdown
+  chunk_size: 500
+  chunk_overlap: 50
+  structured_markdown:
+    table_row_group_size: 20
+    max_atomic_block_chars: 2000
+
+reranker:
+  provider: none # swap point: none | cross_encoder | cohere
+  cross_encoder:
+    model_name: cross-encoder/ms-marco-MiniLM-L-6-v2
+  cohere:
+    model_name: rerank-english-v3.0
+    api_key_env_var: COHERE_API_KEY
+
+generation:
+  provider: ollama # swap point
+  model_name: qwen2.5:3b
+  base_url_env_var: OLLAMA_BASE_URL
+  temperature: 0.0 # matches experiment_032
+  max_tokens: 512
+  seed: 42 # matches experiment_032
+  prompt:
+    id: rag_answer
+    version: v3
+    path: src/rag/prompts/templates/rag_answer_v3.yaml
+
+judge:
+  provider: openai # swap point: openai | anthropic | ollama (ollama = local, for experimentation only)
+  temperature: 0.0
+  max_tokens: 1024
+  cache_enabled: true
+  cache_dir: .cache/ragas
+  openai:
+    model_name: gpt-4o-mini
+    api_key_env_var: OPENAI_API_KEY
+  anthropic:
+    model_name: claude-haiku-4-5-20251001
+    api_key_env_var: ANTHROPIC_API_KEY
+  ollama:
+    model_name: llama3.1:8b # deliberately distinct from generation.model_name
+
+mlflow:
+  enabled: true
+  tracking_uri: "sqlite:///mlflow.db" # swap point: local sqlite file | a real MLflow tracking server URL
+  experiment_name: local-rag-system
+
+retrieval:
+  provider: hybrid # matches experiment_032
+  candidate_k: 5
+  generation_context_top_n: 3
+  hybrid:
+    rrf_k: 60
+  relationship_expansion:
+    enabled: true # matches experiment_032
+    include_parent: true
+    include_neighbors: true
+    max_related_elements: 3
+
+ingestion:
+  supported_extensions: [".pdf", ".docx", ".html", ".htm", ".txt", ".md"]
+
+vision:
+  provider: none # hosted vision OFF (not this milestone)
+
+agent:
+  enabled: true # agentic-RAG toggle; see src/rag/agent/graph.py
+  max_agent_steps: 8
+  max_retrieval_attempts: 2
+  max_tool_calls: 6
+  max_json_parse_retries: 1
+  max_tool_top_k: 20
+  max_chunks_per_document_fetch: 10
+  max_chunks_per_document_fetch_hard_ceiling: 50
+  classify_prompt_path: src/rag/prompts/templates/agent_classify_v2.yaml # unchanged from experiment_032
+  decompose_prompt_path: src/rag/prompts/templates/agent_decompose_v1.yaml # unchanged
+  tool_select_prompt_path: src/rag/prompts/templates/agent_tool_select_v3.yaml # chunk-id prompt, was v1
+  evidence_sufficiency_prompt_path: src/rag/prompts/templates/agent_evidence_sufficiency_v1.yaml # unchanged
+  synthesize_prompt_path: src/rag/prompts/templates/agent_synthesize_v2.yaml # unchanged from experiment_032
+
+security:
+  authorization:
+    enabled: true # unchanged from experiment_032; exercises auth-parity fix
+    cross_tenant_support_roles: ["techfusion_support"]
+  field_redaction:
+    enabled: true # unchanged from experiment_032
+  auth:
+    enabled: true # unchanged from experiment_032
+    insecure_dev_mode: false
+    ingest_roles: ["security_admin", "system_admin", "techfusion_support"]
+    jwt:
+      algorithm: HS256
+      secret_env_var: JWT_HS256_SECRET
+      public_key_path_env_var: JWT_PUBLIC_KEY_PATH
+      issuer: null
+      audience: null
+      leeway_seconds: 30
+      required_claims: ["sub", "tenant_id", "roles"]
+  dos_limits:
+    max_query_length: 2000
+    max_top_k: 20
+    max_filters_bytes: 4096
+    max_upload_bytes: 26214400
+  rate_limit:
+    enabled: false # not the focus of this evaluation
+    requests_per_minute: 60
+    key: tenant
+  egress_policy:
+    enabled: true # unchanged from experiment_032
+    block_unredacted_sensitive_fields: true
+    require_authoritative_trust: false
+    blocked_tenant_ids: []
+    classification_policy:
+      public: true
+      internal: true
+      confidential: false
+      restricted: false
