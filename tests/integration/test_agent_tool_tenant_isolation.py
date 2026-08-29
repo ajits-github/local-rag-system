@@ -92,6 +92,7 @@ def test_get_document_tool_cannot_bypass_tenant_isolation(require_postgres, conf
     )
     result = ingestion.ingest_file(path, ns)
     vectorstore = ingestion._vectorstore
+    pipeline = RetrievalPipeline(secure, vectorstore=vectorstore, embedder=embedder)
 
     try:
         wrong_tenant_auth = AuthorizationContext(
@@ -99,6 +100,7 @@ def test_get_document_tool_cannot_bypass_tenant_isolation(require_postgres, conf
         )
         chunks = get_document(
             GetDocumentArgs(source=str(path)),
+            pipeline,
             vectorstore,
             ns,
             "what is the rollback code",
@@ -114,6 +116,7 @@ def test_get_document_tool_cannot_bypass_tenant_isolation(require_postgres, conf
         )
         chunks = get_document(
             GetDocumentArgs(source=str(path)),
+            pipeline,
             vectorstore,
             ns,
             "what is the rollback code",
@@ -156,6 +159,7 @@ def test_get_document_tool_output_still_gets_field_redacted(
         )
         chunks = get_document(
             GetDocumentArgs(source=str(path)),
+            pipeline,
             vectorstore,
             ns,
             "what is the admin credential",
@@ -225,12 +229,14 @@ def test_get_latest_document_tool_resolves_current_version_and_respects_acl(
     result_v1 = ingestion.ingest_file(path_v1, ns)
     result_v2 = ingestion.ingest_file(path_v2, ns)
     vectorstore = ingestion._vectorstore
+    pipeline = RetrievalPipeline(secure, vectorstore=vectorstore, embedder=embedder)
 
     try:
         auth = AuthorizationContext(tenant_id="tenant_alpha", roles=["tenant_alpha_operator"])
         # Ask for the OLD version's path. must still get current (90 days) content.
         chunks = get_latest_document(
             GetLatestDocumentArgs(source=str(path_v1)),
+            pipeline,
             vectorstore,
             ns,
             "what is the retention period",
@@ -247,6 +253,7 @@ def test_get_latest_document_tool_resolves_current_version_and_respects_acl(
         )
         chunks = get_latest_document(
             GetLatestDocumentArgs(source=str(path_v1)),
+            pipeline,
             vectorstore,
             ns,
             "what is the retention period",
