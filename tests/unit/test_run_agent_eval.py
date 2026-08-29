@@ -72,6 +72,10 @@ class FakePipeline:
         self.retrieve_calls += 1
         return [SearchResult(chunk=_chunk(), score=0.9)]
 
+    def resolve_auth(self, auth, filters=None):
+        """Return `auth` unchanged; authorization parity is tested elsewhere."""
+        return auth
+
     def sanitize_evidence(self, results, auth):
         """Return results unchanged; not exercised by these tests."""
         return results
@@ -369,6 +373,10 @@ class TwoChunkPipeline:
             SearchResult(chunk=relevant, score=0.9),
             SearchResult(chunk=tangential, score=0.5),
         ]
+
+    def resolve_auth(self, auth, filters=None):
+        """Return `auth` unchanged; authorization parity is tested elsewhere."""
+        return auth
 
     def sanitize_evidence(self, results, auth):
         """Return results unchanged; not exercised by these tests."""
