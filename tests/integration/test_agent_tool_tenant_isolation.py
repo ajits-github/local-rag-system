@@ -1,12 +1,15 @@
 """Adversarial proof that the agent's tools cannot bypass authorization.
 
-Covers get_document, get_latest_document, get_related_context. none of
+Covers get_document, get_latest_document, get_related_context. None of
 which can bypass tenant/role authorization or field-level redaction, even
 though they call VectorStore directly rather than going through
-RetrievalPipeline.retrieve(). plus one test for search_knowledge_base's
-LLM-selectable content_type filter (routes through retrieve(), so its ACL
-story is the well-covered one; the filter itself is the part specific to
-this tool).
+RetrievalPipeline.retrieve(). Also proves the reverse: when
+authorization.enabled=False, these same three tools must not filter by a
+caller-supplied auth context either (they resolve auth through
+RetrievalPipeline.resolve_auth, the same kill-switch retrieve() already
+applies). Also includes one test for search_knowledge_base's LLM-selectable
+content_type filter (routes through retrieve(), so its ACL story is the
+well-covered one; the filter itself is the part specific to this tool).
 
 Mirrors tests/integration/test_authorization_isolation.py's self-contained
 pattern: ingests small synthetic documents with real governance front
