@@ -633,7 +633,7 @@ class McpServerConfig(BaseModel):
 
 
 class McpConfig(BaseModel):
-    """MCP server exposing the four RAG tools: search_knowledge_base, get_document, and friends.
+    """MCP server exposing the four RAG tools plus two synthetic business-case tools.
 
     Attributes
     ----------
@@ -653,6 +653,15 @@ class McpConfig(BaseModel):
     not) by the exact same `security.auth.enabled`/`insecure_dev_mode`/
     `jwt` rules `POST /query` already uses (see `rag.mcp.identity`), so
     the two surfaces can never drift into different security postures.
+    `get_customer_case`/`get_case_status` (`rag.mcp.business.store`) have
+    no config toggle of their own: they're a fixed, always-present part
+    of the server once `mcp.enabled` is `True`, the same way
+    `search_knowledge_base`'s `content_type` filter isn't independently
+    toggleable. Their tenant/role authorization is unconditional (see
+    that module's docstring for why), unlike document-level
+    `security.authorization.enabled`, which does have a kill-switch for
+    legacy-corpus-compatibility reasons that don't apply to this
+    synthetic, always-tenanted dataset.
     """
 
     enabled: bool = False
