@@ -23,7 +23,7 @@ from rag.api.routers import agent_query, agent_stream, health, ingest, metrics, 
 from rag.audit import log_audit_event
 from rag.config import AppConfig
 from rag.logging_config import configure_logging
-from rag.mcp.asgi import build_mcp_asgi_app
+from rag.mcp.asgi import build_mcp_asgi_app, mount_mcp_app
 from rag.observability.tracing import configure_tracing
 
 _config = get_config()
@@ -58,7 +58,7 @@ app = FastAPI(
 app.add_middleware(RequestIDMiddleware)
 
 if _mcp_app is not None:
-    app.mount(_config.mcp.server.mount_path, _mcp_app)
+    mount_mcp_app(app, _mcp_app, _config.mcp.server.mount_path)
 
 
 class FeatureFlags(BaseModel):
