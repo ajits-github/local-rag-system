@@ -2700,7 +2700,9 @@ agent decision logic changed.
   of manual span-attribute code for a smaller dependency surface and no
   auto-instrumentation version coupling -- consistent with this project's
   "no infrastructure without a demonstrated requirement" pattern (already
-  applied to Redis, MCP, and LangGraph).
+  applied to Redis and LangGraph; MCP was deferred under the same
+  reasoning until a concrete need appeared -- see
+  [MCP Integration](#mcp-integration) above).
 
 ## Layout-Aware Document Ingestion and Vision
 
