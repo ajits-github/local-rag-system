@@ -2214,6 +2214,84 @@ logs a genuine `authorization_denied` event (`action`, pseudonymous
 caller fails the check, even though the tool's return value never reveals
 that distinction to the caller itself.
 
+### Two hardening fixes, both found by post-implementation review
+
+**Unknown tool arguments now fail loudly.** The SDK's own
+dynamically-built per-tool argument model inherits Pydantic's default
+`extra="ignore"`, with no exposed strictness knob on the high-level
+`MCPServer.tool()` decorator (confirmed empirically: a client-injected
+`tenant_id` field used to be silently dropped, the call still succeeded).
+This was already structurally harmless -- no tool parameter binds those
+names, and `auth` is exclusively resolver-injected, per the previous
+section -- but a silent drop is a worse failure mode than a loud
+rejection at a security boundary. `_harden_argument_schemas` runs once,
+after all four tools are registered, and reaches into `MCPServer`'s
+internal `ToolManager` (no higher-level hook exists in this SDK version)
+to switch each tool's argument model to `extra="forbid"`, then
+regenerates the tool's cached JSON schema so `tools/list` correctly
+advertises `additionalProperties: false` too. Verified empirically before
+wiring it in: mutating an already-constructed Pydantic model's
+`model_config["extra"]` and calling `model_rebuild(force=True)` does
+take effect on the next `model_validate` call. An unknown field --
+including an attempted `tenant_id`/`roles`/`auth` injection -- now fails
+argument validation before the tool function or any resolver ever runs,
+surfacing as a normal `CallToolResult(is_error=True)`.
+
+**The bare mount path works with no client-visible redirect.**
+`Starlette.mount(path, app)` builds a `Mount` route whose match regex is
+literally `<mount_path>/{path:path}` (confirmed against the installed
+`starlette==1.3.1` source), which requires the literal `/` delimiter --
+so it matches `<mount_path>/` and everything under it, but never the
+bare `<mount_path>` itself. A request to the bare path used to fall
+through to the parent `Router`'s own `redirect_slashes` handling and
+receive a `307` to `<mount_path>/`, which the MCP SDK's own Streamable
+HTTP client does not follow during session initialization -- a real
+finding from a live Docker container, not a unit-test artifact (every
+prior local test served the MCP app directly as uvicorn's own root, with
+no `Mount` prefix in the way at all). Two alternatives were considered
+and rejected: registering the SDK's own route at the mount path and
+mounting the outer app at Starlette's supported empty root path (`""`)
+avoids the redirect, but would make that mount match literally every
+unmatched path in the whole `rag-api` app, changing 404 behavior for
+typos and unrelated routes -- too broad a blast radius for a one-endpoint
+fix. `rag/mcp/asgi.py`'s `mount_mcp_app` instead layers a five-line ASGI
+middleware, `_BareMountPathMiddleware`, around the *outer* app: it
+rewrites the ASGI scope's `path` (and `raw_path`) to `mount_path + "/"`
+only when the incoming path is an exact match for `mount_path`, then
+passes every other request through untouched. Both `/mcp` and `/mcp/`
+now resolve identically, with no client-visible redirect at all.
+
+### Dependency choice: core, not optional
+
+`mcp>=2.1,<3` is a core dependency in `pyproject.toml`, not an optional
+extra, deliberately: it's mounted inside the always-running `rag-api`
+process behind a runtime config flag, the same shape as `slowapi`/
+`pyjwt`, not the shape of the eval/hosted-API extras (`ragas`, `mlflow`,
+`cohere`, `anthropic`) that are excluded from the container image on
+purpose. A dry-run install showed the SDK is lightweight on top of what
+this project already required (`pydantic`, `pyjwt`, `starlette`,
+`uvicorn`, `opentelemetry-api` were all already satisfied); the Docker
+image grew by no measurable amount (1.68GB, unchanged from the
+pre-MCP baseline). One direct consequence of this choice: `rag/api/main.py`
+imports `rag.mcp.asgi` unconditionally at module level, so *any*
+environment that imports this codebase at all needs `mcp` installed
+regardless of `config.mcp.enabled` -- exactly like it needs `fastapi` or
+`pydantic` installed. `.pre-commit-config.yaml`'s isolated mypy hook
+environment needed `mcp` added to its own `additional_dependencies` list
+for the same reason: it builds a separate environment from the project's
+own venv, and without the entry there it couldn't resolve
+`mcp.server.mcpserver` imports even though a direct `mypy` run against
+the project's real venv was already clean.
+
+`httpx2` (a real, separate package from `httpx`, confirmed via `pip
+show mcp` listing it under `Requires:` and `pip show httpx2` showing
+`Required-by: mcp`) is the SDK's own transport client, used only by the
+test suite's real MCP client calls. It was only ever transitively
+guaranteed via `mcp`'s own metadata until a later review flagged it as a
+possible typo; it is now declared explicitly in `pyproject.toml`'s `dev`
+extras too, so the test suite's dependency never silently depends on how
+`mcp`'s own dependency tree happens to resolve.
+
 
 ## Observability
 
