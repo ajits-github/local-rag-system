@@ -2121,6 +2121,53 @@ separate `mcp.auth.*` config block: identity is governed entirely by the
 existing `security.auth` tree, so the HTTP API boundary and the MCP
 boundary can never drift into different security postures.
 
+### Identity: transport-resolved, structurally excluded from tool arguments
+
+Every tool declares its authorization parameter as
+`auth: Annotated[AuthorizationContext | None, Resolve(_resolve_auth)]`.
+The SDK's `Resolve(fn)` parameter-injection mechanism statically excludes
+a resolver-filled parameter from the tool's generated JSON schema --
+confirmed directly against the installed `mcp==2.1.1` SDK by tracing
+`tools/base.py`'s `skip_names` list, not assumed from the API surface --
+so a client-supplied `tenant_id`/`roles`/`auth`-shaped argument has no
+code path into authorization at all, not even a hypothetical validation
+bug. This is a stronger guarantee in kind than the in-process agent's own
+approach (`agent/tool_schemas.py`'s `extra="forbid"` Pydantic models,
+which reject a smuggled field but could theoretically be misconfigured):
+the MCP tool schema *cannot represent* `auth` as a settable field at all.
+
+`rag/mcp/identity.py`'s `resolve_http_identity` (called once per tool
+call, reading `Context.headers`) and `resolve_stdio_identity` (called
+once per process, from the `MCP_AUTH_TOKEN` environment variable) both
+reuse `rag.api.auth.verify_jwt` unmodified -- byte-identical rules to
+`api/deps.py:get_current_identity`, the dependency the HTTP `/query`
+route already uses. Neither transport ever reads `tenant_id`/`roles` from
+a tool call's arguments. `rag/mcp/server.py` deliberately does **not**
+start with `from __future__ import annotations`, unlike every other
+module in this codebase: the SDK resolves each tool parameter's
+annotation via `inspect.signature(fn, eval_str=True)`, which evaluates a
+postponed (string) annotation against the function's `__globals__` --
+and the closure-local `_resolve_auth` resolver is never present there,
+so postponed evaluation raises `NameError` at server-build time
+(reproduced directly while building this module, not a hypothetical).
+
+### One choke point for sanitization, mirroring the agent's own pattern
+
+`rag/mcp/server.py`'s `_run_tool` dispatches to the matching
+`rag.agent.tools.*` function, then calls `pipeline.resolve_auth` a
+second time (scoped by `dataset_id` when known) before
+`pipeline.sanitize_evidence`, mirroring `agent/graph.py::_execute_tool`'s
+dispatch-then-sanitize pattern exactly -- including the same
+previously-fixed "resolve auth again before the sanitize call" step (see
+the Agentic RAG section's "Tool chunk ids and authorization parity"
+above for why that fix mattered: passing the *raw*, unresolved context to
+`sanitize_evidence` let field redaction silently fail closed even when a
+genuinely authorized caller was asking). No tool serializes a raw
+`VectorStore`/`SearchResult` object directly; `rag/mcp/schemas.py`'s
+`McpChunkResult` deliberately mirrors `api/routers/query.py`'s
+`SourceItem` exposure level (never `source_dict()`'s richer internal
+shape used only for judge/eval payloads).
+
 
 ## Observability
 
