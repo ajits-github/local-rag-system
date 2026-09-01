@@ -73,7 +73,7 @@ flowchart TD
     subgraph EvalPipe["▸ Evaluation Pipeline (implemented)"]
         direction LR
         Metrics["Metrics Computation"]
-        Recall["Recall@5/10<br/>MRR·Hit Rate"]
+        Recall["Recall 5/10<br/>MRR, Hit Rate"]
         RAGAS["RAGAS Scores<br/>(faithfulness)"]
 
         Metrics --> Recall

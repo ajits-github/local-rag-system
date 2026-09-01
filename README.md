@@ -76,7 +76,7 @@ flowchart TD
     LLM -->|"Answer + Sources"| User
 
     Retrieval --> Evaluation
-    LLM --> Evaluation["Evaluation<br/>Recall@k / MRR / RAGAS"]
+    LLM --> Evaluation["Evaluation<br/>Recall at k / MRR / RAGAS"]
 ```
 <!-- --8<-- [end:docs-architecture-diagram] -->
 
