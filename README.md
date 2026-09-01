@@ -654,7 +654,7 @@ make docs-build   # strict build to site/; fails on broken links/anchors/nav ref
 
 Without `make`: `mkdocs serve` / `mkdocs build --strict`. Nav covers
 architecture, ingestion/chunking, retrieval, multimodal/layout, security,
-Agentic RAG, evaluation/RAGAS, observability, the web UI, deployment/
+Agentic RAG, MCP, evaluation/RAGAS, observability, the web UI, deployment/
 runtime, and a full API reference generated from `src/rag/**`. Not
 published anywhere yet (`mkdocs build --strict` is the local/CI gate for
 now).
@@ -675,8 +675,10 @@ Deferred for now, tracked here rather than left as empty scaffolding:
   (see [Multimodal & Layout-Aware Ingestion](#multimodal--layout-aware-ingestion)
   above) once description quality on real images has been evaluated
   further; current evidence doesn't show an answer-quality improvement.
-- **MCP**: expose the agentic RAG tool layer (`rag/agent/tools.py`) as an
-  actual MCP server for use from other agents.
+- **MCP Stage 2**: making the in-process agent itself an MCP client,
+  deferred until there's a concrete need for it. See [MCP](#mcp) above
+  for what's already shipped (Stage 1A: the four agentic-RAG tools;
+  Stage 1B: the two synthetic business-case tools).
 - **LangGraph**: revisit only if a future need appears for checkpoint/
   resume across requests, human-in-the-loop approval, or substantially
   more complex branching than today's bounded agentic workflow (see
