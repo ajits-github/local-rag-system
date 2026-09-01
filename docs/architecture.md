@@ -2029,6 +2029,99 @@ comparable because its definition changed independently. Latency is also
 not a useful signal for this run: `experiment_040` ran under heavy host
 contention, and node timings show multi-hundred-second single LLM calls.
 
+## MCP Integration
+
+A secure MCP (Model Context Protocol) server, `src/rag/mcp/`, exposing
+six tools over the official `mcp` Python SDK's Streamable HTTP transport,
+mounted directly into the existing `rag-api` process: four RAG tools
+(Stage 1A) that are thin adapters over the same `rag.agent.tools.*`
+functions the in-process agent graph already calls
+(`search_knowledge_base`/`get_document`/`get_latest_document`/
+`get_related_context`), and two synthetic business-case tools (Stage 1B,
+`get_customer_case`/`get_case_status`) reading from `rag.mcp.business`, a
+small in-memory backend standing in for a separate business system. Both
+stages are server-only. MCP-client behavior added to the in-process agent
+(Stage 2) is still deliberately deferred until there's a concrete,
+demonstrated need for it, matching this project's "no infrastructure
+without a demonstrated requirement" pattern (see the Observability
+section's aside below).
+
+### Why now, and why server-only
+
+The trigger for Stage 1A was a real capability gap, not a speculative
+one: an external MCP-speaking agent (Claude Desktop, another team's agent
+runtime) had no way to call this system's retrieval/document tools
+without either bypassing every authorization/redaction control this
+project already built, or re-implementing them from scratch. Wrapping
+the *existing*, already-hardened `rag.agent.tools.*` functions closes
+that gap without touching retrieval logic at all -- the same design bet
+`rag/agent/tools.py`'s plain-function-plus-Pydantic-schema shape made
+early (see the Agentic RAG section's "Known limitations" above) paid off
+here directly.
+
+Stage 1B's trigger was different: not a capability gap, but making the
+"MCP as an integration layer to backend/business systems" case concrete
+rather than asserted. A server that only ever re-exposes this
+codebase's *own* RAG tools doesn't actually demonstrate that MCP
+generalizes past this one system; `get_customer_case`/`get_case_status`
+are a second, structurally independent tool family (own schemas, own
+authorization, own backend module) proving the same server can front an
+unrelated resource type without RAG-specific assumptions leaking into it.
+A synthetic in-memory dataset was a deliberate choice over standing up a
+second real service: the point is the *integration shape* (a distinct
+backend, its own tenant/role rule, reached through the same transport and
+identity-resolution machinery), not operating a second production system
+for a demo.
+
+Making the in-process agent an MCP *client* (Stage 2) was considered and
+rejected for this milestone too: it would only be justified once a
+second, genuinely external MCP server exists for the agent to reach over
+the network. Building client support against only the server this same
+codebase already exposes would be testing infrastructure against itself,
+not a capability gap -- and that reasoning is unaffected by Stage 1B
+shipping, since Stage 1B's business backend is still in-process, not a
+second server.
+
+### Architecture
+
+```mermaid
+flowchart LR
+    Client(["MCP Client<br/>(Claude Desktop, another agent)"])
+    Client -->|"Streamable HTTP<br/>Authorization: Bearer JWT"| Mount["/mcp mount<br/>(mount_mcp_app)"]
+
+    subgraph RagApi["rag-api process"]
+        Mount --> Server["MCPServer<br/>(rag.mcp.server)"]
+        Server -->|"Resolve()"| Identity["rag.mcp.identity<br/>resolve_http_identity"]
+        Identity -->|"verify_jwt"| Auth["rag.api.auth<br/>(shared with POST /query)"]
+
+        Server --> Dispatch["_run_tool: dispatch -> sanitize -> serialize"]
+        Dispatch --> Tools["rag.agent.tools.*<br/>(unmodified)"]
+        Tools --> Pipeline["RetrievalPipeline / VectorStore"]
+        Dispatch -->|"sanitize_evidence"| Pipeline
+
+        Server --> BizDispatch["_run_business_tool"]
+        BizDispatch --> Store["rag.mcp.business.store<br/>(synthetic case backend)"]
+    end
+
+    Pipeline --> DB[("Postgres + pgvector")]
+```
+
+Not a second server or process: `rag.mcp.asgi.build_mcp_asgi_app` builds
+a Starlette ASGI app around the `MCPServer`, and `rag.api.main` mounts
+that app's ASGI callable directly under `config.mcp.server.mount_path`
+(default `/mcp`), sharing the exact same process-wide singletons
+(`rag.api.deps`'s embedder, vector store, retrieval pipeline) every other
+route already uses. `config.mcp.enabled` (default `false`) is a true
+no-op, the same convention as `agent.enabled`/`security.authorization.
+enabled`: when disabled, `rag/api/main.py`'s module-level `_mcp_app =
+build_mcp_asgi_app(...) if config.mcp.enabled else None` short-circuits,
+so the MCP server -- and its Streamable HTTP session manager -- is never
+even constructed, not merely built and left unmounted. There is no
+separate `mcp.auth.*` config block: identity is governed entirely by the
+existing `security.auth` tree, so the HTTP API boundary and the MCP
+boundary can never drift into different security postures.
+
+
 ## Observability
 
 Adds operational telemetry on top of the bounded Agentic RAG workflow:
