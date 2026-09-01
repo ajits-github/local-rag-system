@@ -18,6 +18,18 @@ including resolving `auth` a second time for the sanitize call itself
 Verified against the installed `mcp==2.1.1` SDK (v2's `MCPServer`,
 formerly `FastMCP` in v1 -- a hard rename, not a deprecation warning).
 
+Every registered tool's argument model is hardened after registration
+(see `_harden_argument_schemas`) so an unknown field -- including an
+attempted `tenant_id`/`roles`/`auth` injection -- is rejected loudly by
+Pydantic rather than silently dropped: the SDK's own dynamically-built
+per-tool argument model inherits Pydantic's default `extra="ignore"`
+with no exposed strictness knob on the high-level `MCPServer.tool()`
+decorator (confirmed directly against the installed SDK source). This
+was already structurally harmless (no tool parameter binds those names,
+and `auth` is exclusively resolver-injected -- see `_resolve_auth`), but
+a silent drop is a worse failure mode than a loud rejection at a
+security boundary.
+
 Deliberately does NOT start with ``from __future__ import annotations``,
 unlike every other module in this codebase: the SDK resolves each tool's
 parameter annotations via `inspect.signature(fn, eval_str=True)`, which
@@ -77,6 +89,39 @@ class _Unset:
 
 
 _UNSET = _Unset()
+
+
+def _harden_argument_schemas(server: MCPServer) -> None:
+    """Make every registered tool's argument model reject an unknown field, loudly.
+
+    Reaches into `MCPServer`'s internal `ToolManager` (no higher-level
+    hook exists in this SDK version -- confirmed by inspection, not
+    assumed; closing this fully would mean dropping to the SDK's
+    lower-level `Server` API, out of scope for this fix) to switch each
+    tool's dynamically-built Pydantic argument model from the default
+    `extra="ignore"` to `extra="forbid"`, then regenerates the tool's
+    already-cached JSON schema (what `tools/list` advertises to a
+    client) so it correctly advertises `additionalProperties: false`
+    too. Verified empirically: mutating `model_config` and calling
+    `model_rebuild(force=True)` on an already-constructed Pydantic model
+    does take effect on the next `model_validate` call.
+
+    An unknown field -- including an attempted `tenant_id`/`roles`/
+    `auth` injection -- now fails argument validation before the tool
+    function or any resolver ever runs (`Tool.run` calls
+    `fn_metadata.validate_arguments` first), surfacing to the caller as
+    a normal `CallToolResult(is_error=True)` (a `pydantic.ValidationError`
+    is caught and re-raised as `ToolError` by the SDK itself). This never
+    changes what `auth` resolves to: `auth` is excluded from every tool's
+    argument model entirely (see `Resolve(_resolve_auth)` below), so it
+    was never reachable through argument validation in the first place --
+    this only closes the *unknown-key* gap.
+    """
+    for tool in server._tool_manager.list_tools():
+        arg_model = tool.fn_metadata.arg_model
+        arg_model.model_config["extra"] = "forbid"
+        arg_model.model_rebuild(force=True)
+        tool.parameters = arg_model.model_json_schema(by_alias=True)
 
 
 def build_mcp_server(
@@ -348,4 +393,5 @@ def build_mcp_server(
             "get_related_context", args, auth=auth, filters=None, dataset_id=dataset_id, query=""
         )
 
+    _harden_argument_schemas(server)
     return server
