@@ -205,8 +205,8 @@ def _jwt_secret(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_server_exposes_exactly_the_four_core_tools():
-    """Stage 1A exposes only the four core RAG tools -- no business-backend example yet."""
+async def test_server_exposes_exactly_the_six_tools():
+    """The four core RAG tools (Stage 1A) plus the two business-case tools (Stage 1B)."""
     config = _mcp_config(auth_enabled=False)
     app = build_mcp_asgi_app(config, _FakePipeline(), _FakeVectorStore(), _FakeEmbedder())
     with _serve(app) as base_url:
@@ -216,6 +216,8 @@ async def test_server_exposes_exactly_the_four_core_tools():
         "get_document",
         "get_latest_document",
         "get_related_context",
+        "get_customer_case",
+        "get_case_status",
     }
 
 
@@ -525,3 +527,132 @@ async def test_bare_mount_path_and_mounted_lifespan_work_through_a_wrapping_app(
             f"{root}/mcp/", None, "search_knowledge_base", {"query": "hi"}
         )
         assert slash_result.is_error is False
+
+
+# --- Stage 1B: synthetic business-case tools -------------------------------
+#
+# These need no _FakePipeline/_FakeVectorStore doubles at all: the
+# synthetic backend (rag.mcp.business.store) has no Postgres/Ollama
+# dependency, unlike every RAG tool above.
+
+
+@pytest.mark.asyncio
+async def test_get_customer_case_returns_full_detail_for_authorized_same_tenant_caller():
+    """A caller in the case's own tenant, holding one of its allowed_roles, gets the full case."""
+    config = _mcp_config(auth_enabled=True)
+    app = build_mcp_asgi_app(config, _FakePipeline(), _FakeVectorStore(), _FakeEmbedder())
+
+    with _serve(app) as base_url:
+        result = await _call_tool(base_url, _token(), "get_customer_case", {"case_id": "CASE-1001"})
+
+    assert result.is_error is False
+    case = result.structured_content["result"]
+    assert case["case_id"] == "CASE-1001"
+    assert case["tenant_id"] == "tenant_alpha"
+    assert "subject" in case and "description" in case
+
+
+@pytest.mark.asyncio
+async def test_get_customer_case_denies_role_mismatch_within_same_tenant():
+    """Same tenant is not enough on its own: CASE-1002 is admin-only, operator is denied.
+
+    Returns a plain null result, not an error -- indistinguishable from a
+    case that doesn't exist at all (see the next test).
+    """
+    config = _mcp_config(auth_enabled=True)
+    app = build_mcp_asgi_app(config, _FakePipeline(), _FakeVectorStore(), _FakeEmbedder())
+
+    with _serve(app) as base_url:
+        result = await _call_tool(
+            base_url,
+            _token(tenant_id="tenant_alpha", roles=["tenant_alpha_operator"]),
+            "get_customer_case",
+            {"case_id": "CASE-1002"},
+        )
+
+    assert result.is_error is False
+    assert result.structured_content["result"] is None
+
+
+@pytest.mark.asyncio
+async def test_get_customer_case_nonexistent_id_also_returns_null():
+    """A case_id that doesn't exist at all resolves the same way as an unauthorized one."""
+    config = _mcp_config(auth_enabled=True)
+    app = build_mcp_asgi_app(config, _FakePipeline(), _FakeVectorStore(), _FakeEmbedder())
+
+    with _serve(app) as base_url:
+        result = await _call_tool(base_url, _token(), "get_customer_case", {"case_id": "CASE-9999"})
+
+    assert result.is_error is False
+    assert result.structured_content["result"] is None
+
+
+@pytest.mark.asyncio
+async def test_get_customer_case_allows_cross_tenant_support_role():
+    """A caller holding techfusion_support (and listed on the case) may cross tenants.
+
+    CASE-2002 belongs to tenant_beta and lists techfusion_support in its
+    own allowed_roles; a tenant_alpha-scoped caller holding that role
+    (config.security.authorization.cross_tenant_support_roles) is granted
+    access, mirroring the document-level cross-tenant-support rule.
+    """
+    config = _mcp_config(auth_enabled=True)
+    app = build_mcp_asgi_app(config, _FakePipeline(), _FakeVectorStore(), _FakeEmbedder())
+
+    with _serve(app) as base_url:
+        result = await _call_tool(
+            base_url,
+            _token(tenant_id="tenant_alpha", roles=["techfusion_support"]),
+            "get_customer_case",
+            {"case_id": "CASE-2002"},
+        )
+
+    assert result.is_error is False
+    case = result.structured_content["result"]
+    assert case["case_id"] == "CASE-2002"
+    assert case["tenant_id"] == "tenant_beta"
+
+
+@pytest.mark.asyncio
+async def test_get_customer_case_unrestricted_when_auth_disabled():
+    """security.auth.enabled=False: no token needed, any case is fetchable."""
+    config = _mcp_config(auth_enabled=False)
+    app = build_mcp_asgi_app(config, _FakePipeline(), _FakeVectorStore(), _FakeEmbedder())
+
+    with _serve(app) as base_url:
+        result = await _call_tool(base_url, None, "get_customer_case", {"case_id": "CASE-2001"})
+
+    assert result.is_error is False
+    assert result.structured_content["result"]["case_id"] == "CASE-2001"
+
+
+@pytest.mark.asyncio
+async def test_get_case_status_returns_only_the_narrow_status_shape():
+    """get_case_status exposes status/priority/updated_at, never subject/description."""
+    config = _mcp_config(auth_enabled=True)
+    app = build_mcp_asgi_app(config, _FakePipeline(), _FakeVectorStore(), _FakeEmbedder())
+
+    with _serve(app) as base_url:
+        result = await _call_tool(base_url, _token(), "get_case_status", {"case_id": "CASE-1001"})
+
+    assert result.is_error is False
+    status = result.structured_content["result"]
+    assert set(status.keys()) == {"case_id", "status", "priority", "updated_at"}
+    assert status["case_id"] == "CASE-1001"
+
+
+@pytest.mark.asyncio
+async def test_get_customer_case_rejects_unknown_argument():
+    """The hardening fix covers the business tools too, not just the four RAG tools."""
+    config = _mcp_config(auth_enabled=False)
+    app = build_mcp_asgi_app(config, _FakePipeline(), _FakeVectorStore(), _FakeEmbedder())
+
+    with _serve(app) as base_url:
+        result = await _call_tool(
+            base_url,
+            None,
+            "get_customer_case",
+            {"case_id": "CASE-1001", "tenant_id": "tenant_evil"},
+        )
+
+    assert result.is_error is True
