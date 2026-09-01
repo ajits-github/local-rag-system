@@ -2292,6 +2292,70 @@ possible typo; it is now declared explicitly in `pyproject.toml`'s `dev`
 extras too, so the test suite's dependency never silently depends on how
 `mcp`'s own dependency tree happens to resolve.
 
+### Testing
+
+`tests/unit/test_mcp_identity.py` covers `resolve_http_identity`/
+`resolve_stdio_identity` (valid/missing/malformed/expired tokens,
+`insecure_dev_mode`'s narrow scope) and a dedicated audit-log-hygiene
+check (`caplog`-based) proving neither the raw JWT nor its signing secret
+ever reaches a log record on the success or failure path.
+`tests/unit/test_mcp_disabled_is_a_true_noop.py` imports the real
+`rag.api.main.app` under its default config and proves `/mcp`/`/mcp/`
+both 404 exactly like a route that was never registered, that
+`rag.api.main._mcp_app` is `None` (the MCP server is never even
+constructed, not just left unmounted), and that no `Mount` for the MCP
+path exists in the route table at all.
+`tests/integration/test_mcp_end_to_end.py` runs a real uvicorn server
+hosting the built ASGI app and drives it with the SDK's own
+`streamable_http_client` -- not just internal dispatch calls -- using
+fake pipeline/vectorstore/embedder doubles (no Postgres/Ollama needed);
+it covers identity threading, `top_k` clamping, unknown/injected-argument
+rejection, and (via a small wrapping FastAPI app built the same way
+`rag.api.main` is) the mounted app's bare-path and lifespan wiring
+together, proving the mounted session manager actually starts and both
+path spellings work. The same file's business-tool tests need no
+pipeline/vectorstore doubles at all (the synthetic backend has no
+Postgres/Ollama dependency), and cover both grant paths (same-tenant
+matching role, cross-tenant support role listed on the target case) and
+every denial path (same-tenant role mismatch, cross-tenant with no
+support role at all, cross-tenant support role held but not listed on
+the *target case's own* ACL) through the real wire protocol, plus
+proving an unauthorized case and a nonexistent case return identical
+`null` results. `tests/unit/test_mcp_business_case_store.py`
+unit-tests `rag.mcp.business.store`'s authorization rule directly
+(including the `authorization_denied` audit-log emission via `caplog`),
+independent of any transport. `tests/integration/test_mcp_tenant_isolation.py`
+is a real-Postgres adversarial spot-check (self-skips cleanly without
+Postgres) for the four RAG tools, one scenario per tool, mirroring
+`test_agent_tool_tenant_isolation.py`'s pattern for the same, unmodified
+`rag.agent.tools.*` functions -- the business tools need no equivalent
+file, since they have no Postgres-backed logic to spot-check.
+
+### Known limitations (deliberate, not hidden)
+
+- `security.rate_limit`'s `Limiter` does not wrap the MCP mount -- not a
+  regression (MCP requests were never rate-limited before this milestone
+  existed either, since the route didn't exist), but a gap worth a
+  decision before treating MCP as production-hardened to the same degree
+  as `/query`.
+- Real-Postgres tenant-isolation coverage is a small, targeted spot-check
+  (one scenario per tool), not the full matrix
+  `test_agent_tool_tenant_isolation.py` already runs for the underlying
+  functions -- a deliberate scope choice avoiding near-duplicate test
+  code for logic already proven elsewhere, not an oversight.
+- The SDK's dynamically-built tool schema still has no supported
+  higher-level hook for `extra="forbid"`; `_harden_argument_schemas`
+  reaches into `MCPServer`'s internal `ToolManager` to do it, which is
+  the smallest fix that closes the gap without dropping to the SDK's
+  substantially different lower-level `Server` API.
+- Stage 2 (making the in-process agent an MCP client) is still deferred,
+  per the reasoning in "Why now, and why server-only" above -- not
+  started, not scaffolded.
+- The business-case backend has no write path and no versioning: cases
+  are a fixed, hardcoded seed set, not a mutable store. That's
+  intentional for a synthetic demo, but means the "case gets updated,
+  caller re-fetches and sees the new state" story that `get_case_status`
+  suggests isn't actually exercised by anything.
 
 ## Observability
 
