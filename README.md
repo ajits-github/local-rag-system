@@ -39,8 +39,36 @@ The fastest path is: install Python dependencies, start Postgres, ingest
 `data/sample_docs`, start the API, and call `/query` (see
 [Setup](#setup)).
 
+## Highlights
+
+What sets this apart from a typical RAG tutorial project:
+
+- **Hand-rolled bounded agent workflow, not LangGraph** -- a plain Python
+  state machine with three independent step/retry/tool-call bounds,
+  chosen deliberately over framework overhead. See
+  [`docs/architecture.md`](docs/architecture.md)'s "Agentic RAG" section
+  for the explicit reasoning against adopting one.
+- **Adversarial security test suite** -- tenant isolation, field-level
+  redaction, prompt-injection detection, and document freshness are each
+  proven with dedicated adversarial integration tests, not just
+  happy-path unit tests. See [Security](#security).
+- **40 tracked experiments with real, documented regressions** -- e.g. a
+  reranker that silently truncated results with no reranker configured,
+  and a directory-nesting bug that made a security metric read a false
+  `0.0`. Every run is in [Benchmarks](#benchmarks), not just the wins.
+- **MCP integration**: 6 tools (4 RAG + 2 synthetic business-backend)
+  over the official Python SDK, with caller identity structurally
+  excluded from the tool schema, not just validated away. See [MCP](#mcp).
+- **Full observability stack**: OpenTelemetry traces, Prometheus
+  metrics, and Grafana dashboards wired to the real bounded agent
+  workflow. See [Observability](#observability).
+- **CI that actually gates**: ruff, mypy, pytest, and a Docker build run
+  on every PR, with an explicit, documented list of what's intentionally
+  left out of CI and why. See [Continuous Integration](#continuous-integration).
+
 ## Table of contents
 
+- [Highlights](#highlights)
 - [Architecture](#architecture)
 - [Multimodal & Layout-Aware Ingestion](#multimodal--layout-aware-ingestion)
 - [Agentic RAG](#agentic-rag)
