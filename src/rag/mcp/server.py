@@ -1,19 +1,29 @@
-"""Builds the MCP server exposing the four existing RAG tools.
+"""Builds the MCP server exposing the four core RAG tools plus two synthetic business tools.
 
-Every tool here is a thin adapter over `rag.agent.tools.*` -- the exact
-same functions the in-process agent graph calls (see
+Every RAG tool here is a thin adapter over `rag.agent.tools.*` -- the
+exact same functions the in-process agent graph calls (see
 `rag.agent.graph._dispatch_tool`). No retrieval or authorization logic is
-reimplemented. `auth` is resolved once per call from the transport (see
-`rag.mcp.identity`) via the MCP SDK's `Resolve` parameter-injection
-mechanism, which statically excludes resolver-filled parameters from a
-tool's generated JSON schema -- confirmed directly against the installed
-SDK (see `tests/integration/test_mcp_end_to_end.py`), not assumed -- so
-no tool call can ever supply or override it. Every result is sanitized
-through `RetrievalPipeline.sanitize_evidence` at one central dispatch
-helper (`_run_tool`) before it is serialized and returned, mirroring
-`rag.agent.graph._execute_tool`'s dispatch-then-sanitize pattern exactly,
-including resolving `auth` a second time for the sanitize call itself
-(the same fix documented for the in-process agent tools).
+reimplemented. `auth`/`identity` is resolved once per call from the
+transport (see `rag.mcp.identity`) via the MCP SDK's `Resolve`
+parameter-injection mechanism, which statically excludes resolver-filled
+parameters from a tool's generated JSON schema -- confirmed directly
+against the installed SDK (see `tests/integration/test_mcp_end_to_end.py`),
+not assumed -- so no tool call can ever supply or override it. Every RAG
+result is sanitized through `RetrievalPipeline.sanitize_evidence` at one
+central dispatch helper (`_run_tool`) before it is serialized and
+returned, mirroring `rag.agent.graph._execute_tool`'s dispatch-then-
+sanitize pattern exactly, including resolving `auth` a second time for
+the sanitize call itself (the same fix documented for the in-process
+agent tools).
+
+`get_customer_case`/`get_case_status` (Stage 1B) are a second, structurally
+independent tool family: thin adapters over `rag.mcp.business.store`, a
+synthetic customer-support-case backend with its own tenant/role
+authorization (see that module's docstring for why it does not reuse
+`AuthorizationContext`/`sanitize_evidence`). They exist to demonstrate MCP
+as an integration layer to a separate backend/business system, not just
+another transport for this deployment's own RAG tools -- so they
+deliberately do not route through `_dispatch`/`_run_tool` at all.
 
 Verified against the installed `mcp==2.1.1` SDK (v2's `MCPServer`,
 formerly `FastMCP` in v1 -- a hard rename, not a deprecation warning).
@@ -43,8 +53,9 @@ already-evaluated objects here is required, not a style regression.
 
 import logging
 import time
+from collections.abc import Callable
 from datetime import date
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, TypeVar
 
 from mcp.server.mcpserver import Context, MCPServer, Resolve
 from mcp.server.mcpserver.exceptions import ToolError
@@ -62,6 +73,8 @@ from rag.api.auth import VerifiedIdentity
 from rag.api.request_auth import build_authorization_context
 from rag.config import AppConfig
 from rag.embedders.base import Embedder
+from rag.mcp.business import store as business_store
+from rag.mcp.business.schemas import CaseStatusResult, CustomerCase
 from rag.mcp.identity import resolve_http_identity
 from rag.mcp.schemas import McpChunkResult, to_mcp_result
 from rag.observability import metrics as observability_metrics
@@ -76,6 +89,8 @@ logger = logging.getLogger(__name__)
 _ToolName = Literal[
     "search_knowledge_base", "get_document", "get_latest_document", "get_related_context"
 ]
+_BusinessToolName = Literal["get_customer_case", "get_case_status"]
+_T = TypeVar("_T")
 
 
 class _Unset:
@@ -132,7 +147,7 @@ def build_mcp_server(
     *,
     fixed_identity: VerifiedIdentity | None | _Unset = _UNSET,
 ) -> MCPServer:
-    """Build the MCP server exposing the four RAG tools over this process's existing services.
+    """Build the MCP server exposing the four RAG tools and two business-case tools.
 
     Parameters
     ----------
@@ -166,7 +181,7 @@ def build_mcp_server(
     Returns
     -------
     MCPServer
-        A server with all four tools registered. Callers mount it via
+        A server with all six tools registered. Callers mount it via
         `.streamable_http_app()` (see `rag.mcp.asgi`) or run it directly
         via `.run_stdio_async()` (see `rag.mcp.stdio_entrypoint`).
     """
@@ -174,10 +189,10 @@ def build_mcp_server(
         name="local-rag-system",
         instructions=(
             "Search and fetch content from this deployment's authorized knowledge "
-            "base. Every result is already scoped to your verified identity, "
-            "freshness-filtered, and redacted -- you cannot and should not supply "
-            "a tenant, role, or authorization value yourself; any such argument "
-            "is ignored."
+            "base, and look up synthetic customer-support cases from a separate "
+            "backend system. Every result is already scoped to your verified "
+            "identity -- you cannot and should not supply a tenant, role, or "
+            "authorization value yourself; any such argument is ignored."
         ),
     )
 
@@ -192,6 +207,20 @@ def build_mcp_server(
         fixed_identity if isinstance(fixed_identity, VerifiedIdentity) else None
     )
 
+    def _resolve_identity(ctx: Context) -> VerifiedIdentity | None:
+        """Resolve this call's verified identity from the transport, never from tool args.
+
+        The shared first half of `_resolve_auth` below, factored out so
+        the business-case tools (which need a bare `VerifiedIdentity`,
+        not an `AuthorizationContext`) can reuse the exact same
+        transport-resolution rule rather than a second copy of it.
+        """
+        return (
+            resolved_fixed_identity
+            if use_fixed_identity
+            else resolve_http_identity(ctx.headers, config)
+        )
+
     async def _resolve_auth(
         ctx: Context, as_of: date | None, require_trust_level: str | None
     ) -> AuthorizationContext | None:
@@ -205,12 +234,22 @@ def build_mcp_server(
         passed as `None`: this project's transports never source them
         from anything but a verified identity.
         """
-        identity = (
-            resolved_fixed_identity
-            if use_fixed_identity
-            else resolve_http_identity(ctx.headers, config)
-        )
+        identity = _resolve_identity(ctx)
         return build_authorization_context(identity, None, None, as_of, require_trust_level)
+
+    async def _resolve_identity_only(ctx: Context) -> VerifiedIdentity | None:
+        """`Resolve()`-compatible async wrapper around `_resolve_identity`.
+
+        The business-case tools declare `identity: Annotated[VerifiedIdentity
+        | None, Resolve(_resolve_identity_only)]` -- they need the bare
+        identity, not an `AuthorizationContext`, so they resolve through
+        this wrapper rather than `_resolve_auth`. `Resolve()` requires an
+        async callable (matching `_resolve_auth`'s own signature,
+        confirmed against the installed SDK), which is the only reason
+        this thin wrapper exists separately from `_resolve_identity`
+        itself.
+        """
+        return _resolve_identity(ctx)
 
     def _dispatch(
         tool_name: _ToolName,
@@ -305,6 +344,36 @@ def build_mcp_server(
         observability_metrics.observe_tool_call(tool_name, True, latency_seconds)
         return [to_mcp_result(r) for r in sanitized]
 
+    def _run_business_tool(tool_name: _BusinessToolName, fn: Callable[[], _T]) -> _T:
+        """Dispatch one business-case tool: observe, then delegate authorization to `fn`.
+
+        Structurally parallel to `_run_tool` (tracing span, latency
+        metric, `mcp_tool` error counter on an unanticipated exception),
+        but deliberately does not call `pipeline.sanitize_evidence` --
+        that method redacts chunk/field-level content, a concept this
+        resource type doesn't have. `rag.mcp.business.store` already
+        returns `None` for both "not found" and "not authorized"; there
+        is nothing left for this function to sanitize or gate further.
+        `fn` is a zero-arg closure so this stays generic over which
+        `store` function (and therefore which return type) it wraps,
+        rather than branching on `tool_name` itself.
+        """
+        t0 = time.perf_counter()
+        try:
+            with tracing.start_span(tool_name, attributes={"tool_name": tool_name}) as span:
+                result = fn()
+                tracing.set_attributes(span, {"tool_success": True, "found": result is not None})
+        except Exception:
+            latency_seconds = time.perf_counter() - t0
+            observability_metrics.observe_tool_call(tool_name, False, latency_seconds)
+            observability_metrics.observe_error("mcp_tool")
+            logger.exception("MCP tool %s failed", tool_name)
+            raise  # an unanticipated failure: let the SDK report it generically, never leak details
+
+        latency_seconds = time.perf_counter() - t0
+        observability_metrics.observe_tool_call(tool_name, True, latency_seconds)
+        return result
+
     @server.tool(
         name="search_knowledge_base",
         description=(
@@ -391,6 +460,43 @@ def build_mcp_server(
         args = GetRelatedContextArgs(chunk_id=chunk_id)
         return _run_tool(
             "get_related_context", args, auth=auth, filters=None, dataset_id=dataset_id, query=""
+        )
+
+    @server.tool(
+        name="get_customer_case",
+        description=(
+            "Fetch a synthetic customer-support case by its case_id, from a separate "
+            "backend business system (not this deployment's knowledge base). Scoped "
+            "to your verified tenant and role; a case you may not access is "
+            "indistinguishable from one that doesn't exist."
+        ),
+    )
+    async def get_customer_case(
+        case_id: str,
+        identity: Annotated[VerifiedIdentity | None, Resolve(_resolve_identity_only)] = None,
+    ) -> CustomerCase | None:
+        cross_tenant_support_roles = config.security.authorization.cross_tenant_support_roles
+        return _run_business_tool(
+            "get_customer_case",
+            lambda: business_store.get_customer_case(case_id, identity, cross_tenant_support_roles),
+        )
+
+    @server.tool(
+        name="get_case_status",
+        description=(
+            "Fetch only the status, priority, and last-updated time of a synthetic "
+            "customer-support case by its case_id -- a narrower read than "
+            "get_customer_case for callers that only need to check case state."
+        ),
+    )
+    async def get_case_status(
+        case_id: str,
+        identity: Annotated[VerifiedIdentity | None, Resolve(_resolve_identity_only)] = None,
+    ) -> CaseStatusResult | None:
+        cross_tenant_support_roles = config.security.authorization.cross_tenant_support_roles
+        return _run_business_tool(
+            "get_case_status",
+            lambda: business_store.get_case_status(case_id, identity, cross_tenant_support_roles),
         )
 
     _harden_argument_schemas(server)
