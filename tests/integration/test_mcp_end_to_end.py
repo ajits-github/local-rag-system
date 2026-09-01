@@ -23,18 +23,20 @@ import contextlib
 import socket
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
+from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import UTC, datetime
 
 import httpx2
 import jwt
 import pytest
 import uvicorn
+from fastapi import FastAPI
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
 from rag.config import load_config
-from rag.mcp.asgi import build_mcp_asgi_app
+from rag.mcp.asgi import build_mcp_asgi_app, mount_mcp_app
 from rag.schemas import Chunk, ChunkMetadata, SearchResult
 
 _SECRET = "mcp-e2e-test-secret-not-real"
@@ -471,3 +473,55 @@ async def test_get_document_requires_dataset_id_argument():
         )
 
     assert result.is_error is True
+
+
+@pytest.mark.asyncio
+async def test_bare_mount_path_and_mounted_lifespan_work_through_a_wrapping_app():
+    """Mounted under a real outer app (mirroring rag.api.main), both /mcp and /mcp/ work.
+
+    Every other test in this file serves `build_mcp_asgi_app`'s return
+    value directly as uvicorn's own root app: the MCP SDK's session
+    manager lifespan starts automatically (uvicorn's own lifespan
+    protocol reaches it directly) and there is no `Mount` prefix in the
+    way at all -- neither of which is how `rag.api.main` actually uses
+    this app. This test instead builds a small wrapping FastAPI app the
+    same way `rag.api.main` does: `mount_mcp_app` for the mount (plus
+    its bare-mount-path fix) and a composed lifespan that enters the
+    mounted sub-app's own `router.lifespan_context` (mirroring
+    `rag.api.main`'s own `_lifespan`). Proves two things together: the
+    mounted session manager actually starts (a real tool call would hang
+    or error on session init otherwise -- this is real "mounted-app
+    lifespan coverage", not an inspection of the wiring), and the bare
+    mount path (no trailing slash) succeeds directly rather than
+    307-redirecting -- the exact failure a real MCP client hit against a
+    real Docker container before `mount_mcp_app` existed (see
+    ISSUES.md). If either the mount, the middleware, or the lifespan
+    composition were wrong, `_call_tool`'s `session.initialize()` would
+    raise or hang rather than return a result.
+    """
+    config = _mcp_config(auth_enabled=False)
+    pipeline = _FakePipeline()
+    pipeline.retrieve_results = [SearchResult(chunk=_chunk("c1"), score=0.9)]
+    mcp_app = build_mcp_asgi_app(config, pipeline, _FakeVectorStore(), _FakeEmbedder())
+
+    @asynccontextmanager
+    async def _lifespan(_: FastAPI) -> AsyncIterator[None]:
+        async with AsyncExitStack() as stack:
+            await stack.enter_async_context(mcp_app.router.lifespan_context(mcp_app))
+            yield
+
+    wrapper = FastAPI(lifespan=_lifespan)
+    mount_mcp_app(wrapper, mcp_app, "/mcp")
+
+    with _serve(wrapper) as base_url:
+        root = base_url.rstrip("/")
+
+        bare_result = await _call_tool(
+            f"{root}/mcp", None, "search_knowledge_base", {"query": "hi"}
+        )
+        assert bare_result.is_error is False
+
+        slash_result = await _call_tool(
+            f"{root}/mcp/", None, "search_knowledge_base", {"query": "hi"}
+        )
+        assert slash_result.is_error is False
