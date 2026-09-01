@@ -2,29 +2,63 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import AsyncExitStack, asynccontextmanager
+
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
-from rag.api.deps import get_config, get_rate_limiter
+from rag.api.deps import (
+    get_config,
+    get_embedder,
+    get_rate_limiter,
+    get_retrieval_pipeline,
+    get_vectorstore,
+)
 from rag.api.middleware import RequestIDMiddleware
 from rag.api.routers import agent_query, agent_stream, health, ingest, metrics, query
 from rag.audit import log_audit_event
 from rag.config import AppConfig
 from rag.logging_config import configure_logging
+from rag.mcp.asgi import build_mcp_asgi_app
 from rag.observability.tracing import configure_tracing
 
 _config = get_config()
 configure_logging(_config.app.log_level)
 configure_tracing(_config)
 
+# Built before the FastAPI app itself: when MCP is enabled, the app's own
+# lifespan (below) must also enter this sub-app's lifespan, since Starlette
+# does not auto-propagate a mounted sub-app's lifespan to its parent -- the
+# MCP session manager's background task group would otherwise never start.
+_mcp_app = (
+    build_mcp_asgi_app(_config, get_retrieval_pipeline(), get_vectorstore(), get_embedder())
+    if _config.mcp.enabled
+    else None
+)
+
+
+@asynccontextmanager
+async def _lifespan(_: FastAPI) -> AsyncIterator[None]:
+    """Enter the mounted MCP sub-app's lifespan, when MCP is enabled; a no-op otherwise."""
+    async with AsyncExitStack() as stack:
+        if _mcp_app is not None:
+            await stack.enter_async_context(_mcp_app.router.lifespan_context(_mcp_app))
+        yield
+
+
 app = FastAPI(
     title=_config.app.name,
     description="Modular, config-driven local RAG system.",
+    lifespan=_lifespan,
 )
 app.add_middleware(RequestIDMiddleware)
+
+if _mcp_app is not None:
+    app.mount(_config.mcp.server.mount_path, _mcp_app)
 
 
 class FeatureFlags(BaseModel):
