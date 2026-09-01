@@ -243,6 +243,12 @@ connected backend's active security/agent feature flags (`GET /`'s
 `features` block, booleans and provider names only, never a secret). It
 reuses the backend as-is; no RAG logic lives in the frontend.
 
+![Classic RAG answer with the feature-flags bar and expanded source citations](docs/assets/web-ui-screenshot.png)
+
+*A real `POST /query` round trip against the sample corpus: the feature-flags
+bar confirms which security controls are active, and the sources panel shows
+the actual retrieved chunks with scores and section paths.*
+
 ```bash
 make up             # backend only (Postgres + rag-api)
 make frontend-up    # backend + frontend, http://localhost:3001

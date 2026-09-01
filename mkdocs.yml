@@ -80,6 +80,7 @@ plugins:
         - "docs/architecture.md"
         - "#mlflow-tracking"
         - "frontend/README.md"
+        - "docs/assets/web-ui-screenshot.png"
         # mkdocstrings/autorefs cross-reference links between reference/
         # pages (e.g. "Bases: LLM" -> ../generation/#rag.generation.base.LLM).
         # Verified present in the rendered HTML; htmlproofer's resolver
