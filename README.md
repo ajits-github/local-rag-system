@@ -44,6 +44,7 @@ The fastest path is: install Python dependencies, start Postgres, ingest
 - [Architecture](#architecture)
 - [Multimodal & Layout-Aware Ingestion](#multimodal--layout-aware-ingestion)
 - [Agentic RAG](#agentic-rag)
+- [MCP](#mcp)
 - [Security](#security)
 - [Observability](#observability)
 - [Web UI](#web-ui)
@@ -92,7 +93,8 @@ For the detailed system view, see [`docs/architecture.md`](docs/architecture.md)
 | Prompt | versioned YAML templates | configurable |
 | Evaluation | Recall@k, MRR, RAGAS | extensible |
 | Security | JWT auth, tenant/role ACL, field redaction, rate limiting | independently toggleable, off by default |
-| Agent | bounded tool-calling workflow (`POST /agent/query`) | MCP server |
+| Agent | bounded tool-calling workflow (`POST /agent/query`) | extensible |
+| MCP | Streamable HTTP server, 4 agentic-RAG tools + 2 synthetic business tools | agent-as-client (Stage 2) |
 
 ## Multimodal & Layout-Aware Ingestion
 
@@ -127,6 +129,37 @@ checks as the classic path.
 The details live in [`docs/architecture.md`](docs/architecture.md). A
 baseline is evaluated end-to-end; see
 [Agentic RAG benchmarks](#agentic-rag-benchmarks) below.
+
+<!-- --8<-- [start:docs-mcp] -->
+## MCP
+
+A secure MCP (Model Context Protocol) server, mounted into the same
+`rag-api` process, exposes the four agentic-RAG tools
+(`search_knowledge_base`/`get_document`/`get_latest_document`/
+`get_related_context`) over Streamable HTTP for external MCP clients
+(Claude Desktop, another agent runtime). It wraps the exact same,
+already-hardened `rag.agent.tools.*` functions the in-process agent
+calls, unmodified: identity is resolved from the transport (a verified
+JWT, never a tool argument -- structurally excluded from the tool schema,
+not just rejected by validation), every result passes through the same
+sanitization choke point as the agent path, and an unknown or injected
+tool argument now fails loudly rather than being silently dropped.
+
+The same server also exposes two synthetic business-backend tools
+(`get_customer_case`/`get_case_status`, Stage 1B), demonstrating MCP as
+an integration layer to a separate backend system, not just another
+transport for this deployment's own RAG tools. They read from a small,
+in-memory synthetic customer-support-case dataset with its own tenant/
+role authorization (same rule, same config allow-list document ACL
+already uses for cross-tenant access) -- structurally independent of the
+RAG tools' chunk-level sanitization, since a case has no chunk/field-
+redaction concept. Server-only for now; making the in-process agent an
+MCP client (Stage 2) is still deferred until there's a concrete need for
+it.
+<!-- --8<-- [end:docs-mcp] -->
+
+Off by default (`mcp.enabled: false`, a true no-op); full design and the
+two hardening fixes: [MCP](docs/topics/mcp.md).
 
 <!-- --8<-- [start:docs-security] -->
 ## Security
