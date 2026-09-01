@@ -619,6 +619,46 @@ class VisionConfig(BaseModel):
     ollama: OllamaVisionConfig = Field(default_factory=OllamaVisionConfig)
 
 
+class McpServerConfig(BaseModel):
+    """Streamable-HTTP mount settings for the MCP server.
+
+    Attributes
+    ----------
+    mount_path : str
+        Path the MCP ASGI app is mounted under, inside the existing
+        `rag-api` FastAPI process (not a second server/process).
+    """
+
+    mount_path: str = "/mcp"
+
+
+class McpConfig(BaseModel):
+    """MCP server exposing the four RAG tools: search_knowledge_base, get_document, and friends.
+
+    Attributes
+    ----------
+    enabled : bool
+        When `False` (the default), a true no-op: `main.py` never mounts
+        the MCP ASGI app at all, so `mcp.server.mount_path` 404s like any
+        other undefined route, and the `mcp` package's session-manager
+        lifespan never starts. Matches `agent.enabled`/
+        `security.authorization.enabled`'s convention.
+    server : McpServerConfig
+        Streamable-HTTP mount settings.
+
+    Notes
+    -----
+    Identity is governed entirely by `security.auth` -- there is no
+    separate `mcp.auth.*` block. An MCP tool call is authenticated (or
+    not) by the exact same `security.auth.enabled`/`insecure_dev_mode`/
+    `jwt` rules `POST /query` already uses (see `rag.mcp.identity`), so
+    the two surfaces can never drift into different security postures.
+    """
+
+    enabled: bool = False
+    server: McpServerConfig = Field(default_factory=McpServerConfig)
+
+
 class AppConfig(BaseModel):
     """Root settings object: the single entrypoint used by the API, ingestion CLI, and eval CLI.
 
@@ -640,6 +680,7 @@ class AppConfig(BaseModel):
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     agent: AgentConfig = Field(default_factory=AgentConfig)
     observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
+    mcp: McpConfig = Field(default_factory=McpConfig)
 
     def agent_prompt_template_path(self, path: str) -> Path:
         """Resolve one of `agent.*_prompt_path`, relative to the repo root if not absolute.
