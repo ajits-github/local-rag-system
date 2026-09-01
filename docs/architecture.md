@@ -1942,10 +1942,12 @@ by the mocked unit tests).
   agent router enabled, simple questions still classic; C: full bounded
   agentic workflow) is specified but not recorded yet as
   `experiments/results/*.json` entries.
-- No MCP server, and the agent tool layer doesn't depend on any
-  MCP-specific type. `rag/agent/tools.py`'s
-  plain-function-plus-Pydantic-schema shape was chosen so a future MCP
-  exposure wouldn't require rewriting the underlying business logic.
+- The agent tool layer itself still doesn't depend on any MCP-specific
+  type: `rag/agent/tools.py`'s plain-function-plus-Pydantic-schema shape
+  was chosen so exposing it over MCP wouldn't require rewriting the
+  underlying business logic, and that bet paid off -- see
+  [MCP Integration](#mcp-integration) below, which wraps these same
+  four functions unmodified.
 
 ### Tool chunk ids and authorization parity
 
