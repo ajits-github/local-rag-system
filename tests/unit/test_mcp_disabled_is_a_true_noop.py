@@ -18,7 +18,9 @@ this file deliberately keeps out of scope, matching
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
+from starlette.routing import Mount
 
+import rag.api.main as main_module
 from rag.api.main import app
 from rag.config import load_config
 
@@ -42,3 +44,30 @@ def test_mcp_disabled_matches_a_route_that_never_existed():
     mcp_response = client.get("/mcp")
     control_response = client.get("/this-route-genuinely-does-not-exist")
     assert mcp_response.status_code == control_response.status_code == 404
+
+
+def test_no_mcp_app_is_ever_constructed_when_disabled():
+    """The MCP server, and its Streamable HTTP session manager/lifespan, is never built.
+
+    `rag/api/main.py`'s module-level `_mcp_app = build_mcp_asgi_app(...) if
+    config.mcp.enabled else None` short-circuits: when disabled,
+    `build_mcp_asgi_app` (and everything under it -- `build_mcp_server`,
+    tool registration, the SDK's session manager) is never called at
+    all, not merely built and then left unmounted. This is a stronger
+    property than route-table absence alone: no MCP background task
+    group is ever created for `_lifespan` to enter, since there is
+    nothing to enter.
+    """
+    assert main_module._mcp_app is None
+
+
+def test_no_mount_route_for_the_mcp_path_exists_in_the_route_table_when_disabled():
+    """The app's own route table has no `Mount` registered at the MCP mount path at all.
+
+    A second, independent check from the HTTP-behavior tests above:
+    inspects `app.routes` directly rather than inferring absence from a
+    404 response (which could, in principle, come from some other
+    handler).
+    """
+    mount_paths = {route.path for route in app.routes if isinstance(route, Mount)}
+    assert "/mcp" not in mount_paths
