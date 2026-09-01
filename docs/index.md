@@ -24,6 +24,7 @@ without duplicating it.
 | See how PDFs, DOCX, and images are handled | [Multimodal & Layout](topics/multimodal.md) |
 | Understand tenant/role authorization and redaction | [Security](topics/security.md) |
 | See the bounded agent workflow above classic RAG | [Agentic RAG](topics/agentic-rag.md) |
+| Call the agentic-RAG tools from an external MCP client | [MCP](topics/mcp.md) |
 | Check retrieval/generation quality metrics or RAGAS | [Evaluation & RAGAS](topics/evaluation.md) |
 | See tracing, Prometheus metrics, and dashboards | [Observability](topics/observability.md) |
 | Read function/class-level API docs | [API Reference](reference/index.md) |

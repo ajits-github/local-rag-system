@@ -96,6 +96,7 @@ nav:
   - Multimodal & Layout: topics/multimodal.md
   - Security: topics/security.md
   - Agentic RAG: topics/agentic-rag.md
+  - MCP: topics/mcp.md
   - Evaluation & RAGAS:
       - Overview: topics/evaluation.md
       - Metrics reference: metrics.md
@@ -116,6 +117,7 @@ nav:
       - Prompts: reference/prompts.md
       - Vision: reference/vision.md
       - Agent: reference/agent.md
+      - MCP: reference/mcp.md
       - Ingestion: reference/ingestion.md
       - Evaluation: reference/eval.md
       - Observability: reference/observability.md
