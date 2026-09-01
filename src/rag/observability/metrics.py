@@ -6,7 +6,10 @@ default) so re-importing this module. Which happens routinely across
 timeseries in CollectorRegistry" error the default registry is prone to.
 
 Every metric here has an explicitly bounded label set (checked against
-this milestone's requirement directly): `tool_name` (4 literal tools),
+this milestone's requirement directly): `tool_name` (4 literal agent
+tools plus, since the MCP milestone, 2 literal MCP-only business-case
+tools -- `observe_tool_call` takes a plain `str`, but every call site is
+one of these 6 fixed literals, never an arbitrary tool argument),
 `node` (6 literal graph nodes), `route` (`classic_rag`/`agent`), `reason`
 (5 literal termination reasons), `method`/`path`/`status_code` (a fixed
 set of registered HTTP routes. Never the raw request URL). Never a
