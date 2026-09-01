@@ -2168,6 +2168,52 @@ genuinely authorized caller was asking). No tool serializes a raw
 `SourceItem` exposure level (never `source_dict()`'s richer internal
 shape used only for judge/eval payloads).
 
+### Stage 1B: a second, structurally independent tool family
+
+`get_customer_case`/`get_case_status` deliberately do not route through
+`_dispatch`/`_run_tool` at all -- they call a separate `_run_business_tool`
+helper, which is structurally parallel (tracing span, latency metric, the
+same `mcp_tool` error counter on an unanticipated exception) but skips
+`pipeline.sanitize_evidence` entirely, since that method redacts
+chunk/field-level RAG content, a concept a business case doesn't have.
+`identity` is resolved through a new `_resolve_identity_only` (a thin
+`Resolve()`-compatible wrapper around the same `_resolve_identity`
+`_resolve_auth` itself now calls) rather than `_resolve_auth`, since
+these two tools need a bare `VerifiedIdentity`, not a document-shaped
+`AuthorizationContext` (no `as_of`/`include_superseded`/
+`require_trust_level` concept applies to a case).
+
+`rag/mcp/business/store.py` is the synthetic backend: a small, in-memory,
+read-only dict of `_CaseRecord`s (no Postgres/network dependency --
+deliberately not a new persistence layer, since the point of this
+milestone is the integration shape, not a real case-management system).
+Its authorization rule mirrors the document-ACL predicate exactly (own
+tenant plus a matching role on the resource, or a
+`security.authorization.cross_tenant_support_roles` role that is *also*
+listed on that resource's own allow-list -- reusing that config list, not
+a second parallel privilege list), but is unconditional rather than
+kill-switched: unlike the document corpus, which predates tenant
+governance and must keep `tenant_id IS NULL` meaning "visible to
+everyone" for backward compatibility, every synthetic case has a concrete
+tenant from creation, so there's no legacy state `security.authorization.
+enabled=false` needs to preserve here. `identity is None` (auth disabled
+entirely) still means fully unrestricted, matching every other
+authorization surface's convention -- not a business-tool-specific
+relaxation.
+
+A case the caller may not access and a case that doesn't exist both
+resolve to `None`, mirroring the document corpus's own "SQL-filtered ACL,
+indistinguishable from the outside" property. The difference: that
+document-level property is a documented *gap* (`pgvector.py`'s predicate
+filters before Python ever sees an excluded row, so no
+`authorization_denied` audit event fires for a real per-document denial
+today -- see "Audit logging" above). Business-case authorization happens
+in Python, so a real denial *is* observable there; `_lookup_authorized`
+logs a genuine `authorization_denied` event (`action`, pseudonymous
+`subject`, `tenant_id`, `case_id`) whenever a case is found but the
+caller fails the check, even though the tool's return value never reveals
+that distinction to the caller itself.
+
 
 ## Observability
 
