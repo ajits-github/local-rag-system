@@ -19,6 +19,20 @@ export default defineConfig({
       "/metrics": BACKEND_ORIGIN,
       "/docs": BACKEND_ORIGIN,
       "/openapi.json": BACKEND_ORIGIN,
+      // The bare "/" is both the SPA's own document root and the
+      // backend's GET / (FeatureFlagsBar's info endpoint) -- the only
+      // path where the frontend and the API contract collide. A real
+      // browser navigation sends `Accept: text/html`; FeatureFlagsBar's
+      // own `fetch("/")` doesn't, so that header is what disambiguates
+      // which one a given request to "/" actually wants.
+      "^/$": {
+        target: BACKEND_ORIGIN,
+        changeOrigin: true,
+        bypass(req) {
+          const accept = req.headers.accept ?? "";
+          return accept.includes("text/html") ? req.url : undefined;
+        },
+      },
     },
   },
   test: {
