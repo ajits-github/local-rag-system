@@ -34,6 +34,7 @@ from mcp.client.streamable_http import streamable_http_client
 from rag.factory import build_embedder
 from rag.ingestion.pipeline import IngestionPipeline
 from rag.mcp.asgi import build_mcp_asgi_app
+from rag.retrieval.authorization import AuthorizationContext
 from rag.retrieval.pipeline import RetrievalPipeline
 
 _SECRET = "mcp-tenant-isolation-test-secret"
@@ -199,5 +200,126 @@ async def test_get_document_cannot_cross_tenant_boundary(
             )
             contents = [r["content"] for r in right_tenant.structured_content["result"]]
             assert any("30 days" in c for c in contents)
+    finally:
+        vectorstore.delete_document(result["document_id"])
+
+
+@pytest.mark.asyncio
+async def test_get_latest_document_cannot_cross_tenant_boundary(
+    require_postgres, config, tmp_path: Path, monkeypatch
+):
+    """get_latest_document resolves the current version, but still enforces tenant ACL on it.
+
+    Mirrors test_agent_tool_tenant_isolation.py's in-process version of
+    this scenario, over the real MCP transport this time.
+    """
+    ns = f"pytest-mcp-e2e-{uuid.uuid4()}"
+    secure = _secure_config(config, monkeypatch)
+    ingestion = IngestionPipeline(secure)
+
+    path_v1 = _write_doc(
+        tmp_path,
+        "retention-v1.md",
+        {
+            "tenant_id": "tenant_alpha",
+            "allowed_roles": ["tenant_alpha_operator"],
+            "status": "superseded",
+            "document_version": "1.0",
+        },
+        "The retention period is 7 days.",
+    )
+    path_v2 = _write_doc(
+        tmp_path,
+        "retention-v2.md",
+        {
+            "tenant_id": "tenant_alpha",
+            "allowed_roles": ["tenant_alpha_operator"],
+            "status": "active",
+            "document_version": "2.0",
+            "supersedes": "retention-v1.md",
+        },
+        "The retention period is 90 days.",
+    )
+    result_v1 = ingestion.ingest_file(path_v1, ns)
+    result_v2 = ingestion.ingest_file(path_v2, ns)
+    vectorstore = ingestion._vectorstore
+    pipeline = RetrievalPipeline(secure, vectorstore=vectorstore, embedder=_NoOpEmbedder())
+    app = build_mcp_asgi_app(secure, pipeline, vectorstore, _NoOpEmbedder())
+
+    try:
+        with _serve(app) as base_url:
+            wrong_tenant = await _call_tool(
+                base_url,
+                _token("tenant_beta", ["tenant_beta_operator"]),
+                "get_latest_document",
+                {
+                    "source": str(path_v1),
+                    "dataset_id": ns,
+                    "query": "what is the retention period",
+                },
+            )
+            assert wrong_tenant.structured_content["result"] == []
+
+            # Asks for the OLD version's path; a correctly-authorized caller still gets
+            # redirected to the CURRENT (90 days) version's content, not the stale one.
+            right_tenant = await _call_tool(
+                base_url,
+                _token("tenant_alpha", ["tenant_alpha_operator"]),
+                "get_latest_document",
+                {
+                    "source": str(path_v1),
+                    "dataset_id": ns,
+                    "query": "what is the retention period",
+                },
+            )
+            contents = [r["content"] for r in right_tenant.structured_content["result"]]
+            assert any("90 days" in c for c in contents)
+            assert not any("7 days" in c for c in contents)
+    finally:
+        vectorstore.delete_document(result_v1["document_id"])
+        vectorstore.delete_document(result_v2["document_id"])
+
+
+@pytest.mark.asyncio
+async def test_get_related_context_cannot_reach_an_unauthorized_seed_chunk(
+    require_postgres, config, tmp_path: Path, monkeypatch
+):
+    """A caller who guesses another tenant's chunk_id gets no related context back over MCP.
+
+    get_chunks_by_ids' own auth-scoping (not get_related_context's own
+    logic) is what blocks it -- mirrors
+    test_agent_tool_tenant_isolation.py's in-process version, over the
+    real MCP transport this time.
+    """
+    ns = f"pytest-mcp-e2e-{uuid.uuid4()}"
+    secure = _secure_config(config, monkeypatch)
+    ingestion = IngestionPipeline(secure)
+
+    path = _write_doc(
+        tmp_path,
+        "beta-only.md",
+        {"tenant_id": "tenant_beta", "allowed_roles": ["tenant_beta_operator"]},
+        "Beta-only operational detail.",
+    )
+    result = ingestion.ingest_file(path, ns)
+    vectorstore = ingestion._vectorstore
+    pipeline = RetrievalPipeline(secure, vectorstore=vectorstore, embedder=_NoOpEmbedder())
+    app = build_mcp_asgi_app(secure, pipeline, vectorstore, _NoOpEmbedder())
+
+    try:
+        # Discover the real chunk_id as an authorized Beta caller first (test setup only).
+        beta_auth = AuthorizationContext(tenant_id="tenant_beta", roles=["tenant_beta_operator"])
+        beta_chunks = vectorstore.get_chunks_by_source(str(path), ns, auth=beta_auth)
+        assert beta_chunks
+        real_chunk_id = beta_chunks[0].metadata.chunk_id
+
+        with _serve(app) as base_url:
+            wrong_tenant = await _call_tool(
+                base_url,
+                _token("tenant_alpha", ["tenant_alpha_operator"]),
+                "get_related_context",
+                {"chunk_id": real_chunk_id, "dataset_id": ns},
+            )
+            assert wrong_tenant.structured_content["result"] == []
     finally:
         vectorstore.delete_document(result["document_id"])
