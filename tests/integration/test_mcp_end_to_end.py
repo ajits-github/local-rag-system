@@ -575,6 +575,57 @@ async def test_get_customer_case_denies_role_mismatch_within_same_tenant():
 
 
 @pytest.mark.asyncio
+async def test_get_customer_case_denies_cross_tenant_caller_without_support_role():
+    """A caller from a different tenant, holding no cross-tenant support role, is denied.
+
+    CASE-2001 belongs to tenant_beta; a plain tenant_alpha_operator has no
+    role in `security.authorization.cross_tenant_support_roles` at all, so
+    this fails at the very first check, before the target case's own
+    allowed_roles is even consulted.
+    """
+    config = _mcp_config(auth_enabled=True)
+    app = build_mcp_asgi_app(config, _FakePipeline(), _FakeVectorStore(), _FakeEmbedder())
+
+    with _serve(app) as base_url:
+        result = await _call_tool(
+            base_url,
+            _token(tenant_id="tenant_alpha", roles=["tenant_alpha_operator"]),
+            "get_customer_case",
+            {"case_id": "CASE-2001"},
+        )
+
+    assert result.is_error is False
+    assert result.structured_content["result"] is None
+
+
+@pytest.mark.asyncio
+async def test_get_customer_case_denies_support_role_not_listed_on_target_case():
+    """A config-level cross-tenant support role only works when the target case also lists it.
+
+    CASE-2001 does not include techfusion_support in its own
+    allowed_roles (unlike CASE-2002); holding the role in
+    `security.authorization.cross_tenant_support_roles` is not
+    sufficient on its own. Mirrors the document-level
+    `test_support_role_not_listed_on_document_cannot_access_it` case,
+    now proven over the real MCP wire protocol rather than only against
+    `rag.mcp.business.store` directly.
+    """
+    config = _mcp_config(auth_enabled=True)
+    app = build_mcp_asgi_app(config, _FakePipeline(), _FakeVectorStore(), _FakeEmbedder())
+
+    with _serve(app) as base_url:
+        result = await _call_tool(
+            base_url,
+            _token(tenant_id="tenant_alpha", roles=["techfusion_support"]),
+            "get_customer_case",
+            {"case_id": "CASE-2001"},
+        )
+
+    assert result.is_error is False
+    assert result.structured_content["result"] is None
+
+
+@pytest.mark.asyncio
 async def test_get_customer_case_nonexistent_id_also_returns_null():
     """A case_id that doesn't exist at all resolves the same way as an unauthorized one."""
     config = _mcp_config(auth_enabled=True)
