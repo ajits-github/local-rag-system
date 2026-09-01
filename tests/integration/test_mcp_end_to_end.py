@@ -241,13 +241,19 @@ async def test_search_knowledge_base_threads_verified_identity_into_pipeline_ret
 
 
 @pytest.mark.asyncio
-async def test_injected_tenant_id_and_roles_arguments_have_no_effect():
-    """A client-supplied tenant_id/roles/auth-shaped argument never reaches authorization.
+async def test_injected_tenant_id_roles_and_auth_arguments_are_rejected_loudly():
+    """A client-supplied tenant_id/roles/auth-shaped argument is rejected, not silently dropped.
 
     No tool function has a tenant_id/roles parameter to bind these into,
-    and `auth` is exclusively resolver-injected -- so a client attempting
-    to smuggle one of these keys is structurally inert, proven here by
-    the actual AuthorizationContext the fake pipeline recorded.
+    and `auth` is exclusively resolver-injected, so these keys were
+    already structurally unable to influence authorization. But the
+    SDK's default argument-model behavior (`extra="ignore"`) used to
+    silently drop them rather than reject the call -- a worse failure
+    mode than a loud rejection at a security boundary. `rag.mcp.server`
+    hardens every tool's argument model to `extra="forbid"`
+    (`_harden_argument_schemas`), so this call now fails argument
+    validation before the tool function -- and therefore
+    `pipeline.retrieve()` -- ever runs at all.
     """
     config = _mcp_config(auth_enabled=True)
     pipeline = _FakePipeline()
@@ -266,10 +272,63 @@ async def test_injected_tenant_id_and_roles_arguments_have_no_effect():
             },
         )
 
+    assert result.is_error is True
+    assert pipeline.retrieve_calls == []
+
+
+@pytest.mark.asyncio
+async def test_arbitrary_unknown_argument_is_rejected_loudly():
+    """A client-supplied field with no relation to authorization at all is still rejected.
+
+    Proves the hardening is a general unknown-field rejection, not a
+    special case hardcoded for tenant_id/roles/auth specifically.
+    """
+    config = _mcp_config(auth_enabled=False)
+    pipeline = _FakePipeline()
+    app = build_mcp_asgi_app(config, pipeline, _FakeVectorStore(), _FakeEmbedder())
+
+    with _serve(app) as base_url:
+        result = await _call_tool(
+            base_url, None, "search_knowledge_base", {"query": "hi", "banana": "not a real field"}
+        )
+
+    assert result.is_error is True
+    assert pipeline.retrieve_calls == []
+
+
+@pytest.mark.asyncio
+async def test_all_declared_optional_arguments_are_still_accepted_after_hardening():
+    """Hardening rejects unknown fields only -- every legitimate optional field still validates.
+
+    A regression guard for `_harden_argument_schemas`: `extra="forbid"`
+    must reject keys absent from the schema, never a key the schema
+    actually declares.
+    """
+    config = _mcp_config(auth_enabled=False)
+    pipeline = _FakePipeline()
+    pipeline.retrieve_results = [SearchResult(chunk=_chunk("c1"), score=0.9)]
+    app = build_mcp_asgi_app(config, pipeline, _FakeVectorStore(), _FakeEmbedder())
+
+    with _serve(app) as base_url:
+        result = await _call_tool(
+            base_url,
+            None,
+            "search_knowledge_base",
+            {
+                "query": "hi",
+                "top_k": 2,
+                "content_type": "table",
+                "dataset_id": "ds1",
+                "as_of": "2026-01-01",
+                "require_trust_level": "authoritative",
+            },
+        )
+
     assert result.is_error is False
-    auth = pipeline.retrieve_calls[0]["auth"]
-    assert auth.tenant_id == "tenant_alpha"
-    assert auth.roles == ["tenant_alpha_operator"]
+    assert pipeline.retrieve_calls[0]["filters"] == {
+        "dataset_id": "ds1",
+        "content_type": "table",
+    }
 
 
 @pytest.mark.asyncio
