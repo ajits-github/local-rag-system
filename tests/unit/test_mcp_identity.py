@@ -8,6 +8,7 @@ JWT-construction conventions.
 
 from __future__ import annotations
 
+import logging
 import time
 
 import jwt
@@ -158,3 +159,40 @@ def test_resolve_stdio_identity_rejects_an_invalid_token_from_env(monkeypatch):
     monkeypatch.setenv("MCP_AUTH_TOKEN", "not-a-real-jwt")
     with pytest.raises(RuntimeError, match="failed verification"):
         resolve_stdio_identity(config)
+
+
+def _assert_no_secret_in_logs(records, *secrets: str) -> None:
+    for record in records:
+        rendered = f"{record.getMessage()!r} {record.__dict__!r}"
+        for secret in secrets:
+            assert secret not in rendered, f"log record leaked a raw secret: {rendered!r}"
+
+
+def test_resolve_http_identity_success_path_never_logs_the_raw_token(caplog):
+    """A successful mcp_auth_success audit event never carries the raw JWT string."""
+    config = _auth_config()
+    token = _token()
+
+    with caplog.at_level(logging.INFO, logger="rag.audit"):
+        identity = resolve_http_identity({"authorization": f"Bearer {token}"}, config)
+
+    assert identity is not None
+    assert caplog.records
+    _assert_no_secret_in_logs(caplog.records, token)
+
+
+def test_resolve_http_identity_failure_path_never_logs_the_raw_token_or_signing_secret(caplog):
+    """A failed mcp_auth_failure audit event never carries the raw token or its signing secret."""
+    config = _auth_config()
+    bad_token = jwt.encode(
+        {"sub": "eve", "tenant_id": "tenant_alpha", "roles": [], "exp": int(time.time()) + 3600},
+        "totally-wrong-secret",
+        algorithm="HS256",
+    )
+
+    with caplog.at_level(logging.INFO, logger="rag.audit"):
+        with pytest.raises(ToolError):
+            resolve_http_identity({"authorization": f"Bearer {bad_token}"}, config)
+
+    assert caplog.records
+    _assert_no_secret_in_logs(caplog.records, bad_token, "totally-wrong-secret")
