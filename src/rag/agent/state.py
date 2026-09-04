@@ -71,7 +71,12 @@ class ToolCallRecord(BaseModel):
     """
 
     tool_name: Literal[
-        "search_knowledge_base", "get_document", "get_latest_document", "get_related_context"
+        "search_knowledge_base",
+        "get_document",
+        "get_latest_document",
+        "get_related_context",
+        "get_customer_case",
+        "get_case_status",
     ]
     args: dict[str, Any] = Field(default_factory=dict)
     result_count: int = 0
