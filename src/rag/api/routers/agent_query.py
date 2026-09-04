@@ -15,6 +15,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
+from starlette.applications import Starlette
 
 from rag.agent.graph import run_agent
 from rag.agent.state import AgentState
@@ -24,6 +25,7 @@ from rag.api.deps import (
     get_current_identity,
     get_embedder,
     get_llm,
+    get_mcp_asgi_app,
     get_rate_limiter,
     get_retrieval_pipeline,
     get_vectorstore,
@@ -90,6 +92,7 @@ def agent_query(
     embedder: Embedder = Depends(get_embedder),
     llm: LLM = Depends(get_llm),
     config: AppConfig = Depends(get_config),
+    mcp_app: Starlette | None = Depends(get_mcp_asgi_app),
 ) -> AgentQueryResponse:
     """Run `body.query` through the bounded agent graph and return the answer.
 
@@ -106,6 +109,11 @@ def agent_query(
         The same process-wide instances `/query` uses.
     config : AppConfig
         Application configuration; `config.agent` governs routing/bounds.
+    mcp_app : Starlette | None
+        The process-wide MCP ASGI app singleton (see
+        `rag.api.deps.get_mcp_asgi_app`), threaded through to
+        `run_agent` for the two remote business tools; `None` whenever
+        `mcp.enabled=False`.
 
     Returns
     -------
@@ -126,6 +134,7 @@ def agent_query(
         embedder=embedder,
         llm=llm,
         config=config,
+        mcp_app=mcp_app,
     )
     final_state = result.state
     return AgentQueryResponse(
