@@ -122,7 +122,7 @@ For the detailed system view, see [`docs/architecture.md`](docs/architecture.md)
 | Evaluation | Recall@k, MRR, RAGAS | extensible |
 | Security | JWT auth, tenant/role ACL, field redaction, rate limiting | independently toggleable, off by default |
 | Agent | bounded tool-calling workflow (`POST /agent/query`) | extensible |
-| MCP | Streamable HTTP server, 4 agentic-RAG tools + 2 synthetic business tools | agent-as-client (Stage 2) |
+| MCP | Streamable HTTP server (4 agentic-RAG tools + 2 synthetic business tools) and client (agent calls the 2 business tools) | independently toggleable, off by default |
 
 ## Multimodal & Layout-Aware Ingestion
 
@@ -181,13 +181,21 @@ in-memory synthetic customer-support-case dataset with its own tenant/
 role authorization (same rule, same config allow-list document ACL
 already uses for cross-tenant access) -- structurally independent of the
 RAG tools' chunk-level sanitization, since a case has no chunk/field-
-redaction concept. Server-only for now; making the in-process agent an
-MCP client (Stage 2) is still deferred until there's a concrete need for
-it.
+redaction concept.
+
+The in-process agent is also a real MCP *client* for those same two
+business tools (Stage 2): `POST /agent/query` can dispatch
+`get_customer_case`/`get_case_status` over an actual `mcp.ClientSession`,
+never a shortcut direct function call, while the four RAG tools stay
+direct, in-process calls. Each call mints a short-lived internal service
+token from the caller's already-verified identity -- never the caller's
+own JWT -- and fails closed at startup if authentication isn't enabled,
+since these tools have no unauthenticated fallback state to preserve.
 <!-- --8<-- [end:docs-mcp] -->
 
-Off by default (`mcp.enabled: false`, a true no-op); full design and the
-two hardening fixes: [MCP](docs/topics/mcp.md).
+Off by default (`mcp.enabled: false`/`mcp.client.enabled: false`, both
+true no-ops); full design and both hardening fixes:
+[MCP](docs/topics/mcp.md).
 
 <!-- --8<-- [start:docs-security] -->
 ## Security
@@ -709,10 +717,6 @@ Deferred for now, tracked here rather than left as empty scaffolding:
   (see [Multimodal & Layout-Aware Ingestion](#multimodal--layout-aware-ingestion)
   above) once description quality on real images has been evaluated
   further; current evidence doesn't show an answer-quality improvement.
-- **MCP Stage 2**: making the in-process agent itself an MCP client,
-  deferred until there's a concrete need for it. See [MCP](#mcp) above
-  for what's already shipped (Stage 1A: the four agentic-RAG tools;
-  Stage 1B: the two synthetic business-case tools).
 - **LangGraph**: revisit only if a future need appears for checkpoint/
   resume across requests, human-in-the-loop approval, or substantially
   more complex branching than today's bounded agentic workflow (see
