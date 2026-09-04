@@ -21,6 +21,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from starlette.applications import Starlette
 from starlette.concurrency import run_in_threadpool
 from starlette.responses import StreamingResponse
 
@@ -33,6 +34,7 @@ from rag.api.deps import (
     get_current_identity,
     get_embedder,
     get_llm,
+    get_mcp_asgi_app,
     get_rate_limiter,
     get_retrieval_pipeline,
     get_vectorstore,
@@ -75,6 +77,7 @@ def _run_agent_in_thread(
     embedder: Embedder,
     llm: LLM,
     config: AppConfig,
+    mcp_app: Starlette | None,
     queue: asyncio.Queue[Any],
     loop: asyncio.AbstractEventLoop,
 ) -> None:
@@ -96,6 +99,7 @@ def _run_agent_in_thread(
             embedder=embedder,
             llm=llm,
             config=config,
+            mcp_app=mcp_app,
             on_event=_on_event,
         )
         loop.call_soon_threadsafe(queue.put_nowait, result)
@@ -145,6 +149,7 @@ async def _stream_agent_query(
     embedder: Embedder,
     llm: LLM,
     config: AppConfig,
+    mcp_app: Starlette | None,
 ) -> AsyncIterator[str]:
     """Yield `text/event-stream` messages for one agent run, ending in `completed`/`terminated`.
 
@@ -167,6 +172,7 @@ async def _stream_agent_query(
             embedder=embedder,
             llm=llm,
             config=config,
+            mcp_app=mcp_app,
             queue=queue,
             loop=loop,
         )
@@ -256,6 +262,7 @@ def agent_query_stream(
     embedder: Embedder = Depends(get_embedder),
     llm: LLM = Depends(get_llm),
     config: AppConfig = Depends(get_config),
+    mcp_app: Starlette | None = Depends(get_mcp_asgi_app),
 ) -> StreamingResponse:
     """Stream live progress for the query in `state` through the bounded agent graph.
 
@@ -269,7 +276,7 @@ def agent_query_stream(
         `_build_validated_agent_state` (request-body parsing,
         DoS-limit enforcement, and authorization-context construction all
         happen there, ahead of the dependencies below).
-    pipeline, vectorstore, embedder, llm, config
+    pipeline, vectorstore, embedder, llm, config, mcp_app
         Same injected singletons `/agent/query` uses. Declared *after*
         `state` so a rejected request never resolves them; see
         `_build_validated_agent_state`'s docstring.
@@ -283,6 +290,6 @@ def agent_query_stream(
         as `/agent/query`'s JSON response.
     """
     return StreamingResponse(
-        _stream_agent_query(request, state, pipeline, vectorstore, embedder, llm, config),
+        _stream_agent_query(request, state, pipeline, vectorstore, embedder, llm, config, mcp_app),
         media_type="text/event-stream",
     )
