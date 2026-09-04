@@ -56,7 +56,7 @@ from rag.agent.decisions import (
 )
 from rag.agent.events import AgentEvent, EventType
 from rag.agent.state import AgentState, Citation, NodeInvocationTiming, ToolCallRecord
-from rag.agent.tool_schemas import TOOL_ARG_MODELS
+from rag.agent.tool_schemas import REMOTE_MCP_TOOL_NAMES, TOOL_ARG_MODELS
 from rag.audit import log_audit_event
 from rag.config import AgentConfig, AppConfig
 from rag.embedders.base import Embedder
@@ -541,6 +541,8 @@ def _execute_tool(
     embedder: Embedder,
     dataset_id: str | None,
     agent_cfg: AgentConfig,
+    config: AppConfig,
+    mcp_app: Any | None = None,
     on_event: OnAgentEvent | None = None,
 ) -> AgentState:
     """`execute_tool` node: validate arguments, dispatch, sanitize, and record the outcome.
@@ -579,21 +581,48 @@ def _execute_tool(
         observability_metrics.observe_error("tool")
         return state
 
+    is_remote_tool = decision.tool_name in REMOTE_MCP_TOOL_NAMES
+    if is_remote_tool and not config.mcp.client.enabled:
+        # Defense in depth: the tool-select prompt already never offers these two
+        # names unless mcp.client.enabled (see _load_templates), so this only fires
+        # on a hallucinated/stale decision. Fails like an invalid-argument decision:
+        # a recorded failure, never a dispatch attempt, never a crash.
+        log_audit_event("agent_mcp_tool_disabled", tool_name=decision.tool_name)
+        latency_ms = (time.perf_counter() - t0) * 1000
+        state.tool_call_history.append(
+            ToolCallRecord(
+                tool_name=decision.tool_name,
+                args=args.model_dump(),
+                result_count=0,
+                latency_ms=latency_ms,
+                success=False,
+                error="mcp_client_disabled",
+            )
+        )
+        state.tool_call_count += 1
+        observability_metrics.observe_tool_call(decision.tool_name, False, latency_ms / 1000)
+        return state
+
     _emit_event(on_event, "tool_started", state, tool_name=decision.tool_name)
     try:
         with tracing.start_span(
             decision.tool_name, attributes={"tool_name": decision.tool_name}
         ) as span:
-            results = _dispatch_tool(
-                decision.tool_name,
-                args,
-                state=state,
-                pipeline=pipeline,
-                vectorstore=vectorstore,
-                embedder=embedder,
-                dataset_id=dataset_id,
-                agent_cfg=agent_cfg,
-            )
+            if is_remote_tool:
+                results = _dispatch_mcp_tool(
+                    decision.tool_name, args, state=state, config=config, mcp_app=mcp_app
+                )
+            else:
+                results = _dispatch_tool(
+                    decision.tool_name,
+                    args,
+                    state=state,
+                    pipeline=pipeline,
+                    vectorstore=vectorstore,
+                    embedder=embedder,
+                    dataset_id=dataset_id,
+                    agent_cfg=agent_cfg,
+                )
             tracing.set_attributes(span, {"tool_success": True, "result_count": len(results)})
     except Exception as exc:  # tool failure must never crash the request
         latency_ms = (time.perf_counter() - t0) * 1000
@@ -814,6 +843,7 @@ def run_agent(
     embedder: Embedder,
     llm: LLM,
     config: AppConfig,
+    mcp_app: Any | None = None,
     on_event: OnAgentEvent | None = None,
 ) -> AgentRunResult:
     """Run the bounded agent graph for one query, or the classic-RAG fast path.
@@ -840,6 +870,13 @@ def run_agent(
         layer already uses.
     config : AppConfig
         Application configuration; `config.agent` supplies every bound.
+    mcp_app : Any | None, optional
+        The in-process MCP ASGI app object (see
+        `rag.api.deps.get_mcp_asgi_app`), threaded through to
+        `rag.agent.mcp_client` for the two remote business tools when
+        `config.mcp.client.enabled=True` and
+        `config.mcp.client.transport="asgi"` (the default). Unused, and
+        safe to leave `None`, whenever `mcp.client.enabled=False`.
     on_event : OnAgentEvent | None, optional
         Called with a safe `AgentEvent` at each state-machine transition,
         if set. Used by `POST /agent/query/stream` to stream live
@@ -974,6 +1011,8 @@ def run_agent(
                 embedder=embedder,
                 dataset_id=dataset_id,
                 agent_cfg=agent_cfg,
+                config=config,
+                mcp_app=mcp_app,
                 on_event=on_event,
             ),
         )
