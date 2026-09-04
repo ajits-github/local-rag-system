@@ -238,11 +238,18 @@ class SearchResult(BaseModel):
     score : float
         Similarity or ranking score. Meaningless for ranking on an
         expanded result, which inherits its originating result's score.
-    origin : {"retrieved", "expanded", "tool_fetched"}
+    origin : {"retrieved", "expanded", "tool_fetched", "mcp_remote"}
         Whether this result was directly retrieved, added by relationship
-        expansion, or fetched directly by an agent tool (`get_document`/
+        expansion, fetched directly by an agent tool (`get_document`/
         `get_latest_document`/`get_related_context`'s seed lookup) rather
-        than via similarity search.
+        than via similarity search, or synthesized from a remote MCP
+        business-tool result (`get_customer_case`/`get_case_status`; see
+        `rag.agent.mcp_client`). `"mcp_remote"` evidence is never real
+        document-corpus content: it carries a synthetic `chunk_id`/
+        `source` and is never eligible for freshness resolution,
+        relationship expansion, or document-level ACL, since those all
+        operate on real `VectorStore` rows this evidence never passes
+        through.
     expanded_from : str or None
         `chunk_id` of the originating result, if `origin == "expanded"`.
     injection_suspected : bool
@@ -255,7 +262,7 @@ class SearchResult(BaseModel):
 
     chunk: Chunk
     score: float
-    origin: Literal["retrieved", "expanded", "tool_fetched"] = "retrieved"
+    origin: Literal["retrieved", "expanded", "tool_fetched", "mcp_remote"] = "retrieved"
     expanded_from: str | None = None
     injection_suspected: bool = False
     redacted_field_ids: list[str] = Field(default_factory=list)
