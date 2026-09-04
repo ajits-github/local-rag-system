@@ -74,6 +74,43 @@ toggle that could drift from it.
   MCP SDK's own client doesn't follow during session init. A small
   server-side ASGI middleware now makes both spellings work identically.
 
+## Stage 2: the agent as an MCP client
+
+Stages 1A/1B are server-only: this codebase exposes tools, it doesn't
+call any as a client. Stage 2 closes that other half, but only for the
+two business tools -- `rag/agent/mcp_client.py`, dispatched from
+`rag/agent/graph.py`'s bounded tool loop. The four RAG tools stay exactly
+what they already were: direct, in-process function calls, never routed
+through MCP.
+
+- **Fails closed, not open.** `mcp.client.enabled=True` requires
+  `security.auth.enabled=True` -- checked once at process startup, not
+  per request -- since the business tools' authorization has no
+  kill-switch to fall back on.
+- **Never forwards the caller's own token.** Each remote call mints a
+  fresh, short-lived internal service token from the caller's already-
+  verified tenant/roles (`sub` is always a fixed, clearly synthetic
+  marker), signed with the same secret the receiving, unmodified
+  `verify_jwt` already checks against.
+- **In-process by default, real network as an escape hatch.** The
+  default transport binds an ASGI transport directly to the same MCP
+  server object this process mounts -- no socket, still the full
+  Streamable HTTP protocol end to end. Pointing it at a genuinely
+  separate deployment later is a config change, not new code.
+- **One session per call**, never pooled across requests -- simplest
+  correct answer to "does this call need an already-running event loop,"
+  since `run_agent()`'s node functions are synchronous by design.
+- **Business-case evidence is synthetic and inert to document logic.**
+  A fabricated `chunk_id`/`source`, `origin="mcp_remote"`, and every
+  freshness/relationship/ACL-relevant field left unset -- this evidence
+  never touches `VectorStore` or the retrieval pipeline, so those
+  subsystems structurally never see it.
+
+Full design writeup -- token-minting's `iss`/`aud` asymmetry (a real
+PyJWT behavior found mid-implementation), the DNS-rebinding Host-header
+bug the ASGI transport hit, and the session-lifecycle tradeoffs:
+[MCP Integration](../architecture.md#mcp-integration).
+
 ## Config
 
 ```yaml
@@ -81,23 +118,23 @@ mcp:
   enabled: false      # true no-op when false: the MCP server is never built or mounted
   server:
     mount_path: /mcp
+  client:
+    enabled: false    # true no-op when false: the agent never offers or dispatches the two remote tools
+    transport: asgi   # or "http", for a genuinely separate future deployment
 ```
 
-`mcp.enabled: false` is the shipped default. When `false`, the MCP
-server -- and its Streamable HTTP session manager -- is never even
-constructed, not merely built and left unmounted; `GET /mcp` 404s
-exactly like a route that was never registered.
+`mcp.enabled: false` and `mcp.client.enabled: false` are both shipped
+defaults. When `mcp.enabled` is `false`, the MCP server -- and its
+Streamable HTTP session manager -- is never even constructed, not merely
+built and left unmounted; `GET /mcp` 404s exactly like a route that was
+never registered. When `mcp.client.enabled` is `false`, the agent's
+tool-select prompt never offers `get_customer_case`/`get_case_status`,
+and a decision naming either one anyway fails closed as an ordinary
+recorded tool failure, never a real dispatch attempt.
 
-## What's deferred
-
-Stage 1A (the four RAG tools) and Stage 1B (the two synthetic
-business-case tools) are both server-only. Making the in-process agent
-itself an MCP client (Stage 2) is still deliberately deferred until
-there's a concrete need for it -- tracked in the README's Roadmap
-section, not started or scaffolded.
-
-Full design writeup, including both hardening fixes' root causes and the
-alternatives considered and rejected for the bare-mount-path fix:
+Full design writeup, including both server-side hardening fixes' root
+causes, the alternatives considered and rejected for the bare-mount-path
+fix, and the full Stage 2 design:
 [MCP Integration](../architecture.md#mcp-integration).
 
 API reference: [MCP](../reference/mcp.md).
