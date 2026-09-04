@@ -3,7 +3,7 @@
 [![CI](https://github.com/ajits-github/local-rag-system/actions/workflows/ci.yml/badge.svg)](https://github.com/ajits-github/local-rag-system/actions/workflows/ci.yml)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 ![Python](https://img.shields.io/badge/Python-3.11%2B-blue)
-![License](https://img.shields.io/github/license/ajits-github/local-rag-system)
+![License](https://img.shields.io/badge/license-All%20Rights%20Reserved-lightgrey)
 [![Docs](https://img.shields.io/badge/docs-mkdocs--material-blue)](#documentation)
 ![Offline](https://img.shields.io/badge/inference-offline%20%2F%20CPU--only-informational)
 
