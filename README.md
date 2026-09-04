@@ -68,25 +68,33 @@ What sets this apart from a typical RAG tutorial project:
 
 ## Table of contents
 
-- [Highlights](#highlights)
-- [Architecture](#architecture)
-- [Multimodal & Layout-Aware Ingestion](#multimodal--layout-aware-ingestion)
-- [Agentic RAG](#agentic-rag)
-- [MCP](#mcp)
-- [Security](#security)
-- [Observability](#observability)
-- [Web UI](#web-ui)
-- [Prerequisites](#prerequisites)
-- [Setup](#setup)
-- [Containerized development](#containerized-development)
-- [Configuration](#configuration)
-- [Metadata & filtering](#metadata--filtering)
-- [Evaluation](#evaluation)
-- [Benchmarks](#benchmarks)
-- [Testing](#testing)
-- [Continuous Integration](#continuous-integration)
-- [Documentation](#documentation)
-- [Roadmap](#roadmap)
+- [local-rag-system](#local-rag-system)
+  - [Highlights](#highlights)
+  - [Table of contents](#table-of-contents)
+  - [Architecture](#architecture)
+  - [Multimodal \& Layout-Aware Ingestion](#multimodal--layout-aware-ingestion)
+  - [Agentic RAG](#agentic-rag)
+  - [MCP](#mcp)
+  - [Security](#security)
+  - [Observability](#observability)
+  - [Web UI](#web-ui)
+  - [Prerequisites](#prerequisites)
+  - [Setup](#setup)
+  - [Containerized development](#containerized-development)
+    - [Windows-specific notes](#windows-specific-notes)
+  - [Configuration](#configuration)
+  - [Metadata \& filtering](#metadata--filtering)
+  - [Evaluation](#evaluation)
+    - [RAGAS generation-quality evaluation (optional)](#ragas-generation-quality-evaluation-optional)
+  - [Benchmarks](#benchmarks)
+    - [Agentic RAG benchmarks](#agentic-rag-benchmarks)
+    - [Recording a new experiment](#recording-a-new-experiment)
+    - [MLflow tracking](#mlflow-tracking)
+  - [Testing](#testing)
+  - [Continuous Integration](#continuous-integration)
+  - [Documentation](#documentation)
+  - [Roadmap](#roadmap)
+  - [License](#license)
 
 ## Architecture
 
@@ -730,3 +738,9 @@ vision, security/auth, the web UI, this documentation site) are covered
 in their own sections above, not repeated here. See the
 [documentation site](#documentation) for the full design writeups behind
 everything already shipped.
+
+## License
+
+This project is source-available for portfolio and evaluation purposes only.
+No reuse, modification, redistribution, deployment, or commercial use is
+permitted without prior written permission.
