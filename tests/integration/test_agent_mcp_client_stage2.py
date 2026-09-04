@@ -156,9 +156,7 @@ async def test_agent_run_synthesizes_an_answer_citing_an_authorized_business_cas
         )
 
     assert result.state.termination_reason == "synthesized"
-    remote_calls = [
-        r for r in result.state.tool_call_history if r.tool_name == "get_customer_case"
-    ]
+    remote_calls = [r for r in result.state.tool_call_history if r.tool_name == "get_customer_case"]
     assert remote_calls and remote_calls[0].success is True
     assert any(c.source == "mcp://business/CASE-1001" for c in result.state.citations)
     assert any(c.chunk_id == "mcp:get_customer_case:CASE-1001" for c in result.state.citations)
@@ -188,9 +186,7 @@ async def test_agent_run_denies_wrong_role_same_tenant_case_access(monkeypatch):
     assert result.state.retrieved_evidence == []
     assert result.state.citations == []
     assert result.state.termination_reason in ("insufficient_evidence", "max_steps")
-    remote_calls = [
-        r for r in result.state.tool_call_history if r.tool_name == "get_customer_case"
-    ]
+    remote_calls = [r for r in result.state.tool_call_history if r.tool_name == "get_customer_case"]
     assert remote_calls and all(r.success is True and r.result_count == 0 for r in remote_calls)
 
 

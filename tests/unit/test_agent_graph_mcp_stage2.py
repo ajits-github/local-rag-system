@@ -154,9 +154,7 @@ def test_remote_tool_decision_fails_closed_when_mcp_client_disabled():
         mcp_app=None,
     )
 
-    remote_calls = [
-        r for r in result.state.tool_call_history if r.tool_name == "get_customer_case"
-    ]
+    remote_calls = [r for r in result.state.tool_call_history if r.tool_name == "get_customer_case"]
     assert remote_calls, "expected at least one recorded get_customer_case attempt"
     assert all(r.success is False for r in remote_calls)
     assert all(r.error == "mcp_client_disabled" for r in remote_calls)

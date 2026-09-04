@@ -187,7 +187,10 @@ def test_mint_internal_token_uses_configured_issuer_when_jwt_issuer_is_set():
     auth = AuthorizationContext(tenant_id="tenant_alpha", roles=["op"])
     token = mcp_client.mint_internal_token(auth, config)
     claims = jwt.decode(
-        token, _SECRET, algorithms=["HS256"], issuer="https://issuer.example",
+        token,
+        _SECRET,
+        algorithms=["HS256"],
+        issuer="https://issuer.example",
         options={"verify_aud": False},
     )
     assert claims["iss"] == "https://issuer.example"
@@ -218,9 +221,7 @@ def test_mint_internal_token_uses_and_enforces_configured_audience_when_set():
     config = _secure_config(**{"security.auth.jwt.audience": "rag-mcp-business-real"})
     auth = AuthorizationContext(tenant_id="tenant_alpha", roles=["op"])
     token = mcp_client.mint_internal_token(auth, config)
-    claims = jwt.decode(
-        token, _SECRET, algorithms=["HS256"], audience="rag-mcp-business-real"
-    )
+    claims = jwt.decode(token, _SECRET, algorithms=["HS256"], audience="rag-mcp-business-real")
     assert claims["aud"] == "rag-mcp-business-real"
 
     from rag.api.auth import AuthenticationError, verify_jwt
