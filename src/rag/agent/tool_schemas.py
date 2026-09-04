@@ -1,4 +1,4 @@
-"""Validated argument schemas for the agent's four tools.
+"""Validated argument schemas for the agent's six tools.
 
 Every model is `extra="forbid"`, a deliberate deviation from this
 codebase's usual `extra="ignore"` default (`QueryRequest`, `GoldExample`,
@@ -6,8 +6,18 @@ codebase's usual `extra="ignore"` default (`QueryRequest`, `GoldExample`,
 `tenant_id`/`roles`/`auth`-shaped key into a tool call produces a loud,
 auditable `ValidationError` rather than being silently dropped. Every
 LLM-writable numeric field also carries a hard `Field(ge=..., le=...)`
-range; no schema exposes a chunk-count/limit field at all, since those
-stay entirely server-controlled.
+range; no schema exposes a chunk-count/limit field at all, since those are
+entirely server-controlled (see `rag.config.AgentConfig` and
+`rag.agent.tools`).
+
+Four schemas (`SearchKnowledgeBaseArgs`/`GetDocumentArgs`/
+`GetLatestDocumentArgs`/`GetRelatedContextArgs`) back the local,
+in-process tools in `rag.agent.tools`. Two (`GetCustomerCaseArgs`/
+`GetCaseStatusArgs`, see `REMOTE_MCP_TOOL_NAMES` below) back the remote
+MCP business tools dispatched via `rag.agent.mcp_client`, with the same
+`extra="forbid"` treatment: the "never let the LLM supply identity" rule
+applies regardless of which side of the process boundary a tool executes
+on.
 """
 
 from __future__ import annotations
@@ -88,4 +98,11 @@ TOOL_ARG_MODELS: dict[str, type[BaseModel]] = {
     "get_document": GetDocumentArgs,
     "get_latest_document": GetLatestDocumentArgs,
     "get_related_context": GetRelatedContextArgs,
+    "get_customer_case": GetCustomerCaseArgs,
+    "get_case_status": GetCaseStatusArgs,
 }
+
+# Tool names dispatched via a real MCP client call (rag.agent.mcp_client), rather
+# than a direct in-process function call. Every other name in TOOL_ARG_MODELS is
+# local. See rag.agent.graph._execute_tool for the dispatch branch this drives.
+REMOTE_MCP_TOOL_NAMES: frozenset[str] = frozenset({"get_customer_case", "get_case_status"})
