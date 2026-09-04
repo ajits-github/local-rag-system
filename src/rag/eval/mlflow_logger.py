@@ -48,9 +48,8 @@ _PARAM_FIELDS = [
     "security_auth_enabled",
     "security_rate_limit_enabled",
     "security_egress_policy_enabled",
-    # Agentic RAG milestone: config identity, not a measured outcome --
-    # same "independent on/off toggle" pattern as the security_* fields
-    # above.
+    # Config identity, not a measured outcome; same independent on/off
+    # toggle pattern as the security_* fields above.
     "agent_enabled",
     "corpus_version",
     "corpus_document_count",
@@ -62,10 +61,8 @@ _PARAM_FIELDS = [
     "corpus_gold_record_count",
     "corpus_gold_file_sha256",
     "corpus_digest",
-    # Layout-aware-ingestion-and-vision milestone: config identity fields,
-    # not measured outcomes. vision_model/vision_prompt_version are None
-    # when vision_provider != "ollama" (vision_provider itself predates
-    # this milestone -- see the vision-scaffolding milestone).
+    # Config identity fields, not measured outcomes. vision_model/
+    # vision_prompt_version are None when vision_provider != "ollama".
     "layout_parser",
     "vision_provider",
     "vision_model",
@@ -89,9 +86,9 @@ def build_run_name(record: dict[str, Any]) -> str:
     """Build a human-readable MLflow run name from a record.
 
     E.g. ``experiment_015_qwen2-5-3b_v2_hybrid_rel-exp``. Never changes
-    the MLflow-assigned run UUID (`run.info.run_id`) --
-    `run_name` is purely the display label passed to `mlflow.start_run`.
-    Built from fields already present in `build_experiment_record`'s
+    the MLflow-assigned run UUID (`run.info.run_id`): `run_name` is purely
+    the display label passed to `mlflow.start_run`. Built from fields
+    already present in `build_experiment_record`'s
     schema (`scripts/record_experiment.py`), so no new record fields are
     required; a record missing a field (e.g. an older, pre-multimodal
     experiment with no `relationship_expansion_enabled`) just omits that
@@ -144,7 +141,6 @@ _METRIC_FIELDS = [
     "expanded_context_utilization_rate",
     # Measured outcome rates; see eval/run_eval.py's "safety" report
     # section for exact definitions and lower/higher-is-better direction.
-    # Compatibility metric name for older safety reports.
     "safety_document_unauthorized_retrieval_rate",
     "safety_cross_tenant_leakage_rate",
     "safety_stale_document_error_rate",
@@ -163,8 +159,7 @@ _METRIC_FIELDS = [
     "safety_provider_egress_policy_violation_rate",
     "safety_forged_role_acceptance_rate",
     "safety_duplicate_sensitive_field_miss_rate",
-    # Agentic RAG milestone: see eval/run_agent_eval.py's report sections
-    # for exact definitions.
+    # See eval/run_agent_eval.py's report sections for exact definitions.
     "agent_routing_accuracy",
     "agent_unnecessary_agent_rate",
     "agent_tool_selection_accuracy",
@@ -179,8 +174,8 @@ _METRIC_FIELDS = [
     "agent_latency_ms",
     "agent_prompt_tokens_mean",
     "agent_completion_tokens_mean",
-    # Layout-aware-ingestion-and-vision milestone: see eval/run_eval.py's
-    # "layout_vision" report section for exact definitions.
+    # See eval/run_eval.py's "layout_vision" report section for exact
+    # definitions.
     "table_retrieval_hit_rate",
     "visual_retrieval_hit_rate",
     "page_localization_accuracy",

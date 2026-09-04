@@ -99,7 +99,7 @@ def combine_scannable_fields(
 class SensitiveFieldPolicy(BaseModel):
     """A detectable sensitive-value pattern plus who may see it unredacted.
 
-    Parameters
+    Attributes
     ----------
     field_id : str
         Identifier used in diagnostics and `SearchResult.redacted_field_ids`.
@@ -319,7 +319,7 @@ def redact_source_metadata(
 class DuplicateSensitiveOccurrence(BaseModel):
     """One sensitive literal value found in more than one chunk, or tagged inconsistently.
 
-    Parameters
+    Attributes
     ----------
     literal_value_hash : str
         Sha256 digest of the matched substring, not the raw literal, so

@@ -1,18 +1,11 @@
 """Register a rag.eval.run_agent_eval (+ optional run_agent_ragas_eval) report.
 
 Distinct from scripts/record_experiment.py: the agent report's metric
-shape (routing_accuracy/tool_selection_accuracy/... At the top level, no
-retrieval@k/hit_rate@k nesting) doesn't fit record_experiment.py's flat
-schema, so. Following the same precedent as
-scripts/record_attribution_experiment.py. This writes its own
-experiments/results/agentic/<id>.json, a subdirectory
-compare_experiments.py's non-recursive glob never sees, leaving the
-standard comparison table untouched. It still reuses
-rag.eval.mlflow_logger.log_experiment/build_run_name directly (unlike the
-attribution recorder): mlflow_logger.py's _PARAM_FIELDS/_METRIC_FIELDS
-already carry `agent_enabled` and the 14 `agent_*` metric names from the
-Agentic RAG milestone, so no shared logging code needed to change for this
-script to work.
+shape (routing_accuracy, tool_selection_accuracy, etc. at the top level,
+no retrieval@k/hit_rate@k nesting) doesn't fit that script's flat schema,
+so this writes its own experiments/results/agentic/<id>.json -- a
+subdirectory compare_experiments.py's non-recursive glob never sees,
+leaving the standard comparison table untouched.
 
 `--ragas-output`, if given, merges rag.eval.run_agent_ragas_eval's
 aggregate scores into the same record's ragas_* fields (its `judge`

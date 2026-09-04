@@ -14,9 +14,9 @@ from rag.schemas import RawDocument
 
 # Matches a leading YAML front-matter block delimited by --- lines, as used
 # by the TechFusion knowledge base (title/owner/department/last_reviewed/tags,
-# and. For the safety_evaluation content set. Tenant_id/allowed_roles/
-# classification/status/updated_at/effective_from/document_version/
-# supersedes/trust_level/source_type; see RawDocument for what each means).
+# plus tenant_id/allowed_roles/classification/status/updated_at/
+# effective_from/document_version/supersedes/trust_level/source_type for the
+# security_evaluation content set; see RawDocument for what each means).
 _FRONTMATTER_RE = re.compile(r"\A---[ \t]*\n(.*?\n)---[ \t]*\n?", re.DOTALL)
 
 

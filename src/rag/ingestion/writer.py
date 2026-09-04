@@ -38,10 +38,9 @@ class Writer:
             Vector store the resulting chunks are persisted to.
         vision_provider : VisionProvider | None, optional
             When set, a vision-generated sibling chunk is added for every
-            image span (see `_with_vision_siblings`). `None` (the default,
-            and the only mode exercised so far) means text-only image
-            handling. No image bytes are ever read, no network call is
-            possible.
+            image span (see `_with_vision_siblings`). `None` (the default)
+            means text-only image handling: no image bytes are read, no
+            network call is made.
         """
         self._embedder = embedder
         self._vectorstore = vectorstore
@@ -148,17 +147,13 @@ class Writer:
     ) -> list[str | None]:
         """Link each non-prose span to the nearest preceding prose chunk in its section.
 
-        One linear pass over `chunk_spans` in document order (they're
-        already ordered that way by the chunker). A table/code/
-        configuration/chart/image span's `parent_chunk_id` is the id of the
-        most recently seen prose chunk sharing its `section_path`. The
-        explanatory paragraph introducing that section, standing in for
-        "surrounding context" without needing a full parse tree. Prose
-        spans get `None`: reconstructing a section's full prose is already
-        just "same document_id + section_path, ordered by chunk_index" (see
-        VectorStore.get_chunks_by_section), no pointer chain needed there.
-        A non-prose span with no preceding prose in its section (e.g. a
-        table opening a section before any paragraph) also gets `None`.
+        One linear pass over `chunk_spans` in document order. A table/code/
+        configuration/chart/image span's `parent_chunk_id` is the most
+        recently seen prose chunk sharing its `section_path`, approximating
+        "the paragraph introducing this section" without a full parse tree.
+        Prose spans get `None`, as does a non-prose span with no preceding
+        prose in its section (e.g. a table opening a section before any
+        paragraph).
 
         Parameters
         ----------
@@ -188,22 +183,16 @@ class Writer:
         """Insert a vision-generated sibling span immediately after each image span.
 
         Only called when a `VisionProvider` is configured. For each
-        `content_type="image"` span, resolves its `source_anchor` (e.g.
-        "images/x.png") to a real file relative to `document.source`,
-        consults `VectorStore`'s image-description cache by the image's own
-        sha256 checksum (so an unchanged image is never reprocessed across
-        documents/ingestion runs), calls `VisionProvider.describe_image` on
-        a cache miss, and appends a second span carrying the description as
-        its own embeddable `text`. The original caption/alt-text span is
-        never modified.
+        `content_type="image"` span, resolves `source_anchor` to a file
+        relative to `document.source`, and consults the image-description
+        cache (keyed on the image's sha256, so an unchanged image is never
+        reprocessed) before calling `VisionProvider.describe_image`. The
+        original caption/alt-text span is never modified.
 
-        A `describe_image` call that raises (Ollama unreachable, timed
-        out, or returned something `OllamaVisionProvider` couldn't parse)
-        is caught and logged (`vision_provider_call_failed`) rather than
-        propagated: that one image is skipped -- no vision sibling, same
-        as the missing-asset-file case -- and the rest of the document
-        still ingests normally. A vision-model hiccup on one figure should
-        never fail an entire document's ingestion.
+        A `describe_image` failure (unreachable provider, timeout,
+        unparsable response) is logged and skipped rather than propagated:
+        that one image gets no vision sibling, but the rest of the
+        document still ingests normally.
 
         Parameters
         ----------

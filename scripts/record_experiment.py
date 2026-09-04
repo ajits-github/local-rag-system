@@ -187,7 +187,7 @@ def build_experiment_record(
             "supporting_context_hit_rate"
         ),
         "relevant_image_hit_rate": relevant_image_hit_rate.get("hit_rate"),
-        # None for any report predating the layout-aware-ingestion milestone.
+        # None for any report predating these layout/vision fields.
         "table_retrieval_hit_rate": layout_vision.get("table_retrieval_hit_rate", {}).get(
             "hit_rate"
         ),

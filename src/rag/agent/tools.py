@@ -5,7 +5,7 @@ No tool reimplements retrieval or security logic. Each calls
 function takes `auth: AuthorizationContext | None` as an explicit parameter
 separate from its validated `args`, always supplied by the graph driver
 from `AgentState.authorization_context`. Never constructed from parsed
-LLM JSON (see `rag.agent.decisions`).
+LLM JSON.
 
 `get_document`/`get_latest_document`/`get_related_context` call
 `VectorStore` directly rather than through `RetrievalPipeline.retrieve()`,
@@ -45,9 +45,8 @@ class ToolExecutionError(Exception):
     """Raised when a tool cannot complete its dispatch (e.g. missing dataset_id).
 
     Caught by the graph driver's `execute_tool` node and recorded as a
-    failed `ToolCallRecord` rather than propagated. A tool failure must
-    never crash the request (see the "tool failure is handled safely"
-    invariant in `docs/architecture.md`'s "Agentic RAG" section).
+    failed `ToolCallRecord` rather than propagated; a tool failure must
+    never crash the request.
     """
 
 
@@ -95,12 +94,11 @@ def search_knowledge_base(
 
     Preserves every tenant/role/freshness/trust control `retrieve()`
     already applies; this function adds no retrieval logic of its own.
-    When `args.content_type` is set, it's merged into the caller-supplied
-    (server-controlled) `filters` dict -- the LLM can only ever narrow to
-    one of `ContentTypeFilter`'s allowed values via the already-whitelisted
-    `content_type` filter field (`VectorStore.ALLOWED_FILTER_FIELDS`),
-    never override or add any other key `filters` already carries (e.g.
-    `dataset_id`).
+    When `args.content_type` is set, it is merged into the caller-supplied
+    (server-controlled) `filters` dict: the LLM can only narrow to one of
+    `ContentTypeFilter`'s allowed values via the whitelisted `content_type`
+    field, never override or add any other key `filters` already carries
+    (e.g. `dataset_id`).
     """
     effective_filters = dict(filters) if filters else {}
     if args.content_type is not None:
@@ -216,13 +214,10 @@ def get_related_context(
     auth : AuthorizationContext | None
         Caller authorization context, resolved before use.
     dataset_id : str | None, optional
-        The current query's dataset, when known (the graph driver's
-        `state.filters.get("dataset_id")`). Passed through to
-        `resolve_auth` so freshness-exclusion resolution applies here
-        exactly as it does for `get_document`/`get_latest_document`;
-        omitted only when no dataset scope is available, in which case
-        `resolve_auth` still enforces tenant/role, just without
-        freshness resolution (its own documented fallback).
+        The current query's dataset, when known. Enables freshness-
+        exclusion resolution in `resolve_auth`, matching
+        `get_document`/`get_latest_document`; when omitted, tenant/role
+        enforcement still applies, just without freshness resolution.
 
     Returns
     -------

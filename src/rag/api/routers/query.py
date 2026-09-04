@@ -45,11 +45,9 @@ class SourceItem(BaseModel):
     """One retrieved-chunk citation in a `QueryResponse`.
 
     `content_type`/`section_path`/`page`/`attachment_name`/`source_anchor`/
-    `vision_generated` are the layout-aware-ingestion milestone's additions
-    -- all derived, non-sensitive structural metadata already stored on
-    the chunk (never a local filesystem path: `source`/`attachment_name`/
-    `source_anchor` are the same relative, dataset-root-scoped paths
-    already exposed before this milestone, not absolute disk paths).
+    `vision_generated` are derived, non-sensitive structural metadata
+    already stored on the chunk. `source`/`attachment_name`/`source_anchor`
+    are relative, dataset-root-scoped paths, never absolute filesystem paths.
     """
 
     chunk_id: str

@@ -1,35 +1,22 @@
 """Synthetic customer-support-case backend, with its own tenant/role authorization.
 
-Read-only, in-memory, and self-contained (no Postgres/network dependency)
--- this is a stand-in for a separate backend/business system an MCP
-server might front in a real deployment, not a new persistence layer for
-this project. The point of Stage 1B is demonstrating that shape, not
-building a real case-management system.
+Read-only, in-memory, and self-contained (no Postgres/network
+dependency): a stand-in for a separate backend system an MCP server
+might front, not a real case-management system.
 
-Authorization here is deliberately its own small mechanism, not a reuse
-of `rag.retrieval.authorization.AuthorizationContext`: a case has no
-document/freshness/trust concept, and (unlike the document corpus, which
-predates tenant governance and must keep `tenant_id IS NULL` meaning
-"visible to everyone") every synthetic case has a concrete tenant from
-the start, so there is no legacy-compatibility "unrestricted when absent"
-case to preserve -- enforcement here is unconditional, not gated behind a
-config flag the way `security.authorization.enabled` gates document ACL.
-The tenant+role rule itself mirrors the document predicate exactly (own
-tenant plus a matching `allowed_roles` entry, or a
-`security.authorization.cross_tenant_support_roles` role that is *also*
-on the case's own `allowed_roles`) -- reusing that same config list, not
-a second parallel privilege list.
+Authorization here does not reuse
+`rag.retrieval.authorization.AuthorizationContext` (no document/
+freshness/trust concept applies), and is unconditional (no config
+kill-switch), since every case has a concrete tenant with no legacy
+"unrestricted" state to preserve. The rule mirrors the document
+predicate: own tenant plus a matching `allowed_roles` entry, or a
+`cross_tenant_support_roles` role that is also on the case's own
+`allowed_roles`.
 
-An unauthorized case and a nonexistent case both resolve to `None`: this
-mirrors the document corpus's SQL-filtered ACL, where a caller can never
-distinguish "doesn't exist" from "exists but you may not see it" from the
-response alone. Unlike that SQL-filtered path (a documented gap: see
-`docs/architecture.md`'s "Authorization, Freshness, and Trust" section on
-why per-document `authorization_denied` auditing isn't wired up), the
-lookup here happens in Python, so a real denial *is* observable -- an
-`authorization_denied` audit event is logged whenever a case is found but
-the caller fails the check, even though the caller-visible response is
-still a plain "not found".
+An unauthorized case and a nonexistent case both resolve to `None`, so
+a caller can never distinguish the two from the response. Unlike
+document-level ACL (a silent SQL filter), the lookup happens in Python,
+so a real denial is still audit-logged as `authorization_denied`.
 """
 
 from __future__ import annotations
@@ -46,10 +33,8 @@ from rag.mcp.business.schemas import CasePriority, CaseStatus, CaseStatusResult,
 class _CaseRecord(BaseModel):
     """Internal seed record: every `CustomerCase` field plus the ACL-only `allowed_roles`.
 
-    `allowed_roles` is never serialized back to a caller -- it exists
-    only for `_is_authorized` to check against, the same "ACL data isn't
-    client-facing metadata" split `rag.mcp.schemas.McpChunkResult`
-    already applies to chunk-level `tenant_id`/`sensitive_field_ids`.
+    `allowed_roles` is never serialized back to a caller; it exists only
+    for `_is_authorized` to check against.
     """
 
     case_id: str
@@ -177,10 +162,9 @@ def _is_authorized(
 ) -> bool:
     """Mirror the document ACL rule: own tenant + matching role, or an allowed cross-tenant role.
 
-    `identity is None` means unrestricted -- the same "no identity
-    asserted, no restriction" convention every other authorization
-    surface in this codebase uses (see `AuthorizationContext`'s own
-    docstring), not a weaker business-tool-specific relaxation.
+    `identity is None` means unrestricted, the same "no identity
+    asserted, no restriction" convention every authorization surface in
+    this codebase uses.
     """
     if identity is None:
         return True
@@ -199,6 +183,7 @@ def _lookup_authorized(
     *,
     action: str,
 ) -> _CaseRecord | None:
+    """Look up a case and enforce authorization, audit-logging a denial."""
     case = _SYNTHETIC_CASES.get(case_id)
     if case is None:
         return None
@@ -228,14 +213,14 @@ def get_customer_case(
         The resolved caller identity (see `rag.mcp.identity`), or `None`
         when `security.auth.enabled` is `False`.
     cross_tenant_support_roles : list[str]
-        `config.security.authorization.cross_tenant_support_roles` --
+        `config.security.authorization.cross_tenant_support_roles`,
         reused as-is, not a second privilege list.
 
     Returns
     -------
     CustomerCase | None
         `None` for both "no such case" and "case exists, caller not
-        authorized" -- indistinguishable by design.
+        authorized", indistinguishable by design.
     """
     case = _lookup_authorized(
         case_id, identity, cross_tenant_support_roles, action="get_customer_case"

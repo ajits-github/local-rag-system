@@ -35,39 +35,29 @@ def build_mcp_asgi_app(
     Returns
     -------
     Starlette
-        The app `rag.api.main` mounts at `config.mcp.server.mount_path`.
-        Registered with `streamable_http_path="/"` (not the SDK's own
-        `/mcp` default) since the mount prefix itself already supplies
-        that path segment -- registering the SDK's default here would
-        require every request to repeat it (`/mcp/mcp`).
-
-        Its `.router.lifespan_context` must be entered by the parent
-        app's own lifespan: Starlette does not auto-propagate a mounted
-        sub-app's lifespan, so without this the MCP session manager's
-        background task group would never start. See `rag.api.main`'s
-        combined lifespan.
+        The app `rag.api.main` mounts at `config.mcp.server.mount_path`,
+        registered with `streamable_http_path="/"` since the mount
+        prefix already supplies that path segment (the SDK's own `/mcp`
+        default would otherwise double up as `/mcp/mcp`). Its
+        `.router.lifespan_context` must be entered by the parent app's
+        own lifespan, or the MCP session manager's background task never
+        starts.
     """
     server = build_mcp_server(config, pipeline, vectorstore, embedder)
     return server.streamable_http_app(streamable_http_path="/")
 
 
 class _BareMountPathMiddleware:
-    """Rewrites a request for the bare MCP mount path to its trailing-slash form, server-side.
+    """Rewrite the bare MCP mount path to its trailing-slash form, server-side.
 
-    `Starlette.mount(mount_path, app)` builds a `Mount` route whose match
-    regex is `<mount_path>/{path:path}` (confirmed against the installed
-    `starlette==1.3.1`), which requires a literal `/` immediately after
-    `mount_path` -- so it matches `<mount_path>/` and everything under
-    it, but never the bare `<mount_path>` itself. A request to the bare
-    path therefore falls through to Starlette's own `Router`-level
-    `redirect_slashes` handling and receives a 307 to `<mount_path>/` --
-    which the MCP SDK's own Streamable HTTP client does not follow
-    during session initialization (confirmed against a real client
-    against a real Docker container; see ISSUES.md). This rewrites the
-    ASGI scope's `path` (and `raw_path`, if present) in place, before
-    routing runs, whenever it exactly equals `mount_path` -- so both
-    spellings resolve to the identical request with no client-visible
-    redirect at all. Every other path is passed through untouched.
+    `Starlette.mount(mount_path, app)` only matches `<mount_path>/...`,
+    so a request to the bare path (no trailing slash) falls through to
+    Starlette's 307 redirect, which the MCP SDK's Streamable HTTP client
+    does not follow during session initialization. This rewrites the
+    ASGI scope's `path` (and `raw_path`) in place, before routing runs,
+    whenever it exactly equals `mount_path`, so both spellings resolve
+    identically with no client-visible redirect. Every other path passes
+    through untouched.
     """
 
     def __init__(self, app: ASGIApp, mount_path: str) -> None:
@@ -87,23 +77,16 @@ class _BareMountPathMiddleware:
 def mount_mcp_app(app: Any, mcp_app: Starlette, mount_path: str) -> None:
     """Mount the MCP ASGI app so both `mount_path` and `mount_path/` work, with no visible redirect.
 
-    `app.mount(mount_path, mcp_app)` alone leaves the bare `mount_path`
-    (no trailing slash) 307-redirecting to `mount_path/` -- see
-    `_BareMountPathMiddleware`'s docstring for the exact Starlette
-    mechanics. This does the mount and then layers that middleware on
-    top, so `mount_path` is the reliable, documented canonical MCP
-    endpoint; `mount_path/` keeps working exactly as before, unaffected.
-
-    A no-op for every other route in `app`: the middleware only rewrites
-    a request whose path is an exact match for `mount_path`.
+    Layers `_BareMountPathMiddleware` on top of a normal `app.mount()`
+    so the bare `mount_path` (no trailing slash) resolves the same as
+    `mount_path/` instead of 307-redirecting. Every other route in
+    `app` is unaffected.
 
     Parameters
     ----------
     app
         The outer FastAPI/Starlette application to mount onto. Typed
-        loosely (rather than importing `fastapi.FastAPI`) since only
-        `.mount()`/`.add_middleware()` are used, both already part of
-        Starlette's own `Starlette` interface FastAPI subclasses.
+        loosely since only `.mount()`/`.add_middleware()` are used.
     mcp_app : Starlette
         The app returned by `build_mcp_asgi_app`.
     mount_path : str

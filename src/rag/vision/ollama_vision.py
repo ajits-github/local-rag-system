@@ -28,7 +28,7 @@ class OllamaVisionProvider(VisionProvider):
     Offline by construction: `ollama.Client` talks to a native-host
     Ollama server (same one `OllamaLLM` uses for generation), never a
     hosted API, so `config.security.egress_policy` is never involved for
-    this provider -- see `config.VisionConfig`'s docstring.
+    this provider.
     """
 
     def __init__(
@@ -43,7 +43,7 @@ class OllamaVisionProvider(VisionProvider):
         ----------
         model_name : str, optional
             Ollama vision-model tag, by default `"moondream"`. Must be
-            pulled locally (`ollama pull moondream`) before use --
+            pulled locally (`ollama pull moondream`) before use;
             never installed automatically.
         base_url : str, optional
             Ollama server URL, by default `"http://localhost:11434"`.

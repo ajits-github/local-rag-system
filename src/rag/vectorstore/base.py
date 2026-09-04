@@ -226,7 +226,7 @@ class VectorStore(ABC):
         """Return every document's `(source, checksum)` pair within a dataset.
 
         Used by `eval/corpus_lineage.py` to compute a deterministic corpus
-        digest (sha256 over sorted `"{source}:{checksum}"` lines) --
+        digest (sha256 over sorted `"{source}:{checksum}"` lines).
         `checksum` lives on the `documents` table (see
         `get_or_create_document_id`), not on `chunks`.
 
@@ -457,13 +457,9 @@ class VectorStore(ABC):
     ) -> None:
         """Persist a vision-generated description.
 
-        So an unchanged image is never reprocessed by a (cost-incurring)
-        VisionProvider call, even across documents or ingestion runs --
-        as long as provider/model/prompt_version are also unchanged (the
-        cache key includes all three; see `get_cached_image_description`).
-        Postgres-backed rather than a separate cache service, per this
-        project's "prefer Postgres over Redis absent a concrete need"
-        convention.
+        Keyed by image checksum plus provider/model/prompt_version, so an
+        unchanged image is never reprocessed as long as all three stay
+        the same (see `get_cached_image_description`).
 
         Parameters
         ----------

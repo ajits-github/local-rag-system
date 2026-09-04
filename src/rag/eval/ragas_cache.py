@@ -4,11 +4,6 @@ Wraps RAGAS's own disk cache with an explicit fingerprint of the judge's
 provider, model, and generation settings, so switching judge model or
 provider always misses the cache rather than replaying another model's
 verdict.
-
-Notes
------
-See docs/architecture.md's "RAGAS Judge-Call Caching" section for why
-this fingerprinting is necessary.
 """
 
 from __future__ import annotations

@@ -1,20 +1,16 @@
 """Prometheus metrics: bounded label sets, a dedicated registry, defensive recording.
 
-A dedicated `CollectorRegistry` (never `prometheus_client`'s process-wide
-default) so re-importing this module. Which happens routinely across
-`pytest`'s test collection. Never hits prometheus_client's "Duplicated
-timeseries in CollectorRegistry" error the default registry is prone to.
+Uses its own `CollectorRegistry` rather than `prometheus_client`'s
+process-wide default, so re-importing this module (e.g. across `pytest`
+test collection) never raises a "Duplicated timeseries" error.
 
-Every metric here has an explicitly bounded label set (checked against
-this milestone's requirement directly): `tool_name` (4 literal agent
-tools plus, since the MCP milestone, 2 literal MCP-only business-case
-tools -- `observe_tool_call` takes a plain `str`, but every call site is
-one of these 6 fixed literals, never an arbitrary tool argument),
-`node` (6 literal graph nodes), `route` (`classic_rag`/`agent`), `reason`
-(5 literal termination reasons), `method`/`path`/`status_code` (a fixed
-set of registered HTTP routes. Never the raw request URL). Never a
-query string, tenant id, document id, chunk id, or arbitrary tool
-argument.
+Every label is drawn from a small, fixed vocabulary: `tool_name` and
+`node` are fixed literal names (`observe_tool_call` takes a plain `str`,
+but every call site passes one of the fixed tool names, never an
+arbitrary argument), `route`/`reason` are fixed enums, and
+`method`/`path`/`status_code` come from registered HTTP routes, never the
+raw request URL. No query text, tenant id, document id, or chunk id is
+ever used as a label value.
 """
 
 from __future__ import annotations

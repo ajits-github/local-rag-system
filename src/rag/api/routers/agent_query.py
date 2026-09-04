@@ -73,10 +73,8 @@ class AgentQueryResponse(BaseModel):
 def _agent_rate_limit_string() -> str:
     """Return the current `requests_per_minute` config value as a slowapi limit string.
 
-    Reuses the same `security.rate_limit` budget as `/query` for v1 --
-    see `docs/architecture.md`'s "Agentic RAG" section for why a
-    shared budget was chosen over a stricter agent-specific one, and
-    when to revisit that.
+    Reuses the same `security.rate_limit` budget as `/query`, not a
+    separate agent-specific limit.
     """
     return f"{get_config().security.rate_limit.requests_per_minute}/minute"
 

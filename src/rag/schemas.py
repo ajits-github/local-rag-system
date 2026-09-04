@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 class RawDocument(BaseModel):
     """Represent the common output shape produced by every loader, before cleaning/chunking.
 
-    Parameters
+    Attributes
     ----------
     content : str
         The document's raw text content.
@@ -79,7 +79,7 @@ class RawDocument(BaseModel):
 class ChunkSpan(BaseModel):
     """Represent one chunk of text plus optional structural hints from a `Chunker`.
 
-    Parameters
+    Attributes
     ----------
     text : str
         The chunk's text content.
@@ -125,7 +125,7 @@ class ChunkSpan(BaseModel):
 class ChunkMetadata(BaseModel):
     """Represent metadata stored alongside a chunk's embedding in the vector store.
 
-    Parameters
+    Attributes
     ----------
     document_id, chunk_id : str
         Identifiers for the owning document and this chunk.
@@ -231,7 +231,7 @@ class Chunk(BaseModel):
 class SearchResult(BaseModel):
     """Represent a chunk returned by a vector store search, with its similarity score.
 
-    Parameters
+    Attributes
     ----------
     chunk : Chunk
         The retrieved chunk.
@@ -264,7 +264,7 @@ class SearchResult(BaseModel):
 class DocumentVersionInfo(BaseModel):
     """Represent one document's governance/versioning metadata, for freshness resolution.
 
-    Parameters
+    Attributes
     ----------
     document_id, source : str
         Identifiers for the document.
@@ -297,7 +297,7 @@ class DocumentVersionInfo(BaseModel):
 class IngestionStats(BaseModel):
     """Represent the aggregate and per-file report from `IngestionPipeline.ingest_path`.
 
-    Parameters
+    Attributes
     ----------
     discovered : int
         Total files discovered during this ingestion run.
@@ -313,7 +313,7 @@ class IngestionStats(BaseModel):
     vision_stats : VisionCallStats or None
         `Writer.vision_stats` after this run, or `None` when no
         `VisionProvider` was configured (`config.vision.provider ==
-        "none"`) -- an absent value, not a zeroed one, so "vision wasn't
+        "none"`): an absent value, not a zeroed one, so "vision wasn't
         used" is distinguishable from "vision ran and touched zero images".
     """
 
@@ -331,15 +331,13 @@ class IngestionStats(BaseModel):
 class VisionCallStats(BaseModel):
     """Aggregate `VisionProvider.describe_image` call stats from one `Writer` instance.
 
-    Layout-aware-ingestion milestone: accumulated by
-    `Writer._with_vision_siblings` across every `write()` call the same
-    `Writer` instance handles (i.e. a whole `IngestionPipeline.ingest_path`
-    run, since the pipeline builds one `Writer` and reuses it). Read off
-    `Writer.vision_stats` after a run and folded into `IngestionStats` --
-    an ingestion-time concern, not a retrieval/eval one, so it's not part
-    of `eval/run_eval.py`'s report.
+    Accumulated by `Writer._with_vision_siblings` across every `write()`
+    call the same `Writer` instance handles (one full
+    `IngestionPipeline.ingest_path` run). Read off `Writer.vision_stats`
+    after a run and folded into `IngestionStats`; not part of
+    `eval/run_eval.py`'s report.
 
-    Parameters
+    Attributes
     ----------
     images_processed : int
         Total image spans considered (cache hit or miss).

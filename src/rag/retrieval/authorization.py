@@ -16,13 +16,15 @@ from pydantic import BaseModel, Field
 class AuthorizationContext(BaseModel):
     """Caller identity and date context for one retrieval, or `None` for unrestricted access.
 
-    Parameters
+    Attributes
     ----------
     tenant_id : str or None
         Tenant the caller belongs to. Chunks with no `tenant_id` are
         never gated, so passing a context is always additive.
     roles : list[str]
-        Verified caller roles used for role-based authorization.
+        Caller roles used for role-based authorization. Whether these are
+        verified depends on how the context was built; this class does
+        not verify them itself.
     as_of : date or None
         Date used for document-version freshness resolution (see
         `retrieval/freshness.py`). `None` means "current".

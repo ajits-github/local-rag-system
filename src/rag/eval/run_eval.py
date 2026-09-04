@@ -130,9 +130,6 @@ _REFUSAL_PHRASES = (
 # Deliberately does NOT include TF-SYNTH-* customer-correlation ids: those
 # are operational data an authorized operator may legitimately disclose,
 # not a restricted field, matching field_policy.py's own exclusion.
-# Including it here previously produced a false positive (a correctly
-# redacted admin key alongside a correctly disclosed TF-SYNTH id
-# misclassified as a leak); see ISSUES.md.
 _SENSITIVE_PATTERNS = (
     re.compile(r"SYNTHETIC_ONLY_\w+"),
     re.compile(r"SYNTHETIC_BETA_TOKEN_\w+"),
@@ -282,12 +279,10 @@ def _vision_generated_support(results: list[SearchResult], relevant_documents: l
     """Whether a vision-generated (not just caption/alt-text) image chunk was retrieved.
 
     Distinct from `_content_type_hit(..., {"image", "chart"})`: that asks
-    "was any visual element surfaced," this asks "was actual vision-model
-    understanding available as evidence" -- reads 0.0 whenever
-    `config.vision.provider == "none"` by construction (no chunk ever has
-    `vision_generated=True`), which is the point: this metric is what
-    should move between the "layout-aware, no vision" and "layout-aware,
-    with vision" legs of this milestone's later A/B/C comparison.
+    whether any visual element was surfaced, this asks whether actual
+    vision-model understanding was available as evidence. Reads 0.0 by
+    construction whenever `config.vision.provider == "none"` (no chunk
+    ever has `vision_generated=True`).
     """
     for r in results:
         if r.chunk.metadata.vision_generated and any(
@@ -361,9 +356,8 @@ def _classify_vision_behavior(
 
     One of `"correct_refusal"` / `"hallucinated_answer"` /
     `"caption_leak_success"` / `"incorrect_or_missing"`. See
-    `evaluate`'s docstring for what each means. This is a heuristic triage
-    aid for hand-inspection (see PROJECT_JOURNAL.md's failure-analysis
-    entries), not an automated semantic-correctness judgment:
+    `evaluate`'s docstring for what each means. A heuristic triage aid for
+    hand-inspection, not an automated semantic-correctness judgment:
     `_looks_like_refusal` is a literal phrase match, and `answer_quality`
     is `KeywordOverlapScorer`'s crude keyword-overlap heuristic.
     `caption_leak_success` covers both a legitimate answer from caption
@@ -487,14 +481,11 @@ def _document_only_forbidden(example: GoldExample) -> list[str]:
     """`forbidden_documents` entries that are NOT also in `allowed_documents`.
 
     A document listed in both means the caller may retrieve the document
-    itself. Whatever's actually forbidden is a *field* inside it (see
+    itself; what's actually forbidden is a *field* inside it (see
     `retrieval/field_policy.py`), not the document. Excluding those
-    overlapping entries here is what
-    `document_unauthorized_retrieval_rate` needs to avoid counting a
-    field-level-only case (e.g. techfusion_gold row 120, where the Alpha
-    runbook is both allowed and forbidden) as a document-level
-    authorization failure. This is the exact ambiguity
-    `secure_rag_baseline_v1`'s own report flagged.
+    overlapping entries keeps `document_unauthorized_retrieval_rate` from
+    counting a field-level-only case (a document that is both allowed and
+    forbidden) as a document-level authorization failure.
     """
     allowed = set(example.allowed_documents)
     return [d for d in example.forbidden_documents if d not in allowed]
@@ -1039,7 +1030,7 @@ def evaluate(
         `relationship_expansion_utilization` keys, plus `per_example`
         detail. See `_content_type_breakdown`, `_classify_vision_behavior`,
         `_expansion_utilization`, and `reference_context_is_supported`
-        for what each new metric means and its documented limitations --
+        for what each new metric means and its documented limitations;
         all are deterministic heuristics, not semantic-correctness judges.
     """
     scorer = KeywordOverlapScorer() if run_generation else None
@@ -1174,10 +1165,10 @@ def evaluate(
             relevant_image_hit = _image_hit(retrieval_results, example.relevant_images)
             image_hit_records.append(relevant_image_hit)
 
-        # Layout-aware-ingestion milestone: table/visual/page/section
-        # localization all reuse the same broad top-10 retrieval_results
-        # already fetched above -- no extra retrieval call, matching the
-        # existing image-hit/reference-context metrics' pattern.
+        # Table/visual/page/section localization all reuse the same broad
+        # top-10 retrieval_results already fetched above (no extra
+        # retrieval call), matching the image-hit/reference-context
+        # metrics' pattern.
         if "table" in example.expected_content_types:
             table_hit_records.append(
                 _content_type_hit(retrieval_results, example.relevant_documents, {"table"})
@@ -1234,10 +1225,9 @@ def evaluate(
             entry.update(
                 answer=result["answer"],
                 # Production-config sources-with-content (this answer()
-                # call's own retrieve, at real generation_context_top_n) --
-                # distinct
-                # from `retrieved_sources` above, which comes from the
-                # broader top-10 fetch used for Recall@10. Consumed by
+                # call's own retrieve, at real generation_context_top_n),
+                # distinct from `retrieved_sources` above (the broader
+                # top-10 fetch used for Recall@10). Consumed by
                 # rag.eval.run_ragas_eval for RAGAS's retrieved_contexts.
                 generation_sources=result["sources"],
                 retrieval_ms=result["retrieval_ms"],

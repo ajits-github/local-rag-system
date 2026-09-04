@@ -82,86 +82,81 @@ class GoldExample(BaseModel):
     expected_trust_level : str or None
         Trust level the query should require.
     requires_query_decomposition : bool
-        Agentic RAG milestone: whether answering requires the agent to
-        split the question into subquestions (`decompose` node).
+        Whether answering requires the agent to split the question into
+        subquestions (`decompose` node).
     requires_multiple_retrieval_calls : bool
-        Agentic RAG milestone: whether answering genuinely requires more
-        than one tool dispatch, not just one broad retrieval.
+        Whether answering genuinely requires more than one tool dispatch,
+        not just one broad retrieval.
     requires_latest_document_tool : bool
-        Agentic RAG milestone: whether answering requires resolving a
-        version family via the `get_latest_document` tool specifically
-        (as opposed to freshness resolution inside plain `retrieve()`).
+        Whether answering requires resolving a version family via the
+        `get_latest_document` tool specifically (as opposed to freshness
+        resolution inside plain `retrieve()`).
     expects_insufficient_evidence_retry : bool
-        Agentic RAG milestone: whether a first retrieval is expected to
-        miss, requiring the bounded reformulate-and-retry loop to find
-        the answer.
+        Whether a first retrieval is expected to miss, requiring the
+        bounded reformulate-and-retry loop to find the answer.
     tool_not_needed : bool
-        Agentic RAG milestone: whether this question should route to
-        `classic_rag` even when `config.agent.enabled=True`. Used to
-        score `unnecessary_agent_rate`.
+        Whether this question should route to `classic_rag` even when
+        `config.agent.enabled=True`. Used to score `unnecessary_agent_rate`.
     expects_max_step_termination : bool
-        Agentic RAG milestone: whether this question is expected to
-        exhaust `max_agent_steps`/`max_retrieval_attempts`/`max_tool_calls`
-        rather than resolve normally.
+        Whether this question is expected to exhaust
+        `max_agent_steps`/`max_retrieval_attempts`/`max_tool_calls` rather
+        than resolve normally.
     adversarial_tool_instruction : bool
-        Agentic RAG milestone: whether a tool's output (not the original
-        query) carries a prompt-injection payload. Tests that tool
-        output stays evidence, never becomes an instruction.
+        Whether a tool's output (not the original query) carries a
+        prompt-injection payload. Tests that tool output stays evidence,
+        never becomes an instruction.
     expected_tool_sequence : list[str]
-        Agentic RAG milestone: the expected ordered tool names for
-        `tool_selection_accuracy` scoring.
+        The expected ordered tool names for `tool_selection_accuracy`
+        scoring.
     agentic_category : str or None
-        Agentic RAG milestone: authored scenario bucket (e.g.
-        "query_decomposition", "latest_document_resolution",
-        "retrieval_reformulation", "tool_not_needed",
-        "insufficient_evidence", "adversarial_tool_output"). Distinct
-        from `content_type`'s multimodal buckets and `safety_category`'s
-        security buckets; used for `run_agent_eval.py`'s per-category
-        breakdown.
+        Authored scenario bucket (e.g. "query_decomposition",
+        "latest_document_resolution", "retrieval_reformulation",
+        "tool_not_needed", "insufficient_evidence",
+        "adversarial_tool_output"). Distinct from `content_type`'s
+        multimodal buckets and `safety_category`'s security buckets; used
+        for `run_agent_eval.py`'s per-category breakdown.
     agentic_rationale : str or None
-        Agentic RAG milestone: one-sentence authored explanation of why
-        this question requires the tagged agentic behavior.
+        One-sentence authored explanation of why this question requires
+        the tagged agentic behavior.
     expected_subquestions : list[str]
-        Agentic RAG milestone: reference subquestions for scoring
-        `decompose` node output quality.
+        Reference subquestions for scoring `decompose` node output
+        quality.
     expected_reformulation : str or None
-        Agentic RAG milestone: a reference reformulated query, for
-        scenarios where the first phrasing is expected to miss and the
-        `evaluate_evidence` node's retry should look more like this.
+        A reference reformulated query, for scenarios where the first
+        phrasing is expected to miss and the `evaluate_evidence` node's
+        retry should look more like this.
     minimum_expected_tool_calls, maximum_expected_tool_calls : int or None
-        Agentic RAG milestone: the expected reasonable range of total
-        tool dispatches for this question. `0`/`0` for `tool_not_needed`
-        rows. Used to flag an agent run as under- or over-working a
-        question, distinct from the hard `config.agent.max_tool_calls`
-        ceiling.
+        The expected reasonable range of total tool dispatches for this
+        question. `0`/`0` for `tool_not_needed` rows. Used to flag an
+        agent run as under- or over-working a question, distinct from the
+        hard `config.agent.max_tool_calls` ceiling.
     requires_layout_awareness : bool
-        Layout-aware-ingestion milestone: whether answering depends on
-        structure the classic text-only pipeline would have lost (a
-        table/code/configuration block kept atomic, or a page/section
-        boundary), distinct from `requires_vision` (image understanding)
-        and `requires_relationship_expansion` (parent-prose linking).
+        Whether answering depends on structure the classic text-only
+        pipeline would have lost (a table/code/configuration block kept
+        atomic, or a page/section boundary), distinct from
+        `requires_vision` (image understanding) and
+        `requires_relationship_expansion` (parent-prose linking).
     expected_content_types : list[str]
-        Layout-aware-ingestion milestone: the `ChunkMetadata.content_type`
-        value(s) (e.g. `"table"`/`"code"`/`"configuration"`/`"image"`)
-        the supporting evidence is expected to carry. Distinct from
-        `content_type` (this row's own authored question-category label).
+        The `ChunkMetadata.content_type` value(s) (e.g.
+        `"table"`/`"code"`/`"configuration"`/`"image"`) the supporting
+        evidence is expected to carry. Distinct from `content_type` (this
+        row's own authored question-category label).
     relevant_pages : list[int]
-        Layout-aware-ingestion milestone: source page number(s) (PDF) or
-        manual-page-break count (DOCX) the supporting evidence is
-        expected to come from -- see `ChunkMetadata.page`.
+        Source page number(s) (PDF) or manual-page-break count (DOCX) the
+        supporting evidence is expected to come from; see
+        `ChunkMetadata.page`.
     visual_question_type : str or None
-        Layout-aware-ingestion milestone: authored sub-category for a
-        vision-dependent question (e.g. `"chart_reading"`,
-        `"diagram_relationship"`), when `requires_vision` is true.
+        Authored sub-category for a vision-dependent question (e.g.
+        `"chart_reading"`, `"diagram_relationship"`), when
+        `requires_vision` is true.
     evidence_mode : str or None
-        Layout-aware-ingestion milestone: how the question's supporting
-        evidence is expected to be found -- e.g. `"text_only"`,
-        `"vision_required"`, `"layout_structure"`.
+        How the question's supporting evidence is expected to be found
+        (e.g. `"text_only"`, `"vision_required"`, `"layout_structure"`).
     source_format : str or None
-        Layout-aware-ingestion milestone: the source document's file
-        format (e.g. `"pdf"`/`"docx"`/`"markdown"`), for per-format
-        metric breakdowns independent of `ChunkMetadata.source_type`
-        (which is derived from the retrieved chunk, not authored).
+        The source document's file format (e.g.
+        `"pdf"`/`"docx"`/`"markdown"`), for per-format metric breakdowns
+        independent of `ChunkMetadata.source_type` (which is derived from
+        the retrieved chunk, not authored).
 
     Notes
     -----
@@ -254,7 +249,7 @@ def source_matches_relevant(retrieved_source: str, relevant_path: str) -> bool:
     "data/knowledge_base/security/x.md" regardless of the "data/" root,
     without either side needing to hardcode that root. Re-exported from
     `rag.path_matching` (moved there so `rag.retrieval.freshness` can reuse
-    the identical rule without importing from `rag.eval`.
+    the identical rule without importing from `rag.eval`).
 
     Parameters
     ----------
@@ -274,11 +269,10 @@ def source_matches_relevant(retrieved_source: str, relevant_path: str) -> bool:
 def normalize_for_match(text: str) -> str:
     """Lowercase and collapse whitespace, for reference-context substring matching.
 
-    Deliberately permissive on whitespace/case only, not semantics --
-    `reference_contexts` entries are authored as verbatim excerpts from the
-    source corpus, so this only smooths
-    over incidental formatting differences (line wraps, trailing spaces),
-    never paraphrase differences. See `reference_context_is_supported`'s
+    Permissive on whitespace/case only, not semantics: `reference_contexts`
+    entries are authored as verbatim excerpts, so this only smooths over
+    incidental formatting differences (line wraps, trailing spaces), never
+    paraphrase differences. See `reference_context_is_supported`'s
     documented limitation.
 
     Parameters
@@ -301,18 +295,13 @@ def reference_context_is_supported(reference: str, candidate_texts: Iterable[str
     source corpus) and `eval/run_eval.py` (reference resolves to a
     retrieved chunk): same matching rule, different candidate sets.
 
-    **Limitation** (documented, not hidden): this is substring containment
-    after whitespace normalization, not semantic similarity. It is valid
-    because `reference_contexts` entries are authored as verbatim excerpts
-    (confirmed against real gold rows: exact JSON blocks, exact backtick
-    commands, exact caption sentences including their `*asterisks*`), but
-    it is brittle to any *other* formatting drift between the gold
-    author's copy and the actual text being checked against. For example,
-    a reference spanning a table row-group boundary can get split across
-    two persisted chunks. This under-counts (produces false negatives on
-    genuinely-supported references), never over-counts a coincidental
-    match into a false positive at this excerpt length in practice, but is
-    not a proof of "the model actually used this passage."
+    **Limitation**: this is substring containment after whitespace
+    normalization, not semantic similarity. It works because
+    `reference_contexts` entries are authored as verbatim excerpts, but it
+    is brittle to any other formatting drift (for example, a reference
+    spanning a table row-group boundary can be split across two persisted
+    chunks). This under-counts genuinely-supported references; it is not
+    proof "the model actually used this passage."
 
     Parameters
     ----------

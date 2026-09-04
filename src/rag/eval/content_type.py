@@ -1,10 +1,10 @@
 """Buckets gold questions and KB documents by structured-content type.
 
 Document content types are derived by running the *configured* chunker
-over each referenced file (self-updating. A newly added table/code/chart
-document is picked up the next time this runs, not a hardcoded lookup
-table), reusing the same loader -> cleaner -> chunker chain
-`IngestionPipeline.ingest_file` runs, minus embed/write.
+over each referenced file, reusing the same loader -> cleaner -> chunker
+chain `IngestionPipeline.ingest_file` runs (minus embed/write). This is
+self-updating: a newly added table/code/chart document is picked up the
+next time this runs, not via a hardcoded lookup table.
 """
 
 from __future__ import annotations

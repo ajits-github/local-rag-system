@@ -1,54 +1,30 @@
 """Builds the MCP server exposing the four core RAG tools plus two synthetic business tools.
 
-Every RAG tool here is a thin adapter over `rag.agent.tools.*` -- the
-exact same functions the in-process agent graph calls (see
-`rag.agent.graph._dispatch_tool`). No retrieval or authorization logic is
-reimplemented. `auth`/`identity` is resolved once per call from the
-transport (see `rag.mcp.identity`) via the MCP SDK's `Resolve`
-parameter-injection mechanism, which statically excludes resolver-filled
-parameters from a tool's generated JSON schema -- confirmed directly
-against the installed SDK (see `tests/integration/test_mcp_end_to_end.py`),
-not assumed -- so no tool call can ever supply or override it. Every RAG
-result is sanitized through `RetrievalPipeline.sanitize_evidence` at one
-central dispatch helper (`_run_tool`) before it is serialized and
+Each RAG tool is a thin adapter over `rag.agent.tools.*`, the same
+functions the in-process agent graph calls; no retrieval or
+authorization logic is reimplemented here. Identity is resolved once
+per call from the transport (see `rag.mcp.identity`) via the SDK's
+`Resolve` parameter-injection mechanism, which excludes resolver-filled
+parameters from a tool's generated JSON schema, so a tool call can never
+supply or override it. Every RAG result passes through
+`RetrievalPipeline.sanitize_evidence` in `_run_tool` before being
 returned, mirroring `rag.agent.graph._execute_tool`'s dispatch-then-
-sanitize pattern exactly, including resolving `auth` a second time for
-the sanitize call itself (the same fix documented for the in-process
-agent tools).
+sanitize pattern.
 
-`get_customer_case`/`get_case_status` (Stage 1B) are a second, structurally
-independent tool family: thin adapters over `rag.mcp.business.store`, a
-synthetic customer-support-case backend with its own tenant/role
-authorization (see that module's docstring for why it does not reuse
-`AuthorizationContext`/`sanitize_evidence`). They exist to demonstrate MCP
-as an integration layer to a separate backend/business system, not just
-another transport for this deployment's own RAG tools -- so they
-deliberately do not route through `_dispatch`/`_run_tool` at all.
-
-Verified against the installed `mcp==2.1.1` SDK (v2's `MCPServer`,
-formerly `FastMCP` in v1 -- a hard rename, not a deprecation warning).
+`get_customer_case`/`get_case_status` are a separate tool family: thin
+adapters over `rag.mcp.business.store`, a synthetic case backend with
+its own tenant/role authorization (see that module for why it doesn't
+reuse `AuthorizationContext`/`sanitize_evidence`). They demonstrate MCP
+as an integration layer to a separate backend system, and do not route
+through `_run_tool`.
 
 Every registered tool's argument model is hardened after registration
-(see `_harden_argument_schemas`) so an unknown field -- including an
-attempted `tenant_id`/`roles`/`auth` injection -- is rejected loudly by
-Pydantic rather than silently dropped: the SDK's own dynamically-built
-per-tool argument model inherits Pydantic's default `extra="ignore"`
-with no exposed strictness knob on the high-level `MCPServer.tool()`
-decorator (confirmed directly against the installed SDK source). This
-was already structurally harmless (no tool parameter binds those names,
-and `auth` is exclusively resolver-injected -- see `_resolve_auth`), but
-a silent drop is a worse failure mode than a loud rejection at a
-security boundary.
+(see `_harden_argument_schemas`) so an unknown argument is rejected
+rather than silently dropped.
 
-Deliberately does NOT start with ``from __future__ import annotations``,
-unlike every other module in this codebase: the SDK resolves each tool's
-parameter annotations via `inspect.signature(fn, eval_str=True)`, which
-`eval()`s a postponed (string) annotation against the function's
-`__globals__` -- and `_resolve_auth` below is a closure-local name, never
-present in module globals. Under postponed evaluation this fails with a
-`NameError` at server-build time (confirmed directly: this was hit while
-writing this module, not a hypothetical). Keeping annotations as real,
-already-evaluated objects here is required, not a style regression.
+This module does not use ``from __future__ import annotations``: the
+SDK resolves tool parameter annotations via `eval()`, which fails for
+the closure-local resolver names used below under postponed evaluation.
 """
 
 import logging
@@ -107,30 +83,18 @@ _UNSET = _Unset()
 
 
 def _harden_argument_schemas(server: MCPServer) -> None:
-    """Make every registered tool's argument model reject an unknown field, loudly.
+    """Make every registered tool's argument model reject an unknown field.
 
-    Reaches into `MCPServer`'s internal `ToolManager` (no higher-level
-    hook exists in this SDK version -- confirmed by inspection, not
-    assumed; closing this fully would mean dropping to the SDK's
-    lower-level `Server` API, out of scope for this fix) to switch each
-    tool's dynamically-built Pydantic argument model from the default
-    `extra="ignore"` to `extra="forbid"`, then regenerates the tool's
-    already-cached JSON schema (what `tools/list` advertises to a
-    client) so it correctly advertises `additionalProperties: false`
-    too. Verified empirically: mutating `model_config` and calling
-    `model_rebuild(force=True)` on an already-constructed Pydantic model
-    does take effect on the next `model_validate` call.
-
-    An unknown field -- including an attempted `tenant_id`/`roles`/
-    `auth` injection -- now fails argument validation before the tool
-    function or any resolver ever runs (`Tool.run` calls
-    `fn_metadata.validate_arguments` first), surfacing to the caller as
-    a normal `CallToolResult(is_error=True)` (a `pydantic.ValidationError`
-    is caught and re-raised as `ToolError` by the SDK itself). This never
-    changes what `auth` resolves to: `auth` is excluded from every tool's
-    argument model entirely (see `Resolve(_resolve_auth)` below), so it
-    was never reachable through argument validation in the first place --
-    this only closes the *unknown-key* gap.
+    The SDK's dynamically-built per-tool argument model defaults to
+    Pydantic's `extra="ignore"` with no exposed strictness knob, so an
+    unrecognized argument (e.g. an attempted `tenant_id`/`roles`/`auth`
+    injection) would otherwise be silently dropped rather than rejected.
+    This switches each tool's argument model to `extra="forbid"` and
+    regenerates its cached JSON schema, so validation fails loudly
+    before the tool function or any resolver runs. `auth` itself is
+    never reachable through tool arguments regardless (it is exclusively
+    resolver-injected, see `Resolve(_resolve_auth)` below); this closes
+    the separate unknown-key gap.
     """
     for tool in server._tool_manager.list_tools():
         arg_model = tool.fn_metadata.arg_model
@@ -153,37 +117,24 @@ def build_mcp_server(
     ----------
     config : AppConfig
         Application configuration; `security.auth` governs identity
-        resolution (see `rag.mcp.identity`), `agent.max_tool_top_k`/
-        `agent.max_chunks_per_document_fetch*` govern the same
-        server-controlled bounds the in-process agent tools already use.
-    pipeline : RetrievalPipeline
-        The process-wide retrieval pipeline singleton.
-    vectorstore : VectorStore
-        The process-wide vector store singleton.
-    embedder : Embedder
-        The process-wide embedder singleton, used by `get_document`/
+        resolution, and `agent.max_tool_top_k`/
+        `agent.max_chunks_per_document_fetch*` bound the same
+        server-controlled limits the in-process agent tools use.
+    pipeline, vectorstore, embedder
+        Process-wide singletons; `embedder` is used by `get_document`/
         `get_latest_document`'s relevance-selection pass.
     fixed_identity : VerifiedIdentity | None, keyword-only
-        Left unset (the default) for the Streamable-HTTP transport:
-        identity is resolved per tool call from that call's own request
-        headers (see `rag.mcp.identity.resolve_http_identity`). Pass an
-        explicit value (including `None`, meaning "auth disabled/
-        unrestricted") only for the stdio transport, which has no
-        per-request headers at all and instead resolves one identity
-        once at process startup (see
-        `rag.mcp.identity.resolve_stdio_identity` and
-        `rag.mcp.stdio_entrypoint`) and reuses it for every call in that
-        process. This parameter is the only difference between the two
-        transports' identity handling -- everything else in this
-        function is shared, so neither transport can silently drift from
-        the other.
+        Left unset (the default) for the Streamable-HTTP transport,
+        where identity is resolved per call from that call's request
+        headers. Pass an explicit value (including `None`, meaning
+        auth disabled) only for the stdio transport, which resolves one
+        identity at process startup and reuses it for every call.
 
     Returns
     -------
     MCPServer
         A server with all six tools registered. Callers mount it via
-        `.streamable_http_app()` (see `rag.mcp.asgi`) or run it directly
-        via `.run_stdio_async()` (see `rag.mcp.stdio_entrypoint`).
+        `.streamable_http_app()` or run it via `.run_stdio_async()`.
     """
     server: MCPServer = MCPServer(
         name="local-rag-system",
@@ -196,12 +147,9 @@ def build_mcp_server(
         ),
     )
 
-    # Resolved once, here in the outer scope: mypy does not preserve `is`/`isinstance`
-    # narrowing of a variable captured by a nested closure (confirmed directly --
-    # narrowing fixed_identity inside _resolve_auth itself left its type as
-    # `VerifiedIdentity | _Unset | None`), so the _Unset case is collapsed into a
-    # stable, already-narrowed `VerifiedIdentity | None` local before any closure
-    # reads it.
+    # Resolved once here: mypy does not preserve isinstance narrowing of a
+    # variable captured by a nested closure, so the _Unset case is collapsed
+    # into a plain `VerifiedIdentity | None` local before any closure reads it.
     use_fixed_identity = not isinstance(fixed_identity, _Unset)
     resolved_fixed_identity: VerifiedIdentity | None = (
         fixed_identity if isinstance(fixed_identity, VerifiedIdentity) else None
@@ -227,12 +175,12 @@ def build_mcp_server(
         """Build this call's `AuthorizationContext` from the transport, never from tool args.
 
         `as_of`/`require_trust_level` are ordinary, non-privileged tool
-        arguments (matching `AgentQueryRequest`'s own fields) -- not
-        identity claims -- so they are read by name from the calling
-        tool, same as `build_authorization_context` already treats them
-        for `/query`/`/agent/query`. `tenant_id`/`roles` are always
-        passed as `None`: this project's transports never source them
-        from anything but a verified identity.
+        arguments (matching `AgentQueryRequest`'s own fields), not
+        identity claims, so they are read by name from the calling
+        tool, the same as `build_authorization_context` treats them for
+        `/query`/`/agent/query`. `tenant_id`/`roles` are always passed
+        as `None`; this project's transports never source them from
+        anything but a verified identity.
         """
         identity = _resolve_identity(ctx)
         return build_authorization_context(identity, None, None, as_of, require_trust_level)
@@ -240,14 +188,8 @@ def build_mcp_server(
     async def _resolve_identity_only(ctx: Context) -> VerifiedIdentity | None:
         """`Resolve()`-compatible async wrapper around `_resolve_identity`.
 
-        The business-case tools declare `identity: Annotated[VerifiedIdentity
-        | None, Resolve(_resolve_identity_only)]` -- they need the bare
-        identity, not an `AuthorizationContext`, so they resolve through
-        this wrapper rather than `_resolve_auth`. `Resolve()` requires an
-        async callable (matching `_resolve_auth`'s own signature,
-        confirmed against the installed SDK), which is the only reason
-        this thin wrapper exists separately from `_resolve_identity`
-        itself.
+        `Resolve()` requires an async callable, which is the only reason
+        this thin wrapper exists separately from `_resolve_identity`.
         """
         return _resolve_identity(ctx)
 
@@ -310,12 +252,10 @@ def build_mcp_server(
         dataset_id: str | None,
         query: str,
     ) -> list[McpChunkResult]:
-        """Dispatch, sanitize (the single universal choke point), observe, and serialize.
+        """Dispatch, sanitize, observe, and serialize one RAG tool call.
 
-        Every one of the four tool handlers below routes through this
-        one function -- mirroring `agent.graph._execute_tool`'s design
-        note that sanitization is applied centrally, "not delegated
-        per-tool -- so no tool can bypass it by construction."
+        All four RAG tool handlers route through this function, so
+        sanitization is applied centrally and no tool can bypass it.
         """
         t0 = time.perf_counter()
         try:
@@ -347,16 +287,12 @@ def build_mcp_server(
     def _run_business_tool(tool_name: _BusinessToolName, fn: Callable[[], _T]) -> _T:
         """Dispatch one business-case tool: observe, then delegate authorization to `fn`.
 
-        Structurally parallel to `_run_tool` (tracing span, latency
-        metric, `mcp_tool` error counter on an unanticipated exception),
-        but deliberately does not call `pipeline.sanitize_evidence` --
-        that method redacts chunk/field-level content, a concept this
-        resource type doesn't have. `rag.mcp.business.store` already
-        returns `None` for both "not found" and "not authorized"; there
-        is nothing left for this function to sanitize or gate further.
-        `fn` is a zero-arg closure so this stays generic over which
-        `store` function (and therefore which return type) it wraps,
-        rather than branching on `tool_name` itself.
+        Parallel to `_run_tool` (tracing, latency, error metrics) but
+        skips `pipeline.sanitize_evidence`, which redacts chunk/field
+        content a business case doesn't have; `rag.mcp.business.store`
+        already returns `None` for both "not found" and "not
+        authorized". `fn` is a zero-arg closure so this stays generic
+        over which `store` function it wraps.
         """
         t0 = time.perf_counter()
         try:

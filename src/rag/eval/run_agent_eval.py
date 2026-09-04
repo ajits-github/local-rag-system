@@ -1,13 +1,13 @@
 """Run agentic-RAG evaluation against a gold JSONL dataset.
 
-Deterministic/local only (no RAGAS, no hosted judge). Reports the
-agent-specific metrics the Agentic RAG milestone adds on top of the
-classic Recall@k/MRR/hit-rate metrics `rag.eval.run_eval` already
-computes. Run both against the same corpus for a full picture; this
-module intentionally does not duplicate retrieval-quality scoring.
+Deterministic/local only (no RAGAS, no hosted judge). Reports
+agent-specific metrics (routing, tool selection, evidence sufficiency,
+citation support) on top of the classic Recall@k/MRR/hit-rate metrics
+`rag.eval.run_eval` already computes; run both against the same corpus
+for a full picture.
 
 `--dataset-id` is mandatory, applied as a `filters={"dataset_id": ...}`
-constraint on every call, exactly like `run_eval.py`'s existing rule.
+constraint on every call, matching `run_eval.py`'s rule.
 
 Usage:
     python -m rag.eval.run_agent_eval --gold data/eval/agentic_extension_gold.jsonl \
@@ -73,25 +73,22 @@ def _cited_sources(final_answer: str | None, citations: list[str]) -> list[str] 
     return resolved or None
 
 
-# qwen2.5:3b was found (see ISSUES.md's citation-compliance entry) to often
-# skip the requested "(Source N)" citation format entirely on both
-# routes, even while using the retrieved evidence correctly. Mirrors
-# `run_eval.py`'s `_expansion_utilization` heuristic exactly (len>3-word
-# overlap, same threshold): a triage-grade grounding proxy for when
-# explicit citation parsing finds nothing, not a citation-compliance claim.
+# qwen2.5:3b frequently omits the requested "(Source N)" citation format
+# even while using the retrieved evidence correctly, so explicit citation
+# parsing alone under-counts grounding. Mirrors run_eval.py's
+# `_expansion_utilization` heuristic (same word-length/overlap
+# threshold): a triage-grade proxy, not a citation-compliance claim.
 _MIN_INFERRED_CITATION_OVERLAP = 3
 
 
 def _content_by_source(result: AgentRunResult, final_state: AgentState) -> dict[str, str]:
     """Map each distinct citation source path to its gathered chunk content, concatenated.
 
-    Built from whichever route actually carries content: `result.
-    classic_sources` (`classic_rag`, added for the RAGAS classic-route
-    context gap; see `rag.agent.graph.AgentRunResult`) or `final_state.
-    retrieved_evidence` (`agent`). This is the same underlying data
-    `record["citations"]` itself is derived from, so every citation
-    resolves to *some* content unless the source was never actually
-    gathered (shouldn't happen, defensively tolerated via `.get(...)`` in
+    Built from whichever route actually carries content:
+    `result.classic_sources` for `classic_rag`, or
+    `final_state.retrieved_evidence` for `agent`. Every citation should
+    resolve to some content unless the source was never actually gathered
+    (shouldn't happen, defensively tolerated via `.get(...)` in
     `_infer_cited_sources`).
     """
     by_source: dict[str, list[str]] = {}
@@ -110,12 +107,11 @@ def _infer_cited_sources(final_answer: str, content_by_source: dict[str, str]) -
     Only consulted when explicit `(Source N)` parsing finds nothing (see
     `_resolve_citation_attribution`). A source counts as "inferred cited"
     when at least `_MIN_INFERRED_CITATION_OVERLAP` of its content's own
-    words (length > 3) also appear in the answer text. This is the same
-    style/threshold `run_eval.py`'s `_expansion_utilization` already uses
-    for an analogous "did the answer draw on this content" question.
-    Incidental vocabulary overlap can produce a false positive, and a miss
-    doesn't prove a source was unused. It is a triage aid, not a grounding
-    proof, exactly like that sibling heuristic.
+    words (length > 3) also appear in the answer text, the same style/
+    threshold `run_eval.py`'s `_expansion_utilization` uses for an
+    analogous question. Incidental vocabulary overlap can produce a false
+    positive, and a miss doesn't prove a source was unused: a triage aid,
+    not a grounding proof.
     """
     answer_words = {w.lower() for w in final_answer.split() if len(w) > 3}
     if not answer_words:
@@ -139,7 +135,7 @@ def _resolve_citation_attribution(
     Tries explicit `(Source N)` parsing first (`_cited_sources`); falls
     back to keyword-overlap inference (`_infer_cited_sources`) only when
     that finds nothing, since qwen2.5:3b frequently omits the citation
-    format even when it did use the evidence correctly (see ISSUES.md).
+    format even when it did use the evidence correctly.
 
     Returns
     -------
@@ -159,13 +155,12 @@ def _resolve_citation_attribution(
 
 
 def _expected_route(example: GoldExample) -> str | None:
-    """Infer the expected route from a gold example's agentic-milestone flags.
+    """Infer the expected route from a gold example's agentic-signal flags.
 
-    Returns `None` (not scored by `routing_accuracy`) when a question
-    carries no agentic signal either way, e.g. a plain classic-RAG gold
-    row from `techfusion_gold.jsonl` reused for `tool_not_needed`
-    evidence is exactly the `tool_not_needed=True` case, which this
-    function does classify.
+    Returns `None` (excluded from `routing_accuracy` scoring) when a
+    question carries no agentic signal either way, e.g. a plain
+    classic-RAG-only gold row with no `tool_not_needed`/decomposition/
+    multi-retrieval/latest-document/retry/adversarial flag set.
     """
     if example.tool_not_needed:
         return "classic_rag"
@@ -389,32 +384,21 @@ def _evidence_and_retry_metrics(records: list[dict[str, Any]]) -> dict[str, Any]
 def _citation_support_rate(records: list[dict[str, Any]]) -> dict[str, Any]:
     """Fraction of examples whose attributed sources all path-match a gold relevant document.
 
-    Scores `record["cited_sources"]`, the sources the final answer text
+    Scores `record["cited_sources"]`: the sources the final answer text
     was actually *attributed* to, not every chunk a run happened to
-    gather across every tool call. See the "citation-list scope
-    mismatch" finding in experiments/reports/agentic_rag_baseline_v1.md
-    section 7 and ISSUES.md. `state.citations` (all gathered evidence) is
-    a superset of what a 2-tool-call agent run's synthesis prompt
-    actually drew from, so scoring against it made an otherwise
-    well-grounded answer fail the moment any single tangential chunk was
-    ever retrieved.
+    gather across every tool call. `state.citations` (all gathered
+    evidence) is a superset of what a run's synthesis prompt actually
+    drew from, so scoring against it would fail an otherwise well-grounded
+    answer the moment any single tangential chunk was ever retrieved.
 
-    Attribution itself is two-tier (`record["citation_attribution"]`,
+    Attribution is two-tier (`record["citation_attribution"]`,
     `_resolve_citation_attribution`): "explicit" when the answer text
     parses at least one "Source N" mention, else "inferred" via a
-    keyword-overlap fallback against gathered-source content (qwen2.5:3b
-    was found to often skip the citation format even when it used the
-    evidence correctly; see ISSUES.md), else "none". An example with
-    "none" attribution is excluded from the denominator (reported
-    separately as `uncited_answer_count`), not counted as a pass or a
-    fail. We still cannot determine what such an answer grounded on,
-    and silently treating it as "0 citations, trivially supported" would
-    inflate the metric.
-
-    Not comparable to `experiment_029`'s `citation_support_rate` (the
-    pre-fix all-gathered-evidence definition) or `experiment_032`'s
-    (explicit-only, no inference fallback). See this function's own
-    change note in the returned dict.
+    keyword-overlap fallback against gathered-source content, else
+    "none". An example with "none" attribution is excluded from the
+    denominator (reported separately as `uncited_answer_count`) rather
+    than counted as a pass or a fail, since there is no way to determine
+    what such an answer was grounded on.
     """
     eligible = [r for r in records if r["relevant_documents"]]
     scored = [r for r in eligible if r["cited_sources"]]
@@ -474,13 +458,12 @@ def _latency_and_tokens(records: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _node_latency_breakdown(records: list[dict[str, Any]]) -> dict[str, Any]:
-    """Aggregate per-node-type timing across every example, splitting LLM vs. Overhead time.
+    """Aggregate per-node-type timing across every example, splitting LLM vs. overhead time.
 
-    Reads the additive `AgentRunResult.node_timings_ms`/`node_token_usage`
-    instrumentation from the observability milestone. This is purely a reporting
-    aggregation, no agent decision logic involved. Empty for a run where
-    every question took the `classic_rag` fast path (no per-node structure
-    on that route; see `AgentRunResult`'s own docstring).
+    Purely a reporting aggregation over `AgentRunResult.node_timings_ms`/
+    `node_token_usage`; no agent decision logic involved. Empty for a run
+    where every question took the `classic_rag` fast path (no per-node
+    structure on that route).
     """
     node_names = sorted({name for r in records for name in r["node_timings_ms"]})
     breakdown: dict[str, Any] = {}

@@ -141,10 +141,8 @@ def set_attributes(span: Span, attributes: Mapping[str, Any]) -> None:
     span : Span
         The span to annotate.
     attributes : Mapping[str, Any]
-        Attribute key/value pairs. Never pass raw retrieved content,
-        credentials, or model reasoning text here. See
-        `docs/architecture.md`'s "Observability" section for the full
-        never-attach list.
+        Attribute key/value pairs. Never pass JWTs, credentials, retrieved
+        chunk text, raw prompts, or model reasoning here.
     """
     try:
         for key, value in attributes.items():

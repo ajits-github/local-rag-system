@@ -1,14 +1,14 @@
 """MCP-transport identity resolution: transport-owned, never tool-argument-owned.
 
-Mirrors `rag.api.deps.get_current_identity`'s JWT verification rules
-exactly, adapted to the two transports this project ships: Streamable
-HTTP (per tool call, from the request's `Authorization` header) and
-stdio (once per process, from an environment variable -- stdio has no
-per-request headers at all). Neither path ever reads `tenant_id`/`roles`
-from a tool call's arguments; both resolve a `VerifiedIdentity` (or
-`None`, when `security.auth.enabled` is `False`) from a transport-level
-credential only. Governed entirely by `security.auth` -- there is no
-separate, weaker `mcp.auth.*` toggle that could drift from it.
+Mirrors `rag.api.deps.get_current_identity`'s JWT verification rules,
+adapted to this project's two transports: Streamable HTTP (per call,
+from the request's `Authorization` header) and stdio (once per process,
+from an environment variable, since stdio has no per-request headers).
+Neither path ever reads `tenant_id`/`roles` from a tool call's
+arguments; both resolve a `VerifiedIdentity` (or `None`, when
+`security.auth.enabled` is `False`) from a transport-level credential
+only. Governed entirely by `security.auth`; there is no separate,
+weaker `mcp.auth.*` toggle.
 """
 
 from __future__ import annotations
@@ -55,7 +55,7 @@ def resolve_http_identity(
     ------
     ToolError
         When a token is required but missing, malformed, or fails
-        verification. Carries no token contents -- matches
+        verification. Carries no token contents, matching
         `AuthenticationError`'s own audit-safe design.
     """
     if not config.security.auth.enabled:
@@ -94,7 +94,7 @@ def resolve_stdio_identity(config: AppConfig) -> VerifiedIdentity | None:
     """Resolve a single fixed identity for one stdio server process, at startup only.
 
     stdio has no per-request headers, so identity is verified once, from
-    a JWT supplied via the `MCP_AUTH_TOKEN` environment variable --
+    a JWT supplied via the `MCP_AUTH_TOKEN` environment variable,
     through the exact same `verify_jwt` every other transport uses, never
     a separate, weaker "trust this tenant_id" bypass. Every tool call
     within this process shares this one identity: a stdio server is a
@@ -102,7 +102,7 @@ def resolve_stdio_identity(config: AppConfig) -> VerifiedIdentity | None:
     multi-tenant deployment target.
 
     Returns `None` (fully unrestricted) when `security.auth.enabled` is
-    `False`, matching the HTTP transport exactly -- deliberately no
+    `False`, matching the HTTP transport exactly: deliberately no
     stdio-specific relaxation beyond what HTTP already allows.
 
     Parameters

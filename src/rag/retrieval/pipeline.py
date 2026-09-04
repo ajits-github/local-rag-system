@@ -35,16 +35,13 @@ from rag.vectorstore.base import VectorStore
 def source_label(result: SearchResult) -> str:
     """Build the provenance label for a retrieved source.
 
-    The label includes source metadata such as section, content type,
-    trust level, injection status, and relationship-expansion origin.
-
-    For image chunks, the label distinguishes caption or alt-text content
-    from vision-generated descriptions so the generated answer does not
-    imply visual inspection when no vision model was used.
+    Includes section, content type, trust level, injection status, and
+    relationship-expansion origin. For image chunks, distinguishes
+    caption/alt-text content from a vision-generated description so the
+    generated answer never implies visual inspection that didn't happen.
 
     Public so the agent synthesize node (`rag/agent/graph.py`) can reuse
-    this exact provenance-labeling logic for tool-fetched evidence,
-    rather than reimplementing it.
+    this exact provenance-labeling logic for tool-fetched evidence.
 
     Parameters
     ----------
@@ -566,22 +563,13 @@ class RetrievalPipeline:
     ) -> RetrievalAttribution:
         """Return dense, BM25, and RRF-fused rankings independently, before rerank/expansion.
 
-        An observability-only sibling to `retrieve()`, not a replacement
-        for it: `retrieve()`'s own behavior (including which provider it
-        uses, reranking, and relationship expansion) is completely
-        unchanged by this method's existence. Always computes *both*
-        dense and BM25. Unlike `retrieve()`, which only computes BM25
-        when `config.retrieval.provider == "hybrid"`, attribution
-        can answer "what would each retriever alone have found" even
-        when production is configured for `"dense"`. Uses
-        `config.retrieval.hybrid.rrf_k` for fusion regardless of
-        `config.retrieval.provider`, since that value has a config
-        default even when hybrid isn't the active provider.
-
-        Never calls `self._reranker` or `expand_with_relationships`;
-        the returned rankings are exactly what dense search, BM25 search,
-        and RRF fusion produced, so neither a real reranker's rescoring
-        nor relationship expansion can ever influence them.
+        Observability-only; has no effect on `retrieve()`'s own behavior.
+        Always computes both dense and BM25 (unlike `retrieve()`, which
+        only runs BM25 in hybrid mode) and always fuses with
+        `config.retrieval.hybrid.rrf_k`, regardless of
+        `config.retrieval.provider`. Never reranks or expands
+        relationships, so the returned rankings are exactly what dense
+        search, BM25 search, and RRF fusion produced.
 
         Parameters
         ----------
@@ -631,18 +619,17 @@ class RetrievalPipeline:
         (`rag/agent/tools.py`) can reuse this exact expansion logic
         directly, rather than reimplementing parent/neighbor lookup.
 
-        Ranking and expansion stay separate: expanded chunks are appended
-        after the ranked list (`origin="expanded"`, `expanded_from=<id>`),
-        never interleaved into it or given a freshly computed score.
-        `.score` is inherited from the originating result, so `origin` (not
-        `.score`) is what callers should check to tell directly-retrieved
-        context from expanded context apart. A `parent_chunk_id`/section
-        lookup can never cross a `dataset_id` boundary because it's always
-        scoped to one already-`dataset_id`-filtered result's own
-        `document_id` (see `VectorStore.get_chunks_by_ids`/
+        Expanded chunks are appended after the ranked list
+        (`origin="expanded"`, `expanded_from=<id>`), never interleaved and
+        never given a freshly computed `.score` (it inherits the
+        originating result's); check `origin`, not `.score`, to tell
+        expanded context from directly-retrieved context. A
+        `parent_chunk_id`/section lookup can never cross a `dataset_id`
+        boundary, since it's scoped to an already-`dataset_id`-filtered
+        result's own `document_id` (see `VectorStore.get_chunks_by_ids`/
         `get_chunks_by_section`). Deduplicates against chunks already
         present in `results` and across expansions of different results,
-        and caps additions at `max_related_elements` per originating result.
+        capped at `max_related_elements` per originating result.
 
         Parameters
         ----------
@@ -731,8 +718,8 @@ class RetrievalPipeline:
     ) -> dict[str, Any]:
         """Retrieve context for `query` and generate an answer from it.
 
-        Always reflects production config (no `reranker_top_n`/
-        `generation_context_top_n` override. See `retrieve`).
+        Always reflects production config; unlike `retrieve`, there is no
+        `reranker_top_n`/`generation_context_top_n` override here.
 
         Parameters
         ----------
@@ -754,36 +741,17 @@ class RetrievalPipeline:
             ``{"answer", "prompt_tokens", "completion_tokens", "sources",
             "retrieval_ms", "generation_ms", "total_ms",
             "latency_breakdown_ms", "query_injection_suspected"}``.
-            `prompt_tokens`/`completion_tokens`
-            are read off the LLM instance's own last-call tracking (e.g.
-            `OllamaLLM.last_prompt_tokens`/`last_completion_tokens`) via
-            `getattr`, so any future `LLM` implementation that doesn't
-            track them just reports `None` rather than raising.
-            `latency_breakdown_ms`
-            splits `retrieval_ms` into its component stages (embed, dense/
-            BM25 search, fusion, rerank, expansion)
-            plus `generation_ms`, for latency comparisons (e.g. how much a
-            real reranker adds) that `retrieval_ms`/`generation_ms` alone
-            can't answer. Each `sources` entry includes the chunk's raw
-            `content` alongside its metadata (including `content_type`,
-            `attachment_name`/`source_anchor` for image hits,
-            `origin`/`expanded_from` for relationship-expansion
-            provenance, and `tenant_id`/
-            `trust_level`/`status`/`document_version`/`injection_suspected`/
-            `sensitive_field_ids` (ingestion-time tag, present regardless
-            of redaction)/`redacted_field_ids` (only non-empty when
-            `config.security.field_redaction.enabled` and a policy fired
-            and `content` for such a source already has the raw value
-            replaced with `[REDACTED:SENSITIVE_FIELD]`, so this list is
-            observability only, never a place a raw value could hide),
-            so callers (e.g. RAGAS scoring, eval's reference-context/
-            image-hit/safety metrics) can reuse this retrieval without a
-            redundant call. `answer` itself is passed through
-            `sanitize_redaction_markers_in_answer` before being returned,
-            while `sources` keep their redacted content for observability.
-            `query_injection_suspected` runs the same `detect_injection`
-            heuristic against `query` itself (feeds `eval/run_eval.py`'s
-            `prompt_injection_success_rate`).
+            `prompt_tokens`/`completion_tokens` come from the LLM
+            instance's own last-call tracking (`None` if it doesn't
+            support that). Each `sources` entry is a `source_dict()` dict;
+            its `content` keeps any internal `[REDACTED:...]` marker for
+            observability, while `answer` itself has already passed
+            through `sanitize_redaction_markers_in_answer`, so it never
+            echoes that marker even though `sources` still can.
+            `latency_breakdown_ms` splits `retrieval_ms` into its
+            component stages (embed, dense/BM25 search, fusion, rerank,
+            expansion) plus `generation_ms`. `query_injection_suspected`
+            runs `detect_injection` against `query` itself.
         """
         t0 = time.perf_counter()
         results, stage_ms = self._retrieve_timed(

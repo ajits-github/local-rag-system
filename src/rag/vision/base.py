@@ -1,10 +1,11 @@
 """Vision provider: image/diagram understanding for image-derived indexable content.
 
-`config.vision.provider`/`factory.build_vision_provider` wire this ABC
-in, but the only provider implemented so far is `"none"`: text-only image
-handling (alt text/caption) needs no `VisionProvider` at all. No
-hosted-API-calling concrete subclass exists yet. Tests use a local mock
-subclass, never a class capable of a real network call.
+Selected via `config.vision.provider`/`factory.build_vision_provider`.
+`"none"` (the default) needs no `VisionProvider` instance at all;
+text-only image handling uses alt text/caption only. `"ollama"`
+(`vision.ollama_vision.OllamaVisionProvider`) is the only real,
+locally-running provider implemented so far; no hosted-API-calling
+provider exists.
 """
 
 from __future__ import annotations

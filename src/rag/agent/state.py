@@ -1,9 +1,8 @@
 """Agent run state: only what the bounded graph driver needs, nothing more.
 
-Deliberately excludes raw JWT tokens and any other unrestricted sensitive
-data (see `docs/architecture.md`'s "Agentic RAG" section). Identity is
-carried only as an already-verified `AuthorizationContext`, never a
-`VerifiedIdentity`/raw `sub` claim.
+Deliberately excludes raw JWT tokens and other unrestricted sensitive
+data. Identity is carried only as an already-verified
+`AuthorizationContext`, never a `VerifiedIdentity`/raw `sub` claim.
 """
 
 from __future__ import annotations
@@ -42,7 +41,7 @@ class NodeInvocationTiming(BaseModel):
     """One graph-node call's timing, split into LLM-inference time and everything else.
 
     `llm_ms`/`overhead_ms` are `None` for a node that makes no direct LLM
-    call (`execute_tool`). Deliberately not `0.0`, which would misread
+    call (`tool_execute`). Deliberately not `0.0`, which would misread
     as "an LLM call happened and took no time."
 
     Attributes
@@ -50,9 +49,8 @@ class NodeInvocationTiming(BaseModel):
     total_ms : float
         Total wall-clock time for this node invocation.
     llm_ms : float | None
-        The portion of `total_ms` spent inside `LLM.generate()` calls
-        (summed across any JSON-parse retries `run_decision` made this
-        invocation). See `rag.agent.graph._TimingLLM`.
+        The portion of `total_ms` spent inside `LLM.generate()` calls,
+        summed across any JSON-parse retries made this invocation.
     overhead_ms : float | None
         `total_ms - llm_ms`: JSON parsing/validation, prompt-template
         rendering, and any other node-local work that isn't the model
@@ -92,8 +90,7 @@ class AgentState(BaseModel):
     authorization_context : AuthorizationContext | None
         The caller's verified identity/date context, set once by the API
         router before the graph runs and never reconstructed from
-        anything LLM-derived. Safe to hold here. It carries no raw
-        credential (see `rag.retrieval.authorization.AuthorizationContext`).
+        anything LLM-derived. Carries no raw credential.
     filters : dict[str, Any] | None
         Exact-match retrieval filters (notably `dataset_id`, the hard
         dataset namespace boundary), set once from the request and never
@@ -109,7 +106,7 @@ class AgentState(BaseModel):
     retrieved_evidence : list[SearchResult]
         Accumulated evidence from every tool call so far, always passed
         through `RetrievalPipeline.sanitize_evidence` before being
-        appended here (see `rag.agent.graph`).
+        appended here.
     tool_call_history : list[ToolCallRecord]
         One record per tool dispatch, in order.
     retrieval_attempts : int
@@ -123,15 +120,11 @@ class AgentState(BaseModel):
         bounds.
     prompt_tokens, completion_tokens : int
         Best-effort accumulated token usage across every LLM call this
-        run made (every decision call plus synthesis). Read via
-        `getattr(llm, "last_prompt_tokens"/"last_completion_tokens",
-        None)` after each call, the same pattern
-        `RetrievalPipeline.answer()` uses. `0` for an `LLM`
-        implementation that doesn't track them. On a retried decision
-        call (`rag.agent.decisions.run_decision`), only the last attempt's
-        tokens are counted, since the LLM instance's own tracking
-        attribute is overwritten per call, not accumulated. A
-        documented undercount, not a crash risk.
+        run made. `0` for an `LLM` implementation that doesn't track
+        them. On a retried decision call, only the last attempt's tokens
+        are counted, since the tracking attribute is overwritten per
+        call rather than accumulated; a documented undercount, not a
+        crash risk.
     evidence_sufficient : bool | None
         `evaluate_evidence`'s most recent decision.
     final_answer : str | None
@@ -142,9 +135,9 @@ class AgentState(BaseModel):
         Why the run stopped; `None` only while still in progress.
     node_timings_ms : dict[str, list[NodeInvocationTiming]]
         Every node invocation's timing, keyed by node name (`classify`/
-        `decompose`/`tool_select`/`execute_tool`/`evidence_sufficiency`/
+        `decompose`/`tool_select`/`tool_execute`/`evidence_sufficiency`/
         `synthesize`). A list, not a single value, because
-        `tool_select`/`execute_tool`/`evidence_sufficiency` can run more
+        `tool_select`/`tool_execute`/`evidence_sufficiency` can run more
         than once per request (the bounded retry loop). Both individual
         invocation timing and aggregate-across-invocations timing are
         derivable from this, never just the aggregate. Populated by

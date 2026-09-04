@@ -7,16 +7,15 @@ Checks, in order:
   1. Record count vs --expect-count (warning only; the file may grow).
   2. Every relevant_documents entry resolves to a real file (hard fail).
   3. Answerable questions' expected_answer keyword-overlaps its referenced
-     content (warning only; KeywordOverlapScorer is a crude heuristic,
-     see eval/answer_quality.py's own documented caveat).
+     content (warning only; KeywordOverlapScorer is a crude heuristic).
   4. Every structured-content bucket (table/code_configuration/chart) has
      at least one example (hard fail; proves buckets are "clearly
      identifiable").
   5. No duplicate questions, case-folded exact match (hard fail).
   6. Each reference_contexts entry resolves (verbatim, whitespace-
      normalized) somewhere in its relevant_documents' raw file text
-     (warning only; see eval.gold_schema.reference_context_is_supported's
-     documented limitation). Matched against the file's raw bytes, not the
+     (warning only; a verbatim substring match can under-count real
+     support). Matched against the file's raw bytes, not the
      loader-parsed/cleaned text, because a reference can legitimately come
      from YAML front-matter that TextLoader strips before chunking (e.g. an
      "owner: ..." field used to answer an ownership question).

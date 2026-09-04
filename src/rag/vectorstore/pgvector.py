@@ -614,21 +614,11 @@ class PgVectorStore(VectorStore):
         filters: dict[str, Any] | None = None,
         auth: AuthorizationContext | None = None,
     ) -> list[SearchResult]:
-        r"""See `VectorStore.search_keyword`.
+        """See `VectorStore.search_keyword`.
 
-        Builds a fresh in-memory `rank_bm25.BM25Okapi` index per call from
-        the optionally filtered chunk content fetched via SQL. There is no
-        persistent BM25 index or caching. At this project's current scale
-        (a few hundred chunks per dataset), rebuilding per query is
-        sub-second and avoids the invalidation complexity of caching an
-        index that would need to track re-ingestion; revisit (e.g. a
-        persistent index, or Postgres `tsvector`/`ts_rank` full-text
-        search) if corpus size ever grows enough to make this measurably
-        slow. Tokenization (`_tokenize`) is `\\w+`-based: lowercase word
-        tokens with surrounding punctuation stripped, so e.g. JSON's
-        `"maximum_wait_minutes":` still matches a plain query token
-        `maximum_wait_minutes`. Still no stemming/lemmatization, so this
-        only finds exact (post-punctuation-stripping) token matches.
+        Builds a fresh in-memory `rank_bm25.BM25Okapi` index per call over
+        the filtered chunk content fetched via SQL; no persistent index or
+        cache. See `_tokenize` for tokenization behavior.
         """
         where_sql, filter_params = _build_where_clause(filters)
         auth_sql, auth_params = build_authorization_where_clause(

@@ -2,13 +2,13 @@
 
 Distinct from scripts/record_experiment.py: retrieval attribution produces
 three parallel metric sets (dense/BM25/hybrid) for one config, not the
-single flat metric set record_experiment.py's schema expects, so this
-writes its own experiments/results/attribution/<id>.json. A subdirectory
-compare_experiments.py's non-recursive `results_dir.glob("*.json")` never
-sees, so the standard comparison table/README stay untouched by this --
-and logs its own MLflow run with dense_/bm25_/hybrid_-prefixed metrics,
-reusing mlflow_logger.build_run_name for a readable run name. Never
-touches an existing experiments/results/*.json record.
+single flat metric set that script's schema expects, so this writes its
+own experiments/results/attribution/<id>.json -- a subdirectory
+compare_experiments.py's non-recursive glob never sees, leaving the
+standard comparison table/README untouched. Logs its own MLflow run with
+dense_/bm25_/hybrid_-prefixed metrics, reusing mlflow_logger.build_run_name
+for a readable run name. Never touches an existing
+experiments/results/*.json record.
 
 Usage:
     python -m rag.eval.retrieval_attribution --gold data/eval/techfusion_gold.jsonl \

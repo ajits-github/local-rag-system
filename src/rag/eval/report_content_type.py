@@ -10,7 +10,7 @@ functions) and mean latencies per bucket.
 Usage:
     python -m rag.eval.report_content_type --gold data/eval/techfusion_gold.jsonl \
         --dataset-id techfusion --kb-root data/knowledge_base \
-        > /tmp/techfusion_eval_62_by_content_type.json
+        > /tmp/techfusion_eval_by_content_type.json
 """
 
 from __future__ import annotations

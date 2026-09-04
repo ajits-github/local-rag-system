@@ -86,17 +86,15 @@ def _load_metrics() -> tuple[list[Any], list[str], dict[str, str]]:
 def _resolve_result_columns(used: list[str], df_columns: list[str]) -> dict[str, str | None]:
     """Map each intended metric name to its actual column in `ragas.evaluate()`'s result frame.
 
-    Most metrics' result column is their bare name (e.g. `"faithfulness"`).
-    But metrics with a `mode` parameter (`NoiseSensitivity`/
-    `FactualCorrectness`, both added via `_EXTRA_METRIC_CLASSES`) come
-    back as `"noise_sensitivity(mode=relevant)"`/
-    `"factual_correctness(mode=f1)"` instead (confirmed directly against
-    the pinned `ragas==0.3.9`'s `evaluate()` output, not assumed): ragas
-    disambiguates columns by each metric instance's own config, not just
-    its class name. Matching by prefix (`"<name>("`) tolerates that
-    without hardcoding the exact mode string, which isn't part of this
-    project's `_EXTRA_METRIC_CLASSES` config and could change if a metric
-    class's default `mode` changes in a future ragas version.
+    Most metrics' result column matches their bare name (e.g.
+    `"faithfulness"`). Metrics with a `mode` parameter
+    (`NoiseSensitivity`/`FactualCorrectness`, added via
+    `_EXTRA_METRIC_CLASSES`) come back as
+    `"noise_sensitivity(mode=relevant)"`/`"factual_correctness(mode=f1)"`
+    instead: ragas (pinned at 0.3.9) disambiguates columns by each metric
+    instance's own config, not just its class name. Matched by prefix
+    (`"<name>("`) so this doesn't depend on hardcoding the exact mode
+    string.
 
     Parameters
     ----------
@@ -182,8 +180,8 @@ def score(
     cache : Any | None, optional
         A `ragas.cache.CacheInterface` (e.g.
         `rag.eval.ragas_cache.NamespacedDiskCache`) memoizing judge calls
-        across runs. `None` (the default) disables caching entirely --
-        every call reaches the judge LLM, matching pre-caching behavior.
+        across runs. `None` (the default) disables caching entirely: every
+        call reaches the judge LLM, matching pre-caching behavior.
         Typed `Any` rather than `ragas.cache.CacheInterface` so importing
         this module never requires `ragas` to be installed.
 
@@ -226,13 +224,8 @@ def score(
     result = ragas_evaluate(
         dataset=dataset, metrics=metrics, llm=wrapped_llm, embeddings=wrapped_embeddings
     )
-    # `ragas_evaluate` is typed to return `EvaluationResult | Executor`, but
-    # `Executor` is only ever returned when `return_executor=True` is passed
-    # (confirmed against the installed ragas's own `evaluate()` signature) --
-    # never the case at this call site, so this is a real static fact, not a
-    # blind assumption. `cast` (not a runtime isinstance check) since this
-    # narrows a type-checker-only ambiguity without adding any runtime cost
-    # or behavior change.
+    # ragas_evaluate returns Executor only when return_executor=True,
+    # which this call never passes, so the EvaluationResult cast is safe.
     df = cast("EvaluationResult", result).to_pandas()
     columns = _resolve_result_columns(used, list(df.columns))
 

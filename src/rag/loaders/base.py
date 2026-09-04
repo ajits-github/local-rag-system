@@ -80,16 +80,16 @@ def _matching_assets(document_path: Path, candidates: list[Path]) -> list[Path]:
     A category folder can hold more than one source document, each with
     its own `assets/` subfolder shared between them (e.g. three review
     documents all under `operations/`, each contributing two images to
-    one `operations/assets/`) -- plain positional pairing across the
+    one `operations/assets/`); plain positional pairing across the
     whole folder would silently hand every document the *first*
     document's images. Instead, group candidates by whether their own
     filename shares a (non-stopword) word with `document_path`'s
-    filename -- true for this project's asset-naming convention (e.g.
+    filename, true for this project's asset-naming convention (e.g.
     `capacity-view-01.png` for `ingestion-capacity-analysis.docx`, via
     the shared word "capacity"). Falls back to every candidate, in sorted
     order, if no candidate matches any word (the common case: a folder
     holding only one document's assets, or a naming convention this
-    heuristic can't recognize -- better than resolving zero images).
+    heuristic can't recognize; better than resolving zero images).
 
     Parameters
     ----------
@@ -122,7 +122,7 @@ def resolve_image_asset(
     shared, then paired positionally with embedded images in document
     order), the convention this project's evaluation corpora already use
     for pre-supplied figures. Falls back to writing the image's own bytes
-    (from `image_bytes_factory`, called only on a fallback -- so a
+    (from `image_bytes_factory`, called only on a fallback, so a
     PDF/DOCX with no pre-existing `assets/` folder still ingests
     successfully) into a new `assets/` directory using a generic
     `<document-stem>-figure-{n:02d}<ext>` name.

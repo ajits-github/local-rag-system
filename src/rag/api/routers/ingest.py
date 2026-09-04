@@ -188,34 +188,23 @@ async def _ingest_upload_atomically(
 ) -> dict[str, Any]:
     """Stream, ingest, and install an upload without ever writing directly to `dest`.
 
-    The upload is staged under a unique per-request directory
-    (`_staging_dir`) first, at a path that keeps `dest`'s own filename
-    (`staging_dir / dest.name`). Only the *directory* is randomized, not
-    the file's own name. This matters beyond just avoiding a collision
-    with an existing accepted file: every loader (`TextLoader`/
-    `PDFLoader`/`DocxLoader`/`HTMLLoader`) derives some metadata straight
-    from the physical path it's given: a title fallback
-    (`path.stem`), and, for PDF/DOCX, the naming and directory placement
-    of any extracted embedded images (`loaders/base.py:
-    resolve_image_asset`, keyed off `document_path.stem`/`.parent`).
-    `IngestionPipeline.ingest_file`'s `source_override` only overrides
-    the final persisted `RawDocument.source` string; it can't reach back
-    into a loader's own already-computed `path.stem`-derived fields. By
-    keeping the physical filename identical to the logical one, every
-    such derivation comes out correct automatically. No loader needs to
-    know or care that it's reading a staged upload rather than `dest`
-    itself, and no `.upload-tmp-*` fragment can leak into title, asset
-    filenames, or asset directory placement.
+    Staged first under a unique per-request directory (`_staging_dir`),
+    keeping `dest`'s own filename (only the parent directory is
+    randomized). Loaders derive some metadata straight from the physical
+    path they're given (a `path.stem` title fallback, and PDF/DOCX
+    embedded-image naming via `loaders/base.py:resolve_image_asset`);
+    keeping the filename identical means that metadata comes out correct
+    with no loader change, and no `.upload-tmp-*` fragment can leak into
+    it (`source_override` alone can't fix this, since it only overrides
+    the final persisted `source` string, not a loader's own path-derived
+    fields).
 
     Size-bounding, loader parsing, governance resolution, and the
     ingestion DB write all run against the staged file. Only once
-    ingestion has fully succeeded are any extracted image assets promoted
-    into `UPLOAD_DIR/assets/` (`_install_staged_assets`) and the staged
-    file atomically installed as `dest` (`os.replace`). Any failure along
-    the way (oversized upload, unsupported extension, parse failure,
-    cross-tenant governance rejection) removes the entire staging
-    directory and leaves an existing `dest` and `UPLOAD_DIR/assets/`
-    byte-for-byte untouched.
+    ingestion succeeds are any extracted image assets promoted into
+    `UPLOAD_DIR/assets/` and the staged file installed as `dest`
+    (`os.replace`). Any failure removes the whole staging directory,
+    leaving an existing `dest`/`UPLOAD_DIR/assets/` untouched.
 
     Parameters
     ----------

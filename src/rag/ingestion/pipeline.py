@@ -30,35 +30,24 @@ logger = logging.getLogger(__name__)
 def _source_is_under_root(source: str, root: Path) -> bool:
     """Return whether a persisted `source` path resolves to `root` or one of its descendants.
 
-    Used to scope directory-ingestion deletion detection to documents that
-    could plausibly have come from this ingestion root, so a document
-    ingested through a different root, `POST /ingest` (see `source_override`),
-    or any other equivalent-but-different source path is never mistaken for
-    a deletion just because this particular walk didn't discover it.
+    Scopes directory-ingestion deletion detection to documents that could
+    plausibly have come from this ingestion root, so a document ingested
+    through a different root or via `POST /ingest` is never mistaken for a
+    deletion just because this walk didn't discover it.
 
     Comparison is resolved-path-based, not raw string prefix matching, so
-    relative vs. absolute and `./`-prefixed representations of the current
-    ROOT agree, and a sibling directory sharing a prefix (`knowledge_base`
-    vs. `knowledge_base2`) is never mistaken for a descendant. Backslashes
-    are normalized to `/` first so a source recorded with Windows-style
-    separators (native CLI ingestion) still compares correctly against a
-    POSIX root (container-native `POST /ingest`), or vice versa.
+    relative vs. absolute paths agree and a sibling directory sharing a
+    prefix (`knowledge_base` vs. `knowledge_base2`) is never mistaken for a
+    descendant. Backslashes are normalized to `/` first so a source
+    recorded with Windows-style separators still compares correctly
+    against a POSIX root, or vice versa.
 
-    Scope of the guarantee: this only decides membership for THIS run's
-    deletion diff, given whatever literal `source` strings are already
-    persisted. It does not make document identity itself spelling-stable:
-    `document_id` stays keyed on the literal `source` string everywhere in
-    this system (see `VectorStore.get_or_create_document_id`), so if the
-    exact same physical file is discovered under a different spelling than
-    what's stored (the ROOT itself passed relative one run and absolute the
-    next, or ingested from a different OS's separator convention), the old
-    entry is deleted and a new one created under the new spelling rather
-    than being recognized as "unchanged." That is a bounded, self-correcting
-    outcome, not data loss or duplication (see
-    test_same_root_reingested_with_a_different_spelling_replaces_without_duplicating
-    in tests/unit/test_ingestion_stats.py) -- and consistent with how this
-    codebase already treats any `source` string change as an identity
-    change everywhere else, not a new special case introduced here.
+    Note: this only decides membership for this run's deletion diff, given
+    whatever `source` strings are already persisted; `document_id` itself
+    stays keyed on the literal `source` string, so discovering the same
+    physical file under a different spelling than what's stored replaces
+    the old entry rather than recognizing it as unchanged (a bounded,
+    self-correcting outcome, not data loss or duplication).
 
     Parameters
     ----------
@@ -102,10 +91,9 @@ class IngestionPipeline:
             Embedder to use; built from `config` if omitted.
         vision_provider : VisionProvider | None, optional
             Vision provider passed to `Writer`; built from
-            `config.vision.provider` if omitted (`None` for `"none"`, the
-            only provider implemented so far. So this is `None` in
-            practice until a hosted provider exists). Inject a test mock
-            here to exercise vision-mode ingestion without config changes.
+            `config.vision.provider` if omitted (`None` when the
+            configured provider is `"none"`). Inject a test mock here to
+            exercise vision-mode ingestion without config changes.
         """
         self._config = config
         self._vectorstore = vectorstore or build_vectorstore(config)
@@ -153,16 +141,14 @@ class IngestionPipeline:
             Folder-derived category tag, by default None.
         caller : IngestCallerContext | None, optional
             The authenticated caller's governance identity, if any. `None`
-            (the default) means no caller identity is available. The CLI
-            (`make ingest`)/`ingest_path` always pass this, and `POST
-            /ingest` passes it too whenever JWT auth is disabled or an
+            (the default) for the CLI/`ingest_path`, which never supply
+            one, and for `POST /ingest` when JWT auth is disabled or an
             unauthenticated request was allowed through
-            (`insecure_dev_mode`). In that case the loaded document's own
-            `tenant_id` (front matter, or `None`) is persisted exactly as
-            parsed, unchanged from before this parameter existed. When set,
-            `resolve_ingest_tenant_id` resolves the effective `tenant_id`
-            before any database write happens, so a rejected upload leaves
-            no trace (no document row, no checksum).
+            (`insecure_dev_mode`); in that case the loaded document's own
+            `tenant_id` (front matter, or `None`) is persisted as parsed.
+            When set, `resolve_ingest_tenant_id` resolves the effective
+            `tenant_id` before any database write happens, so a rejected
+            upload leaves no trace.
         source_override : str | None, optional
             When set, overrides the loaded document's `source` (normally
             `str(path)`) before it's persisted or used to resolve

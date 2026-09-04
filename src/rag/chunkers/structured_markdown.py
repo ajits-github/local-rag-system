@@ -8,17 +8,16 @@ handles every prose run within a structured document. A prose-only
 Markdown document therefore produces chunk text identical to
 `RecursiveCharacterChunker` used directly.
 
-`PDFLoader`/`DocxLoader` (the layout-aware ingestion milestone) serialize
-their extracted structure into this same Markdown-equivalent syntax
-(headings, pipe tables, fenced code, standalone image lines with
-emphasis-wrapped captions) rather than this chunker gaining a second
-parsing path -- normalizing onto one structural grammar instead of
-building a parallel element model. The one PDF/DOCX-specific addition is
-a `<!--page:N-->` sentinel line, emitted once per source page (PDF) or
-manual page break (DOCX); never visible in chunk text, it only sets the
-`page` field on every `ChunkSpan` produced until the next marker.
-Markdown/HTML/text documents never contain this sentinel, so `page` stays
-`None` for them, unchanged from before this milestone.
+`PDFLoader`/`DocxLoader` serialize their extracted structure into this
+same Markdown-equivalent syntax (headings, pipe tables, fenced code,
+standalone image lines with emphasis-wrapped captions) rather than this
+chunker gaining a second parsing path, normalizing onto one structural
+grammar instead of a parallel element model. The one PDF/DOCX-specific
+addition is a `<!--page:N-->` sentinel line, emitted once per source
+page (PDF) or manual page break (DOCX); never visible in chunk text, it
+only sets the `page` field on every `ChunkSpan` produced until the next
+marker. Markdown/HTML/text documents never contain this sentinel, so
+`page` stays `None` for them.
 
 `split()` walks the document once, line by line, applying these rules in
 priority order:

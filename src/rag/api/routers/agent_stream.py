@@ -1,30 +1,16 @@
 """`POST /agent/query/stream`: Server-Sent Events for live agent progress.
 
-Additional to, never a replacement for, `POST /agent/query`
-(`agent_query.py`, untouched by this module. Both routes share the same
-JWT-precedence/DoS-limit logic via `rag.api.request_auth` and the same DI
-singletons).
+Additional to, not a replacement for, `POST /agent/query` (`agent_query.py`);
+both share the same JWT-precedence/DoS-limit logic and DI singletons.
 
-Two deliberate choices, documented here rather than left implicit:
+POST, not GET, to match `/agent/query`'s JSON body shape. This means the
+browser's native `EventSource` (GET-only) cannot consume it directly;
+callers hand-parse the `text/event-stream` frames off a streamed `fetch`
+response instead.
 
-- **SSE, not a WebSocket.** This is one-directional server -> client
-  progress for a single already-authenticated request, exactly what SSE
-  is for; a WebSocket's bidirectional channel and connection-lifecycle
-  management would be unused machinery.
-- **POST, not GET.** Matches `/agent/query`'s existing JSON-body request
-  shape (query/filters/tenant_id/roles/as_of/require_trust_level). This
-  project has no browser frontend, so trading away the browser's native
-  `EventSource` API (GET-only) for a consistent request shape across both
-  endpoints is the right tradeoff. Consume this endpoint via `curl -N`
-  or an HTTP client's streaming mode, not `EventSource`.
-
-`run_agent` is synchronous; it runs in Starlette's worker threadpool
-(`run_in_threadpool`) so the event loop stays free to stream events as
-they arrive, via an `asyncio.Queue` bridged across the thread boundary
-with `call_soon_threadsafe`. A client disconnect stops this endpoint from
-yielding further data, but cannot cancel the already-running agent turn
-(it finishes in its worker thread regardless). A documented limitation,
-not a crash risk.
+`run_agent` is synchronous and runs in Starlette's worker threadpool so the
+event loop stays free to stream events as they arrive. A client disconnect
+stops further streaming but cannot cancel the already-running agent turn.
 """
 
 from __future__ import annotations
@@ -71,8 +57,7 @@ _QUEUE_DONE = object()
 def _agent_rate_limit_string() -> str:
     """Return the current `requests_per_minute` config value as a slowapi limit string.
 
-    Same shared budget as `/agent/query`. See that router's identical
-    helper for the reasoning.
+    Same shared budget as `/agent/query`.
     """
     return f"{get_config().security.rate_limit.requests_per_minute}/minute"
 
@@ -163,16 +148,13 @@ async def _stream_agent_query(
 ) -> AsyncIterator[str]:
     """Yield `text/event-stream` messages for one agent run, ending in `completed`/`terminated`.
 
-    `state` is fully built (including DoS-limit validation and
-    authorization-context construction) by the `_build_validated_agent_state`
-    FastAPI dependency, resolved before `agent_query_stream`'s body ever
-    runs -- before this async generator is even handed to
-    `StreamingResponse`. An async generator's body doesn't execute at all
-    until its first `__anext__()`, which happens only after Starlette has
-    already sent the `http.response.start` message (status 200) for a
-    `StreamingResponse`. Validating here would mean an invalid request
-    gets a committed 200 status before the rejection is ever raised,
-    instead of a clean 4xx.
+    `state` must already be fully built and validated by
+    `_build_validated_agent_state` before this generator starts: an async
+    generator's body doesn't run until its first `__anext__()`, which
+    Starlette calls only after already sending the `StreamingResponse`'s
+    200 status. Validating inside this function would mean an invalid
+    request gets a committed 200 before the rejection is raised, instead
+    of a clean 4xx.
     """
     queue: asyncio.Queue[Any] = asyncio.Queue()
     loop = asyncio.get_running_loop()
@@ -225,24 +207,12 @@ def _build_validated_agent_state(
 ) -> AgentState:
     """Validate the request and build its `AgentState`, before any heavy DI resolves.
 
-    Deliberately declared as its own FastAPI dependency, listed *before*
-    `pipeline`/`vectorstore`/`embedder`/`llm` in `agent_query_stream`'s
-    signature, rather than as body-level checks in the route function.
-    FastAPI resolves a route's declared `Depends()` parameters strictly in
-    signature order and aborts the moment one of them raises, without
-    resolving the parameters after it -- confirmed directly against the
-    installed `fastapi==0.141.1`, not assumed (a chained-dependency
-    ordering test proved a later `Depends()` callable is never invoked
-    once an earlier one in the signature raises). Declaring `pipeline`/
-    `vectorstore`/`embedder`/`llm` directly on the route, as this endpoint
-    used to, meant FastAPI's `lru_cache`d singleton getters (see
-    `api/deps.py`) were still resolved for a request this function goes
-    on to reject -- cheap after the first successful request warms the
-    cache, but real, unnecessary singleton construction (model load, DB
-    pool open) on a cold process's very first rejected request. Putting
-    the 404/422/401 checks in a dependency ahead of those four closes that
-    gap without changing `/query`/`/agent/query`, which are out of this
-    fix's scope.
+    Declared as its own dependency, listed *before* `pipeline`/
+    `vectorstore`/`embedder`/`llm` in `agent_query_stream`'s signature:
+    FastAPI resolves `Depends()` parameters in signature order and stops
+    at the first one that raises, so a rejected request never resolves
+    the singleton getters in `api/deps.py` (each expensive to build cold:
+    model load, DB pool open).
 
     Parameters
     ----------
@@ -301,7 +271,7 @@ def agent_query_stream(
         happen there, ahead of the dependencies below).
     pipeline, vectorstore, embedder, llm, config
         Same injected singletons `/agent/query` uses. Declared *after*
-        `state` so a rejected request never resolves them -- see
+        `state` so a rejected request never resolves them; see
         `_build_validated_agent_state`'s docstring.
 
     Returns

@@ -1,11 +1,10 @@
 """Path-suffix matching shared by gold-data evaluation and retrieval-time freshness logic.
 
-Lives outside `rag.eval` (which `rag.ingestion`/`rag.retrieval`/`rag.generation`
-must never import. See `tests/unit/test_gold_data_isolation.py`) so that
-`rag.retrieval.freshness`'s document-version-family resolution can reuse the
-exact same suffix-matching rule `rag.eval.gold_schema` uses for
-`relevant_documents`, without creating a reverse eval -> retrieval-adjacent
-import or duplicating the regex logic in two places.
+Lives outside `rag.eval`, which `rag.ingestion`/`rag.retrieval`/
+`rag.generation` must never import (see
+`tests/unit/test_gold_data_isolation.py`), so `rag.retrieval.freshness`
+can reuse the same suffix-matching rule `rag.eval.gold_schema` uses for
+`relevant_documents` without a reverse eval-to-retrieval import.
 """
 
 from __future__ import annotations

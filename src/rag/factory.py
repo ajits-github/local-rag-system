@@ -152,12 +152,12 @@ def build_llm(config: AppConfig) -> LLM:
 def build_vision_provider(config: AppConfig) -> VisionProvider | None:
     """Construct the `VisionProvider` selected by `config.vision.provider`, if any.
 
-    `None` for the `"none"` provider (the default) -- callers
+    `None` for the `"none"` provider (the default): callers
     (`IngestionPipeline`) must treat `None` as "text-only image
     handling," never call `describe_image`, and never read image bytes.
     `"ollama"` is the first real provider: a local, offline model call
     (see `vision.ollama_vision.OllamaVisionProvider`), reusing
-    `config.ollama_base_url()` -- the same native-host Ollama server
+    `config.ollama_base_url()`, the same native-host Ollama server
     `build_llm`'s `"ollama"` branch talks to, just a different model.
 
     Parameters

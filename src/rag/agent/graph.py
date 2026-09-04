@@ -1,10 +1,7 @@
-"""Hand-rolled, explicitly-bounded agent graph driver.
+"""Hand-rolled, explicitly-bounded agent graph driver. Not LangGraph.
 
-Deliberately not LangGraph. See `docs/architecture.md`'s "Agentic RAG"
-section for the full rationale and the threshold for reconsidering that
-decision. The graph is a plain Python `while` loop over node functions,
-each taking/returning an `AgentState`, with three
-independent, plainly-inspectable integer bounds
+A plain Python `while` loop over node functions, each taking/returning an
+`AgentState`, bounded by three independent counters
 (`max_agent_steps`/`max_retrieval_attempts`/`max_tool_calls`) rather than
 one blended framework `recursion_limit`.
 
@@ -16,18 +13,13 @@ one blended framework `recursion_limit`.
                                                                           -> select_tool (loop)
 
 Every tool call's evidence passes through `RetrievalPipeline.sanitize_evidence`
-before it is appended to state. This is applied uniformly here, in
-`_execute_tool`, regardless of which tool produced it, so no tool can
-bypass field redaction/injection detection by construction.
+in `_execute_tool` before being appended to state, uniformly across tools,
+so no tool can bypass field redaction/injection detection by construction.
 
-Observability (node timing, OpenTelemetry spans, Prometheus metrics, and
-safe live-progress events; see `docs/architecture.md`'s "Observability"
-section) is added by wrapping existing node calls, not by changing any
-node function's internal decision logic. `_TimingLLM` and `_call_node`
-are the two pieces that do this centrally: every node call in `run_agent`
-goes through `_call_node`, and every LLM-calling node is handed the same
-`_TimingLLM`-wrapped `llm` instance instead of the raw one, so this
-module is the only place that needs to know about instrumentation at all.
+Node timing, tracing, and metrics wrap existing node calls via
+`_TimingLLM` and `_call_node` without changing any node's decision logic;
+this module is the only place that needs to know about that
+instrumentation.
 """
 
 from __future__ import annotations
@@ -87,7 +79,7 @@ class NodeTimingStats(BaseModel):
         `total_ms / count`.
     llm_ms_mean : float | None
         Mean LLM-inference-only time per invocation, or `None` for a node
-        that makes no direct LLM call (`execute_tool`).
+        that makes no direct LLM call (`tool_execute`).
     overhead_ms_mean : float | None
         Mean non-LLM time per invocation (JSON parsing/validation/
         template rendering/tool dispatch), or `None` alongside
@@ -154,15 +146,12 @@ class AgentRunResult(BaseModel):
 class _TimingLLM(LLM):
     """Wraps an `LLM`, accumulating wall-clock time spent in `generate()`.
 
-    Never changes what's generated. Every call is forwarded to the
-    wrapped instance unchanged, including retries (`run_decision` may
-    call `generate()` more than once per node invocation; `total_llm_ms`
-    accumulates across all of them so retries are never undercounted, the
-    same undercount `AgentState.prompt_tokens` already documents for
-    token accounting). `__getattr__` forwards everything else (notably
-    `last_prompt_tokens`/`last_completion_tokens`) to the wrapped
-    instance unchanged, so `_accumulate_tokens`'s existing `getattr(...)`
-    pattern keeps working without modification.
+    Never changes what's generated. Every call, including JSON-parse
+    retries, is forwarded to the wrapped instance unchanged, with
+    `total_llm_ms` accumulating across all of them. `__getattr__`
+    forwards everything else (notably `last_prompt_tokens`/
+    `last_completion_tokens`) to the wrapped instance unchanged, so
+    token accounting keeps working without modification.
     """
 
     def __init__(self, llm: LLM) -> None:
@@ -217,10 +206,8 @@ def _load_templates(config: AppConfig) -> dict[str, PromptTemplate]:
 def _summarize_evidence(evidence: list[SearchResult]) -> str:
     """Render a short, source-labeled summary of gathered evidence for a decision prompt.
 
-    Each line exposes `chunk_id` alongside `source`, since
-    `get_related_context` requires the caller to name a real chunk_id and
-    this summary is the tool-selection prompt's view of gathered evidence
-    (see `agent_tool_select_v3.yaml`). No other internal metadata, such as
+    Exposes `chunk_id` alongside `source` so `get_related_context` can be
+    given a real chunk id to look up. No other internal metadata, such as
     document_id, dataset_id, tenant_id, or sensitive_field_ids, is exposed
     here.
     """
@@ -235,12 +222,11 @@ def _summarize_evidence(evidence: list[SearchResult]) -> str:
 
 
 def _accumulate_tokens(state: AgentState, llm: LLM, node: str) -> None:
-    """Best-effort add the LLM's last-call token counts to the state's running total.
+    """Best-effort add the LLM's last-call token counts to the running total.
 
-    Mirrors `RetrievalPipeline.answer()`'s `getattr(..., None)` pattern --
-    an `LLM` implementation that doesn't track tokens contributes 0, never
-    an error. Also adds the same counts to `state.node_token_usage[node]`,
-    for a per-node-type breakdown alongside the run-wide total.
+    An `LLM` implementation that doesn't track tokens contributes 0,
+    never an error. Also adds the same counts to
+    `state.node_token_usage[node]` for a per-node-type breakdown.
     """
     prompt = getattr(llm, "last_prompt_tokens", None)
     completion = getattr(llm, "last_completion_tokens", None)
@@ -261,14 +247,10 @@ def _call_node(
     *,
     timed_llm: _TimingLLM | None = None,
 ) -> Any:
-    """Time one node-function call, split LLM-inference time from overhead, and record telemetry.
+    """Record timing and tracing for one agent node invocation.
 
-    Wraps an existing node call without altering its logic: `fn` is a
-    zero-argument closure over whatever the call already was, invoked
-    exactly once, synchronously, here. Opens an OpenTelemetry span named
-    `name`, appends a `NodeInvocationTiming` to
-    `state.node_timings_ms[name]`, and records both Prometheus node
-    latency histograms (total and LLM-only).
+    Wraps an existing node call (`fn`) without altering its logic or
+    return value.
 
     Parameters
     ----------
@@ -283,7 +265,7 @@ def _call_node(
     timed_llm : _TimingLLM | None, optional
         When set, the LLM-inference portion of this call is measured via
         the delta in `timed_llm.total_llm_ms` before/after `fn()` runs.
-        `None` for a node that makes no direct LLM call (`execute_tool`),
+        `None` for a node that makes no direct LLM call (`tool_execute`),
         so `llm_ms`/`overhead_ms` are recorded as `None` rather than a
         misleading `0.0`.
 
@@ -350,9 +332,8 @@ def _emit_event(
     """Emit one safe live-progress event, if a sink is set.
 
     Never raises. A broken consumer callback can never crash the run.
-    Carries only bounded, already-safe metadata (see `AgentEvent`'s own
-    docstring); never chain-of-thought, raw prompts, retrieved content,
-    or credentials.
+    Carries only bounded, already-safe metadata; never chain-of-thought,
+    raw prompts, retrieved content, or credentials.
     """
     if on_event is None:
         return
@@ -514,19 +495,15 @@ def _execute_tool(
 ) -> AgentState:
     """`execute_tool` node: validate arguments, dispatch, sanitize, and record the outcome.
 
-    Every tool's output passes through `RetrievalPipeline.sanitize_evidence`
-    here, the single, universal sanitization point (see module
-    docstring), before being appended to `state.retrieved_evidence`.
-    `sanitize_evidence` is called with `pipeline.resolve_auth(...)`'s
-    return value, not the raw `state.authorization_context`, so field
-    redaction uses the same effective authorization context as the tool
-    retrieval. A validation failure or any tool-execution error is
-    recorded as a failed `ToolCallRecord` and returned safely; it never
-    propagates and never crashes the request.
-
-    Opens a per-tool-name OpenTelemetry span (nested under the caller's
-    `tool_execute` node span) and records `rag_agent_tool_calls_total`/
-    `rag_agent_tool_latency_seconds` around the actual dispatch attempt.
+    Every tool's output is sanitized (field redaction, injection
+    flagging) via `RetrievalPipeline.sanitize_evidence`, called with the
+    caller's *resolved* authorization context (not the raw
+    `state.authorization_context`) so redaction matches the context the
+    tool retrieval itself used, before being appended to
+    `state.retrieved_evidence`. This is the single point every tool's
+    evidence passes through, so no tool can bypass it. A validation
+    failure or any tool-execution error is recorded as a failed
+    `ToolCallRecord` and returned safely; it never propagates.
     """
     t0 = time.perf_counter()
     arg_model = TOOL_ARG_MODELS[decision.tool_name]
@@ -636,17 +613,13 @@ def _evaluate_evidence(
 
 
 def _order_evidence_for_synthesis(evidence: list[SearchResult]) -> list[SearchResult]:
-    """Stable-sort so authoritative/untagged evidence precedes untrusted evidence.
+    """Stable-sort evidence so authoritative/untagged sources precede untrusted ones.
 
-    Synthesis-time-only reordering: `state.retrieved_evidence` itself
-    (read by every earlier decision prompt, and by `run_agent_eval.py`'s
-    evidence-summary logging) is left untouched. Without this, an
-    untrusted source that happened to be gathered first could outrank an
-    authoritative source addressing the same fact merely because of
-    retrieval/tool-call order. The concrete Q17 regression documented in
-    experiments/reports/agentic_rag_baseline_v1.md section 3. A stable
-    sort preserves relative order within each group, so this never drops
-    or adds a source, only its `[Source N]` numbering.
+    Synthesis-only reordering: `state.retrieved_evidence` itself (read by
+    every earlier decision prompt) is left untouched. Without this, an
+    untrusted source gathered first could outrank an authoritative source
+    on the same fact purely due to retrieval order. The sort is stable
+    and never drops or adds a source, only its `[Source N]` numbering.
     """
     return sorted(
         evidence, key=lambda r: (r.chunk.metadata.trust_level or "").lower() == "untrusted"
@@ -656,15 +629,13 @@ def _order_evidence_for_synthesis(evidence: list[SearchResult]) -> list[SearchRe
 def _synthesize(state: AgentState, llm: LLM, template: PromptTemplate) -> AgentState:
     """`synthesize` node: render accumulated evidence into a cited final answer.
 
-    Evidence is reordered (see `_order_evidence_for_synthesis`) so an
-    authoritative source is always presented, and numbered, ahead of
-    any conflicting untrusted source, reinforcing `agent_synthesize_v2`'s
-    explicit authoritative-vs-untrusted rule with matching evidence order.
-    The raw LLM output is passed through
-    `sanitize_redaction_markers_in_answer` before being stored, the same
-    deterministic backstop `RetrievalPipeline.answer()` applies on the
-    classic path -- this is the one node on the agentic path that
-    produces caller-facing prose, so it's the only one that needs it.
+    Evidence is reordered first (see `_order_evidence_for_synthesis`) so
+    an authoritative source is always presented, and numbered, ahead of
+    any conflicting untrusted source. The raw LLM output is passed
+    through `sanitize_redaction_markers_in_answer` before being stored,
+    the same deterministic backstop the classic-RAG path applies; this is
+    the only agentic-path node that produces caller-facing prose, so it's
+    the only one that needs it.
     """
     ordered_evidence = _order_evidence_for_synthesis(state.retrieved_evidence)
     context = build_context(ordered_evidence)
@@ -759,6 +730,7 @@ def _run_classic_rag(
 
 
 def _classic_result(state: AgentState, pipeline: RetrievalPipeline) -> AgentRunResult:
+    """Run classic RAG and wrap the result as an `AgentRunResult`."""
     state, result = _run_classic_rag(state, pipeline)
     return AgentRunResult(
         state=state,
@@ -771,6 +743,7 @@ def _classic_result(state: AgentState, pipeline: RetrievalPipeline) -> AgentRunR
 
 
 def _agent_result(state: AgentState, t_start: float) -> AgentRunResult:
+    """Build an `AgentRunResult` for a completed `"agent"`-route run."""
     total_ms = (time.perf_counter() - t_start) * 1000
     retrieval_ms = sum(record.latency_ms for record in state.tool_call_history)
     generation_ms = max(total_ms - retrieval_ms, 0.0)
@@ -796,40 +769,32 @@ def run_agent(
     """Run the bounded agent graph for one query, or the classic-RAG fast path.
 
     When `config.agent.enabled` is `False`, always takes the
-    `"classic_rag"` route with zero extra LLM calls. The coarse
-    kill-switch matching `AuthorizationConfig`/`FieldRedactionConfig`'s
-    convention. Otherwise: `classify_query` always runs first (one LLM
-    decision call, even for a question that turns out to be simple. This
-    is the expected, documented cost of routing); a `"simple"` result (or
-    a classify-step bound/parse failure) still falls through to the exact
-    same `classic_rag` node. A `"complex"` result proceeds to `decompose`
-    and the bounded `select_tool -> execute_tool -> evaluate_evidence`
-    loop, gated by three independent counters
+    `"classic_rag"` route with zero extra LLM calls (the same coarse
+    kill-switch convention as `AuthorizationConfig`/`FieldRedactionConfig`).
+    Otherwise `classify_query` always runs first (one LLM decision call,
+    even for a question that turns out simple); a `"simple"` result (or a
+    classify-step bound/parse failure) still falls through to the same
+    `classic_rag` node. A `"complex"` result proceeds to `decompose` and
+    the bounded `select_tool -> execute_tool -> evaluate_evidence` loop,
+    gated by three independent counters
     (`max_agent_steps`/`max_retrieval_attempts`/`max_tool_calls`); see
     the module docstring for the full graph shape.
-
-    Every node call is wrapped in `_call_node` for timing/tracing/metrics
-    and, for LLM-calling nodes, given a `_TimingLLM`-wrapped `llm` so
-    inference time can be split from node overhead. None of this
-    changes what any node decides or how the graph routes.
 
     Parameters
     ----------
     state : AgentState
         Initial state; `original_query`/`authorization_context`/`filters`
-        must already be set by the caller (see
-        `rag.api.routers.agent_query`).
+        must already be set by the caller.
     pipeline, vectorstore, embedder, llm : injected singletons
-        Reused, never reconstructed, from the same DI wiring
-        `RetrievalPipeline`/`api.deps` already use.
+        Reused, never reconstructed, from the same DI wiring the API
+        layer already uses.
     config : AppConfig
         Application configuration; `config.agent` supplies every bound.
     on_event : OnAgentEvent | None, optional
-        Called with a safe `AgentEvent` at each state-machine transition
-        (see `rag.agent.events`), if set. Used by
-        `POST /agent/query/stream` to stream live progress; `/agent/query`
-        itself never sets this. Never raises out of `run_agent` even if
-        the callback itself raises.
+        Called with a safe `AgentEvent` at each state-machine transition,
+        if set. Used by `POST /agent/query/stream` to stream live
+        progress; `/agent/query` itself never sets this. Never raises out
+        of `run_agent` even if the callback itself raises.
 
     Returns
     -------
@@ -981,12 +946,9 @@ def run_agent(
         _increment_step(state)
 
         if state.evidence_sufficient:
-            # A terminal condition (evidence became sufficient) reached on
-            # the final allowed step is a real convergence, not a bound
-            # cutoff. Check it before _check_step_bound would otherwise
-            # mislabel this run "max_steps". See _check_step_bound's
-            # docstring and the agentic-rag-baseline-v1 report's step-
-            # budget-arithmetic finding.
+            # Evidence became sufficient on the final allowed step: a real
+            # convergence, not a step-bound cutoff, so check it before
+            # _check_step_bound would otherwise mislabel this run "max_steps".
             break
         if _check_step_bound(state, agent_cfg):
             break

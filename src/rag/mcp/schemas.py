@@ -1,17 +1,12 @@
 """MCP-facing serialization of retrieval results.
 
-Deliberately separate from `rag.agent.tool_schemas` (tool *input*
-validation, reused as-is) and from `rag.schemas.Chunk`/`SearchResult`
-(the internal representation -- which carries a raw `embedding` vector
-and other fields with no reason to cross the MCP wire). `McpChunkResult`
-mirrors `rag.api.routers.query.SourceItem`'s existing safe public
-citation shape, plus the chunk's own (already-authorized, already-
-sanitized) `content`, since an MCP tool caller has no separate answer-
-synthesis step and must read the retrieved text directly. Deliberately
-excludes `tenant_id`/`trust_level`/`classification`/`sensitive_field_ids`,
-which `rag.retrieval.pipeline.source_dict` also carries for internal
-callers (RAGAS, egress-policy checks) but which `SourceItem` -- the
-actual precedent for what an external API caller sees -- does not.
+`McpChunkResult` mirrors `SourceItem`'s public citation shape
+(`rag.api.routers.query`), plus the chunk's own already-authorized,
+already-sanitized `content` (an MCP caller has no separate answer-
+synthesis step and must read the retrieved text directly). It never
+exposes `tenant_id`/`trust_level`/`classification`/`sensitive_field_ids`
+or the raw embedding vector, matching what `SourceItem` already treats
+as safe for an external caller.
 """
 
 from __future__ import annotations
@@ -38,7 +33,7 @@ class McpChunkResult(BaseModel):
     score : float
         Similarity/ranking score; meaningless for a `tool_fetched`/
         `expanded` origin, which inherit their originating result's
-        score (see `SearchResult.score`'s own docstring).
+        score.
     origin : str
         `"retrieved"`, `"expanded"`, or `"tool_fetched"`.
     vision_generated : bool

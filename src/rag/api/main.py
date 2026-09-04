@@ -32,8 +32,8 @@ configure_tracing(_config)
 
 # Built before the FastAPI app itself: when MCP is enabled, the app's own
 # lifespan (below) must also enter this sub-app's lifespan, since Starlette
-# does not auto-propagate a mounted sub-app's lifespan to its parent -- the
-# MCP session manager's background task group would otherwise never start.
+# does not auto-propagate a mounted sub-app's lifespan to its parent.
+# Without this, the MCP session manager's background task group never starts.
 _mcp_app = (
     build_mcp_asgi_app(_config, get_retrieval_pipeline(), get_vectorstore(), get_embedder())
     if _config.mcp.enabled
@@ -62,18 +62,12 @@ if _mcp_app is not None:
 
 
 class FeatureFlags(BaseModel):
-    """Safe, non-secret summary of which optional features are currently active.
+    """Safe, non-secret summary of which optional security/feature toggles are active.
 
-    Boolean toggles and provider names only, matching the same shape as
-    `config/default.yaml`'s own "swap point" fields. Never a model name,
-    host, connection string, JWT setting, or any other value an attacker
-    could use; every field here is already either directly observable by
-    probing the API's behavior or explicitly documented as safe-to-expose
-    in `CLAUDE.md`. Exists so a caller (in particular, this project's own
-    web UI) can render an at-a-glance "what's actually enforced right now"
-    summary instead of discovering the active security posture by
-    accident. See `CLAUDE.md`'s "Web UI" section for the incident that
-    prompted this.
+    Booleans and provider names only: never a model name, host, connection
+    string, JWT setting, or anything else an attacker could use. Lets a
+    caller (e.g. the web UI) show the actually-enforced security posture
+    rather than assume it from config it cannot see.
 
     Attributes
     ----------

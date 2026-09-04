@@ -5,8 +5,7 @@
 structural guarantee, not a policy one: there is nowhere on the model for
 chain-of-thought, raw prompts, retrieved chunk text, or credentials to
 end up, so no future call site can accidentally leak them into a stream
-just by passing more data through. See `docs/architecture.md`'s
-"Observability" section for the full design.
+just by passing more data through.
 """
 
 from __future__ import annotations

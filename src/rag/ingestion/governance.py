@@ -1,19 +1,15 @@
-"""Ingestion-time caller-identity governance: resolves a newly-ingested document's tenant.
+"""Resolves the tenant_id a newly-ingested document should be stamped with.
 
-Closes the gap where an authenticated upload with no (or mismatched)
-governance metadata could silently become `tenant_id=NULL` (globally
-visible to every tenant) or be assigned to an arbitrary tenant. Document
-level authorization (`retrieval/authorization.py`) already enforces tenant
-scoping at query time; this module is what makes sure a chunk actually
-carries the *right* `tenant_id` in the first place for documents ingested
-through the authenticated `POST /ingest` boundary.
+Prevents a document with missing or mismatched governance front matter
+from silently becoming `tenant_id=NULL` (globally visible to every
+tenant) or being assigned to the wrong tenant. This enforces tenant
+scoping at ingest time; query-time scoping is enforced separately by
+`retrieval/authorization.py`.
 
 Deliberately decoupled from `rag.api.auth.VerifiedIdentity`: `rag.ingestion`
-must never import from `rag.api`, the same API-boundary/pipeline-layer
-separation `rag.retrieval`/`rag.api.auth` already enforce (see `CLAUDE.md`'s
-"Authenticated API boundary" section). `IngestCallerContext` carries only the
+never imports from `rag.api`. `IngestCallerContext` carries only the
 two primitive facts this module needs, built by the API router from a
-`VerifiedIdentity` and passed in as plain data.
+verified identity and passed in as plain data.
 """
 
 from __future__ import annotations
@@ -22,24 +18,22 @@ from pydantic import BaseModel
 
 
 class IngestCallerContext(BaseModel):
-    """The two governance-relevant facts about an authenticated ingest caller.
+    """Governance-relevant facts about an authenticated ingest caller.
 
-    Parameters
+    Attributes
     ----------
     tenant_id : str or None
         The caller's own verified tenant, from `VerifiedIdentity.tenant_id`.
         `None` only if the deployment's JWT config doesn't require a
-        `tenant_id` claim (`security.auth.jwt.required_claims`); a
-        tenant-less identity can still ingest, but every document it
-        ingests without an explicit, privileged override also ends up
-        `tenant_id=None`, the same "no claim to stamp from" limitation
-        this fix cannot invent an answer for.
+        `tenant_id` claim; a tenant-less identity can still ingest, but
+        every document it ingests without an explicit privileged override
+        also ends up `tenant_id=None`.
     is_privileged : bool
         Whether the caller holds a role in
         `security.authorization.cross_tenant_support_roles`, the same
-        role list retrieval-time cross-tenant access already uses (see
-        `vectorstore.pgvector.build_authorization_where_clause`). Reused
-        deliberately rather than adding a second, parallel privilege list.
+        role list retrieval-time cross-tenant access uses (see
+        `vectorstore.pgvector.build_authorization_where_clause`), reused
+        here rather than adding a second, parallel privilege list.
     """
 
     tenant_id: str | None = None
@@ -50,9 +44,9 @@ class IngestGovernanceError(Exception):
     """Raised when an ingest caller's requested tenant_id conflicts with their identity.
 
     Caught at the API boundary (`api/routers/ingest.py`) and turned into a
-    403. Never raised for a `caller=None` call (unauthenticated ingestion --
-    JWT auth disabled, or `insecure_dev_mode`) and the CLI/`make ingest`
-    path, neither of which this module is ever invoked for).
+    403. Never raised for a `caller=None` call: unauthenticated ingestion
+    (JWT auth disabled, or `insecure_dev_mode`) and the CLI/`make ingest`
+    path never invoke this module at all.
     """
 
 
@@ -77,12 +71,10 @@ def resolve_ingest_tenant_id(
          tenant-scoped caller can never assign their upload to a tenant
          other than their own by editing front matter.
 
-    `allowed_roles`/`classification`/`trust_level`/etc. are untouched.
-    this function governs `tenant_id` only, the one field whose absence the
-    pgvector authorization predicate treats as globally visible
-    (`tenant_id IS NULL`). A same-tenant, role-unrestricted default
-    (`allowed_roles=None`) after correct tenant scoping is normal, expected
-    behavior, not a gap this fix needs to close.
+    Only `tenant_id` is resolved here; `allowed_roles`/`classification`/
+    `trust_level` pass through unchanged. `tenant_id` is singled out
+    because it's the one field whose absence the pgvector authorization
+    predicate treats as globally visible (`tenant_id IS NULL`).
 
     Parameters
     ----------
@@ -97,8 +89,7 @@ def resolve_ingest_tenant_id(
     str | None
         The `tenant_id` to persist onto the document/its chunks. Can still
         be `None` if `caller.tenant_id` itself is `None` (a tenant-less
-        verified identity) and `parsed_tenant_id` was also missing,
-        a documented, narrow edge case, not a silent default.
+        verified identity) and `parsed_tenant_id` was also missing.
 
     Raises
     ------

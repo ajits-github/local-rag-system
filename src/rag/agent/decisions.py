@@ -1,16 +1,14 @@
 """Structured LLM-driven decision points for the agentic RAG graph.
 
-Every decision point renders a versioned prompt template instructing
-JSON-only output, calls the existing, unmodified `LLM.generate(system,
-user) -> str`, and parses/validates the response against a Pydantic model
-here. This is **agentic structured tool dispatch**. `LLM JSON decision ->
-Pydantic validation -> trusted Python dispatcher -> tool execution`. And
-explicitly *not* provider-native function/tool calling (i.e. not
-`ollama.Client.chat(tools=[...])`, even though the installed client
-supports that parameter). The LLM only ever produces text; Python is the
-only thing that decides which real function runs and with what (validated)
-arguments. See `docs/architecture.md`'s "Agentic RAG" section for the full
-rationale.
+Each decision point renders a versioned prompt template instructing
+JSON-only output, calls the unmodified `LLM.generate(system, user) -> str`,
+and validates the response against a Pydantic model here: LLM JSON
+decision -> Pydantic validation -> trusted Python dispatcher -> tool
+execution. This is structured tool dispatch, not provider-native
+function/tool calling (e.g. `ollama.Client.chat(tools=[...])`, which the
+installed client supports but this module never uses). The LLM only
+produces text; Python alone decides which function runs and with what
+validated arguments.
 """
 
 from __future__ import annotations
@@ -118,11 +116,10 @@ def run_decision(
 ) -> T | None:
     """Render `template`, call `llm.generate`, and parse the result as `model`.
 
-    On a parse/validation failure, issues up to `max_retries` bounded
-    reparse nudges appended to the user turn. Still plain
-    `LLM.generate(system, user) -> str` calls, never a
-    structured-output-forcing or native tool-calling API. Before giving
-    up.
+    On a parse/validation failure, retries up to `max_retries` times with
+    a reparse nudge appended to the user turn, before giving up. Still
+    plain `LLM.generate(system, user) -> str` calls, never a
+    structured-output-forcing or native tool-calling API.
 
     Parameters
     ----------

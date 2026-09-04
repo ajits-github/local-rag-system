@@ -1,13 +1,11 @@
 """stdio entrypoint for the MCP server: `python -m rag.mcp.stdio_entrypoint`.
 
 Host-only, local-development convenience for a desktop MCP client (e.g.
-Claude Desktop) that talks stdio rather than HTTP -- never containerized,
-never a shared/multi-tenant deployment target (see
-`rag.mcp.identity.resolve_stdio_identity`'s docstring). Builds the exact
-same `rag.mcp.server.build_mcp_server` every Streamable-HTTP request
-already goes through; the only difference is how identity is resolved
-(once, at startup, from `MCP_AUTH_TOKEN`, instead of per-call from an
-HTTP header).
+Claude Desktop) that talks stdio rather than HTTP; never containerized,
+never a shared/multi-tenant deployment target. Builds the same
+`rag.mcp.server.build_mcp_server` every Streamable-HTTP request uses;
+the only difference is that identity is resolved once at startup from
+`MCP_AUTH_TOKEN`, instead of per call from an HTTP header.
 """
 
 from __future__ import annotations

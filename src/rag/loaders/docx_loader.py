@@ -3,18 +3,18 @@
 Serializes headings/tables/images/page breaks into the same
 Markdown-equivalent syntax `StructuredMarkdownChunker` already
 understands (see that module's docstring and `loaders/pdf_loader.py`'s,
-which takes the same approach for PDFs) -- `DocxLoader.load()` still
+which takes the same approach for PDFs); `DocxLoader.load()` still
 returns a `RawDocument` with a single `content: str`, unchanged
 interface.
 
 Unlike a PDF, a `.docx` body is already a flat, ordered sequence of
-paragraphs and tables (`document.element.body`'s children) -- no
+paragraphs and tables (`document.element.body`'s children), so no
 geometry/font-size-based reading-order reconstruction is needed, only a
 single linear walk. Three structural signals come from the OOXML tree
 rather than `python-docx`'s higher-level (paragraph-text-only) API:
 
 - **Page numbers**: a manual page break (`<w:br w:type="page"/>`) is the
-  only reliable page signal `python-docx` exposes -- Word's own
+  only reliable page signal `python-docx` exposes; Word's own
   reflow-based pagination isn't computable without a rendering engine.
   Documents with no manual page breaks get `page=1` throughout (honest:
   reflow position is genuinely unknowable, not silently guessed).
@@ -23,7 +23,7 @@ rather than `python-docx`'s higher-level (paragraph-text-only) API:
   through `document.part.related_parts[rId].blob`.
 - **Code/config blocks**: no dedicated Word style is used in this
   project's corpus, so detection is by run-level monospace font name
-  (Consolas/Courier New/etc.) rather than `paragraph.style.name` --
+  (Consolas/Courier New/etc.) rather than `paragraph.style.name`;
   see `_is_monospace_paragraph`.
 """
 

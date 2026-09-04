@@ -1,12 +1,9 @@
 """Structured JSON logging with request-id and trace-id propagation.
 
-This module owns log formatting only; OpenTelemetry tracing itself lives
-in `rag.observability.tracing` (see `docs/architecture.md`'s
-"Observability" section for the full split between the two). Every log
-line still carries the `request_id` contextvar this module has always
-set, and now additionally carries `trace_id`/`span_id` when a real
-(non-no-op) span is active, so a log line and the trace it happened
-inside can be cross-referenced without a second correlation mechanism.
+Owns log formatting only; OpenTelemetry tracing itself lives in
+`rag.observability.tracing`. Every log line carries the `request_id`
+contextvar, plus `trace_id`/`span_id` when a real (non-no-op) span is
+active, so a log line and its trace can be cross-referenced.
 """
 
 from __future__ import annotations
@@ -89,7 +86,7 @@ def get_request_id() -> str | None:
 def _current_trace_ids() -> tuple[str, str] | None:
     """Return `(trace_id, span_id)` as hex strings, or `None` if no real span is active.
 
-    Deliberately does not import `rag.observability` at module scope --
+    Deliberately does not import `rag.observability` at module scope:
     this module is imported very early (before config is loaded), and
     this keeps the two modules' import order irrelevant. Never raises:
     a missing/no-op span context is the common case (tracing disabled by

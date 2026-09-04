@@ -1,9 +1,8 @@
 """Shared request-boundary security checks used by every query-shaped router.
 
-Extracted from `routers/query.py` so `routers/agent_query.py` reuses the
-exact same, already-tested JWT-precedence and DoS-limit logic rather than
-re-implementing it. Both routers call these functions, never duplicate
-their behavior.
+Extracted from `routers/query.py` so `agent_query.py`/`agent_stream.py`
+reuse the exact same, already-tested JWT-precedence and DoS-limit logic
+rather than re-implementing it.
 """
 
 from __future__ import annotations

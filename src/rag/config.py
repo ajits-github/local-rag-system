@@ -546,7 +546,7 @@ class AgentConfig(BaseModel):
         invalid JSON, before that decision fails safely.
     max_tool_top_k : int
         Server ceiling clamped onto `search_knowledge_base`'s `top_k`
-        argument, independent of that argument's own Pydantic `le` bound
+        argument, independent of that argument's own Pydantic `le` bound.
         A config change, not just the schema literal, is always the
         true final ceiling.
     max_chunks_per_document_fetch : int
@@ -592,12 +592,11 @@ class OllamaVisionConfig(BaseModel):
 
     Reuses `generation.base_url_env_var`'s resolved URL
     (`AppConfig.ollama_base_url()`) rather than declaring a second env
-    var -- vision and text generation are the same native-host Ollama
+    var: vision and text generation are the same native-host Ollama
     server, just different models. `model_name` defaults to `moondream`
     (~1.7GB), chosen for this project's CPU-only 8GB-RAM box over
-    heavier options like `llava:7b`; not installed automatically, the
-    operator must `ollama pull` it themselves, same precedent as
-    `generation.model_name`.
+    heavier options like `llava:7b`; the operator must `ollama pull` it
+    themselves, same as `generation.model_name`.
     """
 
     model_name: str = "moondream"
@@ -648,20 +647,11 @@ class McpConfig(BaseModel):
 
     Notes
     -----
-    Identity is governed entirely by `security.auth` -- there is no
-    separate `mcp.auth.*` block. An MCP tool call is authenticated (or
-    not) by the exact same `security.auth.enabled`/`insecure_dev_mode`/
-    `jwt` rules `POST /query` already uses (see `rag.mcp.identity`), so
-    the two surfaces can never drift into different security postures.
-    `get_customer_case`/`get_case_status` (`rag.mcp.business.store`) have
-    no config toggle of their own: they're a fixed, always-present part
-    of the server once `mcp.enabled` is `True`, the same way
-    `search_knowledge_base`'s `content_type` filter isn't independently
-    toggleable. Their tenant/role authorization is unconditional (see
-    that module's docstring for why), unlike document-level
-    `security.authorization.enabled`, which does have a kill-switch for
-    legacy-corpus-compatibility reasons that don't apply to this
-    synthetic, always-tenanted dataset.
+    Identity is governed entirely by `security.auth`; there is no
+    separate `mcp.auth.*` block. An MCP tool call is authenticated by
+    the same `security.auth.enabled`/`insecure_dev_mode`/`jwt` rules
+    `POST /query` already uses, so the two boundaries cannot drift into
+    different security postures.
     """
 
     enabled: bool = False

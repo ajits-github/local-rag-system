@@ -12,14 +12,10 @@ from rag.generation.base import LLM
 class OllamaLLM(LLM):
     """Generates completions via a local (or remote) Ollama server.
 
-    Tracks `last_prompt_tokens`/`last_completion_tokens` from Ollama's own
-    `prompt_eval_count`/`eval_count` response fields (mirrors
-    `OpenAILLM`'s `call_count`/`input_tokens`/`output_tokens` tracking,
-    but per-call rather than cumulative, since production callers care
-    about one question's token footprint, not a running total). `None`
-    when Ollama's response omits either field (observed to always be
-    present for a non-streaming `generate()` call, but not documented as
-    guaranteed).
+    Tracks `last_prompt_tokens`/`last_completion_tokens` per call (not
+    cumulative), read from Ollama's `prompt_eval_count`/`eval_count`
+    response fields. `None` if either field is omitted, though this
+    hasn't been observed in practice for a non-streaming call.
     """
 
     def __init__(

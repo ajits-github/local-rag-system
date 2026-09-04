@@ -4,9 +4,8 @@ Opt-in and additive: reuses `run_eval.evaluate()` (sliced to
 `--sample-size` examples) for the standard report, then adds a `"ragas"`
 key with faithfulness/answer_relevancy/context_precision/context_recall/
 answer_correctness scores from an independently configured judge LLM
-(`config.judge`. Never defaults to the generation models). Requires the
-`ragas` extra (`pip install .[ragas]`, plus `.[anthropic]` for that hosted
-provider).
+(`config.judge`, never the generation model). Requires the `ragas` extra
+(`pip install .[ragas]`, plus `.[anthropic]` for that hosted provider).
 
 Usage:
     python -m rag.eval.run_ragas_eval --gold data/eval/sample_gold.jsonl \

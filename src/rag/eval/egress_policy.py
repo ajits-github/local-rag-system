@@ -1,18 +1,14 @@
 """Provider-egress policy: gates retrieved content before it reaches a hosted LLM.
 
 Applies at the one confirmed hosted-egress point in this codebase:
-`run_ragas_eval.py`'s context-building step, which hands retrieved chunk
-content to `config.judge.provider` (`openai`/`anthropic`) for RAGAS
-scoring. Production `answer()` never calls a hosted LLM --
-`config.generation.provider` is `Literal["ollama"]` only. So no other
-call site needs this gate today; if a future hosted `generation`/`vision`
-provider is added, it should call `apply_egress_policy` the same way.
+`run_ragas_eval.py`'s context-building step, which sends retrieved chunk
+content to the judge LLM (`config.judge.provider`, `openai`/`anthropic`).
+Production `answer()` never calls a hosted LLM, so no other call site
+needs this gate today.
 
-Independent of, and layered on top of, whatever document-level
-authorization and field-level redaction already ran to produce the
-`source` dict this module inspects (the same per-source dict shape
-`RetrievalPipeline.answer()` returns). This is a *third* checkpoint, not
-a replacement for either.
+A third checkpoint layered on top of document-level authorization and
+field-level redaction (not a replacement for either), applied to the same
+per-source dict `RetrievalPipeline.answer()` returns.
 """
 
 from __future__ import annotations
@@ -41,7 +37,7 @@ def apply_egress_policy(source: dict[str, Any], config: AppConfig) -> EgressDeci
 
     1. `source["tenant_id"]` against `blocked_tenant_ids`. An explicit
        tenant deny-list.
-    2. `source["classification"]` against `classification_policy` --
+    2. `source["classification"]` against `classification_policy`, which
        **fails closed**: a classification with no entry in that dict is
        blocked, not silently allowed (`.get(classification, False)`).
        `None`/missing classification is treated as allowed, matching
@@ -58,7 +54,7 @@ def apply_egress_policy(source: dict[str, Any], config: AppConfig) -> EgressDeci
     ----------
     source : dict[str, Any]
         One entry from `RetrievalPipeline.answer()`'s `"sources"` list
-        (or the dense/bm25/fused lists from `retrieve_attribution`) --
+        (or the dense/bm25/fused lists from `retrieve_attribution`);
         reads `content`/`tenant_id`/`classification`/`trust_level`/
         `sensitive_field_ids`/`redacted_field_ids`.
     config : AppConfig

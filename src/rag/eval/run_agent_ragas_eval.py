@@ -1,28 +1,25 @@
 """Run RAGAS generation-quality scoring against agent-produced answers/evidence.
 
-Sibling to `run_ragas_eval.py`, not a replacement for it: that module
-scores the classic `RetrievalPipeline.answer()` path (via
-`run_eval.evaluate()`); this module scores the agent graph's actual
-output (`rag.agent.graph.run_agent()`, via `run_agent_eval.evaluate_agent`)
-for `data/eval/agentic_extension_gold.jsonl` specifically. RAGAS never
-drives routing/tool-selection/retry scoring. Those stay the
-deterministic `run_agent_eval.py` metrics; this module only judges final-
-answer/evidence quality for whatever route the agent actually took.
+Sibling to `run_ragas_eval.py`: that module scores the classic
+`RetrievalPipeline.answer()` path; this one scores the agent graph's
+actual output (`rag.agent.graph.run_agent()`, via
+`run_agent_eval.evaluate_agent`) for `agentic_extension_gold.jsonl`.
+RAGAS never drives routing/tool-selection/retry scoring; those stay
+`run_agent_eval.py`'s deterministic metrics. This module only judges
+final-answer/evidence quality for whichever route the agent took.
 
-Every scored row's `contexts` comes from `AgentState.retrieved_evidence`
-already gathered by one `run_agent_eval.evaluate_agent(..., include_evidence=True)`
-pass. Not a second agent run. So the judged context is exactly what
-the agent's own synthesize step actually saw, and each source still
-passes through `egress_policy.apply_egress_policy` before it may reach
-the hosted judge, identical in spirit to `run_ragas_eval.py`'s
-`_build_rows`.
+Each row's `contexts` comes from the evidence one
+`evaluate_agent(..., include_evidence=True)` pass already gathered (not a
+second agent run), so the judged context is exactly what the agent's own
+synthesize step saw. Each source still passes through
+`egress_policy.apply_egress_policy` before it may reach the hosted judge,
+matching `run_ragas_eval.py`'s own gating.
 
 `expected_tool_sequence`/`expected_subquestions`/`expected_reformulation`
-are gold-authoring/scoring-only fields already never read by
-`rag.agent.*` (the agent only ever sees `GoldExample.question` via
-`AgentState.original_query`); this module doesn't change that boundary.
-`expected_answer`/`reference_contexts` are read here, in the eval/judge
-path only, exactly like `run_ragas_eval.py` already does.
+are gold-authoring/scoring-only fields, never read by `rag.agent.*` (the
+agent only ever sees `GoldExample.question` via
+`AgentState.original_query`). `expected_answer`/`reference_contexts` are
+read here, in the eval/judge path only, exactly like `run_ragas_eval.py`.
 
 Usage:
     python -m rag.eval.run_agent_ragas_eval \
