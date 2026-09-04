@@ -62,6 +62,27 @@ class GetRelatedContextArgs(BaseModel):
     chunk_id: str
 
 
+class GetCustomerCaseArgs(BaseModel):
+    """Arguments for the remote `get_customer_case` MCP tool.
+
+    Only `case_id` is LLM-writable; tenant/role identity is resolved
+    server-side from the internal service token `rag.agent.mcp_client`
+    mints, never from anything the model produces.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    case_id: str
+
+
+class GetCaseStatusArgs(BaseModel):
+    """Arguments for the remote `get_case_status` MCP tool (see `rag.agent.mcp_client`)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    case_id: str
+
+
 TOOL_ARG_MODELS: dict[str, type[BaseModel]] = {
     "search_knowledge_base": SearchKnowledgeBaseArgs,
     "get_document": GetDocumentArgs,
