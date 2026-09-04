@@ -5,6 +5,8 @@ from pydantic import ValidationError
 
 from rag.agent.tool_schemas import (
     TOOL_ARG_MODELS,
+    GetCaseStatusArgs,
+    GetCustomerCaseArgs,
     GetDocumentArgs,
     GetLatestDocumentArgs,
     GetRelatedContextArgs,
@@ -72,10 +74,28 @@ def test_get_document_args_expose_no_chunk_count_field():
 
 
 def test_tool_arg_models_cover_every_tool_name():
-    """TOOL_ARG_MODELS has exactly one entry per tool the agent can dispatch."""
+    """TOOL_ARG_MODELS has exactly one entry per tool the agent can dispatch.
+
+    Six as of MCP Stage 2: the four local RAG tools plus the two remote
+    MCP business tools (get_customer_case/get_case_status).
+    """
     assert set(TOOL_ARG_MODELS) == {
         "search_knowledge_base",
         "get_document",
         "get_latest_document",
         "get_related_context",
+        "get_customer_case",
+        "get_case_status",
     }
+
+
+def test_get_customer_case_args_rejects_smuggled_auth_field():
+    """extra='forbid' rejects an LLM-supplied auth-shaped key on GetCustomerCaseArgs."""
+    with pytest.raises(ValidationError):
+        GetCustomerCaseArgs.model_validate({"case_id": "CASE-1001", "tenant_id": "tenant_evil"})
+
+
+def test_get_case_status_args_rejects_smuggled_auth_field():
+    """extra='forbid' rejects an LLM-supplied roles-shaped key on GetCaseStatusArgs."""
+    with pytest.raises(ValidationError):
+        GetCaseStatusArgs.model_validate({"case_id": "CASE-1001", "roles": ["security_admin"]})
