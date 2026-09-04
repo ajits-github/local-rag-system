@@ -2039,12 +2039,13 @@ functions the in-process agent graph already calls
 (`search_knowledge_base`/`get_document`/`get_latest_document`/
 `get_related_context`), and two synthetic business-case tools (Stage 1B,
 `get_customer_case`/`get_case_status`) reading from `rag.mcp.business`, a
-small in-memory backend standing in for a separate business system. Both
-stages are server-only. MCP-client behavior added to the in-process agent
-(Stage 2) is still deliberately deferred until there's a concrete,
-demonstrated need for it, matching this project's "no infrastructure
-without a demonstrated requirement" pattern (see the Observability
-section's aside below).
+small in-memory backend standing in for a separate business system.
+Stage 2 makes the in-process agent itself a real MCP *client* for those
+two business tools specifically -- `rag/agent/mcp_client.py`, dispatched
+from `rag/agent/graph.py::_execute_tool` -- while the four RAG tools stay
+exactly what they already were: direct, in-process function calls,
+never routed through MCP. See "Stage 2: the agent as an MCP client"
+below for the full design.
 
 ### Why now, and why server-only
 
@@ -2073,27 +2074,46 @@ backend, its own tenant/role rule, reached through the same transport and
 identity-resolution machinery), not operating a second production system
 for a demo.
 
-Making the in-process agent an MCP *client* (Stage 2) was considered and
-rejected for this milestone too: it would only be justified once a
+Making the in-process agent an MCP *client* (Stage 2) was deferred past
+Stage 1A/1B for the same reason: it would only be justified once a
 second, genuinely external MCP server exists for the agent to reach over
-the network. Building client support against only the server this same
-codebase already exposes would be testing infrastructure against itself,
-not a capability gap -- and that reasoning is unaffected by Stage 1B
-shipping, since Stage 1B's business backend is still in-process, not a
-second server.
+the network, and building client support against only the server this
+same codebase already exposes risks testing infrastructure against
+itself rather than closing a real capability gap. Stage 2 resolves that
+concern architecturally rather than by waiting for a second real
+deployment to appear: the client's default transport
+(`config.mcp.client.transport="asgi"`) *is* an in-process call today
+(an `httpx2.ASGITransport` bound directly to the same server object
+`rag/api/main.py` mounts, no real socket), but the client code itself is
+transport-agnostic -- `config.mcp.client.transport="http"` swaps in a
+real network call to a `server_url`, with zero changes to
+`rag/agent/mcp_client.py` or `rag/agent/graph.py`. So today's build genuinely
+exercises the full Streamable HTTP/JSON-RPC protocol end to end (session
+init, argument hardening, identity resolution via headers, structured
+results) rather than a shortcut direct function call, and pointing it at
+a real external deployment later is a one-line config change, not new
+code. The trigger for actually implementing Stage 2 now was a direct,
+explicit request to close the job-description-level "agent calls
+backend systems via MCP" story completely, not a newly discovered
+external server.
 
 ### Architecture
 
 ```mermaid
 flowchart LR
-    Client(["MCP Client<br/>(Claude Desktop, another agent)"])
+    Client(["External MCP Client<br/>(Claude Desktop, another agent)"])
     Client -->|"Streamable HTTP<br/>Authorization: Bearer JWT"| Mount["/mcp mount<br/>(mount_mcp_app)"]
 
     subgraph RagApi["rag-api process"]
+        Graph["run_agent<br/>(rag.agent.graph)"] -->|"tool_name in<br/>REMOTE_MCP_TOOL_NAMES"| McpClient["rag.agent.mcp_client<br/>(Stage 2)"]
+        McpClient -->|"mints a short-lived<br/>internal service token"| Mint["mint_internal_token"]
+        Mint -->|"ASGITransport(app=mcp_app)<br/>default transport, no socket"| Mount
+
         Mount --> Server["MCPServer<br/>(rag.mcp.server)"]
         Server -->|"Resolve()"| Identity["rag.mcp.identity<br/>resolve_http_identity"]
         Identity -->|"verify_jwt"| Auth["rag.api.auth<br/>(shared with POST /query)"]
 
+        Graph -->|"local tools, unchanged"| Dispatch
         Server --> Dispatch["_run_tool: dispatch -> sanitize -> serialize"]
         Dispatch --> Tools["rag.agent.tools.*<br/>(unmodified)"]
         Tools --> Pipeline["RetrievalPipeline / VectorStore"]
@@ -2105,6 +2125,16 @@ flowchart LR
 
     Pipeline --> DB[("Postgres + pgvector")]
 ```
+
+`run_agent` reaches the MCP server two structurally different ways in
+the same diagram: local tools (`search_knowledge_base` and friends) call
+`Dispatch`/`rag.agent.tools.*` directly, in-process, exactly as before
+Stage 2 existed; `get_customer_case`/`get_case_status` go the long way
+around, through a real `mcp.ClientSession` over `Mount`, indistinguishable
+on the server side from an external MCP client's own call into the same
+mount. `Mint` -> `Mount`'s default transport never opens a real socket
+(see "Transport" below), but it is genuinely the same Streamable HTTP/
+JSON-RPC codepath an external client like the one on the left also uses.
 
 Not a second server or process: `rag.mcp.asgi.build_mcp_asgi_app` builds
 a Starlette ASGI app around the `MCPServer`, and `rag.api.main` mounts
@@ -2213,6 +2243,169 @@ logs a genuine `authorization_denied` event (`action`, pseudonymous
 `subject`, `tenant_id`, `case_id`) whenever a case is found but the
 caller fails the check, even though the tool's return value never reveals
 that distinction to the caller itself.
+
+### Stage 2: the agent as an MCP client
+
+`rag/agent/graph.py::_execute_tool` gains exactly one branch: a static
+lookup (`rag.agent.tool_schemas.REMOTE_MCP_TOOL_NAMES`, a plain
+`frozenset[str]`) decides whether a decision's `tool_name` dispatches to
+the existing, unmodified local `_dispatch_tool` switch, or to a new
+`_dispatch_mcp_tool` that calls `rag/agent/mcp_client.py`. The bounded
+graph loop itself -- `max_agent_steps`/`max_retrieval_attempts`/
+`max_tool_calls`, the `while True:` tool-select/execute/evaluate cycle --
+is untouched; a remote dispatch counts toward `max_tool_calls` exactly
+like a local one, and `max_retrieval_attempts` stays scoped only to
+`search_knowledge_base`, unaffected. The LLM's decision JSON shape is
+also unchanged (`{"tool_name": ..., "tool_args": {...}}`); it never
+reasons about "local vs remote" as a concept, it just picks a tool name
+from whichever prompt template is currently loaded.
+
+**Fail closed without an authenticated identity -- no exception path.**
+The Stage 1B business tools' own tenant/role authorization has no
+kill-switch (see above): every synthetic case has a concrete tenant from
+creation, so unlike document-level ACL there is no legacy
+"unauthenticated means unrestricted" state to preserve. Given that,
+`config.mcp.client.enabled=True` *requires*
+`config.security.auth.enabled=True` -- checked once, at process startup
+(`mcp_client.validate_startup_config`, called from `rag/api/main.py`),
+raising `RuntimeError` before the app serves a single request, rather
+than degrading to some request-time-detected unauthenticated fallback.
+`dispatch_remote_tool_sync` enforces the same guarantee a second time,
+per call: a `None` `AuthorizationContext`, or one with no `tenant_id`,
+raises `ToolExecutionError` immediately, before any network/ASGI call is
+attempted -- there is no code path where a remote business-tool call
+goes out with an empty or absent identity.
+
+**Identity propagates as a freshly minted internal service token, never
+the caller's original JWT.** `AgentState` never holds a raw JWT at all
+(a pre-existing, deliberate invariant -- see the Agentic RAG section);
+Stage 2 does not change that. Instead, `mcp_client.mint_internal_token`
+signs a brand-new, short-lived (`mcp.client.internal_token_ttl_seconds`,
+default 60s) token from `AgentState.authorization_context`'s already-
+*verified* `tenant_id`/`roles`, using the exact same
+`security.auth.jwt` secret the receiving, completely unmodified
+`verify_jwt` checks against -- a same-trust-domain service-token
+exchange, not a relaxation of the shared verification path. `sub` is
+always the fixed `mcp.client.internal_token_subject`
+(`"rag-agent-internal"`), never a real caller's subject, so a decoded
+token or an `mcp_auth_success` audit-log line is immediately
+distinguishable as agent-minted rather than end-user-originated. Only
+`HS256` is supported for minting: it is the one algorithm this codebase
+holds a *signing* key for at all (`AppConfig.jwt_signing_key` returns
+only a *public*, verify-only key for `RS256`/`ES256`, matching
+`scripts/issue_dev_token.py`'s own documented limitation), so
+`validate_startup_config` refuses to start with `mcp.client.enabled=True`
+under any other configured algorithm, and `mint_internal_token` itself
+re-checks defensively at call time too.
+
+`iss`/`aud` are handled asymmetrically, and deliberately so -- confirmed
+directly against the installed `pyjwt`, not assumed safe by analogy
+between the two claims. `iss` is always set (from
+`security.auth.jwt.issuer` when configured, else a fallback
+`mcp.client.internal_token_issuer`): a token carrying an `iss` claim the
+receiving `verify_jwt` call isn't configured to check is simply never
+inspected, so this is safe in both modes and genuinely enforced in the
+former. `aud` does not get the same "informational fallback" treatment:
+reproducing the actual failure while implementing this found that PyJWT
+raises `InvalidAudienceError` for a token carrying **any** `aud` claim
+the moment the verifier passes no expected audience to check against,
+regardless of that claim's value -- so a hypothetical
+`mcp.client.internal_token_audience` fallback, set unconditionally, would
+have made every internal token fail verification whenever
+`security.auth.jwt.audience` happened to be unset (the shipped default).
+`mint_internal_token` therefore omits the `aud` claim entirely in that
+case, and includes it (using the exact configured value) only when
+`security.auth.jwt.audience` is actually set -- in which case the
+unmodified `verify_jwt` genuinely enforces it, exactly as it would for a
+real end-user token.
+
+**Transport: in-process ASGI by default, real HTTP as an escape hatch.**
+See "Why now, and why server-only" above for the reasoning; the
+mechanics: `rag/api/deps.py` gained `get_mcp_asgi_app()`, an
+`lru_cache`d singleton that both `rag/api/main.py`'s mount *and*
+`mcp_client`'s ASGI transport now bind to -- a real correctness
+requirement, not a refactor for its own sake. Before this change,
+`main.py` built its own module-level `_mcp_app`; if the agent's client
+had built a second, independent `MCPServer`/ASGI app instead of reusing
+that exact object, its Streamable-HTTP session-manager lifespan would
+never have been entered by `main.py`'s own `_lifespan` context manager,
+and every call would hang or error at `session.initialize()`. One real
+bug found operating this transport: the MCP SDK auto-enables
+DNS-rebinding Host-header protection whenever a server is built with the
+default `host="127.0.0.1"` (confirmed directly against `mcp`'s
+`Server.streamable_http_app` source, not assumed), allowing only
+`127.0.0.1:*`/`localhost:*`/`[::1]:*` -- an arbitrary internal hostname
+like `"mcp-internal"` was rejected outright with `421 Misdirected
+Request` before ever reaching a tool handler. Fixed by giving the ASGI
+transport's base URL a real, non-default port
+(`http://127.0.0.1:1/`, port 1 chosen only so `httpx2` actually emits a
+`Host` header with an explicit port -- the default HTTP port is omitted
+from that header entirely, which would have silently reproduced the same
+failure). `config.mcp.client.transport="http"` is the alternative for a
+genuinely separate future deployment: a real `mcp.client.
+server_url_env_var`-resolved URL, mirroring `OLLAMA_BASE_URL`'s
+env-var-with-a-sensible-default pattern; `validate_startup_config` only
+requires `mcp.enabled=True` for the `asgi` mode, since `http` mode needs
+no local server object at all.
+
+**Session lifecycle: one fresh `ClientSession` per remote tool call.**
+`run_agent()`'s node functions are synchronous by design (see the
+Agentic RAG section); each remote dispatch bridges to the async MCP
+client via `anyio.run(...)`, the same pattern
+`rag.mcp.stdio_entrypoint.main()` already uses at its own top level. This
+is safe specifically because both real callers of `run_agent()` -- the
+synchronous `/agent/query` route, and the SSE stream's
+`run_in_threadpool`-wrapped call -- already execute off the event-loop
+thread, so there is never an already-running event loop for `anyio.run`
+to collide with. Chosen over a persistent per-run or cross-request
+pooled session for three reasons: trivial identity isolation (a fresh
+`httpx2.AsyncClient` built with exactly this call's minted token can
+never leak into another caller's session); no real connection-
+establishment cost to amortize in the default ASGI-transport mode (no
+socket at all); and remote calls are rare relative to a run's total cost
+(bounded by the shared `max_tool_calls`, against tens of seconds of LLM
+decision latency) -- matching this project's repeated "no infrastructure
+without a demonstrated requirement now" pattern already applied to Redis
+and to Stage 2 itself before this session.
+
+**`mcp_remote` evidence is synthetic, and structurally excluded from
+every document-specific behavior.** `SearchResult.origin` gained a
+fourth value, `"mcp_remote"`. `mcp_client._business_result_to_search_result`
+builds a fabricated `chunk_id` (`f"mcp:{tool_name}:{case_id}"`) and
+`source` (`f"mcp://business/{case_id}"`), and deliberately leaves every
+document-governance `ChunkMetadata` field unset
+(`document_version`/`status`/`effective_from`/`supersedes_source`/
+`allowed_roles`/`classification`/`trust_level` all `None`). This
+evidence never passes through `VectorStore`, `RetrievalPipeline.
+retrieve()`, `resolve_auth`'s freshness-exclusion resolution, or
+`expand_with_relationships()` -- so freshness/version-family resolution,
+relationship expansion, and document-level ACL structurally never apply
+to it, not via a special-case guard checking `origin`, but because
+nothing in its construction path ever calls any of those methods. A
+model that copies a synthetic `mcp:...` chunk_id into `get_related_context`
+(mistaking it for a real one) gets a safe, ordinary miss: `VectorStore.
+get_chunks_by_ids` simply finds no matching row, the existing "not found
+= empty, not a failure" behavior every unknown chunk_id already gets. It
+still passes through the same `pipeline.sanitize_evidence` call every
+tool's output does -- a genuine value-add, not a formality: `detect_injection`
+runs on a case's free-text `description` field exactly as it would on
+retrieved chunk text, while field redaction naturally no-ops (no
+`sensitive_field_ids` tag exists for synthetic evidence). `tenant_id` on
+the synthetic chunk is provenance/display only, surfaced for citation
+purposes, never re-checked as an ACL gate -- that authorization already
+happened, in Python, inside `rag.mcp.business.store`, before this object
+is ever constructed.
+
+Reusing the existing chunk-shaped `SearchResult`/`ChunkMetadata` for
+business-case evidence, rather than introducing a new, parallel non-chunk
+evidence type (`EvidenceItem` or similar), was a deliberate, approved
+scope decision for this milestone: it means `_summarize_evidence`,
+`build_context`, and citation rendering in `_synthesize` needed zero
+changes to support a structurally different kind of evidence, at the
+acknowledged cost of some semantically-overloaded field names
+(`document_id` holding a `case_id`, `source` holding a synthetic URI
+rather than a filesystem-relative path) -- documented directly on
+`_business_result_to_search_result`'s own docstring, not left implicit.
 
 ### Two hardening fixes, both found by post-implementation review
 
@@ -2331,6 +2524,39 @@ Postgres) for the four RAG tools, one scenario per tool, mirroring
 `rag.agent.tools.*` functions -- the business tools need no equivalent
 file, since they have no Postgres-backed logic to spot-check.
 
+**Stage 2** adds three more files. `tests/unit/test_mcp_client_stage2.py`
+(18 tests, no MCP server needed): `validate_startup_config`'s four
+combinations (no-op when disabled, rejects auth-disabled, rejects
+non-HS256, rejects `asgi` transport without `mcp.enabled`), token
+minting (subject is always the fixed marker, tenant/roles carried
+through, expiry genuinely enforced against a real `verify_jwt` with
+`leeway_seconds=0` so a generous default leeway can't mask a broken
+check, the `iss`/`aud` asymmetry proven against real PyJWT behavior in
+both directions), the fail-closed-without-identity guard, and the
+synthetic-evidence field-level isolation proof (every document-
+governance field `None` by construction). `tests/unit/
+test_agent_graph_mcp_stage2.py` (7 tests): fail-closed dispatch when
+`mcp.client.enabled=False` distinguishes "rejected before dispatch" from
+"attempted and failed for a different reason" by asserting the exact
+`error` string; `max_tool_calls` bounding a mix of local and remote
+calls; `TOOL_ARG_MODELS`/`extra="forbid"` coverage for all six tools; a
+synthetic `mcp:...` chunk_id fed into `get_related_context` staying a
+safe miss; `_order_evidence_for_synthesis`'s trust-sort treating
+`mcp_remote` evidence like any other untagged/authoritative chunk, with
+no special-case branch. `tests/integration/test_agent_mcp_client_stage2.py`
+(5 tests, real wire protocol via the ASGI transport against the real
+`rag.mcp.business.store`, no Postgres/Ollama needed): a full `run_agent()`
+run synthesizing a cited answer from an authorized `get_customer_case`
+call; wrong-role-same-tenant and cross-tenant denial through the complete
+agent path (empty evidence, no citations, no crash); an MCP-layer
+failure (a deliberately unwired `mcp_app`, the same failure shape a real
+timeout/connection error would produce) not escaping `run_agent()`; and
+a header-capturing proof that the internal token actually reaching the
+MCP server is never the original caller's credential -- decoding the
+captured `Authorization` header and asserting its `sub` is the fixed
+internal marker, never a stand-in "real end user" subject built
+specifically for that test.
+
 ### Known limitations (deliberate, not hidden)
 
 - `security.rate_limit`'s `Limiter` does not wrap the MCP mount -- not a
@@ -2348,9 +2574,26 @@ file, since they have no Postgres-backed logic to spot-check.
   reaches into `MCPServer`'s internal `ToolManager` to do it, which is
   the smallest fix that closes the gap without dropping to the SDK's
   substantially different lower-level `Server` API.
-- Stage 2 (making the in-process agent an MCP client) is still deferred,
-  per the reasoning in "Why now, and why server-only" above -- not
-  started, not scaffolded.
+- `security.rate_limit`'s `Limiter` still does not wrap the MCP mount
+  (see the bullet above) -- this now also means an agent-originated
+  Stage 2 call, dispatched via the in-process ASGI transport, bypasses
+  the outer app's `SlowAPIMiddleware` entirely, since the ASGI transport
+  invokes the mounted sub-app object directly rather than routing through
+  the parent app's middleware stack. Not a regression (still true that
+  MCP was never rate-limited), but worth knowing specifically because
+  Stage 2 is a new, agent-driven traffic source into that same gap.
+- Internal service-token minting only works when `security.auth.jwt.
+  algorithm="HS256"` -- `validate_startup_config` refuses to start
+  otherwise, rather than degrading to an insecure fallback. Supporting
+  `RS256`/`ES256` would need a private signing key this codebase doesn't
+  hold today (see `scripts/issue_dev_token.py`'s identical limitation);
+  not implemented, since HS256 is this deployment's actual default.
+- Session-per-call (see "Stage 2" above) trades a small amount of
+  per-call session-init overhead for simplicity and identity isolation.
+  Not measured as a bottleneck yet -- remote calls are rare and small
+  next to LLM decision latency -- but a persistent per-run session,
+  still scoped to one caller's identity, is the natural next optimization
+  if profiling ever shows otherwise.
 - The business-case backend has no write path and no versioning: cases
   are a fixed, hardcoded seed set, not a mutable store. That's
   intentional for a synthetic demo, but means the "case gets updated,
