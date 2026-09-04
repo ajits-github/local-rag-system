@@ -13,6 +13,7 @@ from functools import lru_cache
 from fastapi import Depends, HTTPException, Request
 from slowapi import Limiter
 from slowapi.util import get_remote_address
+from starlette.applications import Starlette
 
 from rag.api.auth import AuthenticationError, VerifiedIdentity, verify_jwt
 from rag.audit import log_audit_event, pseudonymous_subject
@@ -21,6 +22,7 @@ from rag.embedders.base import Embedder
 from rag.factory import build_embedder, build_llm, build_reranker, build_vectorstore
 from rag.generation.base import LLM
 from rag.ingestion.pipeline import IngestionPipeline
+from rag.mcp.asgi import build_mcp_asgi_app
 from rag.rerankers.base import Reranker
 from rag.retrieval.pipeline import RetrievalPipeline
 from rag.vectorstore.base import VectorStore
@@ -82,6 +84,24 @@ def get_retrieval_pipeline() -> RetrievalPipeline:
         reranker=get_reranker(),
         llm=get_llm(),
     )
+
+
+@lru_cache
+def get_mcp_asgi_app() -> Starlette | None:
+    """Return the process-wide MCP ASGI app singleton, or `None` when `mcp.enabled=False`.
+
+    The single source of truth for this object: `rag.api.main` mounts it
+    (via `rag.mcp.asgi.mount_mcp_app`) and the agent's own MCP client
+    (`rag.agent.mcp_client`, used for `get_customer_case`/
+    `get_case_status` when `mcp.client.transport="asgi"`) binds an
+    in-process ASGI transport directly to this same object, not a second,
+    independently-constructed `MCPServer` whose session-manager lifespan
+    `main.py`'s own lifespan context manager would never enter.
+    """
+    config = get_config()
+    if not config.mcp.enabled:
+        return None
+    return build_mcp_asgi_app(config, get_retrieval_pipeline(), get_vectorstore(), get_embedder())
 
 
 def get_current_identity(
