@@ -631,6 +631,74 @@ class McpServerConfig(BaseModel):
     mount_path: str = "/mcp"
 
 
+class McpClientConfig(BaseModel):
+    """Agent-side MCP client settings for the two remote business tools.
+
+    The four local RAG tools (`search_knowledge_base`/`get_document`/
+    `get_latest_document`/`get_related_context`) never go through this;
+    it exists only so `run_agent()` can dispatch `get_customer_case`/
+    `get_case_status` as a real MCP client call, rather than a direct
+    in-process function call.
+
+    Attributes
+    ----------
+    enabled : bool
+        When `False` (the default), a true no-op: the tool-select prompt
+        never offers the two remote tools, `ToolSelectionDecision` never
+        dispatches to them, and no MCP client/session is ever
+        constructed. Matches `mcp.enabled`/`agent.enabled`'s convention.
+    transport : {"asgi", "http"}
+        `"asgi"` (the default) calls the same in-process MCP server
+        object `main.py` mounts, via an in-memory ASGI transport: no
+        real socket or port, still the full Streamable HTTP/JSON-RPC
+        protocol. Requires `mcp.enabled=True` (there must be a server
+        object to bind to); checked at startup, not request time.
+        `"http"` is the escape hatch for a genuinely separate
+        deployment: a real network call to `server_url`.
+    server_url_env_var : str
+        Environment variable naming the remote MCP server's base URL,
+        read only when `transport="http"`. Mirrors
+        `generation.base_url_env_var`'s `*_env_var` convention.
+    default_server_url : str
+        Fallback used when `server_url_env_var` is unset, for local/dev
+        convenience (same-process loopback on the conventional API port).
+    timeout_seconds : float
+        Per-call MCP timeout (connection plus tool-call read timeout).
+        A remote hang must never hang the whole agent run.
+    internal_token_ttl_seconds : int
+        Lifetime of the short-lived internal service token minted for
+        each remote call when `security.auth.enabled=True` (see
+        `rag.agent.mcp_client`). Short by design: minted immediately
+        before use and consumed immediately.
+    internal_token_subject : str
+        The `sub` claim on a minted internal token: a fixed, clearly
+        synthetic value, never the original caller's identity. Lets an
+        audit-log reader distinguish an agent-minted service token from
+        a real end-user token at a glance.
+    internal_token_issuer : str
+        Informational `iss` claim identifying this as an agent-to-MCP-
+        service token, used only as a fallback when
+        `security.auth.jwt.issuer` is unset (when it is set, the mint
+        uses that configured value instead so `verify_jwt` actively
+        validates it). There is no equivalent `internal_token_audience`
+        fallback: PyJWT rejects any token carrying an `aud` claim when
+        the caller passes no expected audience to check against, unlike
+        `iss`, which is never inspected when
+        `security.auth.jwt.audience` is unset. `aud` is included on a
+        minted token only when `security.auth.jwt.audience` is actually
+        configured; see `rag.agent.mcp_client.mint_internal_token`.
+    """
+
+    enabled: bool = False
+    transport: Literal["asgi", "http"] = "asgi"
+    server_url_env_var: str = "MCP_CLIENT_SERVER_URL"
+    default_server_url: str = "http://127.0.0.1:8000/mcp"
+    timeout_seconds: float = 10.0
+    internal_token_ttl_seconds: int = 60
+    internal_token_subject: str = "rag-agent-internal"
+    internal_token_issuer: str = "rag-agent-internal"
+
+
 class McpConfig(BaseModel):
     """MCP server exposing the four RAG tools plus two synthetic business-case tools.
 
