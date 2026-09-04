@@ -16,6 +16,20 @@ Every tool call's evidence passes through `RetrievalPipeline.sanitize_evidence`
 in `_execute_tool` before being appended to state, uniformly across tools,
 so no tool can bypass field redaction/injection detection by construction.
 
+Six tools exist: four local, in-process ones dispatched by
+`_dispatch_tool`, plus two remote business-support tools
+(`get_customer_case`/`get_case_status`) dispatched via a real MCP client
+call through `_dispatch_mcp_tool` and `rag.agent.mcp_client`.
+`select_tool` picks a tool purely by name; it never reasons about "local
+vs remote" as a separate concept, since that split is a static,
+server-side lookup (`rag.agent.tool_schemas.REMOTE_MCP_TOOL_NAMES`)
+`_execute_tool` checks before dispatch. The two remote tools are only
+ever offered to the model when `config.mcp.client.enabled=True` (a
+different tool-select prompt template is loaded in that case; see
+`_load_templates`); `_execute_tool` fails a remote-tool decision closed,
+as an ordinary recorded tool failure, if that config is off despite a
+decision naming one anyway.
+
 Node timing, tracing, and metrics wrap existing node calls via
 `_TimingLLM` and `_call_node` without changing any node's decision logic;
 this module is the only place that needs to know about that
@@ -32,7 +46,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, ValidationError
 
-from rag.agent import tools
+from rag.agent import mcp_client, tools
 from rag.agent.decisions import (
     ClassifyDecision,
     DecomposeDecision,
@@ -182,8 +196,20 @@ def _load_template(path: str) -> PromptTemplate:
 
 
 def _load_templates(config: AppConfig) -> dict[str, PromptTemplate]:
-    """Load all five agent decision-point templates, per `config.agent.*_prompt_path`."""
+    """Load all five agent decision-point templates, per `config.agent.*_prompt_path`.
+
+    `tool_select` loads `tool_select_mcp_prompt_path` (the two remote
+    business tools included) instead of `tool_select_prompt_path` when
+    `config.mcp.client.enabled` is `True`: a separate template file, not
+    a runtime-conditional insertion, so the 4-tool prompt used elsewhere
+    is unaffected by this flag.
+    """
     agent_cfg = config.agent
+    tool_select_path = (
+        agent_cfg.tool_select_mcp_prompt_path
+        if config.mcp.client.enabled
+        else agent_cfg.tool_select_prompt_path
+    )
     return {
         "classify": _load_template(
             str(config.agent_prompt_template_path(agent_cfg.classify_prompt_path))
@@ -191,9 +217,7 @@ def _load_templates(config: AppConfig) -> dict[str, PromptTemplate]:
         "decompose": _load_template(
             str(config.agent_prompt_template_path(agent_cfg.decompose_prompt_path))
         ),
-        "tool_select": _load_template(
-            str(config.agent_prompt_template_path(agent_cfg.tool_select_prompt_path))
-        ),
+        "tool_select": _load_template(str(config.agent_prompt_template_path(tool_select_path))),
         "evidence": _load_template(
             str(config.agent_prompt_template_path(agent_cfg.evidence_sufficiency_prompt_path))
         ),
@@ -480,6 +504,32 @@ def _dispatch_tool(
         )
         return [SearchResult(chunk=c, score=1.0, origin="tool_fetched") for c in chunks]
     raise ValueError(f"Unknown tool: {tool_name}")  # unreachable: tool_name is Literal-validated
+
+
+def _dispatch_mcp_tool(
+    tool_name: str,
+    args: Any,
+    *,
+    state: AgentState,
+    config: AppConfig,
+    mcp_app: Any | None,
+) -> list[SearchResult]:
+    """Call `rag.agent.mcp_client` for the two remote business tools, as a real MCP client call.
+
+    Structurally separate from `_dispatch_tool` (the local, unmodified
+    tool switch); see `rag.agent.tool_schemas.REMOTE_MCP_TOOL_NAMES` for
+    which tool names route here instead. `_execute_tool` already
+    validates `args` and wraps this call in the same generic
+    try/except/tracing/metrics envelope every dispatch goes through, so
+    this stays a thin pass-through with no error handling of its own.
+    """
+    return mcp_client.dispatch_remote_tool_sync(
+        tool_name,
+        args,
+        auth=state.authorization_context,
+        config=config,
+        mcp_app=mcp_app,
+    )
 
 
 def _execute_tool(
