@@ -42,6 +42,7 @@ AuthEventType = Literal[
     "agent_max_tool_calls_reached",
     "mcp_auth_success",
     "mcp_auth_failure",
+    "agent_mcp_tool_disabled",
 ]
 
 
