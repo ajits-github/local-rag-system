@@ -38,11 +38,28 @@ Security posture:
 from __future__ import annotations
 
 import time
+from functools import partial
+from typing import Any
 
+import anyio
+import httpx2
 import jwt
+from mcp import ClientSession
+from mcp.client.streamable_http import streamable_http_client
+from opentelemetry import propagate
 
+from rag.agent.tool_schemas import GetCaseStatusArgs, GetCustomerCaseArgs
+from rag.agent.tools import ToolExecutionError
 from rag.config import AppConfig
+from rag.mcp.business.schemas import CaseStatusResult, CustomerCase
 from rag.retrieval.authorization import AuthorizationContext
+from rag.schemas import Chunk, ChunkMetadata, SearchResult
+
+# The MCP SDK's DNS-rebinding Host-header protection (default host="127.0.0.1")
+# only allows "127.0.0.1:*"/"localhost:*"/"[::1]:*". A portless host is omitted
+# from the Host header entirely and gets rejected with 421 Misdirected Request,
+# so a non-default port is required here even though nothing listens on it.
+_ASGI_INTERNAL_BASE_URL = "http://127.0.0.1:1/"
 
 
 def validate_startup_config(config: AppConfig) -> None:
@@ -164,3 +181,180 @@ def mint_internal_token(auth: AuthorizationContext, config: AppConfig) -> str:
         claims["aud"] = jwt_config.audience
     key = config.jwt_signing_key()
     return jwt.encode(claims, key, algorithm="HS256")
+
+
+async def _call_tool_async(
+    tool_name: str,
+    args: GetCustomerCaseArgs | GetCaseStatusArgs,
+    *,
+    auth: AuthorizationContext,
+    config: AppConfig,
+    mcp_app: Any | None,
+) -> dict[str, Any] | None:
+    """Open one fresh MCP session, call `tool_name`, and return its raw structured result.
+
+    Session-per-call by design (see the module docstring). Raises a
+    plain `Exception` on any timeout, connection failure, or tool-side
+    error (`CallToolResult.is_error`); the caller
+    (`rag.agent.graph._execute_tool`) already has a generic
+    catch-and-record-as-failed-ToolCallRecord envelope around any tool
+    dispatch, local or remote, so no special-case error handling is
+    needed here.
+    """
+    client_cfg = config.mcp.client
+    headers: dict[str, str] = {"Authorization": f"Bearer {mint_internal_token(auth, config)}"}
+    # Injects the current OpenTelemetry span's trace context (if tracing is
+    # enabled), so Jaeger shows one connected trace across the agent -> MCP
+    # client -> MCP server boundary instead of two disconnected ones. A no-op,
+    # cheap dict-touch when tracing is disabled (the default no-op propagator).
+    propagate.inject(headers)
+
+    if client_cfg.transport == "asgi":
+        if mcp_app is None:
+            raise RuntimeError(
+                "mcp.client.transport='asgi' but run_agent() was not given an "
+                "mcp_app (see rag.api.deps.get_mcp_asgi_app())."
+            )
+        transport: httpx2.AsyncBaseTransport | None = httpx2.ASGITransport(app=mcp_app)
+        base_url = _ASGI_INTERNAL_BASE_URL
+    else:
+        transport = None
+        base_url = config.mcp_client_server_url()
+
+    async with httpx2.AsyncClient(
+        transport=transport, headers=headers, timeout=client_cfg.timeout_seconds
+    ) as http_client:
+        async with streamable_http_client(base_url, http_client=http_client) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                result = await session.call_tool(
+                    tool_name,
+                    args.model_dump(),
+                    read_timeout_seconds=client_cfg.timeout_seconds,
+                )
+
+    if result.is_error:
+        first = result.content[0] if result.content else None
+        message = getattr(first, "text", None) or "no error detail"
+        raise RuntimeError(f"MCP tool {tool_name!r} returned an error: {message}")
+    structured = result.structured_content or {}
+    return structured.get("result")
+
+
+def _business_result_to_search_result(
+    tool_name: str, case_id: str, data: dict[str, Any]
+) -> SearchResult:
+    """Validate a raw business-tool result against its structured schema and wrap it as evidence.
+
+    Re-validates client-side against `rag.mcp.business.schemas`
+    (`CustomerCase`/`CaseStatusResult`) rather than trusting the raw
+    dict as-is, keeping the structured-schema guarantee end-to-end
+    across the process boundary.
+
+    The synthetic `Chunk`/`ChunkMetadata` this builds deliberately leaves
+    every document-governance field (`document_version`/`status`/
+    `effective_from`/`supersedes_source`/`allowed_roles`/`classification`/
+    `trust_level`) unset, so this evidence never participates in
+    freshness resolution or document-level ACL. `tenant_id` is set from
+    the case's own real tenant purely for citation/audit display; it is
+    never re-checked against an `AuthorizationContext`, since that
+    authorization already happened inside `rag.mcp.business.store`
+    before this function ever runs.
+    """
+    if tool_name == "get_customer_case":
+        case = CustomerCase.model_validate(data)
+        content = (
+            f"Customer support case {case.case_id} (tenant: {case.tenant_id}, "
+            f"customer: {case.customer_name})\n"
+            f"Subject: {case.subject}\n"
+            f"Status: {case.status}, priority: {case.priority}, "
+            f"assigned to: {case.assigned_team}\n"
+            f"Description: {case.description}"
+        )
+        tenant_id = case.tenant_id
+        created_at, last_modified = case.created_at, case.updated_at
+    else:
+        status = CaseStatusResult.model_validate(data)
+        content = (
+            f"Customer support case {status.case_id} status: {status.status}, "
+            f"priority: {status.priority}, last updated: {status.updated_at.isoformat()}"
+        )
+        tenant_id = None
+        created_at = last_modified = status.updated_at
+
+    metadata = ChunkMetadata(
+        document_id=case_id,
+        chunk_id=f"mcp:{tool_name}:{case_id}",
+        source=f"mcp://business/{case_id}",
+        source_type="mcp_business",
+        created_at=created_at,
+        last_modified=last_modified,
+        chunk_index=0,
+        dataset_id="mcp_business",
+        tenant_id=tenant_id,
+    )
+    chunk = Chunk(id=metadata.chunk_id, content=content, metadata=metadata)
+    return SearchResult(chunk=chunk, score=1.0, origin="mcp_remote")
+
+
+def dispatch_remote_tool_sync(
+    tool_name: str,
+    args: GetCustomerCaseArgs | GetCaseStatusArgs,
+    *,
+    auth: AuthorizationContext | None,
+    config: AppConfig,
+    mcp_app: Any | None,
+) -> list[SearchResult]:
+    """Dispatch one remote business-tool call, synchronously, and return it as agent evidence.
+
+    The synchronous entrypoint `rag.agent.graph._execute_tool` calls;
+    bridges to the async MCP client via `anyio.run` since that module's
+    node functions are synchronous by design. Safe to call from a plain
+    worker thread with no already-running event loop; both callers of
+    `run_agent()` (`POST /agent/query`'s sync route, and the SSE stream's
+    `run_in_threadpool`-wrapped call) already satisfy this.
+
+    Parameters
+    ----------
+    tool_name : {"get_customer_case", "get_case_status"}
+        Which remote business tool to call.
+    args : GetCustomerCaseArgs | GetCaseStatusArgs
+        The validated tool-argument instance.
+    auth : AuthorizationContext | None
+        The caller's resolved authorization context. Must be non-`None`
+        with a non-`None` `tenant_id`, or this raises `ToolExecutionError`
+        before attempting any call; there is no anonymous path for these
+        tools (see the module docstring's security posture).
+    config : AppConfig
+        Application configuration; `config.mcp.client` governs transport/
+        timeout/token settings.
+    mcp_app : Any | None
+        The in-process MCP ASGI app object (see
+        `rag.api.deps.get_mcp_asgi_app`), required when
+        `config.mcp.client.transport="asgi"` (the default); unused for
+        `transport="http"`.
+
+    Returns
+    -------
+    list[SearchResult]
+        Empty when the case doesn't exist or the caller isn't authorized
+        for it (the business store's own, deliberately indistinguishable
+        "not found" result, not a tool failure); otherwise exactly one
+        synthetic, `origin="mcp_remote"` result.
+
+    Raises
+    ------
+    ToolExecutionError
+        If `auth` is `None` or has no `tenant_id`; no authenticated
+        identity to attach to the call.
+    """
+    if auth is None or auth.tenant_id is None:
+        raise ToolExecutionError(
+            f"{tool_name} requires an authenticated caller identity with a tenant_id"
+        )
+    case_id = args.case_id
+    call = partial(_call_tool_async, tool_name, args, auth=auth, config=config, mcp_app=mcp_app)
+    raw_result = anyio.run(call)
+    if raw_result is None:
+        return []
+    return [_business_result_to_search_result(tool_name, case_id, raw_result)]
