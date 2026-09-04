@@ -43,16 +43,16 @@ The fastest path is: install Python dependencies, start Postgres, ingest
 
 What sets this apart from a typical RAG tutorial project:
 
-- **Hand-rolled bounded agent workflow, not LangGraph** -- a plain Python
+- **Hand-rolled bounded agent workflow, not LangGraph**: a plain Python
   state machine with three independent step/retry/tool-call bounds,
   chosen deliberately over framework overhead. See
   [`docs/architecture.md`](docs/architecture.md)'s "Agentic RAG" section
   for the explicit reasoning against adopting one.
-- **Adversarial security test suite** -- tenant isolation, field-level
+- **Adversarial security test suite**: tenant isolation, field-level
   redaction, prompt-injection detection, and document freshness are each
   proven with dedicated adversarial integration tests, not just
   happy-path unit tests. See [Security](#security).
-- **40 tracked experiments with real, documented regressions** -- e.g. a
+- **40 tracked experiments with real, documented regressions**: e.g. a
   reranker that silently truncated results with no reranker configured,
   and a directory-nesting bug that made a security metric read a false
   `0.0`. Every run is in [Benchmarks](#benchmarks), not just the wins.
@@ -168,28 +168,28 @@ A secure MCP (Model Context Protocol) server, mounted into the same
 (Claude Desktop, another agent runtime). It wraps the exact same,
 already-hardened `rag.agent.tools.*` functions the in-process agent
 calls, unmodified: identity is resolved from the transport (a verified
-JWT, never a tool argument -- structurally excluded from the tool schema,
+JWT, never a tool argument, structurally excluded from the tool schema,
 not just rejected by validation), every result passes through the same
 sanitization choke point as the agent path, and an unknown or injected
 tool argument now fails loudly rather than being silently dropped.
 
 The same server also exposes two synthetic business-backend tools
-(`get_customer_case`/`get_case_status`, Stage 1B), demonstrating MCP as
+(`get_customer_case`/`get_case_status`), demonstrating MCP as
 an integration layer to a separate backend system, not just another
 transport for this deployment's own RAG tools. They read from a small,
 in-memory synthetic customer-support-case dataset with its own tenant/
 role authorization (same rule, same config allow-list document ACL
-already uses for cross-tenant access) -- structurally independent of the
+already uses for cross-tenant access), structurally independent of the
 RAG tools' chunk-level sanitization, since a case has no chunk/field-
 redaction concept.
 
 The in-process agent is also a real MCP *client* for those same two
-business tools (Stage 2): `POST /agent/query` can dispatch
+business tools: `POST /agent/query` can dispatch
 `get_customer_case`/`get_case_status` over an actual `mcp.ClientSession`,
 never a shortcut direct function call, while the four RAG tools stay
 direct, in-process calls. Each call mints a short-lived internal service
-token from the caller's already-verified identity -- never the caller's
-own JWT -- and fails closed at startup if authentication isn't enabled,
+token from the caller's already-verified identity (never the caller's
+own JWT), and fails closed at startup if authentication isn't enabled,
 since these tools have no unauthenticated fallback state to preserve.
 <!-- --8<-- [end:docs-mcp] -->
 
