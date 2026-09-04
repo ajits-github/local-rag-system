@@ -11,34 +11,30 @@ from pydantic import BaseModel
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
-from rag.api.deps import (
-    get_config,
-    get_embedder,
-    get_rate_limiter,
-    get_retrieval_pipeline,
-    get_vectorstore,
-)
+from rag.agent.mcp_client import validate_startup_config as _validate_mcp_client_startup_config
+from rag.api.deps import get_config, get_mcp_asgi_app, get_rate_limiter
 from rag.api.middleware import RequestIDMiddleware
 from rag.api.routers import agent_query, agent_stream, health, ingest, metrics, query
 from rag.audit import log_audit_event
 from rag.config import AppConfig
 from rag.logging_config import configure_logging
-from rag.mcp.asgi import build_mcp_asgi_app, mount_mcp_app
+from rag.mcp.asgi import mount_mcp_app
 from rag.observability.tracing import configure_tracing
 
 _config = get_config()
 configure_logging(_config.app.log_level)
 configure_tracing(_config)
+_validate_mcp_client_startup_config(_config)
 
 # Built before the FastAPI app itself: when MCP is enabled, the app's own
 # lifespan (below) must also enter this sub-app's lifespan, since Starlette
-# does not auto-propagate a mounted sub-app's lifespan to its parent.
-# Without this, the MCP session manager's background task group never starts.
-_mcp_app = (
-    build_mcp_asgi_app(_config, get_retrieval_pipeline(), get_vectorstore(), get_embedder())
-    if _config.mcp.enabled
-    else None
-)
+# does not auto-propagate a mounted sub-app's lifespan to its parent, so the
+# MCP session manager's background task group would otherwise never start.
+# get_mcp_asgi_app() is the single source of truth for this object: the
+# agent's own MCP client (rag.agent.mcp_client, transport="asgi") binds
+# directly to this same singleton rather than building a second, independent
+# MCPServer whose lifespan this process would never enter.
+_mcp_app = get_mcp_asgi_app()
 
 
 @asynccontextmanager
