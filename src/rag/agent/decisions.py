@@ -44,11 +44,21 @@ class ToolSelectionDecision(BaseModel):
     `tool_args` is intentionally untyped here. It is validated against
     the matching `rag.agent.tool_schemas` model (`extra="forbid"`) by the
     graph driver immediately after this decision is parsed, never trusted
-    as-is.
+    as-is. `get_customer_case`/`get_case_status` are the two remote MCP
+    business tools; the model chooses a tool purely by name, exactly as
+    for the four local tools, and this Literal accepts both regardless
+    of `config.mcp.client.enabled`. `rag.agent.graph._execute_tool` is
+    what fails a remote-tool decision closed when that config is off,
+    not this schema.
     """
 
     tool_name: Literal[
-        "search_knowledge_base", "get_document", "get_latest_document", "get_related_context"
+        "search_knowledge_base",
+        "get_document",
+        "get_latest_document",
+        "get_related_context",
+        "get_customer_case",
+        "get_case_status",
     ]
     tool_args: dict[str, Any] = Field(default_factory=dict)
 
