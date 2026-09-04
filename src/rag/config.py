@@ -563,7 +563,17 @@ class AgentConfig(BaseModel):
     decompose_prompt_path : str
         Path to the `decompose_query` decision point's `PromptTemplate` YAML.
     tool_select_prompt_path : str
-        Path to the `select_tool` decision point's `PromptTemplate` YAML.
+        Path to the `select_tool` decision point's `PromptTemplate` YAML,
+        used when `mcp.client.enabled=False` (offers only the 4 local
+        tools).
+    tool_select_mcp_prompt_path : str
+        Path to the `select_tool` decision point's `PromptTemplate` YAML
+        used instead when `mcp.client.enabled=True` (offers the 4 local
+        tools plus `get_customer_case`/`get_case_status`). Kept as a
+        separate template/path, not a runtime-conditional insertion into
+        one template, so the 4-local-tool prompt an operator has already
+        reviewed is byte-identical whether or not MCP client support
+        happens to be compiled into this config.
     evidence_sufficiency_prompt_path : str
         Path to the `evidence_sufficiency` decision point's `PromptTemplate` YAML.
     synthesize_prompt_path : str
@@ -581,6 +591,7 @@ class AgentConfig(BaseModel):
     classify_prompt_path: str = "src/rag/prompts/templates/agent_classify_v1.yaml"
     decompose_prompt_path: str = "src/rag/prompts/templates/agent_decompose_v1.yaml"
     tool_select_prompt_path: str = "src/rag/prompts/templates/agent_tool_select_v2.yaml"
+    tool_select_mcp_prompt_path: str = "src/rag/prompts/templates/agent_tool_select_v4_mcp.yaml"
     evidence_sufficiency_prompt_path: str = (
         "src/rag/prompts/templates/agent_evidence_sufficiency_v1.yaml"
     )
@@ -712,18 +723,37 @@ class McpConfig(BaseModel):
         `security.authorization.enabled`'s convention.
     server : McpServerConfig
         Streamable-HTTP mount settings.
+    client : McpClientConfig
+        Agent-side MCP client settings for the two remote business
+        tools. Independent of `enabled`/`server` in principle (a
+        genuinely external deployment could run the client against a
+        server this process never mounts, via `transport="http"`), but
+        the default `transport="asgi"` requires `enabled=True`.
 
     Notes
     -----
     Identity is governed entirely by `security.auth`; there is no
     separate `mcp.auth.*` block. An MCP tool call is authenticated by
     the same `security.auth.enabled`/`insecure_dev_mode`/`jwt` rules
-    `POST /query` already uses, so the two boundaries cannot drift into
-    different security postures.
+    `POST /query` already uses (see `rag.mcp.identity`), so the two
+    surfaces can never drift into different security postures.
+    `get_customer_case`/`get_case_status` (`rag.mcp.business.store`) have
+    no config toggle of their own: they are a fixed, always-present part
+    of the server once `mcp.enabled` is `True`, and their tenant/role
+    authorization is unconditional, unlike document-level
+    `security.authorization.enabled`, which has a kill-switch for a
+    legacy, untenanted corpus that doesn't apply to this synthetic,
+    always-tenanted dataset. Because that authorization is unconditional
+    and identity-driven, `mcp.client.enabled=True` requires
+    `security.auth.enabled=True` (checked at startup; see
+    `rag.agent.mcp_client.validate_startup_config`): with auth disabled
+    there is no trustworthy tenant/role context to attach to an
+    agent-originated business-tool call.
     """
 
     enabled: bool = False
     server: McpServerConfig = Field(default_factory=McpServerConfig)
+    client: McpClientConfig = Field(default_factory=McpClientConfig)
 
 
 class AppConfig(BaseModel):
@@ -802,6 +832,21 @@ class AppConfig(BaseModel):
             ``"http://localhost:11434"`` if that variable is unset.
         """
         return os.environ.get(self.generation.base_url_env_var, "http://localhost:11434")
+
+    def mcp_client_server_url(self) -> str:
+        """Resolve the remote MCP server base URL for `mcp.client.transport="http"`.
+
+        Returns
+        -------
+        str
+            The URL read from `mcp.client.server_url_env_var`, or
+            `mcp.client.default_server_url` if that variable is unset.
+            Unused in the default `transport="asgi"` mode, which binds
+            directly to the in-process MCP ASGI app instead.
+        """
+        return os.environ.get(
+            self.mcp.client.server_url_env_var, self.mcp.client.default_server_url
+        )
 
     def cohere_api_key(self) -> str | None:
         """Resolve the Cohere API key from `reranker.cohere.api_key_env_var`.
