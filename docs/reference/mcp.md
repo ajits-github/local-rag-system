@@ -12,4 +12,6 @@
 
 ::: rag.mcp.business.store
 
+::: rag.mcp.business.approvals
+
 ::: rag.mcp.business.schemas
