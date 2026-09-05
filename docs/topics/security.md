@@ -21,6 +21,16 @@ flag defaults to off/no-op):
 - **Prompt-injection detection** is telemetry/reinforcement, not a gate:
   authorization is the actual control.
 
+These controls are inherited unchanged wherever a request enters the
+system: the [Agentic RAG](agentic-rag.md) tool-calling path and the
+[MCP](mcp.md) server/client surface both sit on top of the same
+`RetrievalPipeline`/`AuthorizationContext` enforcement described above,
+never a parallel reimplementation. MCP's one write action
+(`update_case_status`) adds a control specific to that surface: a
+sensitive mutation requires an explicit, role-gated approval the LLM is
+structurally unable to self-grant; see [MCP](mcp.md#stage-3-update_case_status-the-first-write-action)
+for that design.
+
 Full design writeups:
 
 - [Authorization, Freshness, and Trust](../architecture.md#authorization-freshness-and-trust-safetyfreshness-milestone)
