@@ -39,7 +39,12 @@ from rag.api.deps import (
     get_retrieval_pipeline,
     get_vectorstore,
 )
-from rag.api.request_auth import build_authorization_context, enforce_dos_limits
+from rag.api.request_auth import (
+    build_authorization_context,
+    enforce_case_approval_limits,
+    enforce_dos_limits,
+    resolve_case_approvals,
+)
 from rag.api.routers.agent_query import AgentQueryRequest, AgentQueryResponse
 from rag.api.routers.query import SourceItem
 from rag.config import AppConfig
@@ -246,10 +251,17 @@ def _build_validated_agent_state(
     if not config.observability.live_events.enabled:
         raise HTTPException(status_code=404, detail="Live agent events are disabled")
     enforce_dos_limits(body.query, None, body.filters, config)
+    enforce_case_approval_limits(body.case_approvals, config)
     auth = build_authorization_context(
         identity, body.tenant_id, body.roles, body.as_of, body.require_trust_level
     )
-    return AgentState(original_query=body.query, authorization_context=auth, filters=body.filters)
+    case_approvals = resolve_case_approvals(identity, body.case_approvals, config)
+    return AgentState(
+        original_query=body.query,
+        authorization_context=auth,
+        filters=body.filters,
+        case_approvals=case_approvals,
+    )
 
 
 @router.post("/agent/query/stream")
