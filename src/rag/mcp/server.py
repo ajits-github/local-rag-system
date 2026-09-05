@@ -1,4 +1,4 @@
-"""Builds the MCP server exposing the four core RAG tools plus two synthetic business tools.
+"""Builds the MCP server exposing the four core RAG tools plus three synthetic business tools.
 
 Each RAG tool is a thin adapter over `rag.agent.tools.*`, the same
 functions the in-process agent graph calls; no retrieval or
@@ -11,12 +11,16 @@ supply or override it. Every RAG result passes through
 returned, mirroring `rag.agent.graph._execute_tool`'s dispatch-then-
 sanitize pattern.
 
-`get_customer_case`/`get_case_status` are a separate tool family: thin
-adapters over `rag.mcp.business.store`, a synthetic case backend with
-its own tenant/role authorization (see that module for why it doesn't
-reuse `AuthorizationContext`/`sanitize_evidence`). They demonstrate MCP
-as an integration layer to a separate backend system, and do not route
-through `_run_tool`.
+`get_customer_case`/`get_case_status`/`update_case_status` are a
+separate tool family: thin adapters over `rag.mcp.business.store`, a
+synthetic case backend with its own tenant/role authorization (see that
+module for why it doesn't reuse `AuthorizationContext`/
+`sanitize_evidence`). They demonstrate MCP as an integration layer to a
+separate backend system, and do not route through `_run_tool`.
+`update_case_status` is the one write action, registered only when
+`config.mcp.business_actions.enabled` is `True`; its approval for a
+sensitive transition is resolved from a signed token claim
+(`_resolve_case_approvals`), never a tool argument.
 
 Every registered tool's argument model is hardened after registration
 (see `_harden_argument_schemas`) so an unknown argument is rejected
@@ -50,7 +54,14 @@ from rag.api.request_auth import build_authorization_context
 from rag.config import AppConfig
 from rag.embedders.base import Embedder
 from rag.mcp.business import store as business_store
-from rag.mcp.business.schemas import CaseStatusResult, CustomerCase
+from rag.mcp.business.approvals import resolve_case_action_approvals
+from rag.mcp.business.schemas import (
+    CaseActionOutcome,
+    CaseApproval,
+    CaseStatus,
+    CaseStatusResult,
+    CustomerCase,
+)
 from rag.mcp.identity import resolve_http_identity
 from rag.mcp.schemas import McpChunkResult, to_mcp_result
 from rag.observability import metrics as observability_metrics
@@ -65,7 +76,7 @@ logger = logging.getLogger(__name__)
 _ToolName = Literal[
     "search_knowledge_base", "get_document", "get_latest_document", "get_related_context"
 ]
-_BusinessToolName = Literal["get_customer_case", "get_case_status"]
+_BusinessToolName = Literal["get_customer_case", "get_case_status", "update_case_status"]
 _T = TypeVar("_T")
 
 
@@ -111,7 +122,7 @@ def build_mcp_server(
     *,
     fixed_identity: VerifiedIdentity | None | _Unset = _UNSET,
 ) -> MCPServer:
-    """Build the MCP server exposing the four RAG tools and two business-case tools.
+    """Build the MCP server exposing the four RAG tools and the business-case tools.
 
     Parameters
     ----------
@@ -133,8 +144,11 @@ def build_mcp_server(
     Returns
     -------
     MCPServer
-        A server with all six tools registered. Callers mount it via
-        `.streamable_http_app()` or run it via `.run_stdio_async()`.
+        A server with the four RAG tools and two business-case read
+        tools always registered, plus `update_case_status` when
+        `config.mcp.business_actions.enabled` is `True`. Callers mount
+        it via `.streamable_http_app()` or run it via
+        `.run_stdio_async()`.
     """
     server: MCPServer = MCPServer(
         name="local-rag-system",
@@ -192,6 +206,16 @@ def build_mcp_server(
         this thin wrapper exists separately from `_resolve_identity`.
         """
         return _resolve_identity(ctx)
+
+    async def _resolve_case_approvals(ctx: Context) -> list[CaseApproval]:
+        """Resolve this call's pre-authorized case-status approvals from the transport.
+
+        Read from a signed token claim (see `rag.agent.mcp_client.
+        mint_internal_token`), never from a tool argument, the same
+        trust boundary `_resolve_identity`/`_resolve_auth` already
+        enforce for identity.
+        """
+        return resolve_case_action_approvals(ctx.headers, config)
 
     def _dispatch(
         tool_name: _ToolName,
@@ -434,6 +458,39 @@ def build_mcp_server(
             "get_case_status",
             lambda: business_store.get_case_status(case_id, identity, cross_tenant_support_roles),
         )
+
+    if config.mcp.business_actions.enabled:
+
+        @server.tool(
+            name="update_case_status",
+            description=(
+                "Request a status change for a synthetic customer-support case. "
+                "case_id and new_status are the only arguments; whether the "
+                "transition is valid, and whether it needs prior approval, is "
+                "decided entirely server-side. A sensitive transition without "
+                "prior approval returns outcome='approval_required' and makes "
+                "no change."
+            ),
+        )
+        async def update_case_status(
+            case_id: str,
+            new_status: CaseStatus,
+            identity: Annotated[VerifiedIdentity | None, Resolve(_resolve_identity_only)] = None,
+            approved_transitions: Annotated[
+                list[CaseApproval] | None, Resolve(_resolve_case_approvals)
+            ] = None,
+        ) -> CaseActionOutcome | None:
+            cross_tenant_support_roles = config.security.authorization.cross_tenant_support_roles
+            return _run_business_tool(
+                "update_case_status",
+                lambda: business_store.update_case_status(
+                    case_id,
+                    new_status,
+                    identity,
+                    cross_tenant_support_roles,
+                    approved_transitions or [],
+                ),
+            )
 
     _harden_argument_schemas(server)
     return server
