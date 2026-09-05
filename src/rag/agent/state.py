@@ -11,6 +11,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from rag.mcp.business.schemas import CaseApproval
 from rag.retrieval.authorization import AuthorizationContext
 from rag.schemas import SearchResult
 
@@ -77,6 +78,7 @@ class ToolCallRecord(BaseModel):
         "get_related_context",
         "get_customer_case",
         "get_case_status",
+        "update_case_status",
     ]
     args: dict[str, Any] = Field(default_factory=dict)
     result_count: int = 0
@@ -100,6 +102,12 @@ class AgentState(BaseModel):
         Exact-match retrieval filters (notably `dataset_id`, the hard
         dataset namespace boundary), set once from the request and never
         mutated by any LLM decision.
+    case_approvals : list[CaseApproval]
+        Pre-authorized `(case_id, new_status)` pairs for the
+        `update_case_status` write-action tool, set once by the API
+        router from a role-gated request field and never derived from
+        anything LLM-produced. Empty unless the caller's verified
+        identity holds an `mcp.business_actions.approval_roles` role.
     query_type : {"simple", "complex"} or None
         `classify_query`'s routing decision.
     subquestions : list[str]
@@ -158,6 +166,7 @@ class AgentState(BaseModel):
     original_query: str
     authorization_context: AuthorizationContext | None = None
     filters: dict[str, Any] | None = None
+    case_approvals: list[CaseApproval] = Field(default_factory=list)
     query_type: Literal["simple", "complex"] | None = None
     subquestions: list[str] = Field(default_factory=list)
     current_query: str = ""
