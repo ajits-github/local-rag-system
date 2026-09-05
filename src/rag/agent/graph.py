@@ -16,19 +16,24 @@ Every tool call's evidence passes through `RetrievalPipeline.sanitize_evidence`
 in `_execute_tool` before being appended to state, uniformly across tools,
 so no tool can bypass field redaction/injection detection by construction.
 
-Six tools exist: four local, in-process ones dispatched by
-`_dispatch_tool`, plus two remote business-support tools
-(`get_customer_case`/`get_case_status`) dispatched via a real MCP client
-call through `_dispatch_mcp_tool` and `rag.agent.mcp_client`.
-`select_tool` picks a tool purely by name; it never reasons about "local
-vs remote" as a separate concept, since that split is a static,
-server-side lookup (`rag.agent.tool_schemas.REMOTE_MCP_TOOL_NAMES`)
-`_execute_tool` checks before dispatch. The two remote tools are only
-ever offered to the model when `config.mcp.client.enabled=True` (a
-different tool-select prompt template is loaded in that case; see
-`_load_templates`); `_execute_tool` fails a remote-tool decision closed,
-as an ordinary recorded tool failure, if that config is off despite a
-decision naming one anyway.
+Seven tools exist: four local, in-process ones dispatched by
+`_dispatch_tool`, plus three remote business-support tools
+(`get_customer_case`/`get_case_status`/`update_case_status`) dispatched
+via a real MCP client call through `_dispatch_mcp_tool` and
+`rag.agent.mcp_client`. `select_tool` picks a tool purely by name; it
+never reasons about "local vs remote" as a separate concept, since that
+split is a static, server-side lookup
+(`rag.agent.tool_schemas.REMOTE_MCP_TOOL_NAMES`) `_execute_tool` checks
+before dispatch. The two read tools are only ever offered to the model
+when `config.mcp.client.enabled=True`; `update_case_status` additionally
+requires `config.mcp.business_actions.enabled=True` (a different
+tool-select prompt template is loaded per combination; see
+`_load_templates`). `_execute_tool` fails a remote-tool or disabled-
+write-action decision closed, as an ordinary recorded tool failure, if
+the relevant config is off despite a decision naming one anyway.
+`update_case_status` is also treated as the last tool call of a run: once
+dispatched, regardless of outcome, the tool-call loop ends and proceeds
+to synthesis rather than looping back to retry the same mutation.
 
 Node timing, tracing, and metrics wrap existing node calls via
 `_TimingLLM` and `_call_node` without changing any node's decision logic;
@@ -56,7 +61,11 @@ from rag.agent.decisions import (
 )
 from rag.agent.events import AgentEvent, EventType
 from rag.agent.state import AgentState, Citation, NodeInvocationTiming, ToolCallRecord
-from rag.agent.tool_schemas import REMOTE_MCP_TOOL_NAMES, TOOL_ARG_MODELS
+from rag.agent.tool_schemas import (
+    REMOTE_MCP_TOOL_NAMES,
+    TOOL_ARG_MODELS,
+    WRITE_ACTION_TOOL_NAMES,
+)
 from rag.audit import log_audit_event
 from rag.config import AgentConfig, AppConfig
 from rag.embedders.base import Embedder
@@ -198,18 +207,22 @@ def _load_template(path: str) -> PromptTemplate:
 def _load_templates(config: AppConfig) -> dict[str, PromptTemplate]:
     """Load all five agent decision-point templates, per `config.agent.*_prompt_path`.
 
-    `tool_select` loads `tool_select_mcp_prompt_path` (the two remote
-    business tools included) instead of `tool_select_prompt_path` when
-    `config.mcp.client.enabled` is `True`: a separate template file, not
-    a runtime-conditional insertion, so the 4-tool prompt used elsewhere
-    is unaffected by this flag.
+    `tool_select` loads one of three separate template files, never a
+    runtime-conditional insertion into a shared one: the 4-local-tool
+    prompt (`tool_select_prompt_path`) when `mcp.client.enabled=False`;
+    the 6-tool prompt including the two read business tools
+    (`tool_select_mcp_prompt_path`) when `mcp.client.enabled=True` and
+    `mcp.business_actions.enabled=False`; the 7-tool prompt additionally
+    including `update_case_status`
+    (`tool_select_mcp_actions_prompt_path`) when both are `True`.
     """
     agent_cfg = config.agent
-    tool_select_path = (
-        agent_cfg.tool_select_mcp_prompt_path
-        if config.mcp.client.enabled
-        else agent_cfg.tool_select_prompt_path
-    )
+    if config.mcp.client.enabled and config.mcp.business_actions.enabled:
+        tool_select_path = agent_cfg.tool_select_mcp_actions_prompt_path
+    elif config.mcp.client.enabled:
+        tool_select_path = agent_cfg.tool_select_mcp_prompt_path
+    else:
+        tool_select_path = agent_cfg.tool_select_prompt_path
     return {
         "classify": _load_template(
             str(config.agent_prompt_template_path(agent_cfg.classify_prompt_path))
@@ -529,6 +542,7 @@ def _dispatch_mcp_tool(
         auth=state.authorization_context,
         config=config,
         mcp_app=mcp_app,
+        case_approvals=state.case_approvals,
     )
 
 
@@ -582,12 +596,19 @@ def _execute_tool(
         return state
 
     is_remote_tool = decision.tool_name in REMOTE_MCP_TOOL_NAMES
-    if is_remote_tool and not config.mcp.client.enabled:
-        # Defense in depth: the tool-select prompt already never offers these two
-        # names unless mcp.client.enabled (see _load_templates), so this only fires
+    is_write_action = decision.tool_name in WRITE_ACTION_TOOL_NAMES
+    mcp_client_disabled = is_remote_tool and not config.mcp.client.enabled
+    business_action_disabled = is_write_action and not config.mcp.business_actions.enabled
+    if mcp_client_disabled or business_action_disabled:
+        # Defense in depth: the tool-select prompt already never offers a name
+        # unless its config is enabled (see _load_templates), so this only fires
         # on a hallucinated/stale decision. Fails like an invalid-argument decision:
         # a recorded failure, never a dispatch attempt, never a crash.
-        log_audit_event("agent_mcp_tool_disabled", tool_name=decision.tool_name)
+        error = "mcp_client_disabled" if mcp_client_disabled else "business_actions_disabled"
+        log_audit_event(
+            "agent_mcp_tool_disabled" if mcp_client_disabled else "agent_business_action_disabled",
+            tool_name=decision.tool_name,
+        )
         latency_ms = (time.perf_counter() - t0) * 1000
         state.tool_call_history.append(
             ToolCallRecord(
@@ -596,7 +617,7 @@ def _execute_tool(
                 result_count=0,
                 latency_ms=latency_ms,
                 success=False,
-                error="mcp_client_disabled",
+                error=error,
             )
         )
         state.tool_call_count += 1
@@ -1017,6 +1038,14 @@ def run_agent(
             ),
         )
         if _step_or_stop(state, agent_cfg):
+            break
+        if decision.tool_name in WRITE_ACTION_TOOL_NAMES:
+            # A write-action attempt (any outcome: executed, approval_required,
+            # invalid_transition, already_in_status, or a dispatch failure) is
+            # always the last tool call of a run -- never retried in the same
+            # run's evidence-sufficiency/reformulate loop. Proceeds straight to
+            # synthesis, which reports the true outcome from the evidence
+            # _execute_tool already recorded.
             break
 
         state = _call_node(
