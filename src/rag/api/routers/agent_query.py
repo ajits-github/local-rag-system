@@ -14,7 +14,7 @@ from datetime import date
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from starlette.applications import Starlette
 
 from rag.agent.graph import run_agent
@@ -30,11 +30,17 @@ from rag.api.deps import (
     get_retrieval_pipeline,
     get_vectorstore,
 )
-from rag.api.request_auth import build_authorization_context, enforce_dos_limits
+from rag.api.request_auth import (
+    build_authorization_context,
+    enforce_case_approval_limits,
+    enforce_dos_limits,
+    resolve_case_approvals,
+)
 from rag.api.routers.query import SourceItem
 from rag.config import AppConfig
 from rag.embedders.base import Embedder
 from rag.generation.base import LLM
+from rag.mcp.business.schemas import MAX_CASE_APPROVALS, CaseApproval
 from rag.retrieval.pipeline import RetrievalPipeline
 from rag.vectorstore.base import VectorStore
 
@@ -48,6 +54,10 @@ class AgentQueryRequest(BaseModel):
     Same identity-claim precedence as `QueryRequest` (see
     `rag.api.request_auth.build_authorization_context`): `tenant_id`/
     `roles` are only trusted when no verified JWT identity is present.
+    `case_approvals` is honored only when the verified caller holds an
+    `mcp.business_actions.approval_roles` role (see
+    `rag.api.request_auth.resolve_case_approvals`); it is silently
+    dropped, not trusted, otherwise.
     """
 
     query: str
@@ -56,6 +66,7 @@ class AgentQueryRequest(BaseModel):
     roles: list[str] | None = None
     as_of: date | None = None
     require_trust_level: str | None = None
+    case_approvals: list[CaseApproval] | None = Field(default=None, max_length=MAX_CASE_APPROVALS)
 
 
 class AgentQueryResponse(BaseModel):
@@ -123,10 +134,17 @@ def agent_query(
         `"classic_rag"` route with zero extra LLM calls.
     """
     enforce_dos_limits(body.query, None, body.filters, config)
+    enforce_case_approval_limits(body.case_approvals, config)
     auth = build_authorization_context(
         identity, body.tenant_id, body.roles, body.as_of, body.require_trust_level
     )
-    state = AgentState(original_query=body.query, authorization_context=auth, filters=body.filters)
+    case_approvals = resolve_case_approvals(identity, body.case_approvals, config)
+    state = AgentState(
+        original_query=body.query,
+        authorization_context=auth,
+        filters=body.filters,
+        case_approvals=case_approvals,
+    )
     result = run_agent(
         state,
         pipeline=pipeline,
