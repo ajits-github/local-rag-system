@@ -720,8 +720,37 @@ class McpClientConfig(BaseModel):
     internal_token_issuer: str = "rag-agent-internal"
 
 
+class BusinessActionConfig(BaseModel):
+    """Config for the `update_case_status` write-action MCP tool.
+
+    Attributes
+    ----------
+    enabled : bool
+        When `False` (the default), a true no-op: `update_case_status`
+        is not registered on the MCP server at all, and a decision
+        naming it fails closed in `_execute_tool` regardless. Matches
+        `mcp.enabled`/`mcp.client.enabled`'s convention.
+    approval_roles : list[str]
+        Role names allowed to pre-authorize a sensitive case-status
+        transition (e.g. `resolved -> closed`) via a request's
+        `case_approvals` field. Independent of
+        `security.authorization.cross_tenant_support_roles`: this gates
+        an elevated write capability, not a tenant boundary crossing.
+    max_case_approvals_per_request : int
+        Operator-configurable ceiling on how many approvals a single
+        request may carry, enforced at the API boundary (see
+        `rag.api.request_auth.enforce_case_approval_limits`). Smaller
+        than `rag.mcp.business.schemas.MAX_CASE_APPROVALS`, the hard
+        schema-level ceiling that applies regardless of this value.
+    """
+
+    enabled: bool = False
+    approval_roles: list[str] = Field(default_factory=lambda: ["case_status_approver"])
+    max_case_approvals_per_request: int = 5
+
+
 class McpConfig(BaseModel):
-    """MCP server exposing the four RAG tools plus two synthetic business-case tools.
+    """MCP server exposing the four RAG tools plus synthetic business-case tools.
 
     Attributes
     ----------
@@ -734,11 +763,15 @@ class McpConfig(BaseModel):
     server : McpServerConfig
         Streamable-HTTP mount settings.
     client : McpClientConfig
-        Agent-side MCP client settings for the two remote business
-        tools. Independent of `enabled`/`server` in principle (a
-        genuinely external deployment could run the client against a
-        server this process never mounts, via `transport="http"`), but
-        the default `transport="asgi"` requires `enabled=True`.
+        Agent-side MCP client settings for the remote business tools.
+        Independent of `enabled`/`server` in principle (a genuinely
+        external deployment could run the client against a server this
+        process never mounts, via `transport="http"`), but the default
+        `transport="asgi"` requires `enabled=True`.
+    business_actions : BusinessActionConfig
+        Settings for the `update_case_status` write-action tool. A
+        separate kill-switch from `client.enabled`: the two read tools
+        can be enabled without exposing the write tool.
 
     Notes
     -----
@@ -764,6 +797,7 @@ class McpConfig(BaseModel):
     enabled: bool = False
     server: McpServerConfig = Field(default_factory=McpServerConfig)
     client: McpClientConfig = Field(default_factory=McpClientConfig)
+    business_actions: BusinessActionConfig = Field(default_factory=BusinessActionConfig)
 
 
 class AppConfig(BaseModel):
