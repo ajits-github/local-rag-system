@@ -43,6 +43,11 @@ AuthEventType = Literal[
     "mcp_auth_success",
     "mcp_auth_failure",
     "agent_mcp_tool_disabled",
+    "agent_business_action_disabled",
+    "case_action_requested",
+    "case_action_approval_required",
+    "case_action_executed",
+    "case_action_invalid_transition",
 ]
 
 

@@ -1,8 +1,10 @@
 """Synthetic customer-support-case backend, with its own tenant/role authorization.
 
-Read-only, in-memory, and self-contained (no Postgres/network
-dependency): a stand-in for a separate backend system an MCP server
-might front, not a real case-management system.
+In-memory and self-contained (no Postgres/network dependency): a
+stand-in for a separate backend system an MCP server might front, not a
+real case-management system. Mostly read-only; `update_case_status` is
+the one write action, gated by a deterministic transition table and an
+approval requirement for sensitive transitions.
 
 Authorization here does not reuse
 `rag.retrieval.authorization.AuthorizationContext` (no document/
@@ -21,13 +23,22 @@ so a real denial is still audit-logged as `authorization_denied`.
 
 from __future__ import annotations
 
+import threading
+from collections.abc import Sequence
 from datetime import UTC, datetime
 
 from pydantic import BaseModel
 
 from rag.api.auth import VerifiedIdentity
 from rag.audit import log_audit_event, pseudonymous_subject
-from rag.mcp.business.schemas import CasePriority, CaseStatus, CaseStatusResult, CustomerCase
+from rag.mcp.business.schemas import (
+    CaseActionOutcome,
+    CaseApproval,
+    CasePriority,
+    CaseStatus,
+    CaseStatusResult,
+    CustomerCase,
+)
 
 
 class _CaseRecord(BaseModel):
@@ -247,3 +258,151 @@ def get_case_status(
         case_id, identity, cross_tenant_support_roles, action="get_case_status"
     )
     return case.to_status() if case is not None else None
+
+
+# Deterministic, server-side transition rules for update_case_status. Never
+# consulted or overridable by the LLM. Only (resolved -> closed) is sensitive;
+# every other valid transition applies immediately once authorized.
+_VALID_TRANSITIONS: dict[CaseStatus, frozenset[CaseStatus]] = {
+    "open": frozenset({"in_progress"}),
+    "in_progress": frozenset({"resolved"}),
+    "resolved": frozenset({"closed"}),
+    "closed": frozenset(),
+}
+_SENSITIVE_TRANSITIONS: frozenset[tuple[CaseStatus, CaseStatus]] = frozenset(
+    {("resolved", "closed")}
+)
+
+# Guards the read-check-mutate sequence in update_case_status so two
+# concurrent requests for the same case can never both observe a
+# pre-mutation status and both decide to apply it.
+_CASE_MUTATION_LOCK = threading.Lock()
+
+
+def update_case_status(
+    case_id: str,
+    new_status: CaseStatus,
+    identity: VerifiedIdentity | None,
+    cross_tenant_support_roles: list[str],
+    approved_transitions: Sequence[CaseApproval] = (),
+) -> CaseActionOutcome | None:
+    """Request a status change for one case, enforcing transition and approval rules.
+
+    Unlike `get_customer_case`/`get_case_status`, `identity is None` is
+    treated as a hard denial here rather than "unrestricted": this is a
+    mutating action, so there is no legacy unauthenticated-access state
+    worth preserving.
+
+    Parameters
+    ----------
+    case_id : str
+        The case identifier.
+    new_status : CaseStatus
+        The requested target status.
+    identity : VerifiedIdentity | None
+        The resolved caller identity. `None` (no authenticated caller)
+        is always denied.
+    cross_tenant_support_roles : list[str]
+        Same cross-tenant allow-list `get_customer_case` uses.
+    approved_transitions : Sequence[CaseApproval]
+        Pre-authorized `(case_id, new_status)` pairs, resolved from a
+        trusted, signed channel (see `rag.agent.mcp_client.
+        mint_internal_token`), never from a tool argument.
+
+    Returns
+    -------
+    CaseActionOutcome | None
+        `None` for both "no such case" and "not authorized" (mirrors
+        the read tools), and for an unauthenticated caller. Otherwise a
+        `CaseActionOutcome` describing exactly what happened; a
+        non-`"executed"` outcome always means no mutation occurred.
+    """
+    if identity is None:
+        log_audit_event(
+            "authorization_denied",
+            action="update_case_status",
+            case_id=case_id,
+            reason="unauthenticated",
+        )
+        return None
+
+    case = _lookup_authorized(
+        case_id, identity, cross_tenant_support_roles, action="update_case_status"
+    )
+    if case is None:
+        return None
+
+    with _CASE_MUTATION_LOCK:
+        previous_status = case.status
+
+        log_audit_event(
+            "case_action_requested",
+            subject=pseudonymous_subject(identity.subject),
+            case_id=case_id,
+            from_status=previous_status,
+            to_status=new_status,
+        )
+
+        if previous_status == new_status:
+            return CaseActionOutcome(
+                outcome="already_in_status",
+                case_id=case_id,
+                previous_status=previous_status,
+                new_status=new_status,
+                updated_at=case.updated_at,
+            )
+
+        if new_status not in _VALID_TRANSITIONS.get(previous_status, frozenset()):
+            log_audit_event(
+                "case_action_invalid_transition",
+                subject=pseudonymous_subject(identity.subject),
+                case_id=case_id,
+                from_status=previous_status,
+                to_status=new_status,
+            )
+            return CaseActionOutcome(
+                outcome="invalid_transition",
+                case_id=case_id,
+                previous_status=previous_status,
+                new_status=new_status,
+                updated_at=case.updated_at,
+            )
+
+        if (previous_status, new_status) in _SENSITIVE_TRANSITIONS:
+            approved = any(
+                a.case_id == case_id and a.new_status == new_status for a in approved_transitions
+            )
+            if not approved:
+                log_audit_event(
+                    "case_action_approval_required",
+                    subject=pseudonymous_subject(identity.subject),
+                    case_id=case_id,
+                    from_status=previous_status,
+                    to_status=new_status,
+                )
+                return CaseActionOutcome(
+                    outcome="approval_required",
+                    case_id=case_id,
+                    previous_status=previous_status,
+                    new_status=new_status,
+                    updated_at=case.updated_at,
+                )
+
+        case.status = new_status
+        case.updated_at = datetime.now(UTC)
+        updated_at = case.updated_at
+
+    log_audit_event(
+        "case_action_executed",
+        subject=pseudonymous_subject(identity.subject),
+        case_id=case_id,
+        from_status=previous_status,
+        to_status=new_status,
+    )
+    return CaseActionOutcome(
+        outcome="executed",
+        case_id=case_id,
+        previous_status=previous_status,
+        new_status=new_status,
+        updated_at=updated_at,
+    )
