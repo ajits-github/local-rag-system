@@ -17,9 +17,10 @@ import jwt
 import pytest
 
 from rag.agent import mcp_client
-from rag.agent.tool_schemas import GetCaseStatusArgs, GetCustomerCaseArgs
+from rag.agent.tool_schemas import GetCaseStatusArgs, GetCustomerCaseArgs, UpdateCaseStatusArgs
 from rag.agent.tools import ToolExecutionError
 from rag.config import load_config
+from rag.mcp.business.schemas import CaseApproval
 from rag.retrieval.authorization import AuthorizationContext
 
 _SECRET = "mcp-client-unit-test-secret-not-real"
@@ -242,6 +243,34 @@ def test_mint_internal_token_rejects_non_hs256_algorithm():
         mcp_client.mint_internal_token(auth, config)
 
 
+def test_mint_internal_token_omits_case_approvals_claim_when_none_supplied():
+    """No case_approvals claim at all for an ordinary read-tool call."""
+    config = _secure_config()
+    auth = AuthorizationContext(tenant_id="tenant_alpha", roles=["op"])
+    token = mcp_client.mint_internal_token(auth, config)
+    claims = jwt.decode(token, _SECRET, algorithms=["HS256"], options={"verify_aud": False})
+    assert "case_approvals" not in claims
+
+
+def test_mint_internal_token_carries_case_approvals_claim_when_supplied():
+    """A supplied case_approvals list is embedded verbatim as a signed claim."""
+    config = _secure_config()
+    auth = AuthorizationContext(tenant_id="tenant_alpha", roles=["op"])
+    approvals = [CaseApproval(case_id="CASE-1002", new_status="resolved")]
+    token = mcp_client.mint_internal_token(auth, config, approvals)
+    claims = jwt.decode(token, _SECRET, algorithms=["HS256"], options={"verify_aud": False})
+    assert claims["case_approvals"] == [{"case_id": "CASE-1002", "new_status": "resolved"}]
+
+
+def test_mint_internal_token_rejects_case_approvals_over_the_configured_maximum():
+    """Defense in depth: the token minter itself also bounds case_approvals, not just the API."""
+    config = _secure_config(**{"mcp.business_actions.max_case_approvals_per_request": 2})
+    auth = AuthorizationContext(tenant_id="tenant_alpha", roles=["op"])
+    approvals = [CaseApproval(case_id=f"CASE-{i}", new_status="closed") for i in range(3)]
+    with pytest.raises(RuntimeError, match="case_approvals"):
+        mcp_client.mint_internal_token(auth, config, approvals)
+
+
 # --- fail-closed without identity --------------------------------------------
 
 
@@ -267,6 +296,19 @@ def test_dispatch_remote_tool_sync_fails_closed_with_no_tenant_id():
             "get_case_status",
             GetCaseStatusArgs(case_id="CASE-1001"),
             auth=auth,
+            config=config,
+            mcp_app=None,
+        )
+
+
+def test_dispatch_remote_tool_sync_fails_closed_for_update_case_status_with_no_auth():
+    """The write-action tool has no anonymous path either, exactly like the two read tools."""
+    config = _secure_config(**{"mcp.client.enabled": True, "mcp.enabled": True})
+    with pytest.raises(ToolExecutionError, match="authenticated caller identity"):
+        mcp_client.dispatch_remote_tool_sync(
+            "update_case_status",
+            UpdateCaseStatusArgs(case_id="CASE-1002", new_status="closed"),
+            auth=None,
             config=config,
             mcp_app=None,
         )
@@ -327,3 +369,32 @@ def test_case_status_evidence_carries_no_tenant_id():
     )
     assert result.chunk.metadata.tenant_id is None
     assert result.origin == "mcp_remote"
+
+
+@pytest.mark.parametrize(
+    ("outcome", "expect_in_text"),
+    [
+        ("executed", "was changed from resolved to closed"),
+        ("already_in_status", "already closed; no change was made"),
+        ("invalid_transition", "not a valid transition"),
+        ("approval_required", "requires approval before it can be applied"),
+    ],
+)
+def test_update_case_status_evidence_states_the_true_outcome(outcome, expect_in_text):
+    """Every outcome's rendered evidence text is unambiguous about whether a mutation happened."""
+    result = mcp_client._business_result_to_search_result(
+        "update_case_status",
+        "CASE-1002",
+        {
+            "outcome": outcome,
+            "case_id": "CASE-1002",
+            "previous_status": "resolved",
+            "new_status": "closed",
+            "updated_at": "2026-08-27T14:02:00Z",
+        },
+    )
+    assert expect_in_text in result.chunk.content
+    assert result.origin == "mcp_remote"
+    assert result.chunk.metadata.tenant_id is None
+    assert result.chunk.metadata.document_version is None
+    assert result.chunk.metadata.allowed_roles is None
