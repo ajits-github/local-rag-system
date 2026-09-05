@@ -1,19 +1,22 @@
 """Real MCP client/server end-to-end tests for the agent's Stage 2 business tools.
 
 Runs `run_agent()` all the way through, dispatching `get_customer_case`/
-`get_case_status` via a real `mcp.ClientSession` against a real (in-process,
-ASGI-transport) MCP server object built the same way `rag.api.main` builds
-it -- not a mocked dispatch function. Uses `_FakePipeline`/`_FakeVectorStore`/
-`_FakeEmbedder` doubles (same pattern as
-`tests/integration/test_mcp_end_to_end.py`) for the local-tool side, which
-these tests never exercise, and the real `rag.mcp.business.store` synthetic
-dataset for the business-tool side. No Postgres/Ollama needed -- self-
-contained, always runs (the business store has no such dependency either).
+`get_case_status`/`update_case_status` via a real `mcp.ClientSession`
+against a real (in-process, ASGI-transport) MCP server object built the
+same way `rag.api.main` builds it -- not a mocked dispatch function. Uses
+`_FakePipeline`/`_FakeVectorStore`/`_FakeEmbedder` doubles (same pattern
+as `tests/integration/test_mcp_end_to_end.py`) for the local-tool side,
+which these tests never exercise, and the real `rag.mcp.business.store`
+synthetic dataset for the business-tool side. No Postgres/Ollama needed --
+self-contained, always runs (the business store has no such dependency
+either). `_reset_case_store` restores the shared, in-memory case dataset
+after every test, since the `update_case_status` tests genuinely mutate it.
 """
 
 from __future__ import annotations
 
 import asyncio
+import copy
 import time
 
 import jwt
@@ -23,9 +26,19 @@ from rag.agent.graph import run_agent
 from rag.agent.state import AgentState
 from rag.config import load_config
 from rag.mcp.asgi import build_mcp_asgi_app
+from rag.mcp.business import store as business_store
+from rag.mcp.business.schemas import CaseApproval
 from rag.retrieval.authorization import AuthorizationContext
 
 _SECRET = "agent-mcp-stage2-e2e-secret-not-real"
+
+
+@pytest.fixture(autouse=True)
+def _reset_case_store():
+    original = copy.deepcopy(business_store._SYNTHETIC_CASES)
+    yield
+    business_store._SYNTHETIC_CASES.clear()
+    business_store._SYNTHETIC_CASES.update(original)
 
 
 class _FakeEmbedder:
@@ -86,6 +99,34 @@ class ScriptedRemoteToolLLM:
         return True
 
 
+class ScriptedUpdateCaseStatusLLM:
+    """Classifies complex, decomposes once, calls update_case_status, then synthesizes."""
+
+    def __init__(self, case_id: str, new_status: str) -> None:
+        self._case_id = case_id
+        self._new_status = new_status
+
+    def generate(self, system: str, user: str) -> str:
+        """Return the scripted response for whichever decision component asked."""
+        if "routing component" in system:
+            return '{"query_type": "complex"}'
+        if "decomposition component" in system:
+            return '{"subquestions": ["q1"]}'
+        if "tool-selection component" in system:
+            return (
+                '{"tool_name": "update_case_status", '
+                f'"tool_args": {{"case_id": "{self._case_id}", '
+                f'"new_status": "{self._new_status}"}}}}'
+            )
+        if "evidence-sufficiency component" in system:
+            return '{"sufficient": true}'
+        return f"Here is the outcome of the requested change for case {self._case_id}."
+
+    def health_check(self) -> bool:
+        """Report healthy, always."""
+        return True
+
+
 class NeverSufficientLLM:
     """Same shape as ScriptedRemoteToolLLM but never reports evidence sufficient.
 
@@ -119,13 +160,16 @@ class NeverSufficientLLM:
         return True
 
 
-def _secure_mcp_config(*, monkeypatch, ttl_seconds: int | None = None):
+def _secure_mcp_config(
+    *, monkeypatch, ttl_seconds: int | None = None, business_actions: bool = False
+):
     monkeypatch.setenv("JWT_HS256_SECRET", _SECRET)
     config = load_config().model_copy(deep=True)
     config.security.auth.enabled = True
     config.security.auth.jwt.secret_env_var = "JWT_HS256_SECRET"
     config.mcp.enabled = True
     config.mcp.client.enabled = True
+    config.mcp.business_actions.enabled = business_actions
     config.agent.enabled = True
     config.agent.max_retrieval_attempts = 1000
     config.agent.max_agent_steps = 12
@@ -329,3 +373,104 @@ async def test_original_caller_credential_never_reaches_the_mcp_server(monkeypat
         claims = jwt.decode(token, _SECRET, algorithms=["HS256"], options={"verify_aud": False})
         assert claims["sub"] == config.mcp.client.internal_token_subject
         assert claims["sub"] != "real-end-user-alice"
+
+
+@pytest.mark.asyncio
+async def test_agent_run_reports_approval_required_without_mutating_the_case(monkeypatch):
+    """Resolved -> closed on CASE-2001, with no approval attached: no mutation, no retry."""
+    config = _secure_mcp_config(monkeypatch=monkeypatch, business_actions=True)
+    mcp_app = build_mcp_asgi_app(config, _FakePipeline(), _FakeVectorStore(), _FakeEmbedder())
+    llm = ScriptedUpdateCaseStatusLLM("CASE-2001", "closed")
+    auth = AuthorizationContext(tenant_id="tenant_beta", roles=["tenant_beta_operator"])
+    state = AgentState(original_query="close case CASE-2001", authorization_context=auth)
+
+    async with mcp_app.router.lifespan_context(mcp_app):
+        result = await asyncio.to_thread(
+            run_agent,
+            state,
+            pipeline=_FakePipeline(),
+            vectorstore=_FakeVectorStore(),
+            embedder=_FakeEmbedder(),
+            llm=llm,
+            config=config,
+            mcp_app=mcp_app,
+        )
+
+    assert result.state.termination_reason == "synthesized"
+    write_calls = [r for r in result.state.tool_call_history if r.tool_name == "update_case_status"]
+    assert len(write_calls) == 1
+    assert write_calls[0].success is True
+    assert business_store._SYNTHETIC_CASES["CASE-2001"].status == "resolved"
+    assert any(c.source == "mcp://business/CASE-2001" for c in result.state.citations)
+    assert any("requires approval" in r.chunk.content for r in result.state.retrieved_evidence)
+
+
+@pytest.mark.asyncio
+async def test_agent_run_executes_the_mutation_when_case_approvals_supplied(monkeypatch):
+    """The identical request, but with a matching approval, actually mutates the case.
+
+    The caller's roles include case_status_approver alongside their
+    ordinary case-access role: the internal token embeds the caller's
+    full role set, and the MCP server re-checks that set against
+    mcp.business_actions.approval_roles before honoring case_approvals
+    (defense in depth, independent of the API-boundary role gate).
+    """
+    config = _secure_mcp_config(monkeypatch=monkeypatch, business_actions=True)
+    mcp_app = build_mcp_asgi_app(config, _FakePipeline(), _FakeVectorStore(), _FakeEmbedder())
+    llm = ScriptedUpdateCaseStatusLLM("CASE-2001", "closed")
+    auth = AuthorizationContext(
+        tenant_id="tenant_beta", roles=["tenant_beta_operator", "case_status_approver"]
+    )
+    state = AgentState(
+        original_query="close case CASE-2001",
+        authorization_context=auth,
+        case_approvals=[CaseApproval(case_id="CASE-2001", new_status="closed")],
+    )
+
+    async with mcp_app.router.lifespan_context(mcp_app):
+        result = await asyncio.to_thread(
+            run_agent,
+            state,
+            pipeline=_FakePipeline(),
+            vectorstore=_FakeVectorStore(),
+            embedder=_FakeEmbedder(),
+            llm=llm,
+            config=config,
+            mcp_app=mcp_app,
+        )
+
+    assert result.state.termination_reason == "synthesized"
+    write_calls = [r for r in result.state.tool_call_history if r.tool_name == "update_case_status"]
+    assert len(write_calls) == 1
+    assert write_calls[0].success is True
+    assert business_store._SYNTHETIC_CASES["CASE-2001"].status == "closed"
+
+
+def test_remote_update_case_status_failure_does_not_crash_run_agent(monkeypatch):
+    """A malformed/missing mcp_app for update_case_status is a recorded failure, not a crash.
+
+    Same reasoning and sync-test shape as
+    test_mcp_tool_error_does_not_escape_run_agent above.
+    """
+    config = _secure_mcp_config(monkeypatch=monkeypatch, business_actions=True)
+    llm = ScriptedUpdateCaseStatusLLM("CASE-2001", "closed")
+    auth = AuthorizationContext(tenant_id="tenant_beta", roles=["tenant_beta_operator"])
+    state = AgentState(original_query="close case CASE-2001", authorization_context=auth)
+
+    result = run_agent(
+        state,
+        pipeline=_FakePipeline(),
+        vectorstore=_FakeVectorStore(),
+        embedder=_FakeEmbedder(),
+        llm=llm,
+        config=config,
+        mcp_app=None,  # deliberately not wired -> _call_tool_async raises RuntimeError
+    )
+
+    assert result.state.final_answer is not None
+    failed_calls = [
+        r for r in result.state.tool_call_history if r.tool_name == "update_case_status"
+    ]
+    assert failed_calls and all(r.success is False for r in failed_calls)
+    assert len(failed_calls) == 1  # no retry after a write-action failure either
+    assert business_store._SYNTHETIC_CASES["CASE-2001"].status == "resolved"
