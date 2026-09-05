@@ -19,8 +19,10 @@ from rag.agent.state import AgentState
 from rag.agent.tool_schemas import (
     REMOTE_MCP_TOOL_NAMES,
     TOOL_ARG_MODELS,
+    WRITE_ACTION_TOOL_NAMES,
     GetCaseStatusArgs,
     GetCustomerCaseArgs,
+    UpdateCaseStatusArgs,
 )
 from rag.agent.tools import get_related_context
 from rag.config import load_config
@@ -60,6 +62,29 @@ class RemoteToolAlwaysLLM:
             return '{"subquestions": ["q1"]}'
         if "tool-selection component" in system:
             return '{"tool_name": "get_customer_case", "tool_args": {"case_id": "CASE-1001"}}'
+        if "evidence-sufficiency component" in system:
+            return '{"sufficient": false, "reformulated_query": "q1 again"}'
+        return "final best-effort answer"
+
+    def health_check(self) -> bool:
+        """Report healthy, always."""
+        return True
+
+
+class RemoteToolAlwaysUpdateStatusLLM:
+    """Always classifies complex, decomposes once, and always picks update_case_status."""
+
+    def generate(self, system: str, user: str) -> str:
+        """Return the scripted response for whichever decision component asked."""
+        if "routing component" in system:
+            return '{"query_type": "complex"}'
+        if "decomposition component" in system:
+            return '{"subquestions": ["q1"]}'
+        if "tool-selection component" in system:
+            return (
+                '{"tool_name": "update_case_status", '
+                '"tool_args": {"case_id": "CASE-1001", "new_status": "closed"}}'
+            )
         if "evidence-sufficiency component" in system:
             return '{"sufficient": false, "reformulated_query": "q1 again"}'
         return "final best-effort answer"
@@ -121,6 +146,9 @@ def _agent_config(**overrides):
             "client": config.mcp.client.model_copy(
                 update={"enabled": overrides.get("mcp_client_enabled", False)}
             ),
+            "business_actions": config.mcp.business_actions.model_copy(
+                update={"enabled": overrides.get("business_actions_enabled", False)}
+            ),
         }
     )
     return config.model_copy(update={"agent": agent, "mcp": mcp})
@@ -169,9 +197,87 @@ def test_remote_tool_decision_still_offered_literal_is_valid_but_gated_at_dispat
     """
     assert "get_customer_case" in REMOTE_MCP_TOOL_NAMES
     assert "get_case_status" in REMOTE_MCP_TOOL_NAMES
+    assert "update_case_status" in REMOTE_MCP_TOOL_NAMES
     assert REMOTE_MCP_TOOL_NAMES.isdisjoint(
         {"search_knowledge_base", "get_document", "get_latest_document", "get_related_context"}
     )
+    assert WRITE_ACTION_TOOL_NAMES == {"update_case_status"}
+    assert WRITE_ACTION_TOOL_NAMES.issubset(REMOTE_MCP_TOOL_NAMES)
+
+
+def test_update_case_status_decision_fails_closed_when_business_actions_disabled():
+    """mcp.client.enabled=True alone is not enough; business_actions.enabled also gates it.
+
+    mcp_app=None deliberately: if the fail-closed guard were missing, the
+    dispatch would instead raise for lacking an mcp_app, a different
+    error string than this test's exact-match on
+    "business_actions_disabled".
+    """
+    llm = RemoteToolAlwaysUpdateStatusLLM()
+    state = AgentState(
+        original_query="close case CASE-1001",
+        authorization_context=AuthorizationContext(tenant_id="tenant_alpha", roles=["op"]),
+    )
+
+    result = run_agent(
+        state,
+        pipeline=FakePipeline(),
+        vectorstore=FakeVectorStore(),
+        embedder=FakeEmbedder(),
+        llm=llm,
+        config=_agent_config(
+            max_agent_steps=6, mcp_client_enabled=True, business_actions_enabled=False
+        ),
+        mcp_app=None,
+    )
+
+    write_calls = [r for r in result.state.tool_call_history if r.tool_name == "update_case_status"]
+    assert write_calls, "expected at least one recorded update_case_status attempt"
+    assert all(r.success is False for r in write_calls)
+    assert all(r.error == "business_actions_disabled" for r in write_calls)
+
+
+def test_update_case_status_is_never_retried_within_the_same_run(monkeypatch):
+    """A write-action attempt is the last tool call of a run, regardless of its outcome.
+
+    The scripted LLM always proposes update_case_status and
+    evidence-sufficiency always reports insufficient, so without the
+    loop-termination rule this run would retry the same mutation up to
+    max_tool_calls; instead it must stop after exactly one attempt and
+    proceed straight to synthesis.
+    """
+    from rag.agent import mcp_client
+
+    def _fake_dispatch(tool_name, args, *, auth, config, mcp_app, case_approvals=()):
+        return [SearchResult(chunk=_chunk(), score=1.0, origin="mcp_remote")]
+
+    monkeypatch.setattr(mcp_client, "dispatch_remote_tool_sync", _fake_dispatch)
+
+    llm = RemoteToolAlwaysUpdateStatusLLM()
+    state = AgentState(
+        original_query="close case CASE-1001",
+        authorization_context=AuthorizationContext(tenant_id="tenant_alpha", roles=["op"]),
+    )
+
+    result = run_agent(
+        state,
+        pipeline=FakePipeline(),
+        vectorstore=FakeVectorStore(),
+        embedder=FakeEmbedder(),
+        llm=llm,
+        config=_agent_config(
+            max_agent_steps=1000,
+            max_tool_calls=1000,
+            mcp_client_enabled=True,
+            business_actions_enabled=True,
+        ),
+        mcp_app=None,
+    )
+
+    write_calls = [r for r in result.state.tool_call_history if r.tool_name == "update_case_status"]
+    assert len(write_calls) == 1
+    assert result.state.tool_call_count == 1
+    assert result.state.termination_reason == "synthesized"
 
 
 # --- max_tool_calls bounds local and remote calls identically ----------------
@@ -208,8 +314,8 @@ def test_max_tool_calls_bounds_remote_tool_dispatch_attempts_too():
 # --- local tool schemas/dispatch table are untouched --------------------------
 
 
-def test_tool_arg_models_cover_all_six_tools_with_extra_forbid():
-    """The 4 local plus 2 remote MCP tools are the only entries, all extra='forbid'."""
+def test_tool_arg_models_cover_all_seven_tools_with_extra_forbid():
+    """The 4 local plus 3 remote MCP tools are the only entries, all extra='forbid'."""
     assert set(TOOL_ARG_MODELS) == {
         "search_knowledge_base",
         "get_document",
@@ -217,23 +323,29 @@ def test_tool_arg_models_cover_all_six_tools_with_extra_forbid():
         "get_related_context",
         "get_customer_case",
         "get_case_status",
+        "update_case_status",
     }
     for tool_name, model in TOOL_ARG_MODELS.items():
         assert model.model_config.get("extra") == "forbid", tool_name
 
 
 def test_no_remote_tool_arg_model_accepts_an_auth_or_identity_field():
-    """Mirrors test_agent_tools_authorization_parity.py's local-tool test, for the 2 new tools."""
+    """Mirrors test_agent_tools_authorization_parity.py's local-tool test, for the remote tools."""
     import pydantic
 
     for field in ("auth", "tenant_id", "roles"):
         assert field not in GetCustomerCaseArgs.model_fields
         assert field not in GetCaseStatusArgs.model_fields
+        assert field not in UpdateCaseStatusArgs.model_fields
+    for field in ("approved", "approval", "approval_token", "case_approvals"):
+        assert field not in UpdateCaseStatusArgs.model_fields
 
     with pytest.raises(pydantic.ValidationError):
         GetCustomerCaseArgs(case_id="CASE-1001", tenant_id="tenant_evil")
     with pytest.raises(pydantic.ValidationError):
         GetCaseStatusArgs(case_id="CASE-1001", roles=["security_admin"])
+    with pytest.raises(pydantic.ValidationError):
+        UpdateCaseStatusArgs(case_id="CASE-1001", new_status="closed", approved=True)
 
 
 # --- mcp_remote evidence never leaks into document-specific tool behavior ----
