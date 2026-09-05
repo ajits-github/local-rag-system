@@ -574,6 +574,13 @@ class AgentConfig(BaseModel):
         one template, so the 4-local-tool prompt an operator has already
         reviewed is byte-identical whether or not MCP client support
         happens to be compiled into this config.
+    tool_select_mcp_actions_prompt_path : str
+        Path to the `select_tool` decision point's `PromptTemplate` YAML
+        used instead when `mcp.client.enabled=True` and `mcp.
+        business_actions.enabled=True` (offers all 6 read tools plus
+        `update_case_status`). A third, separate template file, not a
+        further runtime-conditional insertion into
+        `tool_select_mcp_prompt_path`.
     evidence_sufficiency_prompt_path : str
         Path to the `evidence_sufficiency` decision point's `PromptTemplate` YAML.
     synthesize_prompt_path : str
@@ -592,6 +599,9 @@ class AgentConfig(BaseModel):
     decompose_prompt_path: str = "src/rag/prompts/templates/agent_decompose_v1.yaml"
     tool_select_prompt_path: str = "src/rag/prompts/templates/agent_tool_select_v2.yaml"
     tool_select_mcp_prompt_path: str = "src/rag/prompts/templates/agent_tool_select_v4_mcp.yaml"
+    tool_select_mcp_actions_prompt_path: str = (
+        "src/rag/prompts/templates/agent_tool_select_v5_mcp_actions.yaml"
+    )
     evidence_sufficiency_prompt_path: str = (
         "src/rag/prompts/templates/agent_evidence_sufficiency_v1.yaml"
     )
