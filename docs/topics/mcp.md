@@ -22,29 +22,32 @@ None of these reimplement retrieval or authorization logic -- they are
 thin MCP adapters over the exact same, already-adversarially-tested
 functions `rag/agent/graph.py`'s in-process tool dispatch calls.
 
-## Two synthetic business-backend tools (Stage 1B)
+## Synthetic business-backend tools (Stage 1B read tools, Stage 3 write action)
 
 | Tool | What it does | Underlying function |
 |---|---|---|
 | `get_customer_case` | Fetch a synthetic customer-support case's full detail by `case_id` | `rag.mcp.business.store.get_customer_case` |
 | `get_case_status` | Fetch only a case's status, priority, and last-updated time -- a narrower read | `rag.mcp.business.store.get_case_status` |
+| `update_case_status` | Request a status change for a case, subject to a fixed transition table and an approval requirement for one sensitive transition | `rag.mcp.business.store.update_case_status` |
 
 These exist to demonstrate MCP as an integration layer to a separate
 backend/business system, not just another transport for this
 deployment's own RAG tools. `rag.mcp.business.store` is a small,
-in-memory, read-only synthetic case dataset (no Postgres/network
-dependency, a stand-in for a real backend a production MCP server might
-front) with its own tenant/role authorization: a case's owning tenant
-plus a matching role on the case, or a
-`security.authorization.cross_tenant_support_roles` role that is also
-listed on that case (the same rule, and the same config list, document
-retrieval already uses for cross-tenant access -- not a second parallel
-privilege list). A case the caller may not access is returned as `null`,
-identical to a case that doesn't exist -- unlike document-level ACL
-(a SQL predicate with no visibility into what it excluded), this
-in-Python check *can* observe a real denial, so it logs an
-`authorization_denied` audit event even though the response itself never
-reveals whether the case exists.
+in-memory synthetic case dataset (no Postgres/network dependency, a
+stand-in for a real backend a production MCP server might front) with
+its own tenant/role authorization: a case's owning tenant plus a matching
+role on the case, or a `security.authorization.cross_tenant_support_roles`
+role that is also listed on that case (the same rule, and the same config
+list, document retrieval already uses for cross-tenant access -- not a
+second parallel privilege list). A case the caller may not access is
+returned as `null`, identical to a case that doesn't exist -- unlike
+document-level ACL (a SQL predicate with no visibility into what it
+excluded), this in-Python check *can* observe a real denial, so it logs
+an `authorization_denied` audit event even though the response itself
+never reveals whether the case exists. `update_case_status` additionally
+treats a missing identity as a hard denial (unlike the two read tools'
+"no identity, fully unrestricted" convention), since a mutating action
+has no legacy unauthenticated-access state to preserve.
 
 ## Identity: transport-resolved, never a tool argument
 
@@ -111,6 +114,42 @@ PyJWT behavior found mid-implementation), the DNS-rebinding Host-header
 bug the ASGI transport hit, and the session-lifecycle tradeoffs:
 [MCP Integration](../architecture.md#mcp-integration).
 
+## Stage 3: `update_case_status`, the first write action
+
+The one mutating tool in this codebase. Deliberately narrow -- one
+transition table, one sensitive transition -- rather than a general
+write framework, since the point was proving the write-action *shape* is
+sound, not building out a full case-management surface.
+
+- **Business rules are deterministic and server-side.** A fixed
+  transition table (`open -> in_progress -> resolved -> closed`, `closed`
+  terminal); an already-in-target-status request is a defined no-op; an
+  invalid transition or a missing approval both leave the case untouched.
+- **The LLM cannot supply or forge approval.** `UpdateCaseStatusArgs` has
+  only `case_id`/`new_status` -- no approval field exists on the schema
+  at all. A human caller's `case_approvals` field on `POST /agent/query`
+  is honored only when their verified identity holds an approval role,
+  then carried as a claim on the same signed internal service token
+  Stage 2 already mints -- reusing the existing trust channel rather than
+  adding a second one. Because each approval names an exact
+  `(case_id, new_status)` pair, one approval can never authorize a
+  different case or a different transition.
+- **A verifiable token alone was not enough to grant an approval -- a
+  real bypass found by post-implementation review, not the original
+  design or test suite.** The approval resolver originally checked only
+  that a token verified under the shared JWT config, never that it was
+  actually minted by the agent's own internal-token flow -- so a direct
+  MCP caller with any ordinary, validly-signed token could attach the
+  claim itself and skip the API-boundary role gate entirely. Fixed by
+  requiring the token's `sub`/`token_use` to unambiguously mark it as
+  agent-minted, plus an independent re-check of that token's own `roles`
+  against the approval-role list. Full diagnosis in `ISSUES.md`; full
+  design in [MCP Integration](../architecture.md#mcp-integration).
+- **A write-action attempt is always the last tool call of a run.**
+  Whatever the outcome -- executed, needs approval, invalid, already
+  done, or a dispatch failure -- the agent proceeds straight to synthesis
+  rather than retrying the same mutation.
+
 ## Config
 
 ```yaml
@@ -119,18 +158,24 @@ mcp:
   server:
     mount_path: /mcp
   client:
-    enabled: false    # true no-op when false: the agent never offers or dispatches the two remote tools
+    enabled: false    # true no-op when false: the agent never offers or dispatches the remote tools
     transport: asgi   # or "http", for a genuinely separate future deployment
+  business_actions:
+    enabled: false    # true no-op when false: update_case_status is not registered on the server at all
 ```
 
-`mcp.enabled: false` and `mcp.client.enabled: false` are both shipped
-defaults. When `mcp.enabled` is `false`, the MCP server -- and its
-Streamable HTTP session manager -- is never even constructed, not merely
-built and left unmounted; `GET /mcp` 404s exactly like a route that was
-never registered. When `mcp.client.enabled` is `false`, the agent's
-tool-select prompt never offers `get_customer_case`/`get_case_status`,
-and a decision naming either one anyway fails closed as an ordinary
-recorded tool failure, never a real dispatch attempt.
+`mcp.enabled: false`, `mcp.client.enabled: false`, and
+`mcp.business_actions.enabled: false` are all shipped defaults. When
+`mcp.enabled` is `false`, the MCP server -- and its Streamable HTTP
+session manager -- is never even constructed, not merely built and left
+unmounted; `GET /mcp` 404s exactly like a route that was never
+registered. When `mcp.client.enabled` is `false`, the agent's tool-select
+prompt never offers `get_customer_case`/`get_case_status`/`update_case_
+status`, and a decision naming one anyway fails closed as an ordinary
+recorded tool failure, never a real dispatch attempt. `mcp.business_
+actions.enabled` is a separate, independent kill-switch specifically for
+the write action: it can stay off even when `mcp.client.enabled` is on,
+leaving the two read tools available without exposing the write tool.
 
 Full design writeup, including both server-side hardening fixes' root
 causes, the alternatives considered and rejected for the bare-mount-path
