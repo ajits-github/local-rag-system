@@ -1,11 +1,14 @@
-"""Agent-side MCP client for the two remote business tools (MCP Stage 2).
+"""Agent-side MCP client for the remote business tools (MCP Stage 2).
 
 Every other agent tool (`search_knowledge_base`/`get_document`/
 `get_latest_document`/`get_related_context`) stays a direct, in-process
 call into `rag.agent.tools`. This module exists only for
-`get_customer_case`/`get_case_status`, dispatched as a real MCP client
-call against the Stage 1B business tools served by `rag.mcp.server`,
-never a shortcut direct function call.
+`get_customer_case`/`get_case_status`/`update_case_status`, dispatched as
+a real MCP client call against the business tools served by
+`rag.mcp.server`, never a shortcut direct function call. The first two
+are read-only; `update_case_status` is the one write action, gated by a
+trusted `case_approvals` claim (see `mint_internal_token`) rather than
+anything in its own tool arguments.
 
 Security posture:
 
@@ -38,6 +41,7 @@ Security posture:
 from __future__ import annotations
 
 import time
+from collections.abc import Sequence
 from functools import partial
 from typing import Any
 
@@ -48,10 +52,10 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 from opentelemetry import propagate
 
-from rag.agent.tool_schemas import GetCaseStatusArgs, GetCustomerCaseArgs
+from rag.agent.tool_schemas import GetCaseStatusArgs, GetCustomerCaseArgs, UpdateCaseStatusArgs
 from rag.agent.tools import ToolExecutionError
 from rag.config import AppConfig
-from rag.mcp.business.schemas import CaseStatusResult, CustomerCase
+from rag.mcp.business.schemas import CaseActionOutcome, CaseApproval, CaseStatusResult, CustomerCase
 from rag.retrieval.authorization import AuthorizationContext
 from rag.schemas import Chunk, ChunkMetadata, SearchResult
 
@@ -113,7 +117,11 @@ def validate_startup_config(config: AppConfig) -> None:
         )
 
 
-def mint_internal_token(auth: AuthorizationContext, config: AppConfig) -> str:
+def mint_internal_token(
+    auth: AuthorizationContext,
+    config: AppConfig,
+    case_approvals: Sequence[CaseApproval] = (),
+) -> str:
     """Mint a fresh, short-lived internal service token for one remote MCP call.
 
     Never forwards the caller's original inbound JWT; always a new
@@ -134,6 +142,13 @@ def mint_internal_token(auth: AuthorizationContext, config: AppConfig) -> str:
     itself checked by `verify_jwt`, useful for anyone inspecting a
     decoded token or log line.
 
+    `case_approvals`, when non-empty, is embedded as a `case_approvals`
+    claim: pre-authorized `(case_id, new_status)` pairs for
+    `update_case_status`, resolved server-side by `rag.mcp.business.
+    approvals.resolve_case_action_approvals`, never read from a tool
+    argument. Reuses this token's existing signature rather than a
+    second trust channel.
+
     Parameters
     ----------
     auth : AuthorizationContext
@@ -142,6 +157,10 @@ def mint_internal_token(auth: AuthorizationContext, config: AppConfig) -> str:
         which checks this before ever calling here.
     config : AppConfig
         Application configuration.
+    case_approvals : Sequence[CaseApproval], optional
+        Pre-authorized case-status transitions to attach, already
+        bounded at the API boundary (see `rag.api.request_auth.
+        enforce_case_approval_limits`).
 
     Returns
     -------
@@ -152,16 +171,25 @@ def mint_internal_token(auth: AuthorizationContext, config: AppConfig) -> str:
     Raises
     ------
     RuntimeError
-        If `security.auth.jwt.algorithm` is not `HS256`. Defense in
+        If `security.auth.jwt.algorithm` is not `HS256` (defense in
         depth: `validate_startup_config` already refuses to start the
-        process in this state, so this should be unreachable in
-        practice.
+        process in this state), or if `case_approvals` exceeds `mcp.
+        business_actions.max_case_approvals_per_request` (defense in
+        depth: the API boundary already enforces this before `AgentState.
+        case_approvals` is ever populated).
     """
     jwt_config = config.security.auth.jwt
     if jwt_config.algorithm != "HS256":
         raise RuntimeError(
             f"Cannot mint an internal MCP service token: "
             f"security.auth.jwt.algorithm={jwt_config.algorithm!r} is not 'HS256'."
+        )
+    max_approvals = config.mcp.business_actions.max_case_approvals_per_request
+    if len(case_approvals) > max_approvals:
+        raise RuntimeError(
+            f"Cannot mint an internal MCP service token: case_approvals has "
+            f"{len(case_approvals)} entries, exceeding the configured maximum of "
+            f"{max_approvals}."
         )
     client_cfg = config.mcp.client
     now = int(time.time())
@@ -179,17 +207,20 @@ def mint_internal_token(auth: AuthorizationContext, config: AppConfig) -> str:
     # asymmetric iss/aud handling.
     if jwt_config.audience:
         claims["aud"] = jwt_config.audience
+    if case_approvals:
+        claims["case_approvals"] = [a.model_dump(mode="json") for a in case_approvals]
     key = config.jwt_signing_key()
     return jwt.encode(claims, key, algorithm="HS256")
 
 
 async def _call_tool_async(
     tool_name: str,
-    args: GetCustomerCaseArgs | GetCaseStatusArgs,
+    args: GetCustomerCaseArgs | GetCaseStatusArgs | UpdateCaseStatusArgs,
     *,
     auth: AuthorizationContext,
     config: AppConfig,
     mcp_app: Any | None,
+    case_approvals: Sequence[CaseApproval] = (),
 ) -> dict[str, Any] | None:
     """Open one fresh MCP session, call `tool_name`, and return its raw structured result.
 
@@ -202,7 +233,8 @@ async def _call_tool_async(
     needed here.
     """
     client_cfg = config.mcp.client
-    headers: dict[str, str] = {"Authorization": f"Bearer {mint_internal_token(auth, config)}"}
+    token = mint_internal_token(auth, config, case_approvals)
+    headers: dict[str, str] = {"Authorization": f"Bearer {token}"}
     # Injects the current OpenTelemetry span's trace context (if tracing is
     # enabled), so Jaeger shows one connected trace across the agent -> MCP
     # client -> MCP server boundary instead of two disconnected ones. A no-op,
@@ -241,15 +273,44 @@ async def _call_tool_async(
     return structured.get("result")
 
 
+def _render_case_action_outcome(outcome: CaseActionOutcome) -> str:
+    """Render one `update_case_status` outcome as plain, unambiguous evidence text.
+
+    Every wording states the true outcome explicitly, so a model
+    synthesizing an answer from this text has no basis to claim a
+    mutation happened when it didn't (`approval_required`/`invalid_
+    transition`) or to imply an action was needed when it wasn't
+    (`already_in_status`).
+    """
+    if outcome.outcome == "executed":
+        return (
+            f"Case {outcome.case_id} status was changed from {outcome.previous_status} "
+            f"to {outcome.new_status}."
+        )
+    if outcome.outcome == "already_in_status":
+        return f"Case {outcome.case_id} is already {outcome.new_status}; no change was made."
+    if outcome.outcome == "invalid_transition":
+        return (
+            f"Requested status change for case {outcome.case_id} from "
+            f"{outcome.previous_status} to {outcome.new_status} is not a valid transition. "
+            f"No change was made; status remains {outcome.previous_status}."
+        )
+    return (
+        f"Status change for case {outcome.case_id} from {outcome.previous_status} to "
+        f"{outcome.new_status} requires approval before it can be applied. No change has "
+        f"been made."
+    )
+
+
 def _business_result_to_search_result(
     tool_name: str, case_id: str, data: dict[str, Any]
 ) -> SearchResult:
     """Validate a raw business-tool result against its structured schema and wrap it as evidence.
 
     Re-validates client-side against `rag.mcp.business.schemas`
-    (`CustomerCase`/`CaseStatusResult`) rather than trusting the raw
-    dict as-is, keeping the structured-schema guarantee end-to-end
-    across the process boundary.
+    (`CustomerCase`/`CaseStatusResult`/`CaseActionOutcome`) rather than
+    trusting the raw dict as-is, keeping the structured-schema guarantee
+    end-to-end across the process boundary.
 
     The synthetic `Chunk`/`ChunkMetadata` this builds deliberately leaves
     every document-governance field (`document_version`/`status`/
@@ -273,6 +334,11 @@ def _business_result_to_search_result(
         )
         tenant_id = case.tenant_id
         created_at, last_modified = case.created_at, case.updated_at
+    elif tool_name == "update_case_status":
+        outcome = CaseActionOutcome.model_validate(data)
+        content = _render_case_action_outcome(outcome)
+        tenant_id = None
+        created_at = last_modified = outcome.updated_at
     else:
         status = CaseStatusResult.model_validate(data)
         content = (
@@ -299,11 +365,12 @@ def _business_result_to_search_result(
 
 def dispatch_remote_tool_sync(
     tool_name: str,
-    args: GetCustomerCaseArgs | GetCaseStatusArgs,
+    args: GetCustomerCaseArgs | GetCaseStatusArgs | UpdateCaseStatusArgs,
     *,
     auth: AuthorizationContext | None,
     config: AppConfig,
     mcp_app: Any | None,
+    case_approvals: Sequence[CaseApproval] = (),
 ) -> list[SearchResult]:
     """Dispatch one remote business-tool call, synchronously, and return it as agent evidence.
 
@@ -316,9 +383,9 @@ def dispatch_remote_tool_sync(
 
     Parameters
     ----------
-    tool_name : {"get_customer_case", "get_case_status"}
+    tool_name : {"get_customer_case", "get_case_status", "update_case_status"}
         Which remote business tool to call.
-    args : GetCustomerCaseArgs | GetCaseStatusArgs
+    args : GetCustomerCaseArgs | GetCaseStatusArgs | UpdateCaseStatusArgs
         The validated tool-argument instance.
     auth : AuthorizationContext | None
         The caller's resolved authorization context. Must be non-`None`
@@ -333,6 +400,10 @@ def dispatch_remote_tool_sync(
         `rag.api.deps.get_mcp_asgi_app`), required when
         `config.mcp.client.transport="asgi"` (the default); unused for
         `transport="http"`.
+    case_approvals : Sequence[CaseApproval], optional
+        Trusted, pre-authorized transitions for `update_case_status`,
+        forwarded to `mint_internal_token`. Ignored (harmless) for the
+        two read tools.
 
     Returns
     -------
@@ -353,7 +424,15 @@ def dispatch_remote_tool_sync(
             f"{tool_name} requires an authenticated caller identity with a tenant_id"
         )
     case_id = args.case_id
-    call = partial(_call_tool_async, tool_name, args, auth=auth, config=config, mcp_app=mcp_app)
+    call = partial(
+        _call_tool_async,
+        tool_name,
+        args,
+        auth=auth,
+        config=config,
+        mcp_app=mcp_app,
+        case_approvals=case_approvals,
+    )
     raw_result = anyio.run(call)
     if raw_result is None:
         return []
