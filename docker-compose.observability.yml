@@ -1,12 +1,12 @@
 # Optional local-development observability stack: Prometheus + Grafana + Jaeger.
 #
-# Never brought up by `make up`/`docker-compose.yml` alone -- entirely
+# Never brought up by `make up`/`docker-compose.yml` alone; entirely
 # opt-in, layered on top:
 #   docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
 # or: make observability-up
 #
 # Jaeger is the trace *storage + UI* here; there is deliberately no
-# separate OpenTelemetry Collector container -- Jaeger (v1.35+) accepts
+# separate OpenTelemetry Collector container: Jaeger (v1.35+) accepts
 # OTLP directly on 4317 (gRPC)/4318 (HTTP), so rag-api exports straight to
 # it. One fewer moving part than Collector+backend for a local dev stack.
 # See docs/architecture.md's "Observability" section for the full reasoning.
@@ -14,7 +14,7 @@
 # Bringing this up does not, by itself, enable tracing: rag-api only
 # exports spans when observability.tracing.enabled is true in
 # config/default.yaml (default false). Prometheus metrics and the /metrics
-# endpoint are unaffected by this file either way -- they're already
+# endpoint are unaffected by this file either way; they're already
 # enabled by default and this just adds something that scrapes them.
 services:
   rag-api:
