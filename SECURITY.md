@@ -19,12 +19,13 @@ security inbox with an SLA.
 
 ## Implemented security controls
 
-All of the following are off by default (`config.security.*` in
-`config/default.yaml`) and independently toggleable, so the base RAG
-pipeline works unmodified without them. See `docs/architecture.md`'s
-"Authorization, Freshness, and Trust", "Field-Level Sensitive-Data
-Redaction", and "Authenticated API Boundary and Security Hardening"
-sections for the full design and documented limitations of each.
+All of the following are off by default (`config.security.*`/`config.agent.*`/
+`config.mcp.*` in `config/default.yaml`) and independently toggleable, so
+the base RAG pipeline works unmodified without them. See
+`docs/architecture.md`'s "Authorization, Freshness, and Trust",
+"Field-Level Sensitive-Data Redaction", "Authenticated API Boundary and
+Security Hardening", "Agentic RAG", and "MCP Integration" sections for
+the full design and documented limitations of each.
 
 - **Authenticated API boundary**: JWT verification (`HS256`/`RS256`/
   `ES256`) at the API boundary, with signature/expiration/issuer/audience
@@ -62,6 +63,35 @@ sections for the full design and documented limitations of each.
 - **Audit logging**: authorization/authentication/redaction decisions are
   logged as structured events, with the JWT subject claim pseudonymized
   before logging, never raw (`src/rag/audit.py`).
+- **Agentic tool-calling boundaries**: every agent tool's argument schema
+  rejects unknown fields (`extra="forbid"`), so the LLM can never supply
+  or override identity, and every LLM-writable numeric argument is
+  server-side range-clamped. Every tool's output passes through the same
+  evidence-sanitization step (field redaction, injection flagging)
+  regardless of which tool produced it. The tool-calling loop is bounded
+  by independent step/retrieval/tool-call limits, not a single blended
+  recursion budget (`src/rag/agent/`).
+- **MCP integration**: identity is resolved from the transport (a
+  verified JWT) and injected server-side; it is never a tool argument a
+  client can supply. Every tool's argument schema is hardened to
+  `extra="forbid"` after registration, and every result passes through
+  the same evidence-sanitization step the in-process agent uses
+  (`src/rag/mcp/`). The agent-as-MCP-client path mints a fresh,
+  short-lived internal service token per call from the caller's already-
+  verified identity, never forwarding the caller's own JWT, and fails
+  closed at startup unless authentication is enabled. The one write
+  action (`update_case_status`) enforces a fixed transition table and
+  requires an explicit, role-gated approval for its one sensitive
+  transition; that approval is honored only from a token that is
+  unambiguously agent-minted (`sub`/`token_use` match, plus an
+  independent re-check of the token's own embedded roles), closing a
+  real authorization-bypass gap found by post-implementation review (see
+  `docs/architecture.md`'s "MCP Integration" section, "Stage 3").
+- **Provider-egress policy**: the one hosted-LLM call site in this
+  codebase (RAGAS judge scoring) is gated on tenant/classification/
+  trust-level and unredacted-sensitive-field checks before any content
+  leaves the process; production `answer()` never calls a hosted LLM at
+  all (`src/rag/eval/egress_policy.py`).
 
 ## Known limitations
 
@@ -74,3 +104,5 @@ These are documented, not hidden, in `docs/architecture.md`:
   robust classifier.
 - Rate limiting uses in-memory state, so it is process-local and does not
   aggregate across multiple API replicas.
+- The rate limiter does not wrap the MCP mount; MCP requests are not
+  rate-limited today.
