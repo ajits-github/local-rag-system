@@ -56,9 +56,12 @@ What sets this apart from a typical RAG tutorial project:
   reranker that silently truncated results with no reranker configured,
   and a directory-nesting bug that made a security metric read a false
   `0.0`. Every run is in [Benchmarks](#benchmarks), not just the wins.
-- **MCP integration**: 6 tools (4 RAG + 2 synthetic business-backend)
-  over the official Python SDK, with caller identity structurally
-  excluded from the tool schema, not just validated away. See [MCP](#mcp).
+- **MCP integration**: 7 tools (4 RAG + 2 synthetic business-backend
+  reads + 1 write action) over the official Python SDK, with caller
+  identity structurally excluded from the tool schema, not just
+  validated away, and the write action's approval channel independently
+  bound to a trusted, agent-minted token rather than any verifiable JWT.
+  See [MCP](#mcp).
 - **Full observability stack**: OpenTelemetry traces, Prometheus
   metrics, and Grafana dashboards wired to the real bounded agent
   workflow. See [Observability](#observability).
@@ -130,7 +133,7 @@ For the detailed system view, see [`docs/architecture.md`](docs/architecture.md)
 | Evaluation | Recall@k, MRR, RAGAS | extensible |
 | Security | JWT auth, tenant/role ACL, field redaction, rate limiting | independently toggleable, off by default |
 | Agent | bounded tool-calling workflow (`POST /agent/query`) | extensible |
-| MCP | Streamable HTTP server (4 agentic-RAG tools + 2 synthetic business tools) and client (agent calls the 2 business tools) | independently toggleable, off by default |
+| MCP | Streamable HTTP server (4 agentic-RAG tools + 2 synthetic business read tools + 1 write action) and client (agent calls the 3 business tools) | independently toggleable, off by default |
 
 ## Multimodal & Layout-Aware Ingestion
 
@@ -181,28 +184,41 @@ not just rejected by validation), every result passes through the same
 sanitization choke point as the agent path, and an unknown or injected
 tool argument now fails loudly rather than being silently dropped.
 
-The same server also exposes two synthetic business-backend tools
-(`get_customer_case`/`get_case_status`), demonstrating MCP as
-an integration layer to a separate backend system, not just another
-transport for this deployment's own RAG tools. They read from a small,
-in-memory synthetic customer-support-case dataset with its own tenant/
-role authorization (same rule, same config allow-list document ACL
-already uses for cross-tenant access), structurally independent of the
-RAG tools' chunk-level sanitization, since a case has no chunk/field-
-redaction concept.
+The same server also exposes two synthetic business-backend read tools
+(`get_customer_case`/`get_case_status`) plus one write action
+(`update_case_status`), demonstrating MCP as an integration layer to a
+separate backend system, not just another transport for this
+deployment's own RAG tools. They read from (and, for the write action,
+mutate) a small, in-memory synthetic customer-support-case dataset with
+its own tenant/role authorization (same rule, same config allow-list
+document ACL already uses for cross-tenant access), structurally
+independent of the RAG tools' chunk-level sanitization, since a case has
+no chunk/field-redaction concept. `update_case_status` is gated by a
+fixed transition table and an approval requirement for one sensitive
+transition; the LLM can supply only `case_id`/`new_status`, never an
+approval -- that comes from a human caller's role-gated request field,
+carried on a signed, agent-minted service token the write tool
+independently verifies before honoring it (a real bypass here, where the
+tool briefly trusted any verifiable token instead of specifically an
+agent-minted one, was found by post-implementation review and fixed;
+see `ISSUES.md`).
 
-The in-process agent is also a real MCP *client* for those same two
-business tools: `POST /agent/query` can dispatch
-`get_customer_case`/`get_case_status` over an actual `mcp.ClientSession`,
+The in-process agent is also a real MCP *client* for those same business
+tools: `POST /agent/query` can dispatch `get_customer_case`/
+`get_case_status`/`update_case_status` over an actual `mcp.ClientSession`,
 never a shortcut direct function call, while the four RAG tools stay
 direct, in-process calls. Each call mints a short-lived internal service
 token from the caller's already-verified identity (never the caller's
 own JWT), and fails closed at startup if authentication isn't enabled,
 since these tools have no unauthenticated fallback state to preserve.
+The write action is always the last tool call of a run: whatever the
+outcome, the agent proceeds straight to synthesis rather than retrying
+the same mutation.
 <!-- --8<-- [end:docs-mcp] -->
 
-Off by default (`mcp.enabled: false`/`mcp.client.enabled: false`, both
-true no-ops); full design and both hardening fixes:
+Off by default (`mcp.enabled: false`/`mcp.client.enabled: false`/
+`mcp.business_actions.enabled: false`, all true no-ops); full design and
+every hardening fix:
 [MCP](docs/topics/mcp.md).
 
 <!-- --8<-- [start:docs-security] -->
