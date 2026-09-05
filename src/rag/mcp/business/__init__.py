@@ -2,8 +2,8 @@
 
 Demonstrates MCP as an integration layer to a separate backend system,
 not just another transport for this deployment's own RAG tools.
-`store.py` is a small, in-memory, read-only case dataset with its own
-tenant/role authorization, independent of
+`store.py` is a small, in-memory, mostly read-only case dataset with its
+own tenant/role authorization, independent of
 `rag.retrieval.authorization.AuthorizationContext` (no document/
 freshness/trust concept applies here) and of
 `RetrievalPipeline.sanitize_evidence` (a case is either authorized
