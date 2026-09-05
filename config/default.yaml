@@ -167,3 +167,5 @@ mcp:
   enabled: false # no-op when false; the MCP ASGI app is never mounted. Governed by security.auth, no separate mcp.auth block
   server:
     mount_path: /mcp
+  business_actions:
+    enabled: false # no-op when false; update_case_status is not registered on the MCP server at all
