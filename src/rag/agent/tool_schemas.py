@@ -12,12 +12,16 @@ entirely server-controlled (see `rag.config.AgentConfig` and
 
 Four schemas (`SearchKnowledgeBaseArgs`/`GetDocumentArgs`/
 `GetLatestDocumentArgs`/`GetRelatedContextArgs`) back the local,
-in-process tools in `rag.agent.tools`. Two (`GetCustomerCaseArgs`/
-`GetCaseStatusArgs`, see `REMOTE_MCP_TOOL_NAMES` below) back the remote
-MCP business tools dispatched via `rag.agent.mcp_client`, with the same
-`extra="forbid"` treatment: the "never let the LLM supply identity" rule
-applies regardless of which side of the process boundary a tool executes
-on.
+in-process tools in `rag.agent.tools`. Three (`GetCustomerCaseArgs`/
+`GetCaseStatusArgs`/`UpdateCaseStatusArgs`, see `REMOTE_MCP_TOOL_NAMES`
+below) back the remote MCP business tools dispatched via
+`rag.agent.mcp_client`, with the same `extra="forbid"` treatment: the
+"never let the LLM supply identity" rule applies regardless of which
+side of the process boundary a tool executes on. `UpdateCaseStatusArgs`
+additionally carries no approval field of any kind -- approval for a
+sensitive transition is resolved server-side from a trusted, signed
+channel, never from a tool argument (see `rag.agent.mcp_client.
+mint_internal_token` and `rag.mcp.business.approvals`).
 """
 
 from __future__ import annotations
@@ -25,6 +29,8 @@ from __future__ import annotations
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from rag.mcp.business.schemas import CaseStatus
 
 ContentTypeFilter = Literal["prose", "table", "code", "configuration", "image", "chart"]
 
@@ -93,6 +99,21 @@ class GetCaseStatusArgs(BaseModel):
     case_id: str
 
 
+class UpdateCaseStatusArgs(BaseModel):
+    """Arguments for the remote `update_case_status` MCP tool.
+
+    Only `case_id` and `new_status` are LLM-writable. Whether the
+    transition is valid, and whether it needs prior approval, is decided
+    entirely server-side (`rag.mcp.business.store.update_case_status`);
+    no approval flag or token exists on this model.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    case_id: str
+    new_status: CaseStatus
+
+
 TOOL_ARG_MODELS: dict[str, type[BaseModel]] = {
     "search_knowledge_base": SearchKnowledgeBaseArgs,
     "get_document": GetDocumentArgs,
@@ -100,9 +121,18 @@ TOOL_ARG_MODELS: dict[str, type[BaseModel]] = {
     "get_related_context": GetRelatedContextArgs,
     "get_customer_case": GetCustomerCaseArgs,
     "get_case_status": GetCaseStatusArgs,
+    "update_case_status": UpdateCaseStatusArgs,
 }
 
 # Tool names dispatched via a real MCP client call (rag.agent.mcp_client), rather
 # than a direct in-process function call. Every other name in TOOL_ARG_MODELS is
 # local. See rag.agent.graph._execute_tool for the dispatch branch this drives.
-REMOTE_MCP_TOOL_NAMES: frozenset[str] = frozenset({"get_customer_case", "get_case_status"})
+REMOTE_MCP_TOOL_NAMES: frozenset[str] = frozenset(
+    {"get_customer_case", "get_case_status", "update_case_status"}
+)
+
+# The subset of REMOTE_MCP_TOOL_NAMES that mutates state, gated by its own
+# mcp.business_actions.enabled kill-switch and treated as the last tool call
+# of a run (see rag.agent.graph's tool-call loop): a write-action attempt is
+# never retried within the same run, regardless of its outcome.
+WRITE_ACTION_TOOL_NAMES: frozenset[str] = frozenset({"update_case_status"})
