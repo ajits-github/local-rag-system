@@ -2031,21 +2031,23 @@ contention, and node timings show multi-hundred-second single LLM calls.
 
 ## MCP Integration
 
-A secure MCP (Model Context Protocol) server, `src/rag/mcp/`, exposing
-six tools over the official `mcp` Python SDK's Streamable HTTP transport,
-mounted directly into the existing `rag-api` process: four RAG tools
-(Stage 1A) that are thin adapters over the same `rag.agent.tools.*`
+A secure MCP (Model Context Protocol) server, `src/rag/mcp/`, exposing up
+to seven tools over the official `mcp` Python SDK's Streamable HTTP
+transport, mounted directly into the existing `rag-api` process: four RAG
+tools (Stage 1A) that are thin adapters over the same `rag.agent.tools.*`
 functions the in-process agent graph already calls
 (`search_knowledge_base`/`get_document`/`get_latest_document`/
-`get_related_context`), and two synthetic business-case tools (Stage 1B,
-`get_customer_case`/`get_case_status`) reading from `rag.mcp.business`, a
-small in-memory backend standing in for a separate business system.
-Stage 2 makes the in-process agent itself a real MCP *client* for those
-two business tools specifically -- `rag/agent/mcp_client.py`, dispatched
-from `rag/agent/graph.py::_execute_tool` -- while the four RAG tools stay
-exactly what they already were: direct, in-process function calls,
-never routed through MCP. See "Stage 2: the agent as an MCP client"
-below for the full design.
+`get_related_context`), two synthetic business-case *read* tools (Stage
+1B, `get_customer_case`/`get_case_status`), and one write action (Stage 3,
+`update_case_status`) -- all three business tools reading from/writing to
+`rag.mcp.business`, a small in-memory backend standing in for a separate
+business system. Stage 2 makes the in-process agent itself a real MCP
+*client* for the business tools specifically -- `rag/agent/mcp_client.py`,
+dispatched from `rag/agent/graph.py::_execute_tool` -- while the four RAG
+tools stay exactly what they already were: direct, in-process function
+calls, never routed through MCP. See "Stage 2: the agent as an MCP
+client" and "Stage 3: `update_case_status`, the first write action" below
+for the full design.
 
 ### Why now, and why server-only
 
@@ -2096,6 +2098,16 @@ code. The trigger for actually implementing Stage 2 now was a direct,
 explicit request to close the job-description-level "agent calls
 backend systems via MCP" story completely, not a newly discovered
 external server.
+
+Stage 3's trigger was the next, obvious gap once Stage 2 made the agent a
+real MCP client: every tool up to that point was read-only, so "the agent
+takes an action, not just answers a question" was still an unproven
+claim. `update_case_status` closes it deliberately narrowly -- one
+mutating tool, gated by a deterministic transition table and an approval
+requirement for exactly one sensitive transition -- rather than a general
+write framework, since the point was proving the write-action *shape*
+(server-side business rules, an approval channel the LLM cannot reach)
+is sound, not building out the full synthetic case-management surface.
 
 ### Architecture
 
@@ -2407,6 +2419,92 @@ acknowledged cost of some semantically-overloaded field names
 rather than a filesystem-relative path) -- documented directly on
 `_business_result_to_search_result`'s own docstring, not left implicit.
 
+### Stage 3: `update_case_status`, the first write action
+
+`update_case_status(case_id, new_status)` is a seventh MCP tool, gated by
+its own kill-switch (`config.mcp.business_actions.enabled`, default
+`false`) independent of `mcp.client.enabled`: the two read tools can be
+turned on without exposing the write tool. When disabled, the tool is not
+registered on the MCP server at all -- not merely unreachable -- so even
+a client that only ever talks to `rag.mcp.server` directly, never through
+the Stage 2 agent, never sees it exist.
+
+**Business rules are deterministic and server-side, never the LLM's to
+enforce.** `rag.mcp.business.store` holds a fixed transition table
+(`open -> in_progress -> resolved -> closed`, `closed` terminal) and one
+sensitive transition (`resolved -> closed`) requiring prior approval.
+Authorization reuses `_lookup_authorized`'s existing tenant/role/
+cross-tenant predicate unchanged, but `update_case_status` additionally
+treats `identity is None` as a hard denial -- a deliberate asymmetry from
+the two read tools' "no identity, fully unrestricted" convention, since a
+mutating action has no legacy unauthenticated-access state worth
+preserving. A request already at its target status is a deterministic
+no-op (`outcome="already_in_status"`), checked before the transition
+table so re-requesting the current status never triggers an approval
+requirement; an invalid transition or a missing approval both return a
+descriptive outcome with no mutation. The read-check-write sequence runs
+under one `_CASE_MUTATION_LOCK`, the first concurrency-safety mechanism
+this in-memory store needed, since it is also the first mutator.
+
+**Approval is trusted-runtime state, structurally unreachable from the
+LLM.** `UpdateCaseStatusArgs` has exactly two fields, `case_id` and
+`new_status`; no approval flag or token exists on the schema at all. A
+human/ops caller of `POST /agent/query` may include a `case_approvals`
+field naming exact `(case_id, new_status)` pairs, honored only when their
+verified JWT identity holds an `mcp.business_actions.approval_roles`
+role (`rag.api.request_auth.resolve_case_approvals`) -- otherwise silently
+dropped, never trusted. The accepted list is stamped onto `AgentState.
+case_approvals` once, by the router, before `run_agent()` starts, at the
+same trust tier as `authorization_context`/`filters`. When the agent
+dispatches the remote call, `mint_internal_token` embeds it as an
+additional `case_approvals` claim on the same short-lived internal
+service token Stage 2 already mints -- reusing the existing signed
+channel rather than adding a second one. Because each entry names an
+exact pair, an approval minted for `CASE-1001 -> closed` cannot authorize
+`CASE-2002 -> closed` or `CASE-1001 -> resolved`; this gives "an approval
+cannot be reused for a different case or action" for free from the data
+shape, with no nonce or single-use-token bookkeeping needed.
+
+**A verifiable JWT alone is not sufficient to grant an approval -- found
+by post-implementation review, not the original design.** The first
+implementation's `rag.mcp.business.approvals.resolve_case_action_approvals`
+checked only that a token verified under the shared `security.auth.jwt`
+config, never that it was actually produced by `mint_internal_token`.
+Since this deployment's tokens are minted and verified in the same trust
+domain (`scripts/issue_dev_token.py` mints a token with the same shared
+secret `verify_jwt` checks against), a direct MCP caller presenting any
+ordinary, validly-signed token could attach a `case_approvals` claim to
+it directly and bypass `resolve_case_approvals`'s role gate entirely,
+since that gate only runs on the `POST /agent/query*` HTTP routes, never
+for a caller that talks to the mounted MCP server directly -- exactly the
+access pattern Stage 1A/1B's own design explicitly allows. The fix:
+`resolve_case_action_approvals` now rejects any token whose `sub`/
+`token_use` don't unambiguously match `mint_internal_token`'s fixed
+markers, and additionally re-checks that same token's own `roles` claim
+(the original caller's already-role-gated roles, embedded by
+`mint_internal_token`) against `approval_roles` before honoring anything
+in the claim -- an independent, defense-in-depth verification of the
+same security-relevant fact, not a re-statement of the API-boundary
+check. See `ISSUES.md` for the full diagnosis.
+
+**The write-action tool call is always the last tool call of a run.**
+Rather than adding a new `termination_reason` or restructuring the
+bounded retry loop, `run_agent()`'s tool-call loop checks `decision.
+tool_name in WRITE_ACTION_TOOL_NAMES` immediately after `tool_execute`
+and, if true, breaks out of the loop regardless of the outcome (executed,
+approval_required, invalid_transition, already_in_status, or a dispatch
+failure) -- proceeding straight to synthesis rather than looping back to
+retry the same mutation. This was an explicit approval condition, not an
+incidental design choice: `approval_required` must be a terminal outcome
+for that action attempt within the run, never silently retried.
+`case_approvals` is bounded at three independent points so the internal
+JWT cannot grow unboundedly: a hard Pydantic schema ceiling
+(`rag.mcp.business.schemas.MAX_CASE_APPROVALS`) on the request field, a
+smaller operator-configurable ceiling enforced at the API router
+(`mcp.business_actions.max_case_approvals_per_request`, matching `security.
+dos_limits`'s "runtime config, not a class-level constant" convention),
+and a defensive re-check inside `mint_internal_token` itself.
+
 ### Two hardening fixes, both found by post-implementation review
 
 **Unknown tool arguments now fail loudly.** The SDK's own
@@ -2557,6 +2655,36 @@ captured `Authorization` header and asserting its `sub` is the fixed
 internal marker, never a stand-in "real end user" subject built
 specifically for that test.
 
+**Stage 3** adds `tests/unit/test_mcp_business_case_actions.py` (14
+tests, plain-function unit tests against `rag.mcp.business.store.
+update_case_status` directly, with an autouse fixture snapshotting and
+restoring the shared `_SYNTHETIC_CASES` dict around every test): the full
+authorization matrix (same-tenant matching/wrong role, cross-tenant
+with/without the support role, unauthenticated denial), every business
+rule (valid transition, invalid transition, already-in-status, skipping a
+state), the approval matrix (sensitive transition without approval,
+matching approval permits execution, an approval scoped to a different
+case or a different target status never applies), a schema-level proof
+`UpdateCaseStatusArgs` has no approval field at all, and audit-event
+emission for each outcome. `tests/unit/test_mcp_business_approvals.py` (9
+tests) is the adversarial suite the post-implementation review fix
+added: a genuine internal-service-shaped token is honored; an ordinary
+end-user token carrying the identical `case_approvals` claim (even one
+also holding the approval role) is rejected on `sub`; a token with the
+right `sub` but no `token_use` marker is rejected; an internal-shaped
+token whose embedded `roles` lack an approval role is rejected; malformed
+entries in an otherwise-valid list are skipped rather than raising.
+Extended `tests/unit/test_mcp_client_stage2.py` (the `case_approvals`
+JWT claim, including its own size-bound defense in depth),
+`tests/unit/test_agent_graph_mcp_stage2.py` (the `business_actions`
+kill-switch's fail-closed path, and a dedicated proof that dispatching
+`update_case_status` ends the tool-call loop after exactly one attempt
+regardless of outcome), and `tests/integration/
+test_agent_mcp_client_stage2.py` (real wire protocol: `approval_required`
+with no mutation, a matching approval executing the mutation against the
+live store for real, a remote-failure path not crashing `run_agent()` --
+all sharing the same store-reset fixture pattern).
+
 ### Known limitations (deliberate, not hidden)
 
 - `security.rate_limit`'s `Limiter` does not wrap the MCP mount -- not a
@@ -2594,11 +2722,30 @@ specifically for that test.
   next to LLM decision latency -- but a persistent per-run session,
   still scoped to one caller's identity, is the natural next optimization
   if profiling ever shows otherwise.
-- The business-case backend has no write path and no versioning: cases
-  are a fixed, hardcoded seed set, not a mutable store. That's
-  intentional for a synthetic demo, but means the "case gets updated,
-  caller re-fetches and sees the new state" story that `get_case_status`
-  suggests isn't actually exercised by anything.
+- The business-case backend has no versioning: `update_case_status` (see
+  "Stage 3" above) closed the "no write path at all" gap, but cases
+  themselves are still a fixed, hardcoded seed set with no history --
+  there is no audit trail of prior statuses beyond the audit-log events
+  each transition emits, and no way to add or remove a case at runtime.
+  Intentional for a synthetic demo, not a limitation this milestone set
+  out to close.
+- `update_case_status`'s transition table and its one sensitive
+  transition (`resolved -> closed`) are both hardcoded in `rag.mcp.
+  business.store`, not configurable -- deliberately, per the milestone's
+  own "do not invent a large approval framework" instruction; a second
+  sensitive transition or a different table would be a code change, not
+  a config change.
+- The in-memory case store's mutation lock (`_CASE_MUTATION_LOCK`) is
+  single-process only, matching its existing synthetic/no-Postgres
+  design. Acceptable for a demo backend with no concurrent-write story;
+  would need a real transactional store before this pattern could
+  generalize to a production write path.
+- Whether a local generation model (`qwen2.5:3b`) reliably preserves a
+  write-action outcome's true meaning in its own paraphrased final answer
+  (rather than drifting toward implying success on an `approval_required`/
+  `invalid_transition` result) has not been verified against a real
+  model -- the deterministic evidence text is unambiguous, but that is a
+  necessary, not sufficient, condition.
 
 ## Observability
 
