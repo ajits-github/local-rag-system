@@ -11,6 +11,7 @@ from rag.agent.tool_schemas import (
     GetLatestDocumentArgs,
     GetRelatedContextArgs,
     SearchKnowledgeBaseArgs,
+    UpdateCaseStatusArgs,
 )
 
 
@@ -76,8 +77,8 @@ def test_get_document_args_expose_no_chunk_count_field():
 def test_tool_arg_models_cover_every_tool_name():
     """TOOL_ARG_MODELS has exactly one entry per tool the agent can dispatch.
 
-    Six as of MCP Stage 2: the four local RAG tools plus the two remote
-    MCP business tools (get_customer_case/get_case_status).
+    Seven tools: the four local RAG tools plus the three remote MCP
+    business tools (get_customer_case/get_case_status/update_case_status).
     """
     assert set(TOOL_ARG_MODELS) == {
         "search_knowledge_base",
@@ -86,6 +87,7 @@ def test_tool_arg_models_cover_every_tool_name():
         "get_related_context",
         "get_customer_case",
         "get_case_status",
+        "update_case_status",
     }
 
 
@@ -99,3 +101,17 @@ def test_get_case_status_args_rejects_smuggled_auth_field():
     """extra='forbid' rejects an LLM-supplied roles-shaped key on GetCaseStatusArgs."""
     with pytest.raises(ValidationError):
         GetCaseStatusArgs.model_validate({"case_id": "CASE-1001", "roles": ["security_admin"]})
+
+
+def test_update_case_status_args_accepts_only_case_id_and_new_status():
+    """UpdateCaseStatusArgs has no approval field; extra='forbid' rejects one anyway."""
+    args = UpdateCaseStatusArgs.model_validate({"case_id": "CASE-1001", "new_status": "closed"})
+    assert args.case_id == "CASE-1001"
+    assert args.new_status == "closed"
+
+    with pytest.raises(ValidationError):
+        UpdateCaseStatusArgs.model_validate(
+            {"case_id": "CASE-1001", "new_status": "closed", "approved": True}
+        )
+    with pytest.raises(ValidationError):
+        UpdateCaseStatusArgs.model_validate({"case_id": "CASE-1001", "new_status": "not-a-status"})
