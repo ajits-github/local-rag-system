@@ -75,13 +75,36 @@ describe("FeatureFlagsBar", () => {
     expect(screen.queryByText("Dev mode")).not.toBeInTheDocument();
   });
 
-  it("shows a status message while loading and an error state when the backend is unreachable", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
+  it(
+    "shows a status message while loading, retries automatically, then shows an error state if the backend stays unreachable",
+    async () => {
+      const fetchMock = vi.fn().mockRejectedValue(new TypeError("Failed to fetch"));
+      vi.stubGlobal("fetch", fetchMock);
+
+      render(<FeatureFlagsBar />);
+      expect(screen.getByText(/Checking backend configuration/)).toBeInTheDocument();
+
+      // Three real retries at 500/1500/3000ms (see useBackendFeatures.ts's
+      // MOUNT_RETRY_DELAYS_MS) before the mount-time check gives up.
+      await waitFor(() => expect(screen.getByText("Backend status unavailable")).toBeInTheDocument(), {
+        timeout: 7000,
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(4);
+    },
+    10000
+  );
+
+  it("recovers without user action if the backend becomes reachable during the automatic mount-time retries", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockResolvedValueOnce(jsonResponse(200, rootInfoBody({ authorization_enabled: true })));
+    vi.stubGlobal("fetch", fetchMock);
 
     render(<FeatureFlagsBar />);
 
-    expect(screen.getByText(/Checking backend configuration/)).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByText("Backend status unavailable")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTitle("Authorization: enabled")).toBeInTheDocument(), { timeout: 2000 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("re-fetches when the refresh button is clicked", async () => {
