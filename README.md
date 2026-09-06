@@ -707,6 +707,16 @@ mlflow ui --backend-store-uri sqlite:///mlflow.db
 `scripts/backfill_mlflow.py` re-logs every `experiments/results/*.json`
 into MLflow in one pass, useful if `mlflow.db`/`mlruns/` is ever deleted.
 
+`scripts/record_agent_experiment.py` is the agentic-eval sibling of
+`record_experiment.py` (see "Agentic RAG benchmarks" above): it registers
+a `rag.eval.run_agent_eval` report into `experiments/results/agentic/` and
+also logs to MLflow, additionally flattening per-node latency
+(classify/decompose/tool_select/tool_execute/evidence_sufficiency/
+synthesize), a termination-reason breakdown (including a combined
+guardrail/limit-termination rate), and per-tool-name usage counts/rates
+into individually named metrics, e.g. `agent_node_synthesize_latency_ms_mean`,
+`agent_termination_max_steps_rate`, `agent_tool_usage_get_document_count`.
+
 ## Testing
 
 ```bash
