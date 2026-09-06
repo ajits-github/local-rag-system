@@ -17,6 +17,17 @@ Records every agent-specific prompt's id/version/path/sha256 checksum
 the classic-path generation prompt's own checksum, so the exact prompt set
 behind a given result is always reconstructable later.
 
+Also flattens rag.eval.run_agent_eval's per-node latency breakdown,
+termination-reason breakdown, and tool-usage breakdown (all aggregate,
+computed once per eval run from the existing AgentState.node_timings_ms/
+termination_reason/tool_call_history data -- no new instrumentation) into
+individually named fields, e.g. `agent_node_synthesize_latency_ms_mean`,
+`agent_termination_max_steps_rate`, `agent_tool_usage_get_document_count`.
+Every one of these fields draws from a small, fixed vocabulary (node
+names, termination reasons, tool names), so this never introduces an
+unbounded/high-cardinality set of MLflow metric names as eval runs
+accumulate.
+
 Usage:
     python -m rag.eval.run_agent_eval --gold data/eval/agentic_extension_gold.jsonl \
         --dataset-id techfusion --config config/experiments/agentic-rag-baseline-v1.yaml \
@@ -51,6 +62,38 @@ _AGENT_PROMPT_FIELDS = [
     ("tool_select", "tool_select_prompt_path"),
     ("evidence_sufficiency", "evidence_sufficiency_prompt_path"),
     ("synthesize", "synthesize_prompt_path"),
+]
+
+# rag.agent.graph._call_node's fixed node-name vocabulary (see that
+# module's `_load_templates`/dispatch call sites). classic_rag-only runs
+# never populate node_latency_breakdown_ms at all, so every lookup below
+# is a graceful `.get(...)` chain, never a KeyError.
+_AGENT_NODE_NAMES = [
+    "classify",
+    "decompose",
+    "tool_select",
+    "tool_execute",
+    "evidence_sufficiency",
+    "synthesize",
+]
+
+# rag.eval.run_agent_eval's own fixed vocabularies for the same reason:
+# small, bounded sets, safe to flatten into individually named fields.
+_TERMINATION_REASONS = [
+    "synthesized",
+    "max_steps",
+    "max_retrieval_attempts",
+    "max_tool_calls",
+    "insufficient_evidence",
+]
+_TOOL_NAMES = [
+    "search_knowledge_base",
+    "get_document",
+    "get_latest_document",
+    "get_related_context",
+    "get_customer_case",
+    "get_case_status",
+    "update_case_status",
 ]
 
 
@@ -98,6 +141,27 @@ def build_agent_experiment_record(
     """
     corpus_lineage = agent_report.get("corpus_lineage", {})
     per_example = agent_report.get("per_example", [])
+    node_latency = agent_report.get("node_latency_breakdown_ms", {})
+    termination_by_reason = agent_report.get("termination_reason_breakdown", {}).get(
+        "by_reason", {}
+    )
+    tool_usage_by_tool = agent_report.get("tool_usage_breakdown", {}).get("by_tool", {})
+    node_latency_fields = {
+        f"agent_node_{name}_latency_ms_mean": node_latency.get(name, {}).get(
+            "mean_ms_per_invocation"
+        )
+        for name in _AGENT_NODE_NAMES
+    }
+    termination_reason_fields: dict[str, Any] = {}
+    for reason in _TERMINATION_REASONS:
+        entry = termination_by_reason.get(reason, {})
+        termination_reason_fields[f"agent_termination_{reason}_count"] = entry.get("count")
+        termination_reason_fields[f"agent_termination_{reason}_rate"] = entry.get("rate")
+    tool_usage_fields: dict[str, Any] = {}
+    for name in _TOOL_NAMES:
+        entry = tool_usage_by_tool.get(name, {})
+        tool_usage_fields[f"agent_tool_usage_{name}_count"] = entry.get("count")
+        tool_usage_fields[f"agent_tool_usage_{name}_rate"] = entry.get("rate")
     prompt_checksums = {
         f"agent_{name}_prompt_checksum": _checksum(
             str(config.agent_prompt_template_path(getattr(config.agent, field)))
@@ -171,6 +235,15 @@ def build_agent_experiment_record(
         "agent_completion_tokens_mean": agent_report.get("agent_token_usage", {}).get(
             "mean_completion_tokens"
         ),
+        "agent_guardrail_termination_count": agent_report.get(
+            "termination_reason_breakdown", {}
+        ).get("guardrail_termination_count"),
+        "agent_guardrail_termination_rate": agent_report.get(
+            "termination_reason_breakdown", {}
+        ).get("guardrail_termination_rate"),
+        **node_latency_fields,
+        **termination_reason_fields,
+        **tool_usage_fields,
     }
 
     if ragas_report is not None:
