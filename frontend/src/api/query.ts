@@ -26,6 +26,11 @@ export function buildQueryRequestBody(query: string, identity?: DevIdentity): Qu
   }
   if (identity?.asOf) body.as_of = identity.asOf;
   if (identity?.requireTrustLevel) body.require_trust_level = identity.requireTrustLevel;
+  // Scopes retrieval to one ingestion namespace. Without this, a query
+  // searches every dataset_id ever ingested into the shared dev Postgres
+  // instance at once (see ISSUES.md); this field exists so manual testing
+  // can match the accepted evaluation setup's own hard `--dataset-id` filter.
+  if (identity?.datasetId) body.filters = { ...(body.filters ?? {}), dataset_id: identity.datasetId };
   return body;
 }
 

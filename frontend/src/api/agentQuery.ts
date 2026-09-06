@@ -29,6 +29,8 @@ export function buildAgentQueryRequestBody(query: string, identity?: DevIdentity
   }
   if (identity?.asOf) body.as_of = identity.asOf;
   if (identity?.requireTrustLevel) body.require_trust_level = identity.requireTrustLevel;
+  // See buildQueryRequestBody's identical dataset_id handling in query.ts.
+  if (identity?.datasetId) body.filters = { ...(body.filters ?? {}), dataset_id: identity.datasetId };
   return body;
 }
 
