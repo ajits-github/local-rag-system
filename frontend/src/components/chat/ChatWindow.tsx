@@ -1,5 +1,6 @@
 import { DevIdentityPanel } from "../DevIdentityPanel";
 import { FeatureFlagsBar } from "../FeatureFlagsBar";
+import { RuntimeInfoPanel } from "../RuntimeInfoPanel";
 import { ModeToggle } from "../ModeToggle";
 import { useChat } from "../../state/chatContext";
 import { useSendMessage } from "../../hooks/useSendMessage";
@@ -28,6 +29,8 @@ export function ChatWindow() {
       </header>
 
       <FeatureFlagsBar />
+
+      <RuntimeInfoPanel />
 
       <DevIdentityPanel
         identity={state.devIdentity}
