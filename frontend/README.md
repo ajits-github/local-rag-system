@@ -84,6 +84,25 @@ correct, the active config just had every safety control disabled. The
 bar makes that visible at a glance instead of by accident. See
 `CLAUDE.md`'s "Web UI" section for the full writeup.
 
+## Runtime configuration panel
+
+A collapsed-by-default "Runtime configuration" panel (`RuntimeInfoPanel`,
+under `FeatureFlagsBar`) shows the connected backend's actual pipeline
+identity: generation provider/model, embedding model, vector store,
+retrieval mode, sparse retrieval (BM25) status, fusion method, reranker,
+agent/MCP/vision status, and the same security toggles `FeatureFlagsBar`
+already summarizes. Fetched from `GET /info` (`rag.api.main.RuntimeInfo`)
+lazily, only on first expand, not on page load, since this is opt-in
+developer detail rather than always-visible security posture -- unlike
+`FeatureFlagsBar`, which fetches eagerly for exactly that reason. A
+manual refresh button re-fetches on demand.
+
+`GET /info` is a separate endpoint from `GET /`, not an extension of it:
+`GET /`'s own backend test deliberately asserts no model name ever
+appears in that response, so model/provider identity (not itself a
+secret, but the kind of "identifying configuration" `GET /` promises
+never to leak) lives here instead.
+
 ## Classic vs. Agentic RAG
 
 - **Classic RAG** calls `POST /query`.
