@@ -695,6 +695,8 @@ def evaluate_agent(
         **_latency_and_tokens(records),
         "node_latency_breakdown_ms": _node_latency_breakdown(records),
         "node_token_breakdown": _node_token_breakdown(records),
+        **_termination_reason_breakdown(records),
+        **_tool_usage_breakdown(records),
         **_llm_call_summary(records),
         "by_agentic_category": _by_agentic_category(records),
     }
