@@ -27,6 +27,7 @@ without duplicating it.
 | Call the agentic-RAG tools from an external MCP client | [MCP](topics/mcp.md) |
 | Check retrieval/generation quality metrics or RAGAS | [Evaluation & RAGAS](topics/evaluation.md) |
 | See tracing, Prometheus metrics, and dashboards | [Observability](topics/observability.md) |
+| See how answer ratings are captured and exported | [Feedback loop](topics/feedback.md) |
 | Read function/class-level API docs | [API Reference](reference/index.md) |
 | Read the full system design writeup | [Architecture](architecture.md) |
 
