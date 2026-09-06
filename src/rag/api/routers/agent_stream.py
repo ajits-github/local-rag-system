@@ -110,7 +110,11 @@ def _run_agent_in_thread(
         )
         loop.call_soon_threadsafe(queue.put_nowait, result)
     except Exception as exc:  # never let a worker-thread exception hang the stream
-        logger.warning("Agent run failed during streaming", exc_info=True)
+        logger.warning(
+            "agent_stream_failed",
+            extra={"component": "agent_stream", "error_type": type(exc).__name__},
+            exc_info=True,
+        )
         loop.call_soon_threadsafe(queue.put_nowait, exc)
     finally:
         loop.call_soon_threadsafe(queue.put_nowait, _QUEUE_DONE)
