@@ -155,7 +155,14 @@ describe("FeedbackControls", () => {
       useEffect(() => {
         dispatch({
           type: "SET_DEV_IDENTITY",
-          identity: { bearerToken: "", tenantId: "tenant_alpha", roles: "", asOf: "", requireTrustLevel: "" },
+          identity: {
+            bearerToken: "",
+            tenantId: "tenant_alpha",
+            roles: "",
+            asOf: "",
+            requireTrustLevel: "",
+            datasetId: "",
+          },
         });
         dispatch({ type: "ADD_ASSISTANT_PLACEHOLDER", id: "a1", mode: "classic" });
         dispatch({
@@ -204,6 +211,7 @@ describe("FeedbackControls", () => {
             roles: "",
             asOf: "",
             requireTrustLevel: "",
+            datasetId: "",
           },
         });
         dispatch({ type: "ADD_ASSISTANT_PLACEHOLDER", id: "a1", mode: "classic" });

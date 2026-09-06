@@ -8,11 +8,18 @@ function jsonResponse(status: number, body: unknown): Response {
 describe("buildHeaders", () => {
   it("attaches an Authorization header only when a bearer token is present", () => {
     expect(buildHeaders(undefined)).not.toHaveProperty("Authorization");
-    expect(buildHeaders({ bearerToken: "", tenantId: "", roles: "", asOf: "", requireTrustLevel: "" })).not.toHaveProperty(
-      "Authorization"
-    );
     expect(
-      buildHeaders({ bearerToken: "abc.def.ghi", tenantId: "", roles: "", asOf: "", requireTrustLevel: "" })
+      buildHeaders({ bearerToken: "", tenantId: "", roles: "", asOf: "", requireTrustLevel: "", datasetId: "" })
+    ).not.toHaveProperty("Authorization");
+    expect(
+      buildHeaders({
+        bearerToken: "abc.def.ghi",
+        tenantId: "",
+        roles: "",
+        asOf: "",
+        requireTrustLevel: "",
+        datasetId: "",
+      })
     ).toMatchObject({ Authorization: "Bearer abc.def.ghi" });
   });
 });
