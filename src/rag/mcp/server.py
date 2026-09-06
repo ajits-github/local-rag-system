@@ -267,6 +267,32 @@ def build_mcp_server(
             f"Unknown tool: {tool_name}"
         )  # unreachable: tool_name is Literal-validated
 
+    def _log_tool_call_completed(
+        tool_name: str,
+        *,
+        success: bool,
+        result_count: int,
+        latency_seconds: float,
+        error_type: str | None = None,
+    ) -> None:
+        """Emit one structured tool-completion log line.
+
+        Never includes raw tool arguments, raw tool output, or the
+        exception message text -- only the tool name, a bounded
+        `error_type` (the exception class name, never `str(exc)`), and
+        counts/timing.
+        """
+        logger.info(
+            "tool_call_completed",
+            extra={
+                "tool_name": tool_name,
+                "success": success,
+                "result_count": result_count,
+                "duration_ms": round(latency_seconds * 1000, 2),
+                "error_type": error_type,
+            },
+        )
+
     def _run_tool(
         tool_name: _ToolName,
         args: Any,
@@ -292,11 +318,25 @@ def build_mcp_server(
             latency_seconds = time.perf_counter() - t0
             observability_metrics.observe_tool_call(tool_name, False, latency_seconds)
             observability_metrics.observe_error("mcp_tool")
+            _log_tool_call_completed(
+                tool_name,
+                success=False,
+                result_count=0,
+                latency_seconds=latency_seconds,
+                error_type=type(exc).__name__,
+            )
             raise ToolError(str(exc)) from None
-        except Exception:
+        except Exception as exc:
             latency_seconds = time.perf_counter() - t0
             observability_metrics.observe_tool_call(tool_name, False, latency_seconds)
             observability_metrics.observe_error("mcp_tool")
+            _log_tool_call_completed(
+                tool_name,
+                success=False,
+                result_count=0,
+                latency_seconds=latency_seconds,
+                error_type=type(exc).__name__,
+            )
             logger.exception("MCP tool %s failed", tool_name)
             raise  # an unanticipated failure: let the SDK report it generically, never leak details
 
@@ -306,6 +346,9 @@ def build_mcp_server(
         sanitized = pipeline.sanitize_evidence(results, effective_auth)
         latency_seconds = time.perf_counter() - t0
         observability_metrics.observe_tool_call(tool_name, True, latency_seconds)
+        _log_tool_call_completed(
+            tool_name, success=True, result_count=len(sanitized), latency_seconds=latency_seconds
+        )
         return [to_mcp_result(r) for r in sanitized]
 
     def _run_business_tool(tool_name: _BusinessToolName, fn: Callable[[], _T]) -> _T:
@@ -323,15 +366,28 @@ def build_mcp_server(
             with tracing.start_span(tool_name, attributes={"tool_name": tool_name}) as span:
                 result = fn()
                 tracing.set_attributes(span, {"tool_success": True, "found": result is not None})
-        except Exception:
+        except Exception as exc:
             latency_seconds = time.perf_counter() - t0
             observability_metrics.observe_tool_call(tool_name, False, latency_seconds)
             observability_metrics.observe_error("mcp_tool")
+            _log_tool_call_completed(
+                tool_name,
+                success=False,
+                result_count=0,
+                latency_seconds=latency_seconds,
+                error_type=type(exc).__name__,
+            )
             logger.exception("MCP tool %s failed", tool_name)
             raise  # an unanticipated failure: let the SDK report it generically, never leak details
 
         latency_seconds = time.perf_counter() - t0
         observability_metrics.observe_tool_call(tool_name, True, latency_seconds)
+        _log_tool_call_completed(
+            tool_name,
+            success=True,
+            result_count=1 if result is not None else 0,
+            latency_seconds=latency_seconds,
+        )
         return result
 
     @server.tool(
