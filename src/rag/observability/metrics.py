@@ -128,6 +128,19 @@ ERRORS_TOTAL = Counter(
     registry=REGISTRY,
 )
 
+FEEDBACK_SUBMISSIONS_TOTAL = Counter(
+    "rag_feedback_submissions_total",
+    "Total POST /feedback submissions, by rating and outcome.",
+    ["rating", "outcome"],
+    registry=REGISTRY,
+)
+FEEDBACK_SUBMISSION_LATENCY_SECONDS = Histogram(
+    "rag_feedback_submission_latency_seconds",
+    "POST /feedback handling latency in seconds (store write only).",
+    buckets=_LATENCY_BUCKETS_SECONDS,
+    registry=REGISTRY,
+)
+
 _F = TypeVar("_F", bound=Callable[..., None])
 
 
@@ -202,6 +215,25 @@ def observe_error(component: str) -> None:
     ERRORS_TOTAL.labels(component=component).inc()
 
 
+@_defensive
+def observe_feedback_submission(rating: str, outcome: str, latency_seconds: float) -> None:
+    """Record one `POST /feedback` submission.
+
+    Parameters
+    ----------
+    rating : str
+        `"positive"` or `"negative"` (a fixed, bounded vocabulary).
+    outcome : str
+        `"created"`, `"updated"`, or `"failed"` (a fixed, bounded
+        vocabulary). Never the request's query/comment/tenant id, which
+        would be unbounded-cardinality label values.
+    latency_seconds : float
+        Time spent in the feedback-store write.
+    """
+    FEEDBACK_SUBMISSIONS_TOTAL.labels(rating=rating, outcome=outcome).inc()
+    FEEDBACK_SUBMISSION_LATENCY_SECONDS.observe(latency_seconds)
+
+
 def render_metrics() -> bytes:
     """Render every metric in `REGISTRY` as Prometheus text exposition.
 
@@ -219,6 +251,7 @@ __all__ = [
     "observe_agent_request",
     "observe_error",
     "observe_evidence_sufficiency",
+    "observe_feedback_submission",
     "observe_http_request",
     "observe_node_latency",
     "observe_retrieval_latency",
