@@ -40,6 +40,7 @@ from rag.api.routers.query import SourceItem
 from rag.config import AppConfig
 from rag.embedders.base import Embedder
 from rag.generation.base import LLM
+from rag.logging_config import get_request_id
 from rag.mcp.business.schemas import MAX_CASE_APPROVALS, CaseApproval
 from rag.retrieval.pipeline import RetrievalPipeline
 from rag.vectorstore.base import VectorStore
@@ -70,7 +71,11 @@ class AgentQueryRequest(BaseModel):
 
 
 class AgentQueryResponse(BaseModel):
-    """Response body for `POST /agent/query`."""
+    """Response body for `POST /agent/query`.
+
+    `request_id` mirrors `QueryResponse.request_id` -- see that model's
+    docstring.
+    """
 
     answer: str
     sources: list[SourceItem]
@@ -81,6 +86,7 @@ class AgentQueryResponse(BaseModel):
     retrieval_ms: float
     generation_ms: float
     total_ms: float
+    request_id: str | None = None
 
 
 def _agent_rate_limit_string() -> str:
@@ -180,4 +186,5 @@ def agent_query(
         retrieval_ms=result.retrieval_ms,
         generation_ms=result.generation_ms,
         total_ms=result.total_ms,
+        request_id=get_request_id(),
     )
