@@ -378,6 +378,56 @@ def test_log_experiment_omits_safety_metrics_when_none(monkeypatch: pytest.Monke
     assert "corpus_digest" not in fake.params
 
 
+def test_log_experiment_logs_agent_node_termination_and_tool_usage_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The agentic-rag-reeval milestone's new per-node/termination/tool-usage fields are logged.
+
+    These fields only ever appear on a scripts/record_agent_experiment.py
+    record (never a classic scripts/record_experiment.py one), but
+    log_experiment() itself doesn't know or care which script produced
+    the record -- any field present in _METRIC_FIELDS is logged if set.
+    """
+    fake = _install_fake_mlflow(monkeypatch)
+    config = MLflowConfig()
+    record = _record(
+        agent_node_classify_latency_ms_mean=120.0,
+        agent_node_synthesize_latency_ms_mean=450.0,
+        agent_guardrail_termination_count=1,
+        agent_guardrail_termination_rate=0.5,
+        agent_termination_synthesized_count=1,
+        agent_termination_synthesized_rate=0.5,
+        agent_termination_max_steps_count=1,
+        agent_termination_max_steps_rate=0.5,
+        agent_tool_usage_search_knowledge_base_count=2,
+        agent_tool_usage_search_knowledge_base_rate=1.0,
+    )
+
+    log_experiment(record, config)
+
+    assert fake.metrics["agent_node_classify_latency_ms_mean"] == 120.0
+    assert fake.metrics["agent_node_synthesize_latency_ms_mean"] == 450.0
+    assert fake.metrics["agent_guardrail_termination_count"] == 1.0
+    assert fake.metrics["agent_guardrail_termination_rate"] == 0.5
+    assert fake.metrics["agent_termination_synthesized_count"] == 1.0
+    assert fake.metrics["agent_termination_max_steps_rate"] == 0.5
+    assert fake.metrics["agent_tool_usage_search_knowledge_base_count"] == 2.0
+    assert fake.metrics["agent_tool_usage_search_knowledge_base_rate"] == 1.0
+
+
+def test_log_experiment_omits_agent_node_metrics_when_none(monkeypatch: pytest.MonkeyPatch):
+    """A classic (non-agentic) record, with none of the new fields set, logs none of them."""
+    fake = _install_fake_mlflow(monkeypatch)
+    config = MLflowConfig()
+
+    log_experiment(_record(), config)
+
+    assert "agent_node_classify_latency_ms_mean" not in fake.metrics
+    assert "agent_guardrail_termination_count" not in fake.metrics
+    assert "agent_termination_synthesized_rate" not in fake.metrics
+    assert "agent_tool_usage_search_knowledge_base_count" not in fake.metrics
+
+
 def test_log_experiment_returns_run_id(monkeypatch: pytest.MonkeyPatch):
     """log_experiment returns the MLflow run's run_id on success."""
     _install_fake_mlflow(monkeypatch)
