@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import date
 from typing import Any
 
@@ -15,6 +16,8 @@ from rag.config import AppConfig
 from rag.logging_config import get_request_id
 from rag.retrieval.authorization import AuthorizationContext
 from rag.retrieval.pipeline import RetrievalPipeline
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 _limiter = get_rate_limiter()
@@ -148,4 +151,19 @@ def query(
     _enforce_dos_limits(body, config)
     auth = _build_authorization_context(body, identity, config)
     result = pipeline.answer(body.query, filters=body.filters, candidate_k=body.top_k, auth=auth)
+    # Same event name/shape as the agent routes' run-completion log
+    # (rag.agent.graph._finish); never includes query/answer text.
+    logger.info(
+        "agent_request_completed",
+        extra={
+            "route": "classic_rag",
+            "termination_reason": "synthesized",
+            "step_count": 1,
+            "tool_call_count": 0,
+            "retrieval_attempts": None,
+            "evidence_sufficient": None,
+            "duration_ms": round(result["total_ms"], 2),
+            "success": True,
+        },
+    )
     return QueryResponse(**result, request_id=get_request_id())
