@@ -3,6 +3,7 @@ import { DebugPanel } from "../DebugPanel";
 import { ErrorBanner } from "../ErrorBanner";
 import { SourcesPanel } from "../SourcesPanel";
 import type { ChatMessage } from "../../state/types";
+import { FeedbackControls } from "./FeedbackControls";
 import { Markdown } from "./Markdown";
 
 const TERMINATION_NOTICE: Record<string, string> = {
@@ -56,6 +57,7 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
             )}
             <Markdown text={message.text} />
             <SourcesPanel sources={message.sources} />
+            <FeedbackControls message={message} />
             <DebugPanel debug={message.debug} />
           </>
         )}
