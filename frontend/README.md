@@ -133,6 +133,20 @@ backend.
 The token is kept in `sessionStorage` only (cleared when the tab closes),
 never `localStorage`.
 
+The same panel also has a **Dataset ID** field, independent of identity.
+`dataset_id` is a required, non-defaulted namespace on every ingested
+chunk (see `CLAUDE.md`'s "Document identity" section) -- a shared dev
+Postgres instance can easily hold several unrelated ingestions
+(the real corpus, layout/vision A/B/C experiment copies, leftover
+integration-test artifacts) side by side. Leaving this field blank
+searches *every* dataset_id at once, which is almost never what you want
+for manual testing: it's how an unrelated document from a different
+ingestion can outrank the real corpus's own (correct, but weaker-scoring)
+answer. Set it to match the corpus you're testing against (e.g.
+`techfusion`) to reproduce the same scoping the accepted evaluation
+harness (`eval/run_eval.py`, which always hard-filters by `--dataset-id`)
+already uses.
+
 ## Errors and safety states
 
 Authentication failure, rate limiting, oversized-request rejection,
