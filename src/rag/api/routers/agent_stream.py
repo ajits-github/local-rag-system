@@ -50,6 +50,7 @@ from rag.api.routers.query import SourceItem
 from rag.config import AppConfig
 from rag.embedders.base import Embedder
 from rag.generation.base import LLM
+from rag.logging_config import get_request_id
 from rag.retrieval.pipeline import RetrievalPipeline
 from rag.vectorstore.base import VectorStore
 
@@ -115,8 +116,18 @@ def _run_agent_in_thread(
         loop.call_soon_threadsafe(queue.put_nowait, _QUEUE_DONE)
 
 
-def _final_response(result: AgentRunResult) -> AgentQueryResponse:
-    """Build the same response shape `/agent/query` returns, for the final SSE event."""
+def _final_response(result: AgentRunResult, request_id: str | None) -> AgentQueryResponse:
+    """Build the same response shape `/agent/query` returns, for the final SSE event.
+
+    `request_id` is threaded in explicitly rather than read from
+    `rag.logging_config.get_request_id()` at this point: this function
+    runs deep inside an async generator driven by Starlette's own
+    response-streaming machinery, well after `RequestIDMiddleware`'s
+    `dispatch()` may already have reset the contextvar in its `finally`
+    block. Capturing the value once, synchronously, in
+    `agent_query_stream` itself (before the `StreamingResponse`/generator
+    exist at all) sidesteps that race entirely.
+    """
     final_state = result.state
     return AgentQueryResponse(
         answer=final_state.final_answer or "",
@@ -143,6 +154,7 @@ def _final_response(result: AgentRunResult) -> AgentQueryResponse:
         retrieval_ms=result.retrieval_ms,
         generation_ms=result.generation_ms,
         total_ms=result.total_ms,
+        request_id=request_id,
     )
 
 
@@ -155,6 +167,7 @@ async def _stream_agent_query(
     llm: LLM,
     config: AppConfig,
     mcp_app: Starlette | None,
+    request_id: str | None,
 ) -> AsyncIterator[str]:
     """Yield `text/event-stream` messages for one agent run, ending in `completed`/`terminated`.
 
@@ -202,7 +215,7 @@ async def _stream_agent_query(
                     "terminated", '{"event_type": "terminated", "termination_reason": "error"}'
                 )
             elif isinstance(item, AgentRunResult):
-                response = _final_response(item)
+                response = _final_response(item, request_id)
                 event_type = (
                     "completed" if item.state.termination_reason == "synthesized" else "terminated"
                 )
@@ -301,7 +314,10 @@ def agent_query_stream(
         `completed` or `terminated` event carrying the same payload shape
         as `/agent/query`'s JSON response.
     """
+    request_id = get_request_id()
     return StreamingResponse(
-        _stream_agent_query(request, state, pipeline, vectorstore, embedder, llm, config, mcp_app),
+        _stream_agent_query(
+            request, state, pipeline, vectorstore, embedder, llm, config, mcp_app, request_id
+        ),
         media_type="text/event-stream",
     )
