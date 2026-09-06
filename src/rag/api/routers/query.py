@@ -12,6 +12,7 @@ from rag.api.auth import VerifiedIdentity
 from rag.api.deps import get_config, get_current_identity, get_rate_limiter, get_retrieval_pipeline
 from rag.api.request_auth import build_authorization_context, enforce_dos_limits
 from rag.config import AppConfig
+from rag.logging_config import get_request_id
 from rag.retrieval.authorization import AuthorizationContext
 from rag.retrieval.pipeline import RetrievalPipeline
 
@@ -64,13 +65,22 @@ class SourceItem(BaseModel):
 
 
 class QueryResponse(BaseModel):
-    """Response body for `POST /query`."""
+    """Response body for `POST /query`.
+
+    `request_id` is the same correlation id already echoed on the
+    `x-request-id` response header (see `api/middleware.py`), sourced
+    from the identical per-request contextvar
+    (`rag.logging_config.get_request_id`). Exposed here too so a caller
+    (the web UI's `POST /feedback` flow) can tie a feedback submission to
+    the exact answer/run it rated without a separate lookup.
+    """
 
     answer: str
     sources: list[SourceItem]
     retrieval_ms: float
     generation_ms: float
     total_ms: float
+    request_id: str | None = None
 
 
 def _build_authorization_context(
@@ -138,4 +148,4 @@ def query(
     _enforce_dos_limits(body, config)
     auth = _build_authorization_context(body, identity, config)
     result = pipeline.answer(body.query, filters=body.filters, candidate_k=body.top_k, auth=auth)
-    return QueryResponse(**result)
+    return QueryResponse(**result, request_id=get_request_id())
