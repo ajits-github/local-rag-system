@@ -277,7 +277,10 @@ A small React/Vite/TypeScript chat interface (`frontend/`) sits over the
 existing API: choose Classic or Agentic RAG, watch live agent progress,
 inspect sources/citations, and see an always-visible summary of the
 connected backend's active security/agent feature flags (`GET /`'s
-`features` block, booleans and provider names only, never a secret). It
+`features` block, booleans and provider names only, never a secret). A
+separate collapsible "Runtime configuration" panel (`GET /info`) adds the
+concrete pipeline identity behind those flags: generation/embedding
+model, retrieval mode, fusion method, reranker, and MCP/vision status. It
 reuses the backend as-is; no RAG logic lives in the frontend.
 
 ![Classic RAG answer with the feature-flags bar and expanded source citations](docs/assets/web-ui-screenshot.png)
