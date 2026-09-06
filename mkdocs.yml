@@ -103,6 +103,7 @@ nav:
       - Metrics reference: metrics.md
   - Observability: topics/observability.md
   - Web UI: topics/web-ui.md
+  - Feedback loop: topics/feedback.md
   - Deployment & Runtime: topics/deployment.md
   - API Reference:
       - Overview: reference/index.md
@@ -122,4 +123,5 @@ nav:
       - Ingestion: reference/ingestion.md
       - Evaluation: reference/eval.md
       - Observability: reference/observability.md
+      - Feedback: reference/feedback.md
       - API: reference/api.md
