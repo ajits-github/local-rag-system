@@ -14,7 +14,7 @@ from slowapi.middleware import SlowAPIMiddleware
 from rag.agent.mcp_client import validate_startup_config as _validate_mcp_client_startup_config
 from rag.api.deps import get_config, get_mcp_asgi_app, get_rate_limiter
 from rag.api.middleware import RequestIDMiddleware
-from rag.api.routers import agent_query, agent_stream, health, ingest, metrics, query
+from rag.api.routers import agent_query, agent_stream, feedback, health, ingest, metrics, query
 from rag.audit import log_audit_event
 from rag.config import AppConfig
 from rag.logging_config import configure_logging
@@ -179,4 +179,5 @@ app.include_router(ingest.router)
 app.include_router(query.router)
 app.include_router(agent_query.router)
 app.include_router(agent_stream.router)
+app.include_router(feedback.router)
 app.include_router(metrics.router)
