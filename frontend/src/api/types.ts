@@ -28,6 +28,7 @@ export const QueryResponseSchema = z.object({
   retrieval_ms: z.number(),
   generation_ms: z.number(),
   total_ms: z.number(),
+  request_id: z.string().nullable().optional(),
 });
 export type QueryResponse = z.infer<typeof QueryResponseSchema>;
 
@@ -50,6 +51,7 @@ export const AgentQueryResponseSchema = z.object({
   retrieval_ms: z.number(),
   generation_ms: z.number(),
   total_ms: z.number(),
+  request_id: z.string().nullable().optional(),
 });
 export type AgentQueryResponse = z.infer<typeof AgentQueryResponseSchema>;
 
@@ -102,6 +104,33 @@ export const RootInfoSchema = z.object({
   features: FeatureFlagsSchema,
 });
 export type RootInfo = z.infer<typeof RootInfoSchema>;
+
+export const FeedbackRatingSchema = z.enum(["positive", "negative"]);
+export type FeedbackRating = z.infer<typeof FeedbackRatingSchema>;
+
+/** Mirrors src/rag/feedback/schemas.py's NEGATIVE_FEEDBACK_REASONS. */
+export const NEGATIVE_FEEDBACK_REASONS = [
+  ["incorrect_answer", "Incorrect answer"],
+  ["outdated_information", "Outdated information"],
+  ["unsupported_answer", "Not supported by sources"],
+  ["wrong_or_missing_citation", "Wrong or missing citation"],
+  ["incomplete_answer", "Incomplete answer"],
+  ["irrelevant_answer", "Irrelevant answer"],
+  ["other", "Other"],
+] as const;
+
+/** Mirrors src/rag/feedback/schemas.py's POSITIVE_FEEDBACK_REASONS. */
+export const POSITIVE_FEEDBACK_REASONS = [
+  ["accurate_and_helpful", "Accurate and helpful"],
+  ["well_cited", "Well cited"],
+  ["other", "Other"],
+] as const;
+
+export const FeedbackAckSchema = z.object({
+  feedback_id: z.string(),
+  status: z.enum(["created", "updated"]),
+});
+export type FeedbackAck = z.infer<typeof FeedbackAckSchema>;
 
 export type RagMode = "classic" | "agent";
 
