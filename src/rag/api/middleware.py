@@ -64,6 +64,7 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
             status_code = response.status_code if response is not None else 500
             route = request.scope.get("route")
             path_label = getattr(route, "path", None) or request.url.path
+            route_name = getattr(route, "name", None)
             tracing.set_attributes(
                 span,
                 {
@@ -73,20 +74,25 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
                     "request_id": request_id,
                 },
             )
+            # Logged while `span` is still the active span (before span_cm.__exit__
+            # below detaches it), so JSONFormatter's ambient trace_id/span_id lookup
+            # actually finds it -- logging after __exit__ would silently omit them.
+            logger.info(
+                "request_handled",
+                extra={
+                    "method": request.method,
+                    "path": request.url.path,
+                    "route_name": route_name,
+                    "status_code": status_code,
+                    "duration_ms": duration_ms,
+                },
+            )
             try:
                 span_cm.__exit__(None, None, None)
             except Exception:
                 logger.warning("Failed to close HTTP request span", exc_info=True)
             observability_metrics.observe_http_request(
                 request.method, path_label, status_code, duration_ms / 1000
-            )
-            logger.info(
-                "request_handled",
-                extra={
-                    "method": request.method,
-                    "path": request.url.path,
-                    "duration_ms": duration_ms,
-                },
             )
             reset_request_id(token)
         response.headers["x-request-id"] = request_id
