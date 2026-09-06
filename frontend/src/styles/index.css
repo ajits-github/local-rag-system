@@ -492,6 +492,39 @@ body {
   border: none;
 }
 
+.collapsible-panel--runtime {
+  border: none;
+}
+
+.runtime-info {
+  padding: 0.4rem 0 0.6rem;
+}
+
+.runtime-info__status {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.runtime-info__status--error {
+  color: var(--error-text);
+}
+
+.runtime-info__refresh {
+  margin-top: 0.5rem;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  border-radius: 6px;
+  padding: 0.2rem 0.6rem;
+  cursor: pointer;
+  font-size: 0.75rem;
+}
+
+.runtime-info__refresh:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .dev-identity-form {
   display: flex;
   flex-direction: column;
