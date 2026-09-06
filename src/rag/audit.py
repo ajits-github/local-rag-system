@@ -48,6 +48,7 @@ AuthEventType = Literal[
     "case_action_approval_required",
     "case_action_executed",
     "case_action_invalid_transition",
+    "feedback_submitted",
 ]
 
 
