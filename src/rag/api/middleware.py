@@ -30,7 +30,7 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
     """
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
-        """Set the request id, run the handler, record telemetry, and echo the id back.
+        """Set the request id, run the handler, record telemetry, and set the response header.
 
         Parameters
         ----------
@@ -44,7 +44,14 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
         Response
             The handler's response, with an `x-request-id` header set.
         """
-        request_id = request.headers.get("x-request-id", str(uuid.uuid4()))
+        # Always server-generated, never taken from an inbound `x-request-id`
+        # header: this value is also `QueryResponse.request_id`/
+        # `AgentQueryResponse.request_id`, the feedback loop's
+        # `(tenant_id, caller_key, request_id)` dedup/update key
+        # (`api/routers/feedback.py`). Trusting a caller-supplied header here
+        # would let a caller force collisions across unrelated answers and
+        # overwrite another submission's feedback row.
+        request_id = str(uuid.uuid4())
         token = set_request_id(request_id)
         start = time.monotonic()
         response: Response | None = None
