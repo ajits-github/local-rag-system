@@ -800,6 +800,58 @@ class McpConfig(BaseModel):
     business_actions: BusinessActionConfig = Field(default_factory=BusinessActionConfig)
 
 
+class FeedbackConfig(BaseModel):
+    """User-feedback-loop persistence tunables (`POST /feedback`).
+
+    Attributes
+    ----------
+    enabled : bool
+        When `False`, `POST /feedback` 404s, matching the router-level
+        runtime-check pattern `security.dos_limits`/`observability.
+        live_events` already use. `True` by default: feedback collection
+        has no external dependency beyond the already-required Postgres
+        instance.
+    table_name : str
+        Name of the feedback table.
+    store_query_text : bool
+        Whether to persist the caller-echoed original query text. The
+        caller already saw this text in their own request; storing it is
+        what makes a feedback row usable for later eval-curation review.
+        An operator with a stricter privacy posture can turn this off.
+    store_answer_text : bool
+        Same reasoning as `store_query_text`, for the generated answer
+        text the caller already received.
+    max_comment_length : int
+        Maximum allowed free-text `comment` length, in characters.
+    max_query_text_length : int
+        Maximum allowed `query` length, in characters. Mirrors
+        `security.dos_limits.max_query_length` but kept independent since
+        feedback is a different endpoint with its own bound.
+    max_answer_text_length : int
+        Maximum allowed `answer` length, in characters.
+    max_cited_sources : int
+        Maximum number of entries allowed in `cited_source_ids`/
+        `tool_calls`.
+
+    Notes
+    -----
+    Enforced as router-level checks (`api/routers/feedback.py`'s
+    `_enforce_feedback_limits`), not Pydantic field constraints, matching
+    `DoSLimitsConfig`'s own reasoning: the bounds must read from runtime
+    config, not a value baked into the request model at class-definition
+    time.
+    """
+
+    enabled: bool = True
+    table_name: str = "feedback"
+    store_query_text: bool = True
+    store_answer_text: bool = True
+    max_comment_length: int = 1000
+    max_query_text_length: int = 2000
+    max_answer_text_length: int = 8000
+    max_cited_sources: int = 20
+
+
 class AppConfig(BaseModel):
     """Root settings object: the single entrypoint used by the API, ingestion CLI, and eval CLI.
 
@@ -822,6 +874,7 @@ class AppConfig(BaseModel):
     agent: AgentConfig = Field(default_factory=AgentConfig)
     observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
     mcp: McpConfig = Field(default_factory=McpConfig)
+    feedback: FeedbackConfig = Field(default_factory=FeedbackConfig)
 
     def agent_prompt_template_path(self, path: str) -> Path:
         """Resolve one of `agent.*_prompt_path`, relative to the repo root if not absolute.
