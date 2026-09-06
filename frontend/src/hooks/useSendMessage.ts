@@ -47,6 +47,7 @@ export function useSendMessage() {
           dispatch({
             type: "COMPLETE_ASSISTANT_ANSWER",
             id: assistantId,
+            query: text,
             text: response.answer,
             sources: response.sources,
             debug: debugFromQueryResponse(response),
@@ -65,6 +66,7 @@ export function useSendMessage() {
               dispatch({
                 type: "COMPLETE_ASSISTANT_ANSWER",
                 id: assistantId,
+                query: text,
                 text: item.response.answer,
                 sources: item.response.sources,
                 debug: debugFromAgentResponse(item.response),
@@ -79,6 +81,7 @@ export function useSendMessage() {
             dispatch({
               type: "COMPLETE_ASSISTANT_ANSWER",
               id: assistantId,
+              query: text,
               text: response.answer,
               sources: response.sources,
               debug: debugFromAgentResponse(response),
