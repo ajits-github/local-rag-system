@@ -95,6 +95,30 @@ export const FeatureFlagsSchema = z.object({
 });
 export type FeatureFlags = z.infer<typeof FeatureFlagsSchema>;
 
+export const RuntimeInfoSchema = z.object({
+  generation_provider: z.string(),
+  generation_model: z.string(),
+  embedding_provider: z.string(),
+  embedding_model: z.string(),
+  vectorstore_provider: z.string(),
+  retrieval_mode: z.string(),
+  sparse_retrieval_enabled: z.boolean(),
+  fusion_method: z.string().nullable(),
+  reranker_provider: z.string(),
+  reranker_enabled: z.boolean(),
+  agent_enabled: z.boolean(),
+  mcp_enabled: z.boolean(),
+  mcp_client_enabled: z.boolean(),
+  vision_provider: z.string(),
+  tracing_enabled: z.boolean(),
+  rate_limit_enabled: z.boolean(),
+  field_redaction_enabled: z.boolean(),
+  authorization_enabled: z.boolean(),
+  auth_enabled: z.boolean(),
+});
+/** Mirrors src/rag/api/main.py's RuntimeInfo (GET /info): system-wide pipeline configuration. */
+export type RuntimeInfo = z.infer<typeof RuntimeInfoSchema>;
+
 export const RootInfoSchema = z.object({
   service: z.string(),
   status: z.string(),
