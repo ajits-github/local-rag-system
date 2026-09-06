@@ -223,6 +223,62 @@ def build_schema_sql(*, documents_table: str, chunks_table: str, dimension: int)
     """
 
 
+def build_feedback_schema_sql(*, table: str) -> str:
+    """Build the idempotent DDL that creates/migrates the feedback table.
+
+    A separate function from `build_schema_sql` (documents/chunks): the
+    feedback table has no vector column, no embedding dimension, and no
+    relationship to the documents/chunks tables at all -- it just records
+    a caller's rating of an answer, keyed by that answer's `request_id`.
+
+    Parameters
+    ----------
+    table : str
+        Name of the feedback table.
+
+    Returns
+    -------
+    str
+        A multi-statement SQL script, safe to re-run.
+    """
+    return f"""
+    CREATE TABLE IF NOT EXISTS {table} (
+        feedback_id UUID NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        -- tenant_id is NOT NULL with a '' sentinel (never NULL) specifically so it
+        -- can participate in the UNIQUE constraint below: Postgres treats every
+        -- NULL as distinct from every other NULL, so a NULL-inclusive key would
+        -- never actually deduplicate two anonymous/no-tenant submissions.
+        tenant_id TEXT NOT NULL DEFAULT '',
+        caller_key TEXT NOT NULL,
+        request_id TEXT NOT NULL,
+        rating TEXT NOT NULL,
+        reason TEXT,
+        comment TEXT,
+        route TEXT,
+        dataset_id TEXT,
+        query_text TEXT,
+        answer_text TEXT,
+        cited_source_ids TEXT[],
+        tool_calls TEXT[],
+        generation_model TEXT,
+        prompt_id TEXT,
+        prompt_version TEXT,
+        retrieval_provider TEXT,
+        reranker_provider TEXT,
+        PRIMARY KEY (feedback_id),
+        UNIQUE (tenant_id, caller_key, request_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS {table}_tenant_id_idx ON {table} (tenant_id);
+    CREATE INDEX IF NOT EXISTS {table}_created_at_idx ON {table} (created_at);
+    CREATE INDEX IF NOT EXISTS {table}_rating_idx ON {table} (rating);
+    CREATE INDEX IF NOT EXISTS {table}_dataset_id_idx ON {table} (dataset_id);
+    CREATE INDEX IF NOT EXISTS {table}_route_idx ON {table} (route);
+    """
+
+
 def main() -> None:
     """CLI entrypoint: build the schema SQL from config and run it."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -235,19 +291,21 @@ def main() -> None:
         chunks_table=config.vectorstore.chunks_table,
         dimension=config.embedding.dimension,
     )
+    feedback_sql = build_feedback_schema_sql(table=config.feedback.table_name)
 
     conn = psycopg2.connect(config.database_url())
     try:
         with conn:
             with conn.cursor() as cur:
                 cur.execute(sql)
+                cur.execute(feedback_sql)
         used_config = (
             DEFAULT_CONFIG_PATH.name if args.config == str(DEFAULT_CONFIG_PATH) else args.config
         )
         print(
             f"Initialized '{config.vectorstore.documents_table}' and "
             f"'{config.vectorstore.chunks_table}' (dim={config.embedding.dimension}) "
-            f"using {used_config}"
+            f"and '{config.feedback.table_name}' using {used_config}"
         )
     finally:
         conn.close()
