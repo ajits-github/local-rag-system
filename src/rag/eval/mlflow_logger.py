@@ -174,6 +174,47 @@ _METRIC_FIELDS = [
     "agent_latency_ms",
     "agent_prompt_tokens_mean",
     "agent_completion_tokens_mean",
+    # Per-node latency means (rag.eval.run_agent_eval's node_latency_breakdown_ms,
+    # flattened by scripts/record_agent_experiment.py). None on any record
+    # where every scored question took the classic_rag fast path.
+    "agent_node_classify_latency_ms_mean",
+    "agent_node_decompose_latency_ms_mean",
+    "agent_node_tool_select_latency_ms_mean",
+    "agent_node_tool_execute_latency_ms_mean",
+    "agent_node_evidence_sufficiency_latency_ms_mean",
+    "agent_node_synthesize_latency_ms_mean",
+    # Guardrail/limit termination (any of max_steps/max_retrieval_attempts/
+    # max_tool_calls), aggregated across every agent-routed example.
+    "agent_guardrail_termination_count",
+    "agent_guardrail_termination_rate",
+    # Per-termination-reason counts/rates (AgentState.termination_reason's
+    # fixed vocabulary; see rag.eval.run_agent_eval._TERMINATION_REASONS).
+    "agent_termination_synthesized_count",
+    "agent_termination_synthesized_rate",
+    "agent_termination_max_steps_count",
+    "agent_termination_max_steps_rate",
+    "agent_termination_max_retrieval_attempts_count",
+    "agent_termination_max_retrieval_attempts_rate",
+    "agent_termination_max_tool_calls_count",
+    "agent_termination_max_tool_calls_rate",
+    "agent_termination_insufficient_evidence_count",
+    "agent_termination_insufficient_evidence_rate",
+    # Per-tool-name usage counts/rates (ToolCallRecord.tool_name's fixed
+    # vocabulary; see rag.eval.run_agent_eval._TOOL_NAMES).
+    "agent_tool_usage_search_knowledge_base_count",
+    "agent_tool_usage_search_knowledge_base_rate",
+    "agent_tool_usage_get_document_count",
+    "agent_tool_usage_get_document_rate",
+    "agent_tool_usage_get_latest_document_count",
+    "agent_tool_usage_get_latest_document_rate",
+    "agent_tool_usage_get_related_context_count",
+    "agent_tool_usage_get_related_context_rate",
+    "agent_tool_usage_get_customer_case_count",
+    "agent_tool_usage_get_customer_case_rate",
+    "agent_tool_usage_get_case_status_count",
+    "agent_tool_usage_get_case_status_rate",
+    "agent_tool_usage_update_case_status_count",
+    "agent_tool_usage_update_case_status_rate",
     # See eval/run_eval.py's "layout_vision" report section for exact
     # definitions.
     "table_retrieval_hit_rate",
