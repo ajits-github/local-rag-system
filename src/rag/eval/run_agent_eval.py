@@ -39,6 +39,34 @@ from rag.vectorstore.base import VectorStore
 _BOUND_TERMINATIONS = {"max_steps", "max_retrieval_attempts", "max_tool_calls"}
 _answer_quality_scorer = KeywordOverlapScorer()
 
+# AgentState.termination_reason's fixed Literal vocabulary (rag.agent.state).
+# Hardcoded, not introspected, matching this module's existing
+# _AGENT_PROMPT_FIELDS-style convention of a small fixed list kept in sync
+# by hand; a genuinely new termination reason would need a code change
+# here regardless of how it's discovered.
+_TERMINATION_REASONS = [
+    "synthesized",
+    "max_steps",
+    "max_retrieval_attempts",
+    "max_tool_calls",
+    "insufficient_evidence",
+]
+
+# ToolCallRecord.tool_name's fixed Literal vocabulary (rag.agent.state).
+# Same fixed-list convention as _TERMINATION_REASONS above: bounded and
+# small, so flattening a per-tool-name breakdown into named fields never
+# risks the "high-cardinality metric name" problem a per-query or
+# per-document-id breakdown would.
+_TOOL_NAMES = [
+    "search_knowledge_base",
+    "get_document",
+    "get_latest_document",
+    "get_related_context",
+    "get_customer_case",
+    "get_case_status",
+    "update_case_status",
+]
+
 # Matches "Source 2", "Sources 1 and 3", "(Source 4)", etc.; the citation
 # style `agent_synthesize_v1`/`v2` and `rag_answer_v3` both instruct the
 # model to use (rule 5: '... Reference its source number, e.g. "(Source 2)"').
@@ -504,6 +532,72 @@ def _node_token_breakdown(records: list[dict[str, Any]]) -> dict[str, Any]:
             ),
         }
         for name in node_names
+    }
+
+
+def _termination_reason_breakdown(records: list[dict[str, Any]]) -> dict[str, Any]:
+    """Per-termination-reason counts/rates across every agent-routed example.
+
+    Scoped to `route == "agent"` records only, matching
+    `_latency_and_tokens`'s `agent_routed` scoping: `_run_classic_rag`
+    also stamps `termination_reason = "synthesized"` on its single fast
+    path, so including classic-routed rows would just dilute this
+    agent-loop-specific breakdown by whatever fraction of the gold set
+    never entered the bounded loop at all -- `_routing_metrics` already
+    reports that split. `guardrail_termination_count`/`_rate` reuses the
+    same `_BOUND_TERMINATIONS` set `_evidence_and_retry_metrics` scores
+    `max_step_termination_rate` against, generalized here to every
+    agent-routed example rather than only the gold-flagged subset.
+    """
+    agent_routed = [r for r in records if r["route"] == "agent"]
+    total = len(agent_routed)
+    counts = dict.fromkeys(_TERMINATION_REASONS, 0)
+    for r in agent_routed:
+        reason = r["termination_reason"]
+        if reason in counts:
+            counts[reason] += 1
+    guardrail_count = sum(counts[reason] for reason in _BOUND_TERMINATIONS)
+    return {
+        "termination_reason_breakdown": {
+            "count": total,
+            "by_reason": {
+                reason: {"count": n, "rate": (n / total if total else None)}
+                for reason, n in counts.items()
+            },
+            "guardrail_termination_count": guardrail_count,
+            "guardrail_termination_rate": guardrail_count / total if total else None,
+        }
+    }
+
+
+def _tool_usage_breakdown(records: list[dict[str, Any]]) -> dict[str, Any]:
+    """Per-tool-name dispatch counts/rates across every agent-routed example's tool calls.
+
+    Scoped to `route == "agent"` records (`classic_rag` never dispatches a
+    tool). Counts every dispatch, successful or not, toward `count`;
+    `success_rate` is scoped to that tool's own dispatches. Tool names are
+    `_TOOL_NAMES`'s fixed, bounded set, so this never grows with the
+    number of examples an eval run happens to score.
+    """
+    all_records = [rec for r in records if r["route"] == "agent" for rec in r["tool_call_records"]]
+    total = len(all_records)
+    by_tool: dict[str, list[dict[str, Any]]] = {name: [] for name in _TOOL_NAMES}
+    for rec in all_records:
+        by_tool.setdefault(rec["tool_name"], []).append(rec)
+    return {
+        "tool_usage_breakdown": {
+            "count": total,
+            "by_tool": {
+                name: {
+                    "count": len(recs),
+                    "rate": (len(recs) / total if total else None),
+                    "success_rate": (
+                        sum(1 for r in recs if r["success"]) / len(recs) if recs else None
+                    ),
+                }
+                for name, recs in by_tool.items()
+            },
+        }
     }
 
 
