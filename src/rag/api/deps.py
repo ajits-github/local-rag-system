@@ -20,6 +20,7 @@ from rag.audit import log_audit_event, pseudonymous_subject
 from rag.config import AppConfig, load_config
 from rag.embedders.base import Embedder
 from rag.factory import build_embedder, build_llm, build_reranker, build_vectorstore
+from rag.feedback.store import FeedbackStore
 from rag.generation.base import LLM
 from rag.ingestion.pipeline import IngestionPipeline
 from rag.mcp.asgi import build_mcp_asgi_app
@@ -102,6 +103,18 @@ def get_mcp_asgi_app() -> Starlette | None:
     if not config.mcp.enabled:
         return None
     return build_mcp_asgi_app(config, get_retrieval_pipeline(), get_vectorstore(), get_embedder())
+
+
+@lru_cache
+def get_feedback_store() -> FeedbackStore:
+    """Return the process-wide `FeedbackStore` singleton.
+
+    A separate connection pool from `get_vectorstore()`'s -- feedback
+    persistence is deliberately decoupled from the retrieval path (see
+    `rag.feedback.store`'s module docstring).
+    """
+    config = get_config()
+    return FeedbackStore(config.database_url(), table=config.feedback.table_name)
 
 
 def get_current_identity(
