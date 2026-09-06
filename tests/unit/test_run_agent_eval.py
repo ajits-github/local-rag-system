@@ -11,6 +11,8 @@ from rag.eval.run_agent_eval import (
     _extract_cited_source_numbers,
     _infer_cited_sources,
     _resolve_citation_attribution,
+    _termination_reason_breakdown,
+    _tool_usage_breakdown,
     evaluate_agent,
 )
 from rag.schemas import Chunk, ChunkMetadata, SearchResult
@@ -161,6 +163,24 @@ def test_evaluate_agent_reports_routing_and_tool_metrics():
     assert report["by_agentic_category"]["query_decomposition"]["count"] == 1
     assert pipeline.answer_calls == 1
     assert pipeline.retrieve_calls == 1
+
+    # The classic_rag-routed example (example 1) is excluded from both
+    # breakdowns: only the agent-routed example (example 2) counts.
+    termination = report["termination_reason_breakdown"]
+    assert termination["count"] == 1
+    assert termination["by_reason"]["synthesized"]["count"] == 1
+    assert termination["by_reason"]["synthesized"]["rate"] == 1.0
+    assert termination["by_reason"]["max_steps"]["count"] == 0
+    assert termination["guardrail_termination_count"] == 0
+    assert termination["guardrail_termination_rate"] == 0.0
+
+    tool_usage = report["tool_usage_breakdown"]
+    assert tool_usage["count"] == 1
+    assert tool_usage["by_tool"]["search_knowledge_base"]["count"] == 1
+    assert tool_usage["by_tool"]["search_knowledge_base"]["rate"] == 1.0
+    assert tool_usage["by_tool"]["search_knowledge_base"]["success_rate"] == 1.0
+    assert tool_usage["by_tool"]["get_document"]["count"] == 0
+    assert tool_usage["by_tool"]["get_document"]["rate"] == 0.0
 
 
 def test_evaluate_agent_answer_correctness_and_verbose_output():
@@ -533,3 +553,81 @@ def test_tool_selection_coverage_supplements_the_strict_accuracy_gate():
     assert coverage["required_tool_coverage"]["mean"] == 0.5
     assert coverage["expected_tool_precision"]["mean"] == 1.0
     assert coverage["unexpected_tool_rate"]["mean"] == 0.0
+
+
+def test_termination_reason_breakdown_counts_guardrail_terminations():
+    """max_steps/max_retrieval_attempts/max_tool_calls all count toward the guardrail bucket.
+
+    A classic_rag-routed row is excluded entirely, since _run_classic_rag
+    always stamps termination_reason="synthesized" on its single fast
+    path -- including it would dilute this agent-loop-specific breakdown.
+    """
+    records = [
+        {"route": "agent", "termination_reason": "max_steps", "tool_call_records": []},
+        {"route": "agent", "termination_reason": "max_retrieval_attempts", "tool_call_records": []},
+        {"route": "agent", "termination_reason": "synthesized", "tool_call_records": []},
+        {"route": "classic_rag", "termination_reason": "synthesized", "tool_call_records": []},
+    ]
+
+    breakdown = _termination_reason_breakdown(records)["termination_reason_breakdown"]
+
+    assert breakdown["count"] == 3
+    assert breakdown["by_reason"]["max_steps"]["count"] == 1
+    assert breakdown["by_reason"]["max_retrieval_attempts"]["count"] == 1
+    assert breakdown["by_reason"]["synthesized"]["count"] == 1
+    assert breakdown["by_reason"]["insufficient_evidence"]["count"] == 0
+    assert breakdown["by_reason"]["insufficient_evidence"]["rate"] == 0.0
+    assert breakdown["guardrail_termination_count"] == 2
+    assert breakdown["guardrail_termination_rate"] == 2 / 3
+
+
+def test_termination_reason_breakdown_handles_no_agent_routed_examples():
+    """A gold set that's entirely classic_rag-routed reports zero counts, never a divide-by-zero."""
+    records = [
+        {"route": "classic_rag", "termination_reason": "synthesized", "tool_call_records": []}
+    ]
+
+    breakdown = _termination_reason_breakdown(records)["termination_reason_breakdown"]
+
+    assert breakdown["count"] == 0
+    assert breakdown["by_reason"]["synthesized"]["count"] == 0
+    assert breakdown["by_reason"]["synthesized"]["rate"] is None
+    assert breakdown["guardrail_termination_count"] == 0
+    assert breakdown["guardrail_termination_rate"] is None
+
+
+def test_tool_usage_breakdown_scopes_success_rate_per_tool():
+    """count/rate are scoped across all agent-routed tool calls; success_rate is per-tool."""
+    records = [
+        {
+            "route": "agent",
+            "tool_call_records": [
+                {"tool_name": "search_knowledge_base", "success": True, "result_count": 2},
+                {"tool_name": "search_knowledge_base", "success": False, "result_count": 0},
+                {"tool_name": "get_document", "success": True, "result_count": 1},
+            ],
+        },
+        {"route": "classic_rag", "tool_call_records": []},
+    ]
+
+    breakdown = _tool_usage_breakdown(records)["tool_usage_breakdown"]
+
+    assert breakdown["count"] == 3
+    assert breakdown["by_tool"]["search_knowledge_base"]["count"] == 2
+    assert breakdown["by_tool"]["search_knowledge_base"]["rate"] == 2 / 3
+    assert breakdown["by_tool"]["search_knowledge_base"]["success_rate"] == 0.5
+    assert breakdown["by_tool"]["get_document"]["count"] == 1
+    assert breakdown["by_tool"]["get_document"]["success_rate"] == 1.0
+    assert breakdown["by_tool"]["get_related_context"]["count"] == 0
+    assert breakdown["by_tool"]["get_related_context"]["success_rate"] is None
+
+
+def test_tool_usage_breakdown_handles_no_agent_routed_examples():
+    """No agent-routed tool calls at all reports zero counts and None rates, no divide-by-zero."""
+    records = [{"route": "classic_rag", "tool_call_records": []}]
+
+    breakdown = _tool_usage_breakdown(records)["tool_usage_breakdown"]
+
+    assert breakdown["count"] == 0
+    assert breakdown["by_tool"]["search_knowledge_base"]["count"] == 0
+    assert breakdown["by_tool"]["search_knowledge_base"]["rate"] is None
