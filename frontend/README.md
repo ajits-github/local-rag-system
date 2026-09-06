@@ -1,7 +1,7 @@
 # Local RAG Chat (frontend)
 
 A small React + Vite + TypeScript chat UI over the existing FastAPI backend
-(`/query`, `/agent/query`, `/agent/query/stream`). This is a frontend over
+(`/query`, `/agent/query`, `/agent/query/stream`, `/feedback`). This is a frontend over
 the proven backend, not a redesign of it: no RAG logic lives here, and no
 backend code changes were needed to build it.
 
@@ -100,6 +100,21 @@ bar makes that visible at a glance instead of by accident. See
 Sources are rendered in a collapsible panel with content-type badges
 (table/code/configuration/image/chart/prose), section path, page number,
 and score, never a filesystem path (the API never returns one).
+
+## Feedback
+
+Every completed answer gets compact thumbs up/down controls
+(`src/components/chat/FeedbackControls.tsx`), keyed off the response's
+`request_id` (a message with no `request_id` renders no feedback controls
+at all, since there'd be nothing to correlate it to). An optional
+"Add details" form lets you pick a small closed-vocabulary reason and add
+a short comment; both submit via `POST /feedback`, reusing the same dev
+identity as every other request. Clicking an already-submitted rating
+again is a no-op; clicking the other rating, or submitting the details
+form, replaces the earlier submission (matches the backend's own
+update-not-duplicate semantics for the same run). See
+`CLAUDE.md`'s "User feedback loop" section and
+`docs/architecture.md`'s "Feedback loop" section for the full design.
 
 ## Authentication and local development
 
