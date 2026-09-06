@@ -356,6 +356,34 @@ def _aggregate_node_timings(
     return stats
 
 
+def _log_tool_call_completed(
+    tool_name: str,
+    *,
+    success: bool,
+    result_count: int,
+    latency_ms: float,
+    is_remote: bool,
+    error_type: str | None = None,
+) -> None:
+    """Emit one structured tool-completion log line.
+
+    Never includes raw tool arguments, raw tool output, or the exception
+    message text -- only the tool name, a bounded `error_type` (the
+    exception class name, never `str(exc)`), and counts/timing.
+    """
+    logger.info(
+        "tool_call_completed",
+        extra={
+            "tool_name": tool_name,
+            "success": success,
+            "result_count": result_count,
+            "duration_ms": round(latency_ms, 2),
+            "origin": "remote" if is_remote else "local",
+            "error_type": error_type,
+        },
+    )
+
+
 def _emit_event(
     on_event: OnAgentEvent | None,
     event_type: EventType,
@@ -593,6 +621,14 @@ def _execute_tool(
         state.tool_call_count += 1
         observability_metrics.observe_tool_call(decision.tool_name, False, latency_ms / 1000)
         observability_metrics.observe_error("tool")
+        _log_tool_call_completed(
+            decision.tool_name,
+            success=False,
+            result_count=0,
+            latency_ms=latency_ms,
+            is_remote=decision.tool_name in REMOTE_MCP_TOOL_NAMES,
+            error_type="invalid_arguments",
+        )
         return state
 
     is_remote_tool = decision.tool_name in REMOTE_MCP_TOOL_NAMES
@@ -622,6 +658,14 @@ def _execute_tool(
         )
         state.tool_call_count += 1
         observability_metrics.observe_tool_call(decision.tool_name, False, latency_ms / 1000)
+        _log_tool_call_completed(
+            decision.tool_name,
+            success=False,
+            result_count=0,
+            latency_ms=latency_ms,
+            is_remote=is_remote_tool,
+            error_type=error,
+        )
         return state
 
     _emit_event(on_event, "tool_started", state, tool_name=decision.tool_name)
@@ -660,6 +704,14 @@ def _execute_tool(
         state.tool_call_count += 1
         observability_metrics.observe_tool_call(decision.tool_name, False, latency_ms / 1000)
         observability_metrics.observe_error("tool")
+        _log_tool_call_completed(
+            decision.tool_name,
+            success=False,
+            result_count=0,
+            latency_ms=latency_ms,
+            is_remote=is_remote_tool,
+            error_type=type(exc).__name__,
+        )
         _emit_event(on_event, "tool_completed", state, tool_name=decision.tool_name, result_count=0)
         return state
 
@@ -682,6 +734,13 @@ def _execute_tool(
         )
     )
     observability_metrics.observe_tool_call(decision.tool_name, True, latency_ms / 1000)
+    _log_tool_call_completed(
+        decision.tool_name,
+        success=True,
+        result_count=len(sanitized),
+        latency_ms=latency_ms,
+        is_remote=is_remote_tool,
+    )
     _emit_event(
         on_event, "tool_completed", state, tool_name=decision.tool_name, result_count=len(sanitized)
     )
@@ -926,6 +985,22 @@ def run_agent(
                 "termination_reason": result.state.termination_reason,
                 "agent_step_count": result.state.step_count,
                 "tool_call_count": result.state.tool_call_count,
+            },
+        )
+        # Logged while root_span is still active (before __exit__ below detaches
+        # it) so JSONFormatter's ambient trace_id/span_id lookup finds it. Never
+        # includes query/answer/evidence text -- only run-shape counters.
+        logger.info(
+            "agent_request_completed",
+            extra={
+                "route": result.route,
+                "termination_reason": result.state.termination_reason,
+                "step_count": result.state.step_count,
+                "tool_call_count": result.state.tool_call_count,
+                "retrieval_attempts": result.state.retrieval_attempts,
+                "evidence_sufficient": result.state.evidence_sufficient,
+                "duration_ms": round(result.total_ms, 2),
+                "success": result.state.termination_reason == "synthesized",
             },
         )
         try:
