@@ -3510,3 +3510,274 @@ set's path-suffix matching was affected by the move.
   embedded images in the same stream order -- true for the real corpus's
   simple, single-column documents (verified directly), not a guarantee
   for an arbitrarily complex PDF with overlapping or z-ordered images.
+
+## Feedback loop (feedback milestone)
+
+Adds a closed, production-shaped user-feedback path on top of the
+existing query/agent routes, so a caller's rating of an answer becomes
+durable, tenant-isolated, and reviewable, without turning feedback
+storage into a second, uncontrolled sensitive-data sink. Deliberately
+scoped to persistence, retrieval, and export only -- automatic
+feedback-to-gold promotion and CI eval gates are explicitly out of scope
+for this milestone (see "Deliberately out of scope" below).
+
+```
+answer (POST /query or /agent/query*)
+  -> caller sees answer + request_id
+  -> thumbs up/down (+ optional structured reason/comment)
+  -> POST /feedback
+  -> tenant-scoped Postgres row (rag.feedback.store.FeedbackStore)
+  -> scripts/export_feedback.py (JSONL/CSV, filtered)
+  -> human review
+  -> optional, deliberate, hand-authored promotion into a gold eval file
+```
+
+### `request_id`: the answer/run identifier feedback ties to
+
+`QueryResponse`/`AgentQueryResponse` gained one additive field,
+`request_id`, sourced from the same per-request contextvar
+(`rag.logging_config.get_request_id`) that already produces the
+`x-request-id` response header and every structured log line's
+`request_id` field for that request -- not a new identifier concept, a
+second exposure of one that already existed. This is the "exact
+answer/run" reference this milestone's goal calls for; no new request log
+or answer-history table was added just to support it (a much larger
+change this milestone's own scope explicitly avoids).
+
+One real subtlety: `POST /agent/query/stream`'s SSE terminal frame is
+built deep inside an async generator, driven by Starlette's own
+response-streaming machinery, running after `RequestIDMiddleware`'s
+`dispatch()` may already have reset the contextvar in its `finally`
+block (the generator's body executes concurrently with, and can outlive,
+what that middleware's own `call_next()` await covers). Reading
+`get_request_id()` at that point would be a race. `agent_stream.py`
+instead captures the value once, synchronously, in
+`agent_query_stream()`'s own body -- before the `StreamingResponse`/
+generator are even constructed -- and threads it through as a plain
+function argument (`_stream_agent_query(..., request_id)` ->
+`_final_response(result, request_id)`), sidestepping the race entirely
+rather than trying to reason about exactly when the contextvar is still
+valid.
+
+`request_id` is never existence-checked against a server-side log of
+past requests -- none exists, and adding one solely to validate this
+field would be a materially larger change than this milestone's scope.
+It is treated as an opaque, format-bounded (`min_length=1`,
+`max_length=100`) correlation string a caller asserts, not a verified
+reference. A stale or entirely made-up `request_id` is still accepted
+deterministically (proven directly by
+`test_stale_or_nonexistent_request_id_is_still_accepted_deterministically`)
+-- a documented, deliberate choice, not a gap discovered later.
+
+### API and identity/tenant trust
+
+`POST /feedback` (`rag/api/routers/feedback.py`) reuses `/query`'s exact
+JWT-precedence rule rather than inventing a second one:
+`rag.api.request_auth.resolve_trusted_tenant_id` is a smaller sibling of
+`build_authorization_context` (same forged-claim-logging behavior, but
+returning a bare `tenant_id` instead of a full `AuthorizationContext`,
+since feedback has no retrieval/ACL concept to build one for). A verified
+JWT identity's `tenant_id` always wins over a body-supplied one; a
+mismatch is logged as `forged_claim_attempt` (the same event `/query`
+already uses) but never trusted. `get_current_identity` -- the same
+dependency every other router uses -- is reused unmodified, so
+`security.auth.enabled`/`insecure_dev_mode`'s existing behavior (401 on a
+missing/invalid token, unless dev mode allows no token at all) applies to
+`/feedback` identically, not a parallel auth story.
+
+`FeedbackRequest` sets `model_config = ConfigDict(extra="forbid")` -- a
+deliberate deviation from `QueryRequest`'s permissive default. This is a
+narrow, security-relevant write path, not a flexible query surface, so an
+unrecognized field is rejected outright rather than silently ignored (the
+same reasoning `agent/tool_schemas.py`'s LLM-writable argument models
+already apply, for a different reason).
+
+Structured reasons are a small, closed vocabulary
+(`rag/feedback/schemas.py`'s `NEGATIVE_FEEDBACK_REASONS`/
+`POSITIVE_FEEDBACK_REASONS`), not arbitrary strings. `FeedbackRequest`'s
+`model_validator` rejects a reason drawn from the wrong rating's set (a
+`positive` rating cannot carry `incorrect_answer`, and vice versa) as a
+422, before it ever reaches the store.
+
+### Database design and dedup/update semantics
+
+`rag/feedback/store.py`'s `FeedbackStore` is a small, dedicated Postgres
+store with its own `ThreadedConnectionPool` -- deliberately not folded
+into `PgVectorStore`'s pool or its `VectorStore` interface, since
+feedback has no embedding/similarity-search/authorization-predicate
+concept at all, just a narrow write/read table. Schema DDL lives in
+`scripts/init_db.py`'s `build_feedback_schema_sql`, run by the same
+idempotent `python scripts/init_db.py` (and therefore `make up`) every
+other table's schema already goes through.
+
+Preferred duplicate semantics, per this milestone's own instruction: one
+feedback row per trusted caller and per answer/run, where a later
+submission for the same run *updates* the earlier rating/reason/comment
+rather than creating an unbounded pile of duplicates. The dedup/update
+key is `(tenant_id, caller_key, request_id)`, enforced by a database
+`UNIQUE` constraint and applied via a single `INSERT ... ON CONFLICT (...)
+DO UPDATE ... RETURNING feedback_id, (xmax = 0) AS inserted` statement --
+atomic under concurrent submissions, unlike an application-level
+SELECT-then-INSERT/UPDATE. `feedback_id` stays stable across an update;
+`created_at`/`updated_at` distinguish the original submission from the
+latest edit.
+
+**A real Postgres gotcha, found and fixed before this ever reached
+tests**: `tenant_id` is stored as `TEXT NOT NULL DEFAULT ''` rather than
+a nullable column with the sentinel resolved elsewhere. Postgres treats
+every `NULL` as distinct from every other `NULL` for the purposes of a
+`UNIQUE` constraint, so a `NULL`-inclusive key would silently never
+deduplicate two anonymous/no-tenant submissions -- each would insert a
+new row instead of updating the first, exactly the "unbounded duplicates"
+outcome this milestone explicitly asks to avoid. Storing `''` (mapped
+back to `None` on read, in `rag.feedback.store._row_to_record`) sidesteps
+this without adding a second column. Proven directly by
+`test_two_anonymous_no_tenant_submissions_do_not_collide`.
+
+`caller_key` is the verified JWT subject's pseudonymous hash
+(`rag.audit.pseudonymous_subject`, the same hashing helper every other
+audit event already uses -- never the raw claim) when a verified identity
+is present, or the fixed literal `"anonymous"` otherwise. This is a
+documented, deliberate limitation, not an oversight: this API is
+stateless with no session/cookie concept, so two different unauthenticated
+callers who happen to submit feedback against the very same `request_id`
+(a per-response, server-minted UUIDv4 shown only to the original caller)
+would share one row. A stable, distinguishable caller identity requires a
+verified identity here, exactly like every other identity-dependent
+guarantee in this codebase.
+
+Cited-source/tool-call provenance (`cited_source_ids`/`tool_calls`,
+`TEXT[]` columns, matching the `chunks` table's existing array-column
+precedent for e.g. `allowed_roles`/`table_headers`) and generation/prompt/
+retrieval/reranker lineage are all stored as normalized, filterable
+columns rather than one bounded JSON blob, per this milestone's own
+"prefer structured columns" instruction. Indexes exist on `tenant_id`,
+`created_at`, `rating`, `dataset_id`, and `route` -- the filters
+`scripts/export_feedback.py` and any future admin surface actually need.
+
+### Lineage is a best-effort snapshot, not a per-answer record
+
+`generation_model`/`prompt_id`/`prompt_version`/`retrieval_provider`/
+`reranker_provider` are read from `AppConfig` at the moment feedback is
+*submitted*, not captured at the moment the original answer was
+*generated* -- no per-answer metadata store exists yet to look this up
+from. In this single-process, config-loaded-once-per-process deployment
+this is normally exact (config only changes on restart), but it is not a
+structural guarantee across, say, a mid-session config hot-reload were
+one ever added. Documented here rather than silently assumed correct;
+`query_text`/`answer_text` (the caller-echoed original question/answer,
+gated by `FeedbackConfig.store_query_text`/`store_answer_text`) are the
+fields a reviewer should actually trust for "what did this feedback refer
+to," with the lineage fields as a best-effort debugging aid alongside
+them.
+
+### Privacy and security posture
+
+Feedback storage is deliberately narrow, not a general logging sink:
+
+- **No JWT, token, or `AuthorizationContext` is ever stored.** The store
+  only ever receives a `FeedbackWriteInput` dataclass built by the router
+  from already-resolved, already-trusted plain strings/lists -- proven
+  directly by `test_no_jwt_or_auth_context_ever_reaches_the_store`, which
+  asserts every field on the object the store received is a bare
+  `str`/`list`/`None`.
+- **No chain-of-thought, raw prompts, or hidden tool reasoning.**
+  `tool_calls` is only ever the public list of tool *names* a run
+  dispatched (`AgentQueryResponse.tool_calls`'s own existing, already
+  non-sensitive shape) -- never tool arguments, decision reasoning, or
+  intermediate LLM output.
+  `query`/`answer` are exactly the text the caller already received in
+  their own request/response, never new exposure; both are still
+  length-bounded (`feedback.max_query_text_length`/
+  `max_answer_text_length`) and independently toggleable off via
+  `FeedbackConfig.store_query_text`/`store_answer_text` for a stricter
+  privacy posture.
+- **Comment/citation/tool-call lists are all bounded.**
+  `feedback.max_comment_length`/`max_cited_sources` are runtime-config
+  values enforced at the router level
+  (`_enforce_feedback_limits`), matching `DoSLimitsConfig`'s own
+  established "bounds must read from config, not a class-level Pydantic
+  constraint" reasoning -- not baked into the request model itself.
+- **Fails closed on invalid tenant/auth state.** `POST /feedback` reuses
+  `get_current_identity` unmodified, so `security.auth.enabled=True`
+  with no `insecure_dev_mode` rejects an unauthenticated caller with 401
+  before any feedback logic runs, exactly like `/query`.
+- **Audit/trace without sensitive content.** `log_audit_event(
+  "feedback_submitted", tenant_id=..., rating=..., route=...,
+  has_comment=<bool>, outcome=...)` logs only IDs, a fixed two-value
+  rating enum, a fixed route enum, a boolean, and a fixed outcome enum --
+  never the comment, query, or answer text itself.
+- **No fine-grained field-level redaction pass runs over feedback text.**
+  `query`/`answer` are the caller's own already-redacted, already-sanitized
+  text (retrieval-time field redaction and
+  `sanitize_redaction_markers_in_answer` already ran before the caller
+  ever saw this content) -- there is nothing further to redact that the
+  caller doesn't already possess. A `comment`, by contrast, is genuinely
+  free text a caller could paste anything into; this milestone bounds its
+  length but does not scan its contents, the same posture this project
+  takes toward every other free-text field a caller directly authors
+  (e.g. the original `query` string itself).
+
+### Export and eval-curation boundary
+
+No public `GET /feedback` exists, by explicit instruction.
+`scripts/export_feedback.py` (`FeedbackStore.export`, filterable by
+tenant/rating/dataset/route/date range) is the reviewer-facing path,
+writing JSONL or CSV for human inspection -- matching this project's
+established `scripts/`-based internal-tooling convention
+(`record_experiment.py`, `compare_experiments.py`) rather than adding a
+new admin API surface this codebase has no precedent for.
+
+Feedback is never automatically written into a gold eval file. Promoting
+a specific negative-feedback example into
+`data/eval/techfusion_gold.jsonl` (or any other gold file) remains a
+separate, deliberate, hand-authored step -- this milestone deliberately
+stops at "a human-reviewable export," per its own explicit instruction
+not to implement automatic feedback-to-gold promotion or a CI eval gate
+yet. `test_write_jsonl_never_mutates_a_gold_dataset_file` documents this
+boundary directly: the export path has no code path that writes anywhere
+but the caller-specified `--out` file.
+
+### Observability
+
+`rag.observability.metrics`'s `FEEDBACK_SUBMISSIONS_TOTAL` (labeled by
+`rating` and `outcome` -- `created`/`updated`/`failed`, all fixed,
+low-cardinality vocabularies, never a query/comment/tenant id) and
+`FEEDBACK_SUBMISSION_LATENCY_SECONDS` follow the exact same dedicated-
+`CollectorRegistry`/`_defensive`-wrapper pattern every other metric in
+this module already uses. A storage failure increments both the
+feedback-specific `outcome="failed"` counter and the generic
+`rag_errors_total{component="feedback"}` counter (`observe_error`,
+reused unmodified), giving both a feedback-specific and a
+cross-component view of the same failure without a second parallel
+metric family.
+
+### Frontend
+
+`frontend/src/components/chat/FeedbackControls.tsx` renders compact
+thumbs up/down buttons plus an optional, disclosed-on-demand reason/
+comment form, reading `message.debug.requestId` (populated from the new
+`request_id` response field) to know what to attach feedback to; a
+message with no `request_id` (an older/malformed response) renders no
+feedback controls at all rather than submitting something it can't
+correlate. Duplicate prevention is client-side and deliberate: clicking
+an already-submitted, already-selected rating again is a no-op, while
+clicking the *other* rating (an explicit change) submits an update,
+mirroring the backend's own upsert semantics exactly. No hidden agent
+reasoning is ever surfaced -- the component only ever reads already-public
+fields (`message.text`, `message.sources`, `message.debug.route`/
+`toolCalls`), the same discipline `AgentActivityPanel`'s existing
+no-free-text-field guarantee already establishes for this codebase.
+
+### Deliberately out of scope (per this milestone's own instructions)
+
+- Automatic feedback-to-gold-dataset promotion.
+- A CI eval-gate driven by feedback volume/sentiment.
+- Running RAGAS or a hosted judge against feedback-flagged examples.
+- Any new MCP tool, LangGraph adoption, or a Redis/Kafka/Celery queue for
+  feedback processing -- none is needed for a low-volume, synchronous
+  Postgres write.
+- A broadly-accessible feedback-browsing endpoint.
+
+These remain natural follow-ups for a later milestone, once enough real
+feedback volume exists to make automatic curation meaningful.
