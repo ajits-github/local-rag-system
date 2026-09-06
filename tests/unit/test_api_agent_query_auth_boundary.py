@@ -218,7 +218,14 @@ def test_agent_disabled_response_shape_matches_classic_route(client_with):
 
 
 def test_query_endpoint_response_schema_is_unaffected_by_the_new_route(client_with):
-    """POST /query itself is untouched. same 5-field response shape as before."""
+    """POST /query's response shape is unaffected by the agent route.
+
+    `request_id` is a separate, later, additive field (the feedback-loop
+    milestone's correlation id, sourced from the same value as the
+    `x-request-id` header) -- not something `/agent/query`'s existence
+    added, so it's included in the expected set here rather than tracked
+    as a second historical baseline.
+    """
     config = load_config()
     client, pipeline = client_with(config)
 
@@ -231,4 +238,5 @@ def test_query_endpoint_response_schema_is_unaffected_by_the_new_route(client_wi
         "retrieval_ms",
         "generation_ms",
         "total_ms",
+        "request_id",
     }
