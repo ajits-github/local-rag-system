@@ -86,6 +86,22 @@ export function DevIdentityPanel({
               placeholder="e.g. authoritative"
             />
           </label>
+          <label>
+            Dataset ID
+            <input
+              type="text"
+              value={identity.datasetId}
+              onChange={(e) => update({ datasetId: e.target.value })}
+              placeholder="e.g. techfusion (leave blank to search every ingested dataset)"
+            />
+          </label>
+          {!identity.datasetId && (
+            <p className="dev-identity-form__hint">
+              No dataset selected: retrieval will search every dataset_id ever ingested into this
+              Postgres instance, not just one corpus. Set this to match the corpus you actually mean to
+              query.
+            </p>
+          )}
         </div>
       )}
     </div>
