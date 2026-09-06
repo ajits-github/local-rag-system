@@ -1,7 +1,7 @@
 import { createContext, useContext, useMemo, useReducer, type ReactNode } from "react";
 import type { DevIdentity, RagMode, SourceItem } from "../api/types";
 import type { RagApiErrorKind } from "../api/client";
-import type { ChatMessage, DebugInfo } from "./types";
+import type { ChatMessage, DebugInfo, FeedbackState } from "./types";
 
 const DEV_IDENTITY_STORAGE_KEY = "rag-ui:dev-identity";
 
@@ -47,12 +47,14 @@ type ChatAction =
   | {
       type: "COMPLETE_ASSISTANT_ANSWER";
       id: string;
+      query: string;
       text: string;
       sources: SourceItem[];
       debug: DebugInfo;
       insufficientEvidence: boolean;
     }
   | { type: "FAIL_ASSISTANT_MESSAGE"; id: string; kind: RagApiErrorKind; message: string }
+  | { type: "SET_FEEDBACK"; id: string; feedback: FeedbackState }
   | { type: "NEW_CHAT" };
 
 function initialState(): ChatState {
@@ -122,6 +124,7 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
             ? {
                 ...m,
                 status: "done",
+                query: action.query,
                 text: action.text,
                 sources: action.sources,
                 debug: action.debug,
@@ -138,6 +141,11 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
             ? { ...m, status: "error", errorKind: action.kind, errorMessage: action.message }
             : m
         ),
+      };
+    case "SET_FEEDBACK":
+      return {
+        ...state,
+        messages: state.messages.map((m) => (m.id === action.id ? { ...m, feedback: action.feedback } : m)),
       };
     case "NEW_CHAT":
       return { ...state, messages: [] };
