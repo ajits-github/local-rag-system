@@ -31,13 +31,31 @@ describe("chatReducer", () => {
     state = chatReducer(state, {
       type: "COMPLETE_ASSISTANT_ANSWER",
       id: "a1",
+      query: "the question",
       text: "the answer",
       sources: [],
       debug: { route: "classic_rag" },
       insufficientEvidence: false,
     });
 
-    expect(state.messages[0]).toMatchObject({ status: "done", text: "the answer", insufficientEvidence: false });
+    expect(state.messages[0]).toMatchObject({
+      status: "done",
+      query: "the question",
+      text: "the answer",
+      insufficientEvidence: false,
+    });
+  });
+
+  it("stores feedback state for a message via SET_FEEDBACK", () => {
+    let state = initialChatState();
+    state = chatReducer(state, { type: "ADD_ASSISTANT_PLACEHOLDER", id: "a1", mode: "classic" });
+    state = chatReducer(state, {
+      type: "SET_FEEDBACK",
+      id: "a1",
+      feedback: { status: "submitted", rating: "positive", feedbackId: "fb-1" },
+    });
+
+    expect(state.messages[0].feedback).toMatchObject({ status: "submitted", rating: "positive" });
   });
 
   it("marks a message as errored without discarding it", () => {
