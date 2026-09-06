@@ -2930,8 +2930,29 @@ router-level-runtime-config-check pattern `security.dos_limits` already
 uses) and returns 404 when disabled, else Prometheus text exposition.
 `GET /` (`api/main.py`) is a new, dependency-light endpoint -- no
 vectorstore/LLM health checks (that's `GET /health`) -- returning service
-name/status and links to `/health`/`/docs`/`/metrics` (the last only when
-metrics are enabled).
+name/status, links to `/health`/`/docs`/`/metrics` (the last only when
+metrics are enabled), and a `features` block (`FeatureFlags`): booleans
+and provider names only (`auth_enabled`, `authorization_enabled`,
+`field_redaction_enabled`, `rate_limit_enabled`, `agent_enabled`,
+`vision_provider`, `tracing_enabled`, `insecure_dev_mode`), never a
+model name, host, or connection string.
+
+`GET /info` is a sibling endpoint, not an extension of `GET /`: it
+returns `RuntimeInfo`, the concrete pipeline identity `FeatureFlags`
+deliberately omits (`generation_provider`/`generation_model`,
+`embedding_provider`/`embedding_model`, `vectorstore_provider`,
+`retrieval_mode`, `sparse_retrieval_enabled`, `fusion_method`,
+`reranker_provider`/`reranker_enabled`, `mcp_enabled`/
+`mcp_client_enabled`, plus the same security/agent/vision toggles `GET /`
+already reports). Kept separate because `GET /`'s own regression test
+asserts no model name ever appears in that response; a model name is not
+itself a secret, but it is exactly the kind of identifying configuration
+that endpoint promises never to leak, so a new endpoint was the cleaner
+fix rather than relaxing that guarantee. Both endpoints exclude JWTs,
+signing keys, DB URLs, filesystem paths, internal tokens, and prompt
+text. The web UI's `RuntimeInfoPanel` renders `GET /info` inside a
+collapsed-by-default panel, fetched lazily on first expand rather than
+eagerly on mount like the always-visible `FeatureFlagsBar`.
 
 ### Live agent execution events (SSE)
 
