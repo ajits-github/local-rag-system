@@ -141,4 +141,5 @@ export interface DevIdentity {
   roles: string;
   asOf: string;
   requireTrustLevel: string;
+  datasetId: string;
 }

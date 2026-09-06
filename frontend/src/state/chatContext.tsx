@@ -11,6 +11,7 @@ const emptyIdentity: DevIdentity = {
   roles: "",
   asOf: "",
   requireTrustLevel: "",
+  datasetId: "",
 };
 
 function loadDevIdentity(): DevIdentity {
