@@ -59,6 +59,9 @@ services:
       - ./src:/app/src
       - ./config:/app/config
       - ./data/uploads:/app/data/uploads
+    # Access logging stays on here (unlike the Dockerfile CMD/prod override):
+    # useful, human-readable terminal feedback while iterating locally, and
+    # this command already overrides the image's default CMD.
     command: ["uvicorn", "rag.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
     deploy:
       resources:

@@ -19,7 +19,9 @@ services:
     # Replace dev bind mounts; keep uploaded documents persistent.
     volumes: !override
       - ./data/uploads:/app/data/uploads
-    command: ["uvicorn", "rag.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    # --no-access-log: see Dockerfile's own CMD comment. Kept explicit here too
+    # since this command line overrides the image's default CMD entirely.
+    command: ["uvicorn", "rag.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]
     healthcheck:
       interval: 15s
       timeout: 5s

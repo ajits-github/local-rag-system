@@ -49,4 +49,8 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD python -c "import urllib.request as u; u.urlopen('http://127.0.0.1:8000/health', timeout=5)" || exit 1
 
-CMD ["uvicorn", "rag.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# --no-access-log: uvicorn's own plain-text access log duplicates the
+# structured request_handled JSON log (api/middleware.py), which already
+# carries status_code plus every other field the access log would. Server
+# lifecycle/error logs (uvicorn/uvicorn.error) are unaffected.
+CMD ["uvicorn", "rag.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]
