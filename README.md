@@ -34,6 +34,10 @@ can change one axis without touching pipeline code.
 - Deterministic + RAGAS evaluation with an experiment-tracking table (see
   [Benchmarks](#benchmarks))
 - A React web UI (`frontend/`) for interactive testing of both RAG paths
+- A closed feedback loop: thumbs up/down (+ optional reason/comment) on
+  any answer, persisted tenant-scoped in Postgres, exportable for human
+  review; never auto-promoted to gold eval data (see
+  [Feedback loop](#feedback-loop))
 
 The fastest path is: install Python dependencies, start Postgres, ingest
 `data/sample_docs`, start the API, and call `/query` (see
@@ -81,6 +85,7 @@ What sets this apart from a typical RAG tutorial project:
   - [Security](#security)
   - [Observability](#observability)
   - [Web UI](#web-ui)
+  - [Feedback loop](#feedback-loop)
   - [Prerequisites](#prerequisites)
   - [Setup](#setup)
   - [Containerized development](#containerized-development)
@@ -292,6 +297,29 @@ backend: `cd frontend && npm install && npm run dev`
 for the full setup, authentication behavior, and known limitations.
 <!-- --8<-- [end:docs-web-ui] -->
 
+<!-- --8<-- [start:docs-feedback] -->
+## Feedback loop
+
+`POST /feedback` lets a caller rate an answer they already received
+(`positive`/`negative`, plus an optional small structured reason and a
+bounded free-text comment), tied to that answer's `request_id` (the same
+correlation id returned in `QueryResponse.request_id`/
+`AgentQueryResponse.request_id` and the `x-request-id` response header).
+Identity/tenant handling is byte-identical to `/query`'s: a verified JWT
+always wins over a body-supplied `tenant_id`, and a mismatch is logged,
+never trusted. One row per `(tenant_id, caller, request_id)`; a later
+submission for the same run updates that row rather than creating a
+duplicate.
+
+Feedback is never treated as ground truth. There is no public
+`GET /feedback`; `scripts/export_feedback.py` is the reviewer-facing path
+(JSONL/CSV, filterable by tenant/rating/dataset/route/date), producing
+data for a human to review before anything is hand-curated into a gold
+eval file. See `docs/architecture.md`'s "Feedback loop" section for the
+full design (schema, dedup semantics, privacy controls) and the web UI's
+thumbs controls (`frontend/src/components/chat/FeedbackControls.tsx`).
+<!-- --8<-- [end:docs-feedback] -->
+
 <!-- --8<-- [start:docs-prereq-setup] -->
 ## Prerequisites
 
@@ -452,6 +480,18 @@ An unset or empty value preserves the default behavior exactly. A path
 that doesn't exist, or isn't valid YAML, fails loudly at config-load time
 rather than silently falling back to `config/default.yaml`.
 
+**`config/default.yaml` is a local dev/demo posture, not a production
+one.** Every security control ships off (`authorization`, `field_redaction`,
+`auth`, `rate_limit`) so the quickstart above works with zero setup, and
+the agentic path still points at the original, pre-fix prompt versions.
+`config/production.yaml` is the recommended profile for any real
+deployment -- every security control this project has built and
+validated, turned on, built from the most complete validated experiment
+records (see that file's own header comment for the full rationale):
+```bash
+RAG_CONFIG_PATH=/app/config/production.yaml docker compose up -d
+```
+
 ### Windows-specific notes
 
 - `host.docker.internal` (used to reach native Ollama) is a Docker Desktop
@@ -471,13 +511,18 @@ rather than silently falling back to `config/default.yaml`.
 All provider choices and tunables live in `config/default.yaml`:
 embedding model, chunk size/overlap, reranker (`none` / `cross_encoder` /
 `cohere`), LLM, retrieval `candidate_k`, generation context size, security
-toggles, and agent bounds. Point at an alternate config with
-`--config path/to/other.yaml` on the ingestion/eval CLIs. The running API
-(not a CLI) instead reads the `RAG_CONFIG_PATH` environment variable,
-unset by default; see "Running the API against an alternate config file"
-above. Comparable configs for experiments live under
-`config/experiments/`, each a full standalone copy rather than a partial
-override.
+toggles, and agent bounds. `config/default.yaml` is a developer-friendly
+demo posture (every security toggle off); `config/production.yaml` is
+the profile to point a real deployment at instead -- see "Running the
+API against an alternate config file" above. Point at an alternate
+config with `--config path/to/other.yaml` on the ingestion/eval CLIs.
+The running API (not a CLI) instead reads the `RAG_CONFIG_PATH`
+environment variable, unset by default. Comparable configs for
+experiments live under `config/experiments/`, each a full standalone
+copy rather than a partial override, and each an immutable record of a
+specific past evaluation run -- `config/production.yaml` is the one
+config file in this project meant to be updated as new security fixes
+land.
 
 Generation prompts are versioned YAML files under
 `src/rag/prompts/templates/` (`rag_answer_v1.yaml`, `rag_answer_v2.yaml`,
