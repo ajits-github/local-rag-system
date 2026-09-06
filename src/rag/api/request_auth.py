@@ -89,6 +89,42 @@ def build_authorization_context(
     )
 
 
+def resolve_trusted_tenant_id(
+    identity: VerifiedIdentity | None, tenant_id: str | None
+) -> str | None:
+    """Resolve a trusted `tenant_id`, using `build_authorization_context`'s own precedence rule.
+
+    For callers (e.g. `POST /feedback`) that need only a trusted
+    `tenant_id`, not a full `AuthorizationContext`. A verified identity's
+    `tenant_id` always wins; a disagreeing caller-supplied `tenant_id` is
+    logged as `forged_claim_attempt` but never used, exactly like
+    `build_authorization_context`.
+
+    Parameters
+    ----------
+    identity : VerifiedIdentity | None
+        The verified caller identity, or `None`.
+    tenant_id : str | None
+        Caller-supplied `tenant_id` (only trusted when `identity` is
+        `None`).
+
+    Returns
+    -------
+    str | None
+        The trusted tenant id, or `None` when no tenant was asserted.
+    """
+    if identity is not None:
+        if tenant_id is not None and tenant_id != identity.tenant_id:
+            log_audit_event(
+                "forged_claim_attempt",
+                subject=pseudonymous_subject(identity.subject),
+                verified_tenant_id=identity.tenant_id,
+                body_tenant_id=tenant_id,
+            )
+        return identity.tenant_id
+    return tenant_id
+
+
 def enforce_dos_limits(
     query: str, top_k: int | None, filters: dict[str, Any] | None, config: AppConfig
 ) -> None:
