@@ -146,6 +146,134 @@ def root(config: AppConfig = Depends(get_config)) -> RootResponse:
     )
 
 
+class RuntimeInfo(BaseModel):
+    """Safe, non-secret snapshot of the effective runtime pipeline configuration.
+
+    Complements `FeatureFlags`: that model summarizes security/agent
+    toggles for the always-visible feature-flags strip, while this model
+    additionally surfaces the concrete provider/model choices behind the
+    running pipeline (which model answered, whether BM25/reranking/MCP
+    are active), for the developer/debug UI. Kept on a separate `GET
+    /info` endpoint rather than folded into `GET /`: `GET /`'s own
+    regression test (`test_root_features_never_leak_secrets_or_identifying_config`)
+    deliberately asserts no model name ever appears there, and a model
+    name is not itself a secret but is exactly the kind of "identifying
+    configuration" that endpoint promises never to carry.
+
+    Still bound by the same rule as `FeatureFlags`: never a JWT/signing
+    key, DB URL, filesystem path, internal token, raw auth context,
+    prompt text, or tenant data. Provider names and model identifiers are
+    the only "new" kind of information here relative to `FeatureFlags`.
+
+    Attributes
+    ----------
+    generation_provider : str
+        `generation.provider` (e.g. `"ollama"`).
+    generation_model : str
+        `generation.model_name`.
+    embedding_provider : str
+        `embedding.provider`.
+    embedding_model : str
+        `embedding.model_name`.
+    vectorstore_provider : str
+        `vectorstore.provider` (e.g. `"pgvector"`).
+    retrieval_mode : str
+        `retrieval.provider` (`"dense"` or `"hybrid"`).
+    sparse_retrieval_enabled : bool
+        Whether BM25 keyword search runs alongside dense search
+        (`retrieval.provider == "hybrid"`).
+    fusion_method : str | None
+        `"rrf"` when `sparse_retrieval_enabled`, else `None` (no fusion
+        step runs in dense-only mode).
+    reranker_provider : str
+        `reranker.provider`.
+    reranker_enabled : bool
+        `reranker.provider != "none"`.
+    agent_enabled : bool
+        `agent.enabled`.
+    mcp_enabled : bool
+        `mcp.enabled`; whether the MCP server is mounted at all.
+    mcp_client_enabled : bool
+        `mcp.client.enabled`; whether the agent dispatches the two
+        business-case tools as a real MCP client call.
+    vision_provider : str
+        `vision.provider` (`"none"` or `"ollama"`).
+    tracing_enabled : bool
+        `observability.tracing.enabled`.
+    rate_limit_enabled : bool
+        `security.rate_limit.enabled`.
+    field_redaction_enabled : bool
+        `security.field_redaction.enabled`.
+    authorization_enabled : bool
+        `security.authorization.enabled`.
+    auth_enabled : bool
+        `security.auth.enabled`.
+    """
+
+    generation_provider: str
+    generation_model: str
+    embedding_provider: str
+    embedding_model: str
+    vectorstore_provider: str
+    retrieval_mode: str
+    sparse_retrieval_enabled: bool
+    fusion_method: str | None
+    reranker_provider: str
+    reranker_enabled: bool
+    agent_enabled: bool
+    mcp_enabled: bool
+    mcp_client_enabled: bool
+    vision_provider: str
+    tracing_enabled: bool
+    rate_limit_enabled: bool
+    field_redaction_enabled: bool
+    authorization_enabled: bool
+    auth_enabled: bool
+
+
+@app.get("/info", response_model=RuntimeInfo)
+def info(config: AppConfig = Depends(get_config)) -> RuntimeInfo:
+    """Effective runtime pipeline configuration, safe to expose without authentication.
+
+    Lightweight, config-only (no dependency injection of vectorstore/llm/
+    pipeline), matching `root()`'s own pattern. Intended for a developer/
+    debug UI panel, not for making authorization decisions.
+
+    Parameters
+    ----------
+    config : AppConfig
+        Application configuration, read per-request so a
+        `dependency_overrides`-based test can exercise this directly.
+
+    Returns
+    -------
+    RuntimeInfo
+        The safe, non-secret runtime configuration snapshot.
+    """
+    sparse_retrieval_enabled = config.retrieval.provider == "hybrid"
+    return RuntimeInfo(
+        generation_provider=config.generation.provider,
+        generation_model=config.generation.model_name,
+        embedding_provider=config.embedding.provider,
+        embedding_model=config.embedding.model_name,
+        vectorstore_provider=config.vectorstore.provider,
+        retrieval_mode=config.retrieval.provider,
+        sparse_retrieval_enabled=sparse_retrieval_enabled,
+        fusion_method="rrf" if sparse_retrieval_enabled else None,
+        reranker_provider=config.reranker.provider,
+        reranker_enabled=config.reranker.provider != "none",
+        agent_enabled=config.agent.enabled,
+        mcp_enabled=config.mcp.enabled,
+        mcp_client_enabled=config.mcp.client.enabled,
+        vision_provider=config.vision.provider,
+        tracing_enabled=config.observability.tracing.enabled,
+        rate_limit_enabled=config.security.rate_limit.enabled,
+        field_redaction_enabled=config.security.field_redaction.enabled,
+        authorization_enabled=config.security.authorization.enabled,
+        auth_enabled=config.security.auth.enabled,
+    )
+
+
 app.state.limiter = get_rate_limiter()
 
 
