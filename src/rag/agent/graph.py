@@ -887,6 +887,7 @@ def _synthesize(state: AgentState, llm: LLM, template: PromptTemplate) -> AgentS
             attachment_name=r.chunk.metadata.attachment_name,
             source_anchor=r.chunk.metadata.source_anchor,
             vision_generated=r.chunk.metadata.vision_generated,
+            origin=r.origin,
         )
         for r in ordered_evidence
     ]
@@ -954,6 +955,7 @@ def _run_classic_rag(
             attachment_name=s.get("attachment_name"),
             source_anchor=s.get("source_anchor"),
             vision_generated=bool(s.get("vision_generated", False)),
+            origin=s.get("origin", "retrieved"),
         )
         for s in result["sources"]
     ]
