@@ -23,6 +23,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import anyio
+
 from rag.agent.graph import AgentRunResult, run_agent
 from rag.agent.state import AgentState
 from rag.config import AppConfig, load_config
@@ -213,6 +215,7 @@ def _record_for_example(
     config: AppConfig,
     dataset_id: str,
     include_evidence: bool = False,
+    mcp_app: Any | None = None,
 ) -> dict[str, Any]:
     """Run one gold example through the agent graph and capture a scoring-ready record.
 
@@ -231,7 +234,13 @@ def _record_for_example(
         filters={"dataset_id": dataset_id},
     )
     result = run_agent(
-        state, pipeline=pipeline, vectorstore=vectorstore, embedder=embedder, llm=llm, config=config
+        state,
+        pipeline=pipeline,
+        vectorstore=vectorstore,
+        embedder=embedder,
+        llm=llm,
+        config=config,
+        mcp_app=mcp_app,
     )
     final_state = result.state
     tool_names = [record.tool_name for record in final_state.tool_call_history]
@@ -636,6 +645,7 @@ def evaluate_agent(
     config: AppConfig,
     verbose: bool = False,
     include_evidence: bool = False,
+    mcp_app: Any | None = None,
 ) -> dict[str, Any]:
     """Run every example through the agent graph and compute agent-specific metrics.
 
@@ -658,6 +668,15 @@ def evaluate_agent(
         `_record_for_example`). Off by default; `run_agent_ragas_eval.py`
         turns this on to build RAGAS contexts from the same agent run
         instead of re-running the graph a second time.
+    mcp_app : Any | None, optional
+        The in-process MCP ASGI app object (see
+        `rag.mcp.asgi.build_mcp_asgi_app`), forwarded to `run_agent()` for
+        every example so the remote business tools
+        (`get_customer_case`/`get_case_status`/`update_case_status`) are
+        actually reachable when `config.mcp.client.enabled=True`. Its
+        lifespan must already be entered by the caller (see `run()`);
+        `None` when `mcp.client.enabled=False`, matching every other
+        caller of `run_agent()`.
 
     Returns
     -------
@@ -675,6 +694,7 @@ def evaluate_agent(
             config=config,
             dataset_id=dataset_id,
             include_evidence=include_evidence,
+            mcp_app=mcp_app,
         )
         for example in examples
     ]
@@ -705,6 +725,20 @@ def evaluate_agent(
     return report
 
 
+async def _evaluate_agent_with_mcp_lifespan(mcp_app: Any, run_eval: Any) -> dict[str, Any]:
+    """Enter `mcp_app`'s lifespan once for the whole eval run, then call `run_eval` in a thread.
+
+    Mirrors how `rag.api.main` enters the same lifespan once for the
+    life of the whole process, rather than once per request/tool call.
+    `run_eval` (a zero-arg closure over `evaluate_agent`) runs in a
+    worker thread since `run_agent()`'s own remote-tool dispatch bridges
+    to async via a fresh `anyio.run()` per call, which cannot nest inside
+    an already-running event loop on the same thread.
+    """
+    async with mcp_app.router.lifespan_context(mcp_app):
+        return await anyio.to_thread.run_sync(run_eval)
+
+
 def run(
     gold_path: Path, config_path: str | None, dataset_id: str, corpus_version: str | None = None
 ) -> dict[str, Any]:
@@ -715,9 +749,32 @@ def run(
     llm = build_llm(config)
     pipeline = RetrievalPipeline(config, vectorstore=vectorstore, embedder=embedder, llm=llm)
     examples = load_gold_jsonl(gold_path)
-    result = evaluate_agent(
-        pipeline, vectorstore, embedder, llm, examples, dataset_id, config, verbose=True
-    )
+
+    def _run_eval(mcp_app: Any | None = None) -> dict[str, Any]:
+        return evaluate_agent(
+            pipeline,
+            vectorstore,
+            embedder,
+            llm,
+            examples,
+            dataset_id,
+            config,
+            verbose=True,
+            mcp_app=mcp_app,
+        )
+
+    if config.mcp.client.enabled:
+        # Mirrors rag.api.deps.get_mcp_asgi_app(): the same in-process server
+        # object the agent's MCP client dispatches remote business-tool calls
+        # against, so get_customer_case/get_case_status/update_case_status are
+        # actually reachable from this CLI harness, not just from the live API.
+        from rag.mcp.asgi import build_mcp_asgi_app
+
+        mcp_app = build_mcp_asgi_app(config, pipeline, vectorstore, embedder)
+        result = anyio.run(_evaluate_agent_with_mcp_lifespan, mcp_app, lambda: _run_eval(mcp_app))
+    else:
+        result = _run_eval()
+
     lineage = compute_corpus_lineage(
         vectorstore, dataset_id, corpus_version or "unspecified", gold_path
     )
