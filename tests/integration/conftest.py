@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 import pytest
 
 from rag.config import load_config
+from rag.factory import build_vectorstore
 
 
 def _tcp_reachable(host: str, port: int, timeout: float = 1.5) -> bool:
@@ -59,4 +60,37 @@ def require_ollama(ollama_available):
         pytest.skip(
             "Ollama is not reachable at OLLAMA_BASE_URL — "
             "start it and `ollama pull qwen2.5:1.5b` first."
+        )
+
+
+@pytest.fixture(scope="session")
+def techfusion_corpus_available(postgres_available, config) -> bool:
+    """Whether the real, gitignored `techfusion` corpus is already ingested.
+
+    Unlike `postgres_available`/`ollama_available`, this dependency is
+    never satisfiable in CI: `data/knowledge_base/` is gitignored (see
+    CLAUDE.md), so a fresh checkout has no source files to ingest at all.
+    A long-running local dev Postgres that's already had the corpus
+    ingested once (`make ingest` or equivalent) is the only environment
+    where this is ever true.
+    """
+    if not postgres_available:
+        return False
+    vectorstore = build_vectorstore(config)
+    return len(vectorstore.list_document_sources("techfusion")) > 0
+
+
+@pytest.fixture
+def require_techfusion_corpus(techfusion_corpus_available):
+    """Skip the test if the real `techfusion` corpus isn't ingested locally.
+
+    Always skips in CI (`data/knowledge_base/` is gitignored, so nothing
+    is ever there to ingest); this is a permanent, not occasional, gap
+    for that environment, unlike `require_postgres`/`require_ollama`.
+    """
+    if not techfusion_corpus_available:
+        pytest.skip(
+            "The real `techfusion` corpus is not ingested in this Postgres instance, "
+            "ingest data/knowledge_base under dataset_id=techfusion first. "
+            "This never passes in CI: data/knowledge_base/ is gitignored."
         )

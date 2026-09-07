@@ -20,12 +20,20 @@ Two independent groups:
 - Local specialized-tool scenarios (the six `specialized_get_document`/
   `specialized_get_latest_document`/`specialized_get_related_context`
   gold rows): call `rag.agent.tools` directly against the real, already
-  -ingested `techfusion` dataset (`require_postgres`; no re-ingestion, no
-  mutation -- these are read-only lookups against existing corpus
-  documents by their real, stable `source` path). Confirms the exact
-  documents/relationships these gold questions depend on actually exist
-  and resolve the way the gold row's `agentic_rationale` claims, before
-  any live-model run is trusted to get the same answer.
+  -ingested `techfusion` dataset (`require_postgres`, `require_techfusion_corpus`;
+  no re-ingestion, no mutation -- these are read-only lookups against
+  existing corpus documents by their real, stable `source` path).
+  Confirms the exact documents/relationships these gold questions depend
+  on actually exist and resolve the way the gold row's `agentic_rationale`
+  claims, before any live-model run is trusted to get the same answer.
+  Unlike every other file in `tests/integration/`, this group can't
+  synthesize its own fixture content via `tmp_path` -- these gold rows
+  are authored against the real corpus's actual structure (version
+  chains, relationship links), not a document this test controls.
+  `require_techfusion_corpus` (`tests/integration/conftest.py`) skips it
+  cleanly wherever that real, gitignored corpus isn't already ingested --
+  always true in CI, since `data/knowledge_base/` is gitignored and a
+  fresh checkout has nothing to ingest at all.
 """
 
 from __future__ import annotations
@@ -196,7 +204,7 @@ def test_gold_update_case_status_denied_case_2001_cross_tenant_tenant_alpha_oper
 
 
 def test_gold_get_document_postgres_recovery_spans_troubleshooting_and_closure(
-    require_postgres, config
+    require_postgres, require_techfusion_corpus, config
 ):
     """Row 1: get_document on the PostgreSQL Recovery runbook covers both distant sections."""
     secure = _secure_config(config)
@@ -222,7 +230,9 @@ def test_gold_get_document_postgres_recovery_spans_troubleshooting_and_closure(
     assert "Reapply deletion tombstones" in text
 
 
-def test_gold_get_document_access_control_policy_spans_three_time_windows(require_postgres, config):
+def test_gold_get_document_access_control_policy_spans_three_time_windows(
+    require_postgres, require_techfusion_corpus, config
+):
     """Row 2: get_document on the Access Control Policy covers all three time-bounded windows."""
     secure = _secure_config(config)
     vectorstore = build_vectorstore(secure)
@@ -248,7 +258,9 @@ def test_gold_get_document_access_control_policy_spans_three_time_windows(requir
     assert "maximum 30-minute session" in text
 
 
-def test_gold_get_latest_document_incident_response_v1_redirects_to_v2(require_postgres, config):
+def test_gold_get_latest_document_incident_response_v1_redirects_to_v2(
+    require_postgres, require_techfusion_corpus, config
+):
     """Row 3: naming incident-response-v1.md directly still resolves to v2's current values."""
     secure = _secure_config(config)
     vectorstore = build_vectorstore(secure)
@@ -278,7 +290,9 @@ def test_gold_get_latest_document_incident_response_v1_redirects_to_v2(require_p
     assert "Platform on-call" not in text
 
 
-def test_gold_get_latest_document_retention_policy_v1_redirects_to_v2(require_postgres, config):
+def test_gold_get_latest_document_retention_policy_v1_redirects_to_v2(
+    require_postgres, require_techfusion_corpus, config
+):
     """Row 4: naming retention-policy-v1.md directly still resolves to v2's 90-day value."""
     secure = _secure_config(config)
     vectorstore = build_vectorstore(secure)
@@ -306,7 +320,7 @@ def test_gold_get_latest_document_retention_policy_v1_redirects_to_v2(require_po
 
 
 def test_gold_get_related_context_ocr_retry_config_reaches_lock_ttl_explanation(
-    require_postgres, config
+    require_postgres, require_techfusion_corpus, config
 ):
     """Row 5: get_related_context on the OCR retry JSON config reaches its parent prose."""
     secure = _secure_config(config)
@@ -332,7 +346,7 @@ def test_gold_get_related_context_ocr_retry_config_reaches_lock_ttl_explanation(
 
 
 def test_gold_get_related_context_latency_budget_config_reaches_rollout_rationale(
-    require_postgres, config
+    require_postgres, require_techfusion_corpus, config
 ):
     """Row 6: get_related_context on the latency-budget config reaches the rollout rationale."""
     secure = _secure_config(config)
