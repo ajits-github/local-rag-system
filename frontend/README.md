@@ -86,15 +86,15 @@ bar makes that visible at a glance instead of by accident. See
 
 ## Runtime configuration panel
 
-A collapsed-by-default "Runtime configuration" panel (`RuntimeInfoPanel`,
-under `FeatureFlagsBar`) shows the connected backend's actual pipeline
-identity: generation provider/model, embedding model, vector store,
-retrieval mode, sparse retrieval (BM25) status, fusion method, reranker,
-agent/MCP/vision status, and the same security toggles `FeatureFlagsBar`
-already summarizes. Fetched from `GET /info` (`rag.api.main.RuntimeInfo`)
-lazily, only on first expand, not on page load, since this is opt-in
-developer detail rather than always-visible security posture -- unlike
-`FeatureFlagsBar`, which fetches eagerly for exactly that reason. A
+A "Runtime configuration" panel (`RuntimeInfoPanel`, under
+`FeatureFlagsBar`) shows the connected backend's actual pipeline identity:
+generation provider/model, embedding model, vector store, retrieval mode,
+sparse retrieval (BM25) status, fusion method, reranker, agent/MCP/vision
+status, and the same security toggles `FeatureFlagsBar` already
+summarizes. Fetched from `GET /info` (`rag.api.main.RuntimeInfo`) once on
+load. The collapsed toggle itself doubles as a compact badge (e.g.
+`qwen2.5:3b · Hybrid · RRF · MCP`) so the essentials are visible without
+expanding; the full field-by-field breakdown stays behind the toggle. A
 manual refresh button re-fetches on demand.
 
 `GET /info` is a separate endpoint from `GET /`, not an extension of it:
@@ -117,8 +117,18 @@ never to leak) lives here instead.
   with a small notice that live progress isn't available.
 
 Sources are rendered in a collapsible panel with content-type badges
-(table/code/configuration/image/chart/prose), section path, page number,
-and score, never a filesystem path (the API never returns one).
+(table/code/configuration/image/chart/prose), an origin badge
+distinguishing a local RAG/knowledge-base source from an MCP remote/
+business-tool one (`SourceItem.origin`), section path, page number, and
+score, never a filesystem path (the API never returns one).
+
+Each completed answer also has a collapsible **Debug** panel, organized
+into Request (correlation id), Pipeline (route, termination reason),
+Timings (retrieval/generation/total), and Tools sections. For an agentic
+run, each tool dispatch renders as a small card: tool name, execution
+(Local vs. MCP remote, from `AgentQueryResponse.tool_call_details`),
+status, and duration -- never the tool's arguments, reasoning, or raw
+error text.
 
 ## Feedback
 
@@ -148,6 +158,26 @@ and the UI makes that visible rather than implying they still matter. This
 panel is local-development tooling; there is no client-side authorization
 of any kind. Every access decision is still made entirely by the
 backend.
+
+Fields are edited in a draft and only take effect once you click **Apply
+settings**, which validates the input first (a bearer token must be
+structurally a JWT; an invalid entry is rejected inline, tied to its
+field, and never applied or sent). A successful apply collapses the panel
+into a compact "Developer session" summary (tenant/role, as-of date,
+dataset, and -- for a token -- an expiry countdown); an **Edit settings**
+button reopens it pre-filled with the currently-applied values.
+
+For a bearer token specifically, the JWT payload is decoded **client-side,
+for display only** (`src/utils/jwt.ts`) -- this never constitutes
+authentication or authorization, and the backend's own signature
+verification remains the only thing that actually accepts or rejects a
+request. A header badge (`TokenStatusBadge`) shows a live countdown to
+`exp` (e.g. "Authenticated · 47:32"), stepping through healthy →
+expiring-soon (≤10 min) → critical (≤2 min) → expired states with
+distinct text/icons (not color alone) and an `aria-live` announcement on
+each transition. Once expired, the badge says so plainly and offers a
+**Replace token** action that reopens Developer settings; nothing mints
+or refreshes a token automatically.
 
 The token is kept in `sessionStorage` only (cleared when the tab closes),
 never `localStorage`.
