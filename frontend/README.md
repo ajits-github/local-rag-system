@@ -25,8 +25,8 @@ npm run dev
 ```
 
 Opens on `http://localhost:5173`. The Vite dev server proxies `/query`,
-`/agent/*`, `/health`, `/metrics`, `/docs`, `/openapi.json` to
-`http://localhost:8000` (see `vite.config.ts`). This keeps the browser
+`/agent/*`, `/feedback`, `/info`, `/health`, `/metrics`, `/docs`,
+`/openapi.json` to `http://localhost:8000` (see `vite.config.ts`). This keeps the browser
 talking to a single origin, so the FastAPI backend never needs CORS
 middleware added to it. Point the proxy at a different backend port with
 `VITE_DEV_PROXY_TARGET` (see `.env.example`).
@@ -57,6 +57,70 @@ which `config/default.yaml` does not do by default.
 entirely separate, opt-in overlay, following the same pattern as
 `docker-compose.observability.yml`.
 
+## UI modes: developer vs. production
+
+The same build serves two UI modes, selected by a single build-time Vite
+env var, `VITE_UI_MODE` (`src/config/uiMode.ts`):
+
+- **`developer`** -- shows the Developer settings panel (bearer token
+  entry, tenant/role/as-of/dataset controls), the always-visible feature
+  flags bar and Runtime configuration panel, the per-answer Debug panel
+  (route, timings, tool-call cards), raw retrieval scores in the sources
+  list, and a small "Developer Mode" badge in the header.
+- **`production`** -- hides all of the above. Chat, Classic/Agentic mode
+  switching, citations/sources (without the raw score), feedback
+  controls, and error/loading states all still work normally.
+
+**The safe default is `production`.** Any value other than the exact
+string `"developer"` -- unset, empty, a typo, wrong case -- resolves to
+`production`. This is deliberate fail-safe behavior: a build that forgets
+to set the flag must never accidentally ship developer/debug tooling.
+
+**This is a display flag only, never a security boundary.** Hiding the
+Developer settings panel does not add or remove any backend capability:
+the backend's JWT verification, tenant/role authorization, and field
+redaction are unaffected by, and unaware of, this flag. A user who edits
+the frontend bundle directly (or just calls the API themselves) has
+exactly the same access either way -- what they're actually allowed to do
+is still decided entirely by the backend, per this project's existing
+authentication/authorization design (see `CLAUDE.md`'s "Authenticated API
+boundary" section). This flag only decides whether the *browser UI*
+exposes a convenient developer control for something the backend may or
+may not permit.
+
+### Configuring it locally
+
+`npm run dev` and `npm run build` both read `VITE_UI_MODE` from the
+environment the same way every other `VITE_*` value in `.env.example`
+does. Create `frontend/.env` (gitignored) with:
+
+```
+VITE_UI_MODE=developer
+```
+
+to get developer tooling in local development; leave it unset for the
+production-shaped UI. You can also pass it inline for one run:
+
+```
+VITE_UI_MODE=developer npm run dev
+```
+
+### How the Docker build selects a mode
+
+`frontend/Dockerfile` declares `ARG VITE_UI_MODE=production`, so a plain
+`docker build ./frontend` (no `--build-arg`) always produces a
+production-mode image. `docker-compose.frontend.yml` forwards a
+`VITE_UI_MODE` shell variable as that same build arg, defaulting to
+`production` when it isn't set:
+
+```
+# production-mode image (default)
+docker compose -f docker-compose.yml -f docker-compose.frontend.yml up -d --build
+
+# developer/demo-mode image
+VITE_UI_MODE=developer docker compose -f docker-compose.yml -f docker-compose.frontend.yml up -d --build
+```
+
 ## Backend configuration
 
 The frontend has no say in which backend config file is loaded.
@@ -75,6 +139,14 @@ refresh button.
 Booleans and provider names only, never a model name/host/secret. If
 `security.auth.enabled` and `security.auth.insecure_dev_mode` are both on,
 an additional "Dev mode" pill calls that out explicitly.
+
+Each pill's on/off state is never color-only: an enabled pill gets a
+visible "✓" in addition to its accent border/dot, and every pill carries
+a screen-reader-only "enabled"/"disabled" word plus a `title` tooltip
+saying the same thing in full. `Vision: none` (the backend's literal
+`vision_provider` value when no vision model is configured) renders as
+the friendlier `Vision: off`; any real provider name (e.g. `ollama`)
+still renders as-is.
 
 This exists because of a real incident: a Base64-obfuscated credential-
 extraction prompt succeeded against whatever config happened to be
@@ -103,6 +175,13 @@ appears in that response, so model/provider identity (not itself a
 secret, but the kind of "identifying configuration" `GET /` promises
 never to leak) lives here instead.
 
+If `GET /info` fails (backend still starting, a transient network blip),
+the toggle and expanded body both say the neutral "Runtime info
+unavailable" -- deliberately not styled as an error (no red), since this
+section describes the pipeline, not the chat itself: a failed fetch here
+never implies chat is broken, and the Refresh button stays available to
+retry.
+
 ## Classic vs. Agentic RAG
 
 - **Classic RAG** calls `POST /query`.
@@ -119,16 +198,44 @@ never to leak) lives here instead.
 Sources are rendered in a collapsible panel with content-type badges
 (table/code/configuration/image/chart/prose), an origin badge
 distinguishing a local RAG/knowledge-base source from an MCP remote/
-business-tool one (`SourceItem.origin`), section path, page number, and
-score, never a filesystem path (the API never returns one).
+business-tool one (`SourceItem.origin`), section path, and page number,
+never a filesystem path (the API never returns one). The raw numeric
+relevance score is developer-mode only (see "UI modes" above) -- it's
+citation-adjacent, not itself a secret, but it reads as internal debug
+detail to an end user.
 
-Each completed answer also has a collapsible **Debug** panel, organized
-into Request (correlation id), Pipeline (route, termination reason),
-Timings (retrieval/generation/total), and Tools sections. For an agentic
-run, each tool dispatch renders as a small card: tool name, execution
-(Local vs. MCP remote, from `AgentQueryResponse.tool_call_details`),
-status, and duration -- never the tool's arguments, reasoning, or raw
-error text.
+Each completed answer also has a collapsible **Debug** panel (developer
+mode only), organized into Request (correlation id), Pipeline (route,
+termination reason), Timings (retrieval/generation/total), and Tools
+sections. For an agentic run, each tool dispatch renders as a small
+card: tool name, execution (Local vs. MCP remote, from
+`AgentQueryResponse.tool_call_details`), status, and duration -- never
+the tool's arguments, reasoning, or raw error text.
+
+## Empty chat state
+
+Before the first message, the center of the chat area shows a short
+product-facing prompt ("Ask about the TechFusion knowledge base") plus
+2-3 example-query chips (`src/components/chat/MessageList.tsx`). Each
+chip's text is a real question grounded in the actual demo corpus (see
+`PROJECT_JOURNAL.md`'s "Empty chat state" entry for exactly which
+document/fact backs each one) -- never a placeholder case ID or a
+document that may not exist, since a wrong example would look like a
+broken app on the very first thing a visitor sees. Clicking a chip
+populates the composer via `MessageInput`'s imperative handle
+(`MessageInputHandle.setValue`) and focuses it; it does not submit the
+query automatically, matching how the composer already works everywhere
+else (typing or pasting text never sends it by itself either).
+
+## Composer
+
+The message textarea (`MessageInput`) starts at a compact single-line
+height and grows automatically as you type or paste multi-line content,
+up to a cap (160px, beyond which it scrolls internally rather than
+growing further) -- there's no manual drag-resize handle, since the
+auto-grow behavior supersedes it. Enter sends, Shift+Enter inserts a
+newline, and the Send button/textarea both respect the same
+sending-in-progress `disabled` state as before.
 
 ## Feedback
 
@@ -163,9 +270,17 @@ Fields are edited in a draft and only take effect once you click **Apply
 settings**, which validates the input first (a bearer token must be
 structurally a JWT; an invalid entry is rejected inline, tied to its
 field, and never applied or sent). A successful apply collapses the panel
-into a compact "Developer session" summary (tenant/role, as-of date,
-dataset, and -- for a token -- an expiry countdown); an **Edit settings**
-button reopens it pre-filled with the currently-applied values.
+into a compact "Developer session" summary: a header row ("Developer
+session" plus an **Edit settings** button aligned to the right) and one
+horizontal line below it joining whichever facts are actually set with
+" · " (e.g. `tenant_beta · tenant_beta_operator · Current · expires in
+3h 58m`) -- tenant, role, as-of date, dataset, trust level, and (for a
+token) an expiry phrase, each its own segment, present only when set.
+This intentionally does not repeat the bare word "Authenticated" the
+header's `TokenStatusBadge` already shows; the expiry phrase itself
+implies that, and a problem state (`Token expired`/`Malformed token`)
+takes that segment's place when relevant. **Edit settings** reopens the
+full form pre-filled with the currently-applied values.
 
 For a bearer token specifically, the JWT payload is decoded **client-side,
 for display only** (`src/utils/jwt.ts`) -- this never constitutes
