@@ -200,8 +200,31 @@ def _expected_route(example: GoldExample) -> str | None:
         or example.requires_latest_document_tool
         or example.expects_insufficient_evidence_retry
         or example.adversarial_tool_instruction
+        or example.requires_specialized_tool
+        or example.requires_mcp_business_tool
     ):
         return "agent"
+    return None
+
+
+def _render_case_action_outcome(evidence_text: str) -> str | None:
+    """Classify an update_case_status outcome from its own deterministic evidence wording.
+
+    Matches the exact, fixed phrasings `rag.agent.mcp_client.
+    _render_case_action_outcome` produces for each `CaseActionOutcome.
+    outcome` value -- never a semantic/LLM judgment, since the tool's own
+    output text is itself a deterministic function of the outcome type.
+    Returns `None` when no known phrasing is found (e.g. the tool was
+    never called, or was denied outright with no evidence at all).
+    """
+    if "requires approval before it can be applied" in evidence_text:
+        return "approval_required"
+    if "is not a valid transition" in evidence_text:
+        return "invalid_transition"
+    if "no change was made" in evidence_text and "already" in evidence_text:
+        return "already_in_status"
+    if "status was changed from" in evidence_text:
+        return "executed"
     return None
 
 
