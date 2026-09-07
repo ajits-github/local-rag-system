@@ -63,7 +63,7 @@ describe("FeedbackControls", () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, { feedback_id: "fb-1", status: "created" }));
     vi.stubGlobal("fetch", fetchMock);
     const sources: SourceItem[] = [
-      { chunk_id: "doc_0", document_id: "doc", source: "a.md", score: 0.9, vision_generated: false },
+      { chunk_id: "doc_0", document_id: "doc", source: "a.md", score: 0.9, vision_generated: false, origin: "retrieved" },
     ];
     renderFeedback({ route: "classic_rag", requestId: "req-1", toolCalls: ["search_knowledge_base"] }, sources);
 
