@@ -45,7 +45,7 @@ from rag.api.request_auth import (
     enforce_dos_limits,
     resolve_case_approvals,
 )
-from rag.api.routers.agent_query import AgentQueryRequest, AgentQueryResponse
+from rag.api.routers.agent_query import AgentQueryRequest, AgentQueryResponse, _tool_call_details
 from rag.api.routers.query import SourceItem
 from rag.config import AppConfig
 from rag.embedders.base import Embedder
@@ -148,6 +148,7 @@ def _final_response(result: AgentRunResult, request_id: str | None) -> AgentQuer
                 attachment_name=c.attachment_name,
                 source_anchor=c.source_anchor,
                 vision_generated=c.vision_generated,
+                origin=c.origin,
             )
             for c in final_state.citations
         ],
@@ -155,6 +156,7 @@ def _final_response(result: AgentRunResult, request_id: str | None) -> AgentQuer
         termination_reason=final_state.termination_reason,
         steps=final_state.step_count,
         tool_calls=[record.tool_name for record in final_state.tool_call_history],
+        tool_call_details=_tool_call_details(final_state.tool_call_history),
         retrieval_ms=result.retrieval_ms,
         generation_ms=result.generation_ms,
         total_ms=result.total_ms,
