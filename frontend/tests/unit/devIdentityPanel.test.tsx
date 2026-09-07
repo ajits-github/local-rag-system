@@ -184,7 +184,7 @@ describe("DevIdentityPanel", () => {
     expect(screen.getByText("tenant-alpha")).toBeInTheDocument();
   });
 
-  it("shows decoded tenant/roles and an expiry countdown in the summary for an applied token", async () => {
+  it("shows decoded tenant/roles and an expiry countdown as one compact horizontal summary line", async () => {
     renderStandalone();
     const user = setupUser();
     const token = makeJwt({ sub: "user-1", tenant_id: "tenant-beta", roles: ["tenant_beta_operator"], exp: expInMinutes(47) });
@@ -194,16 +194,22 @@ describe("DevIdentityPanel", () => {
     await user.click(screen.getByRole("button", { name: "Apply settings" }));
 
     const summary = screen.getByText("Developer session").closest<HTMLElement>(".dev-session-summary")!;
-    expect(within(summary).getByText("Authenticated")).toBeInTheDocument();
+    // A single compact line ("tenant · role · Current · expires in Xm"),
+    // not a multi-row field list -- exactly one line element for the facts.
+    expect(summary.querySelectorAll(".dev-session-summary__line")).toHaveLength(1);
     expect(within(summary).getByText("tenant-beta")).toBeInTheDocument();
     expect(within(summary).getByText("tenant_beta_operator")).toBeInTheDocument();
+    expect(within(summary).getByText("Current")).toBeInTheDocument();
     // Not pinned to an exact minute count: real time elapses between minting
     // the token and this assertion (user-event interactions take real wall-clock
     // ms even under fake timers), so only the format is checked here -- the
     // exact countdown arithmetic is covered deterministically, under fully
     // frozen time, by useTokenStatus.test.ts and tokenStatusBadge.test.tsx.
-    const expiresValue = within(summary).getByText("Expires in").nextElementSibling;
-    expect(expiresValue?.textContent).toMatch(/^\d+m$/);
+    // The bare "Authenticated" text is deliberately not repeated here --
+    // the header's TokenStatusBadge already owns that -- so this asserts
+    // the expiry phrasing directly instead.
+    const expirySegment = within(summary).getByText(/^expires in \d+m$/);
+    expect(expirySegment).toBeInTheDocument();
   });
 
   it("disables tenant/roles inputs while a bearer token is being entered, before Apply", async () => {
