@@ -44,6 +44,7 @@ instrumentation.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from collections.abc import Callable
 from functools import lru_cache, partial
@@ -448,15 +449,79 @@ def _step_or_stop(state: AgentState, agent_cfg: AgentConfig) -> bool:
     return _check_step_bound(state, agent_cfg)
 
 
+_CASE_MUTATION_VERB_RE = re.compile(
+    r"\b(close|closes|closing|reopen|reopens|reopening|resolve|resolves|resolving)\b"
+)
+_CASE_MUTATION_DIRECTIVE_RE = re.compile(
+    r"\b(set|sets|setting|change|changes|changing|update|updates|updating|"
+    r"mark|marks|marking|move|moves|moving|transition|transitions|transitioning)\b"
+)
+_CASE_STATUS_TARGET_RE = re.compile(r"\b(status|state|open|in.progress|resolved|closed)\b")
+
+
+def _looks_like_case_mutation_request(query: str) -> bool:
+    """Detect phrasing that clearly asks to change a business case's status.
+
+    A deterministic backstop, not a substitute for `agent_classify_v2`'s
+    own judgment: `_classify_query` still calls the LLM first, but a
+    request this function flags is always routed to the agent path
+    regardless of what the model classified it as. Needed because a
+    prompt-only fix cannot guarantee compliance -- the same reasoning
+    behind `field_policy.sanitize_redaction_markers_in_answer`'s
+    existence. The specialized-tool evaluation found `agent_classify_v2`
+    misrouting phrasings like "please close case X" as "simple", which
+    skips the agent loop -- and therefore MCP's `update_case_status` --
+    entirely, even though the write action itself is proven correct,
+    deterministically, whenever it is actually dispatched.
+
+    This function only ever widens routing toward the agent path; it
+    never routes a request away from it, and it never infers
+    authorization or approval -- those stay exactly where they already
+    lived, inside the MCP business store's own transition table and
+    approval check.
+
+    Parameters
+    ----------
+    query : str
+        The caller's original question.
+
+    Returns
+    -------
+    bool
+        `True` when the query names a case and either a direct mutation
+        verb ("close"/"reopen"/"resolve") or a directive verb
+        ("set"/"change"/"update"/"mark"/"move"/"transition") paired with
+        a status/state word or a literal status value.
+    """
+    lowered = query.lower()
+    if "case" not in lowered:
+        return False
+    if _CASE_MUTATION_VERB_RE.search(lowered):
+        return True
+    return bool(
+        _CASE_MUTATION_DIRECTIVE_RE.search(lowered) and _CASE_STATUS_TARGET_RE.search(lowered)
+    )
+
+
 def _classify_query(
     state: AgentState, llm: LLM, template: PromptTemplate, max_retries: int
 ) -> AgentState:
-    """`classify_query` node: route as simple/complex. Defaults to `"simple"` on parse failure."""
+    """`classify_query` node: route as simple/complex. Defaults to `"simple"` on parse failure.
+
+    `_looks_like_case_mutation_request` overrides the LLM's own
+    classification to `"complex"` whenever the query clearly asks to
+    change a business case's status, regardless of what the model
+    decided -- see that function's docstring for why this cannot be left
+    to prompt wording alone.
+    """
     decision = run_decision(
         llm, template, ClassifyDecision, max_retries, query=state.original_query
     )
     _accumulate_tokens(state, llm, "classify")
-    state.query_type = decision.query_type if decision is not None else "simple"
+    query_type = decision.query_type if decision is not None else "simple"
+    if query_type != "complex" and _looks_like_case_mutation_request(state.original_query):
+        query_type = "complex"
+    state.query_type = query_type
     return state
 
 
