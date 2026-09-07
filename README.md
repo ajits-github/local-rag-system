@@ -742,7 +742,7 @@ e2e); see [`frontend/README.md`](frontend/README.md).
 ## Continuous Integration
 
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every
-PR/push to `main` (and via manual `workflow_dispatch`), in four parallel
+PR/push to `main` (and via manual `workflow_dispatch`), in six parallel
 jobs:
 
 - **code-quality**: `pre-commit run --all-files` (ruff, ruff-format, mypy,
@@ -752,10 +752,23 @@ jobs:
   service container spun up by the workflow itself (not your local `make up`
   stack). Tests gated on a local Ollama (`require_ollama` in
   `tests/integration/conftest.py`) skip cleanly, since CI doesn't run Ollama.
+- **security-regression-gate**: a curated, fast (no external services)
+  subset of `tests/unit` covering authorization, field-level redaction, DoS/
+  rate limits, MCP identity/business-tool authorization, and agent guardrail
+  behavior (step/tool-call bounds, insufficient evidence, malformed tool
+  args, citation compliance) as its own distinctly-named status check.
+- **retrieval-eval-gate**: ingests a small tracked sample corpus, runs
+  `rag.eval.run_eval --skip-generation`, and checks Recall@5/@10/MRR plus
+  one corpus-level safety metric against explicit thresholds via
+  `scripts/check_eval_gates.py`.
 - **docker-build**: builds the production image from `Dockerfile`, runs it
   against the same Postgres service container, and checks `GET /health`
   reports `vectorstore: ok` (Ollama is expected `unreachable` here, for the
   same reason as above). No image is pushed anywhere yet.
+
+See [`docs/ci_eval_gates.md`](docs/ci_eval_gates.md) for the full gate
+design: which metrics are blocking, where thresholds live, how to run the
+same gate locally, and how to update a baseline intentionally.
 
 What CI intentionally leaves out: RAGAS scoring, hosted-judge (OpenAI/
 Anthropic) calls, MLflow experiment logging, and full private-corpus
