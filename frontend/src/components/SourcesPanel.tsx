@@ -22,7 +22,7 @@ function badgeClass(contentType: string | null | undefined): string {
   return `source-badge source-badge--${key}`;
 }
 
-function SourceRow({ source }: { source: SourceItem }) {
+function SourceRow({ source, showScore }: { source: SourceItem; showScore: boolean }) {
   const label = CONTENT_TYPE_LABEL[source.content_type ?? "prose"] ?? source.content_type ?? "Text";
   const isMcp = source.origin === "mcp_remote";
   return (
@@ -38,7 +38,7 @@ function SourceRow({ source }: { source: SourceItem }) {
         <span className="source-row__name" title={source.source}>
           {source.source}
         </span>
-        <span className="source-row__score">{source.score.toFixed(3)}</span>
+        {showScore && <span className="source-row__score">{source.score.toFixed(3)}</span>}
       </div>
       <div className="source-row__meta">
         {source.section_path && <span>{source.section_path}</span>}
@@ -51,7 +51,13 @@ function SourceRow({ source }: { source: SourceItem }) {
   );
 }
 
-export function SourcesPanel({ sources }: { sources: SourceItem[] }) {
+/**
+ * `showScore` defaults to true: the raw relevance score is not a secret,
+ * just internal-debug-flavored detail (see CLAUDE.md's "production vs.
+ * developer UI mode" note) -- callers that want it hidden in production
+ * mode pass `showScore={false}` explicitly (see MessageBubble).
+ */
+export function SourcesPanel({ sources, showScore = true }: { sources: SourceItem[]; showScore?: boolean }) {
   const [expanded, setExpanded] = useState(false);
   if (sources.length === 0) return null;
 
@@ -68,7 +74,7 @@ export function SourcesPanel({ sources }: { sources: SourceItem[] }) {
       {expanded && (
         <ul className="source-list">
           {sources.map((source) => (
-            <SourceRow key={source.chunk_id} source={source} />
+            <SourceRow key={source.chunk_id} source={source} showScore={showScore} />
           ))}
         </ul>
       )}
