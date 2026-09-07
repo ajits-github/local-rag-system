@@ -3,6 +3,13 @@
 # never needs CORS middleware added to it (see frontend/README.md).
 FROM node:20-alpine AS builder
 WORKDIR /app
+# Selects the built-in "developer" vs. "production" UI mode (see
+# src/config/uiMode.ts and frontend/README.md's "UI modes" section).
+# Defaults to "production" -- the safe fallback -- so a plain
+# `docker build` with no --build-arg never ships developer tooling by
+# accident; pass --build-arg VITE_UI_MODE=developer for a demo image.
+ARG VITE_UI_MODE=production
+ENV VITE_UI_MODE=$VITE_UI_MODE
 COPY package.json package-lock.json* ./
 RUN npm install
 COPY . .
