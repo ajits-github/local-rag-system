@@ -31,6 +31,10 @@ export function RuntimeInfoPanel() {
   const [expanded, setExpanded] = useState(false);
   const { info, loading, error, load } = useRuntimeInfo();
 
+  // Neutral, not alarming: this section describes the pipeline, it isn't
+  // the chat itself. A failed fetch here never implies chat is broken.
+  const toggleLabel = info ? `Runtime: ${compactBadge(info)}` : error && !loading ? "Runtime info unavailable" : "Runtime configuration";
+
   return (
     <div className="collapsible-panel collapsible-panel--runtime">
       <button
@@ -39,20 +43,14 @@ export function RuntimeInfoPanel() {
         onClick={() => setExpanded((v) => !v)}
         aria-expanded={expanded}
       >
-        {expanded ? "▾" : "▸"} {info ? `Runtime: ${compactBadge(info)}` : "Runtime configuration"}
-        {error && !loading && (
-          <span className="runtime-info__badge-error" role="status">
-            {" "}
-            (unavailable)
-          </span>
-        )}
+        {expanded ? "▾" : "▸"} {toggleLabel}
       </button>
       {expanded && (
         <div className="runtime-info">
           {loading && <span className="runtime-info__status">Loading runtime configuration…</span>}
           {error && !loading && (
-            <span className="runtime-info__status runtime-info__status--error" role="status">
-              Runtime configuration unavailable
+            <span className="runtime-info__status" role="status">
+              Runtime info unavailable. Chat still works normally.
             </span>
           )}
           {info && !loading && !error && (
