@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { Fragment, forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import type { DevIdentity } from "../api/types";
 import { formatApproxDuration, useTokenStatus, type TokenStatus } from "../hooks/useTokenStatus";
 import { looksLikeJwt } from "../utils/jwt";
@@ -29,18 +29,34 @@ function validateDraft(draft: DevIdentity): FieldErrors {
   return errors;
 }
 
-function sessionStatusText(status: TokenStatus): string | null {
+/**
+ * One short segment summarizing token health, meant to sit inline among
+ * the other facts rather than as its own paragraph -- the header's
+ * TokenStatusBadge already owns the live "Authenticated" countdown, so
+ * this only adds a word when it says something that badge doesn't
+ * already cover (no-exp token: authenticated but no countdown to show;
+ * expired/malformed: worth restating next to Edit settings).
+ */
+function statusSegment(status: TokenStatus): string | null {
   if (!status.hasToken) return null;
   switch (status.state) {
     case "invalid":
       return "Malformed token";
     case "expired":
       return "Token expired";
-    default:
+    case "no_exp":
       return "Authenticated";
+    default:
+      return status.remainingMs != null ? `expires in ${formatApproxDuration(status.remainingMs)}` : null;
   }
 }
 
+/**
+ * Compact horizontal summary (e.g. "tenant_beta · tenant_beta_operator ·
+ * Current · expires in 3h 58m") instead of a multi-row field list --
+ * detailed editing is always one click away via Edit settings, so the
+ * collapsed view doesn't need to spend a whole row per field.
+ */
 function DevSessionSummary({
   identity,
   onEdit,
@@ -51,7 +67,6 @@ function DevSessionSummary({
   editButtonRef: React.RefObject<HTMLButtonElement>;
 }) {
   const status = useTokenStatus(identity.bearerToken);
-  const statusText = sessionStatusText(status);
   const tenantLabel = status.hasToken ? status.claims?.tenantId : identity.tenantId || undefined;
   const roles = status.hasToken
     ? status.claims?.roles
@@ -61,6 +76,15 @@ function DevSessionSummary({
         .filter(Boolean);
   const rolesLabel = roles && roles.length > 0 ? roles.join(", ") : undefined;
 
+  const segments = [
+    tenantLabel,
+    rolesLabel,
+    identity.asOf || "Current",
+    identity.datasetId || undefined,
+    identity.requireTrustLevel || undefined,
+    statusSegment(status) ?? undefined,
+  ].filter((segment): segment is string => Boolean(segment));
+
   return (
     <div className="dev-session-summary">
       <div className="dev-session-summary__header">
@@ -69,41 +93,18 @@ function DevSessionSummary({
           Edit settings
         </button>
       </div>
-      {statusText && <p className="dev-session-summary__status">{statusText}</p>}
-      <dl className="debug-grid">
-        {tenantLabel && (
-          <>
-            <dt>Tenant</dt>
-            <dd>{tenantLabel}</dd>
-          </>
-        )}
-        {rolesLabel && (
-          <>
-            <dt>Role</dt>
-            <dd>{rolesLabel}</dd>
-          </>
-        )}
-        <dt>As of</dt>
-        <dd>{identity.asOf || "Current"}</dd>
-        {identity.datasetId && (
-          <>
-            <dt>Dataset</dt>
-            <dd>{identity.datasetId}</dd>
-          </>
-        )}
-        {identity.requireTrustLevel && (
-          <>
-            <dt>Require trust level</dt>
-            <dd>{identity.requireTrustLevel}</dd>
-          </>
-        )}
-        {status.hasToken && status.remainingMs != null && (
-          <>
-            <dt>Expires in</dt>
-            <dd>{formatApproxDuration(status.remainingMs)}</dd>
-          </>
-        )}
-      </dl>
+      <p className="dev-session-summary__line">
+        {segments.map((segment, index) => (
+          <Fragment key={index}>
+            {index > 0 && (
+              <span className="dev-session-summary__sep" aria-hidden="true">
+                ·
+              </span>
+            )}
+            <span className="dev-session-summary__field">{segment}</span>
+          </Fragment>
+        ))}
+      </p>
     </div>
   );
 }
