@@ -2,7 +2,7 @@ import { render } from "@testing-library/react";
 import { vi } from "vitest";
 import { ChatProvider } from "../../src/state/chatContext";
 import { ChatWindow } from "../../src/components/chat/ChatWindow";
-import type { FeatureFlags } from "../../src/api/types";
+import type { FeatureFlags, RuntimeInfo } from "../../src/api/types";
 
 export function renderChatWindow() {
   return render(
@@ -41,15 +41,43 @@ export function rootInfoResponse(featureOverrides: Partial<FeatureFlags> = {}): 
   });
 }
 
+/** A valid GET /info response; ChatWindow's RuntimeInfoPanel fetches this on mount (for its compact badge). */
+export function runtimeInfoResponse(overrides: Partial<RuntimeInfo> = {}): Response {
+  return jsonResponse(200, {
+    generation_provider: "ollama",
+    generation_model: "qwen2.5:3b",
+    embedding_provider: "sentence_transformers",
+    embedding_model: "sentence-transformers/all-MiniLM-L6-v2",
+    vectorstore_provider: "pgvector",
+    retrieval_mode: "hybrid",
+    sparse_retrieval_enabled: true,
+    fusion_method: "rrf",
+    reranker_provider: "none",
+    reranker_enabled: false,
+    agent_enabled: true,
+    mcp_enabled: false,
+    mcp_client_enabled: false,
+    vision_provider: "none",
+    tracing_enabled: false,
+    rate_limit_enabled: false,
+    field_redaction_enabled: false,
+    authorization_enabled: false,
+    auth_enabled: false,
+    ...overrides,
+  });
+}
+
 /**
  * Build a `fetch` mock that dispatches by exact URL. Every ChatWindow
- * render fires a `GET /` on mount (FeatureFlagsBar), so this defaults "/"
- * to a valid response unless a test explicitly overrides it. This keeps every
- * other test's fetch-call assertions from tripping over that extra call.
+ * render fires a `GET /` (FeatureFlagsBar) and a `GET /info`
+ * (RuntimeInfoPanel's compact badge) on mount, so this defaults both
+ * unless a test explicitly overrides them. This keeps every other test's
+ * fetch-call assertions from tripping over those two extra calls.
  */
 export function routedFetchMock(routes: Record<string, () => Response | Promise<Response>>) {
   const allRoutes: Record<string, () => Response | Promise<Response>> = {
     "/": () => rootInfoResponse(),
+    "/info": () => runtimeInfoResponse(),
     ...routes,
   };
   return vi.fn(async (url: string, _init?: RequestInit) => {
