@@ -52,6 +52,35 @@ describe("FeatureFlagsBar", () => {
     expect(screen.getByTitle("Vision provider: ollama")).toHaveTextContent("Vision: ollama");
   });
 
+  it("marks an enabled flag with a checkmark and an sr-only 'enabled' word, not color alone", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(jsonResponse(200, rootInfoBody({ authorization_enabled: true, auth_enabled: false })))
+    );
+
+    render(<FeatureFlagsBar />);
+
+    const authorizationPill = await screen.findByTitle("Authorization: enabled");
+    expect(authorizationPill).toHaveTextContent("✓");
+    expect(authorizationPill.querySelector(".sr-only")).toHaveTextContent("enabled");
+
+    const authPill = screen.getByTitle("Auth: disabled");
+    expect(authPill).not.toHaveTextContent("✓");
+    expect(authPill.querySelector(".sr-only")).toHaveTextContent("disabled");
+  });
+
+  it("shows a friendly 'off' label for vision_provider: none, and the real provider name otherwise", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(jsonResponse(200, rootInfoBody({ vision_provider: "none" })))
+    );
+
+    render(<FeatureFlagsBar />);
+
+    const visionPill = await screen.findByTitle("Vision provider: none");
+    expect(visionPill).toHaveTextContent("Vision: off");
+  });
+
   it("flags insecure_dev_mode explicitly when auth is enabled with dev mode on", async () => {
     vi.stubGlobal(
       "fetch",
