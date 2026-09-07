@@ -27,6 +27,7 @@ import anyio
 
 from rag.agent.graph import AgentRunResult, run_agent
 from rag.agent.state import AgentState
+from rag.agent.tool_schemas import REMOTE_MCP_TOOL_NAMES
 from rag.config import AppConfig, load_config
 from rag.embedders.base import Embedder
 from rag.eval.answer_quality import KeywordOverlapScorer
@@ -271,6 +272,12 @@ def _record_for_example(
     cited_sources, citation_attribution = _resolve_citation_attribution(
         final_state.final_answer, citation_sources, result, final_state
     )
+    mcp_tool_records = [
+        r for r in final_state.tool_call_history if r.tool_name in REMOTE_MCP_TOOL_NAMES
+    ]
+    mcp_evidence_texts = [
+        r.chunk.content for r in final_state.retrieved_evidence if r.origin == "mcp_remote"
+    ]
     record = {
         "question": example.question,
         "agentic_category": example.agentic_category,
@@ -303,6 +310,16 @@ def _record_for_example(
         "relevant_documents": example.relevant_documents,
         "expected_answer": example.expected_answer,
         "unanswerable": example.unanswerable,
+        "requires_specialized_tool": example.requires_specialized_tool,
+        "requires_mcp_business_tool": example.requires_mcp_business_tool,
+        "expected_mcp_denial": example.expected_mcp_denial,
+        "mcp_forbidden_snippets": example.mcp_forbidden_snippets,
+        "expected_case_action_outcome": example.expected_case_action_outcome,
+        "mcp_tool_called": bool(mcp_tool_records),
+        "mcp_tool_all_empty": (
+            all(r.result_count == 0 for r in mcp_tool_records) if mcp_tool_records else None
+        ),
+        "mcp_evidence_texts": mcp_evidence_texts,
     }
     if include_evidence:
         record["evidence_sources"] = (
@@ -658,6 +675,131 @@ def _by_agentic_category(records: list[dict[str, Any]]) -> dict[str, Any]:
     return breakdown
 
 
+def _specialized_tool_reachability_metrics(records: list[dict[str, Any]]) -> dict[str, Any]:
+    """Per-tool-name reachability: was tool X dispatched at least once when gold expected it.
+
+    Distinct from `_tool_usage_breakdown` (raw dispatch counts/success
+    rate, no comparison to what was expected) and from
+    `_tool_selection_coverage_metrics` (aggregated across every expected
+    tool in one macro-average, not broken out per tool name). Restricted
+    to `_TOOL_NAMES`'s fixed vocabulary; a tool gold never expects is
+    reported with `count: 0` rather than omitted, so the full seven-tool
+    surface is always visible in one place. This is a live-LLM
+    tool-*selection* signal, not a reachability *proof* -- see the
+    deterministic tool-dispatch tests (`test_agent_tool_tenant_isolation.py`,
+    `test_mcp_business_case_actions.py`, `test_agent_mcp_client_stage2.py`)
+    for whether each tool actually works when called.
+    """
+    by_tool: dict[str, Any] = {}
+    for tool_name in _TOOL_NAMES:
+        expected = [r for r in records if tool_name in r["expected_tool_sequence"]]
+        called = [r for r in expected if tool_name in r["tool_calls"]]
+        by_tool[tool_name] = {
+            "expected_count": len(expected),
+            "called_when_expected_rate": (len(called) / len(expected) if expected else None),
+        }
+    return {"per_tool_reachability": by_tool}
+
+
+def _mcp_authorization_metrics(records: list[dict[str, Any]]) -> dict[str, Any]:
+    """MCP-business-tool-specific authorization/grounding signals.
+
+    Three independent checks, each scoped to a different subset of
+    `requires_mcp_business_tool` rows:
+
+    - `denial_tool_behavior_accuracy`: for `expected_mcp_denial` rows, did
+      every dispatched MCP tool call in this run return zero results (the
+      business store's own fail-closed behavior), rather than a tool
+      failure or an unexpectedly non-empty result. `None` (excluded) for
+      a row that never dispatched an MCP tool at all -- that is a
+      tool-*selection* miss, already scored by `per_tool_reachability`,
+      not an authorization failure.
+    - `denial_leakage_rate`: for the same denial rows, did the final
+      answer text leak any of the gold-authored `mcp_forbidden_snippets`
+      (e.g. a customer name) despite the tool call itself being denied --
+      a direct, textual security-failure check independent of whether the
+      denial mechanism worked.
+    - `grounding_rate`: for `requires_mcp_business_tool` rows that are
+      *not* denial scenarios, was the synthesized answer actually
+      attributed to (or at least backed by) an `mcp_remote`-origin
+      result, rather than a plain corpus-search answer that happens to
+      look plausible for a question the corpus has no data to answer.
+    """
+    denial_rows = [r for r in records if r["expected_mcp_denial"]]
+    denial_with_call = [r for r in denial_rows if r["mcp_tool_called"]]
+    denial_behaved = [r for r in denial_with_call if r["mcp_tool_all_empty"]]
+    leaked = [
+        r
+        for r in denial_rows
+        if r["final_answer"]
+        and any(snippet in r["final_answer"] for snippet in r["mcp_forbidden_snippets"])
+    ]
+    grounding_rows = [
+        r for r in records if r["requires_mcp_business_tool"] and not r["expected_mcp_denial"]
+    ]
+    grounded = [
+        r
+        for r in grounding_rows
+        if r["mcp_evidence_texts"]
+        and (
+            any(s.startswith("mcp://business/") for s in (r["cited_sources"] or []))
+            or r["citation_attribution"] != "none"
+        )
+    ]
+    return {
+        "mcp_authorization": {
+            "denial_tool_behavior_accuracy": {
+                "count": len(denial_with_call),
+                "rate": (len(denial_behaved) / len(denial_with_call) if denial_with_call else None),
+                "note": "Excludes denial rows where no MCP tool was dispatched at all -- a "
+                "tool-selection miss, not an authorization failure.",
+            },
+            "denial_leakage_rate": {
+                "count": len(denial_rows),
+                "rate": (len(leaked) / len(denial_rows) if denial_rows else None),
+                "note": "Fraction of denial-scenario answers containing a gold-authored "
+                "forbidden snippet. 0.0 is the correct, expected value.",
+            },
+            "grounding_rate": {
+                "count": len(grounding_rows),
+                "rate": (len(grounded) / len(grounding_rows) if grounding_rows else None),
+                "note": "Fraction of non-denial MCP-required rows whose answer is actually "
+                "backed by mcp_remote evidence, not a corpus-only answer to a question the "
+                "corpus cannot actually answer.",
+            },
+        }
+    }
+
+
+def _case_action_outcome_metrics(records: list[dict[str, Any]]) -> dict[str, Any]:
+    """Accuracy of update_case_status outcomes against gold-expected outcomes.
+
+    Classifies the actual outcome from the tool's own deterministic
+    evidence wording (`_render_case_action_outcome`), never from the
+    free-text final answer -- the wording the business store itself
+    produces is a direct function of `CaseActionOutcome.outcome`, so this
+    is a structural check, not a semantic judgment of the model's prose.
+    """
+    scored = [r for r in records if r["expected_case_action_outcome"] is not None]
+    classified = [
+        (r, _render_case_action_outcome(" ".join(r["mcp_evidence_texts"]))) for r in scored
+    ]
+    correct = [r for r, actual in classified if actual == r["expected_case_action_outcome"]]
+    no_evidence = [r for r, actual in classified if actual is None]
+    return {
+        "case_action_outcome_accuracy": {
+            "count": len(scored),
+            "rate": len(correct) / len(scored) if scored else None,
+            "no_evidence_count": len(no_evidence),
+            "note": "Compares the outcome classified from the tool's own deterministic "
+            "evidence wording against the gold-expected outcome. no_evidence_count is rows "
+            "where no update_case_status evidence was found at all (tool never dispatched, "
+            "or dispatched but denied), a tool-selection/authorization signal already "
+            "covered by per_tool_reachability/mcp_authorization, not a wrong-outcome case.",
+        }
+    }
+
+
 def evaluate_agent(
     pipeline: RetrievalPipeline,
     vectorstore: VectorStore,
@@ -732,6 +874,9 @@ def evaluate_agent(
         **_routing_metrics(records),
         **_tool_metrics(records),
         **_tool_selection_coverage_metrics(records),
+        **_specialized_tool_reachability_metrics(records),
+        **_mcp_authorization_metrics(records),
+        **_case_action_outcome_metrics(records),
         **_evidence_and_retry_metrics(records),
         "citation_support_rate": _citation_support_rate(records),
         "agent_answer_correctness": _answer_correctness(records),
