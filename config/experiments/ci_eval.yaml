@@ -1,0 +1,77 @@
+# ci_eval: the frozen config the fast CI retrieval-eval gate ingests and
+# queries against (see scripts/check_eval_gates.py, docs/ci_eval_gates.md).
+#
+# Deliberately a full standalone snapshot, not "config/default.yaml plus a
+# few overrides" -- so a future change to config/default.yaml (a different
+# embedding model, chunking provider, retrieval mode, etc.) can never
+# silently shift the CI gate's baseline out from under it. If default.yaml
+# changes in a way that should also change the CI gate, that's a deliberate,
+# reviewed edit to this file plus a corresponding baseline update in
+# config/eval_gates.yaml, never an automatic side effect.
+#
+# Every value below matches config/default.yaml as of the ci-eval-gates
+# milestone (dense retrieval, no reranker, no security/agent overhead --
+# none of which the retrieval-only gate exercises anyway, since it runs
+# with --skip-generation and never touches config.agent/config.security).
+#
+# Secrets and host/port values are never hardcoded here: fields ending in
+# `_env_var` name an environment variable resolved at load time by
+# rag.config.Settings.
+
+app:
+  name: local-rag-system
+  log_level: INFO
+
+embedding:
+  provider: sentence_transformers # swap point
+  model_name: sentence-transformers/all-MiniLM-L6-v2
+  device: cpu
+  batch_size: 32
+  normalize: true
+  dimension: 384 # must match model output dim; used to size the pgvector column
+
+vectorstore:
+  provider: pgvector # swap point (future: chroma, faiss, ...)
+  connection_env_var: DATABASE_URL # never hardcode host/port/credentials
+  documents_table: documents
+  chunks_table: chunks
+  distance_metric: cosine
+
+chunking:
+  provider: structured_markdown # swap point: recursive_character | structured_markdown
+  chunk_size: 500
+  chunk_overlap: 50
+  structured_markdown:
+    table_row_group_size: 20
+    max_atomic_block_chars: 2000
+
+reranker:
+  provider: none # no reranker in the fast gate: one fewer model download, one fewer source of noise
+
+generation:
+  provider: ollama # swap point; unused by the retrieval gate (run_eval --skip-generation)
+  model_name: qwen2.5:1.5b
+  base_url_env_var: OLLAMA_BASE_URL
+  temperature: 0.0
+  max_tokens: 512
+  seed: 42
+  prompt:
+    id: rag_answer
+    version: v1
+    path: src/rag/prompts/templates/rag_answer_v1.yaml
+
+mlflow:
+  enabled: false # CI has no MLflow tracking server/writable run dir to log to
+
+retrieval:
+  provider: dense # matches config/default.yaml; no BM25/RRF variance to account for
+  candidate_k: 5
+  generation_context_top_n: 3
+  relationship_expansion:
+    enabled: false
+
+ingestion:
+  supported_extensions: [".md", ".txt"] # the CI sample corpus is Markdown only
+
+vision:
+  provider: none
