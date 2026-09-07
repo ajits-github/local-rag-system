@@ -56,7 +56,7 @@ What sets this apart from a typical RAG tutorial project:
   redaction, prompt-injection detection, and document freshness are each
   proven with dedicated adversarial integration tests, not just
   happy-path unit tests. See [Security](#security).
-- **40 tracked experiments with real, documented regressions**: e.g. a
+- **41 tracked experiments with real, documented regressions**: e.g. a
   reranker that silently truncated results with no reranker configured,
   and a directory-nesting bug that made a security metric read a false
   `0.0`. Every run is in [Benchmarks](#benchmarks), not just the wins.
@@ -69,9 +69,12 @@ What sets this apart from a typical RAG tutorial project:
 - **Full observability stack**: OpenTelemetry traces, Prometheus
   metrics, and Grafana dashboards wired to the real bounded agent
   workflow. See [Observability](#observability).
-- **CI that actually gates**: ruff, mypy, pytest, and a Docker build run
-  on every PR, with an explicit, documented list of what's intentionally
-  left out of CI and why. See [Continuous Integration](#continuous-integration).
+- **CI that actually gates**: ruff, mypy, pytest, a Docker build, and two
+  dedicated evaluation gates (retrieval-quality thresholds against a
+  tracked sample corpus, a curated security/agent-guardrail regression
+  suite) run on every PR, with centralized, documented baselines and an
+  explicit list of what's intentionally left out of CI and why. See
+  [Continuous Integration](#continuous-integration).
 
 ## Table of contents
 
@@ -282,6 +285,7 @@ separate collapsible "Runtime configuration" panel (`GET /info`) adds the
 concrete pipeline identity behind those flags: generation/embedding
 model, retrieval mode, fusion method, reranker, and MCP/vision status. It
 reuses the backend as-is; no RAG logic lives in the frontend.
+<!-- --8<-- [end:docs-web-ui] -->
 
 ![Classic RAG answer with the feature-flags bar and expanded source citations](docs/assets/web-ui-screenshot.png)
 
@@ -289,6 +293,7 @@ reuses the backend as-is; no RAG logic lives in the frontend.
 bar confirms which security controls are active, and the sources panel shows
 the actual retrieved chunks with scores and section paths.*
 
+<!-- --8<-- [start:docs-web-ui-setup] -->
 ```bash
 make up             # backend only (Postgres + rag-api)
 make frontend-up    # backend + frontend, http://localhost:3001
@@ -296,9 +301,10 @@ make frontend-up    # backend + frontend, http://localhost:3001
 
 or for local frontend development against a native `uvicorn`/Docker
 backend: `cd frontend && npm install && npm run dev`
-(`http://localhost:5173`). See [`frontend/README.md`](frontend/README.md)
+(`http://localhost:5173`).
+<!-- --8<-- [end:docs-web-ui-setup] -->
+See [`frontend/README.md`](frontend/README.md)
 for the full setup, authentication behavior, and known limitations.
-<!-- --8<-- [end:docs-web-ui] -->
 
 <!-- --8<-- [start:docs-feedback] -->
 ## Feedback loop

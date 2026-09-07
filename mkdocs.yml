@@ -76,11 +76,13 @@ plugins:
         # point at README's own repo-root-relative links/anchors, which
         # aren't resolvable from within the docs site (README.md itself
         # isn't part of the built site). Real, in-site equivalents are
-        # linked separately right next to each transclusion.
+        # linked separately right next to each transclusion. (The web-ui
+        # snippet's own root-relative image/frontend-README references
+        # used to need entries here too, until the snippet boundaries were
+        # narrowed to exclude them -- see docs/topics/web-ui.md, which now
+        # supplies its own correctly-pathed image instead.)
         - "docs/architecture.md"
         - "#mlflow-tracking"
-        - "frontend/README.md"
-        - "docs/assets/web-ui-screenshot.png"
         # mkdocstrings/autorefs cross-reference links between reference/
         # pages (e.g. "Bases: LLM" -> ../generation/#rag.generation.base.LLM).
         # Verified present in the rendered HTML; htmlproofer's resolver
@@ -101,6 +103,7 @@ nav:
   - Evaluation & RAGAS:
       - Overview: topics/evaluation.md
       - Metrics reference: metrics.md
+      - CI evaluation gates: ci_eval_gates.md
   - Observability: topics/observability.md
   - Web UI: topics/web-ui.md
   - Feedback loop: topics/feedback.md

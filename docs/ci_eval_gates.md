@@ -29,8 +29,8 @@ Two new CI jobs, alongside the four pre-existing ones
 ## Blocking metrics
 
 Every gate's baseline, floor/ceiling, and rationale lives in
-[`config/eval_gates.yaml`](../config/eval_gates.yaml), not in CI YAML.
-Currently:
+`config/eval_gates.yaml` (repo root, not part of this docs site), not in
+CI YAML. Currently:
 
 | Gate | Metric | Baseline | CI floor/ceiling | Direction |
 |---|---|---|---|---|
@@ -145,8 +145,8 @@ Ollama benchmark in the fast path):
   `scripts/record_agent_experiment.py`.
 
 These remain manual, run locally exactly as documented in README's
-[Evaluation](../README.md#evaluation) and
-[Continuous Integration](../README.md#continuous-integration) sections.
+"Evaluation" and "Continuous Integration" sections (repo root
+`README.md`, not part of this docs site).
 
 ## Non-blocking / deliberately excluded metrics
 

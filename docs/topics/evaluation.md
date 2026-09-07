@@ -12,7 +12,8 @@ serving path.
 
 See [Metrics reference](../metrics.md) for the full metric-by-metric
 breakdown (what each one measures, its known limitations, and which
-report section it lives in).
+report section it lives in), and [CI evaluation gates](../ci_eval_gates.md)
+for the fast, deterministic subset of this that runs on every PR.
 
 --8<-- "README.md:docs-benchmarks"
 
