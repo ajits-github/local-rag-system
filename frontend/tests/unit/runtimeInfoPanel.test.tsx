@@ -82,13 +82,22 @@ describe("RuntimeInfoPanel", () => {
     expect(screen.getByText("Fusion method")).toBeInTheDocument();
   });
 
-  it("shows an error state when the backend is unreachable", async () => {
+  it("shows a neutral, non-alarming unavailable state when the backend is unreachable", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
 
     render(<RuntimeInfoPanel />);
 
-    await waitFor(() => expect(screen.getByText("(unavailable)")).toBeInTheDocument());
-    expect(screen.getByRole("button", { name: /Runtime configuration/ })).toBeInTheDocument();
+    const toggle = await screen.findByRole("button", { name: /Runtime info unavailable/ });
+    // No alarming red styling class anywhere in this component.
+    expect(document.querySelector(".runtime-info__status--error")).not.toBeInTheDocument();
+    expect(document.querySelector(".runtime-info__badge-error")).not.toBeInTheDocument();
+
+    const user = userEvent.setup();
+    await user.click(toggle);
+    expect(screen.getByRole("status")).toHaveTextContent(/Runtime info unavailable/);
+
+    // A subtle retry action stays available even in the unavailable state.
+    expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled();
   });
 
   it("re-fetches when the refresh button is clicked", async () => {
