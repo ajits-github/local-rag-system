@@ -16,6 +16,12 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        # "developer" | "production"; defaults to the Dockerfile's own
+        # safe default (production) when unset. Export VITE_UI_MODE=developer
+        # before `up --build` for a demo image with Developer Settings /
+        # debug panels visible. See frontend/README.md's "UI modes" section.
+        VITE_UI_MODE: ${VITE_UI_MODE:-production}
     container_name: local-rag-frontend
     restart: unless-stopped
     depends_on:
