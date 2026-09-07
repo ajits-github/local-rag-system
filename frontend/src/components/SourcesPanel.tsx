@@ -10,6 +10,13 @@ const CONTENT_TYPE_LABEL: Record<string, string> = {
   chart: "Chart",
 };
 
+const ORIGIN_LABEL: Record<SourceItem["origin"], string> = {
+  retrieved: "RAG",
+  expanded: "RAG (related)",
+  tool_fetched: "RAG (tool)",
+  mcp_remote: "MCP remote",
+};
+
 function badgeClass(contentType: string | null | undefined): string {
   const key = contentType ?? "prose";
   return `source-badge source-badge--${key}`;
@@ -17,10 +24,17 @@ function badgeClass(contentType: string | null | undefined): string {
 
 function SourceRow({ source }: { source: SourceItem }) {
   const label = CONTENT_TYPE_LABEL[source.content_type ?? "prose"] ?? source.content_type ?? "Text";
+  const isMcp = source.origin === "mcp_remote";
   return (
     <li className="source-row">
       <div className="source-row__header">
         <span className={badgeClass(source.content_type)}>{label}</span>
+        <span
+          className={`origin-badge ${isMcp ? "origin-badge--mcp" : "origin-badge--rag"}`}
+          title={isMcp ? "Sourced from an MCP remote/business tool, not the local knowledge base" : "Sourced from the local RAG knowledge base"}
+        >
+          {ORIGIN_LABEL[source.origin]}
+        </span>
         <span className="source-row__name" title={source.source}>
           {source.source}
         </span>
