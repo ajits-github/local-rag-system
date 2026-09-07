@@ -1,0 +1,120 @@
+# Central threshold definitions for the fast CI evaluation gate
+# (scripts/check_eval_gates.py, run by the retrieval-eval-gate CI job).
+# See docs/ci_eval_gates.md for the full design.
+#
+# Every gate is checked against one rag.eval.run_eval JSON report (produced
+# with --skip-generation --verbose against the tracked CI sample corpus --
+# see docs/ci_eval_gates.md for the exact command). `metric_path` is a
+# dotted lookup into that report.
+#
+# direction: "higher_is_better" gates use `floor` (value must be >= floor);
+# "lower_is_better" gates use `ceiling` (value must be <= ceiling).
+#
+# blocking: true (the default) fails CI. blocking: false still prints and
+# is reported, but never fails the build -- reserved for a metric that
+# turns out too noisy to gate safely (see docs/ci_eval_gates.md; none of
+# the gates below currently need this).
+#
+# Updating a baseline/floor here is a deliberate, reviewed code change.
+# check_eval_gates.py never rewrites this file itself.
+
+version: 1
+
+# Retrieval-quality gates. Baselines measured 2026-09-07 by actually running:
+#   python -m rag.ingestion.pipeline data/sample_docs --dataset-id ci_eval_sample \
+#     --config config/experiments/ci_eval.yaml --clear
+#   python -m rag.eval.run_eval --gold data/eval/sample_gold.jsonl \
+#     --dataset-id ci_eval_sample --config config/experiments/ci_eval.yaml \
+#     --skip-generation --verbose
+# against the tracked data/sample_docs corpus (3 documents / 16 chunks) and
+# data/eval/sample_gold.jsonl (4 questions: 2 single_document, 1 multi_hop,
+# 1 unanswerable/out_of_scope). This is NOT the real techfusion corpus's
+# recorded baseline (e.g. experiment_028's Recall@5 ~= 0.788) -- that corpus
+# and its gold files are gitignored and unavailable in CI (see CLAUDE.md's
+# "Testing conventions" section), so the fast gate necessarily measures a
+# different, much smaller, but fully CI-safe and deterministic corpus. Full
+# 84/126-question techfusion evaluation remains a manual/heavy workflow
+# (see docs/ci_eval_gates.md).
+retrieval_gates:
+  gates:
+    - id: recall_at_5
+      metric_path: retrieval.recall@5
+      direction: higher_is_better
+      baseline: 0.625
+      floor: 0.5
+      blocking: true
+      rationale: >
+        4-question gold set; recall@5 counts every relevant_documents entry
+        found (the multi_hop question needs both of its 2 relevant
+        documents to score 1.0 on that question). Floor allows the
+        multi_hop question's recall to drop by one increment (e.g. missing
+        one of its two relevant documents) without failing, but not a
+        second, independent miss.
+      failure_message: "Recall@5 regressed on the CI sample corpus -- retrieval quality may have broken."
+    - id: recall_at_10
+      metric_path: retrieval.recall@10
+      direction: higher_is_better
+      baseline: 0.75
+      floor: 0.625
+      blocking: true
+      rationale: >
+        Same corpus/config as recall_at_5, at a wider cutoff. Same
+        one-increment tolerance.
+      failure_message: "Recall@10 regressed on the CI sample corpus."
+    - id: hit_rate_at_5
+      metric_path: hit_rate.hit_rate@5
+      direction: higher_is_better
+      baseline: 0.75
+      floor: 0.5
+      blocking: true
+      rationale: >
+        Baseline: 3 of 4 questions have at least one relevant document in
+        the top 5. Floor allows one question to regress to a full miss
+        (3/4 -> 2/4) before failing; a second full miss is a real
+        regression at this sample size, not noise.
+      failure_message: "Hit-rate@5 regressed -- more than one question is retrieving no relevant document at all."
+    - id: mrr
+      metric_path: mrr
+      direction: higher_is_better
+      baseline: 0.75
+      floor: 0.625
+      blocking: true
+      rationale: >
+        Same corpus/config. Floor tolerates roughly one question's top
+        relevant match dropping by a single rank position (e.g. rank 1 to
+        rank 2) without failing the gate.
+      failure_message: "MRR regressed -- relevant documents are ranking lower on average."
+
+# Security invariants that are actually measurable from this same report
+# (a corpus-level diagnostic, not gold-row-driven -- see field_policy.py).
+# Zero-tolerance by design: any nonzero count is a real ingestion-time
+# tagging gap, not a matter of degree.
+#
+# The rest of section 3's zero-tolerance invariants (cross-tenant leakage,
+# sensitive-field leakage, forged-role acceptance, unauthorized MCP/business
+# actions, approval-required-without-approval mutations, direct-tool-path
+# authorization bypass) need gold rows with tenant/forbidden_documents
+# fields that only exist in the gitignored techfusion security_evaluation
+# corpus -- unmeasurable as a *report metric* in CI. They are instead
+# enforced as deterministic pytest assertions in the security-regression-gate
+# CI job (tests/unit/test_authorization.py, test_field_policy.py,
+# test_mcp_business_case_actions.py, test_mcp_business_approvals.py, etc.
+# -- see docs/ci_eval_gates.md for the full curated list). Those tests are
+# already zero-tolerance by construction (they assert a denial/redaction/
+# no-mutation outcome directly), so they need no separate threshold entry
+# here.
+security_gates:
+  gates:
+    - id: duplicate_sensitive_field_miss_rate
+      metric_path: safety.duplicate_sensitive_field_miss_rate.rate
+      direction: lower_is_better
+      baseline: 0.0
+      ceiling: 0.0
+      blocking: true
+      rationale: >
+        Zero-tolerance (see CLAUDE.md's field-level-safety milestone): any
+        sensitive-literal occurrence missing its ingestion-time
+        sensitive_field_ids tag is a real query-time redaction gap. Always
+        present in the report (corpus-level, not gold-row-driven); rate
+        0.0 on the CI sample corpus is expected regardless of count.
+      failure_message: "A sensitive-field literal in the CI sample corpus is missing its ingestion-time tag -- redaction could silently skip it."
