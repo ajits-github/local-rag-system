@@ -6,11 +6,15 @@ from rag.agent.state import AgentState
 from rag.config import load_config
 from rag.eval.gold_schema import GoldExample
 from rag.eval.run_agent_eval import (
+    _case_action_outcome_metrics,
     _cited_sources,
     _content_by_source,
     _extract_cited_source_numbers,
     _infer_cited_sources,
+    _mcp_authorization_metrics,
+    _render_case_action_outcome,
     _resolve_citation_attribution,
+    _specialized_tool_reachability_metrics,
     _termination_reason_breakdown,
     _tool_usage_breakdown,
     evaluate_agent,
@@ -631,3 +635,138 @@ def test_tool_usage_breakdown_handles_no_agent_routed_examples():
     assert breakdown["count"] == 0
     assert breakdown["by_tool"]["search_knowledge_base"]["count"] == 0
     assert breakdown["by_tool"]["search_knowledge_base"]["rate"] is None
+
+
+def test_specialized_tool_reachability_scopes_by_expected_tool_name():
+    """Each tool's rate only counts rows that actually expected that specific tool."""
+    records = [
+        {"expected_tool_sequence": ["get_document"], "tool_calls": ["get_document"]},
+        {"expected_tool_sequence": ["get_document"], "tool_calls": ["search_knowledge_base"]},
+        {"expected_tool_sequence": ["get_case_status"], "tool_calls": ["get_case_status"]},
+        {"expected_tool_sequence": [], "tool_calls": []},
+    ]
+
+    by_tool = _specialized_tool_reachability_metrics(records)["per_tool_reachability"]
+
+    assert by_tool["get_document"]["expected_count"] == 2
+    assert by_tool["get_document"]["called_when_expected_rate"] == 0.5
+    assert by_tool["get_case_status"]["expected_count"] == 1
+    assert by_tool["get_case_status"]["called_when_expected_rate"] == 1.0
+    assert by_tool["get_related_context"]["expected_count"] == 0
+    assert by_tool["get_related_context"]["called_when_expected_rate"] is None
+
+
+def _mcp_record(**overrides):
+    base = {
+        "expected_mcp_denial": False,
+        "mcp_tool_called": False,
+        "mcp_tool_all_empty": None,
+        "final_answer": "",
+        "mcp_forbidden_snippets": [],
+        "requires_mcp_business_tool": False,
+        "mcp_evidence_texts": [],
+        "cited_sources": [],
+        "citation_attribution": "none",
+    }
+    base.update(overrides)
+    return base
+
+
+def test_mcp_authorization_denial_behavior_accuracy_excludes_never_called_rows():
+    """A denial row where no MCP tool was ever dispatched is excluded, not scored as a failure."""
+    records = [
+        _mcp_record(expected_mcp_denial=True, mcp_tool_called=True, mcp_tool_all_empty=True),
+        _mcp_record(expected_mcp_denial=True, mcp_tool_called=True, mcp_tool_all_empty=False),
+        _mcp_record(expected_mcp_denial=True, mcp_tool_called=False, mcp_tool_all_empty=None),
+    ]
+
+    result = _mcp_authorization_metrics(records)["mcp_authorization"]
+
+    assert result["denial_tool_behavior_accuracy"]["count"] == 2
+    assert result["denial_tool_behavior_accuracy"]["rate"] == 0.5
+
+
+def test_mcp_authorization_denial_leakage_rate_flags_forbidden_snippet_in_answer():
+    """A denial-scenario answer echoing a forbidden snippet counts as a leak."""
+    records = [
+        _mcp_record(
+            expected_mcp_denial=True,
+            final_answer="I cannot access details about Globex Ltd's case.",
+            mcp_forbidden_snippets=["Globex"],
+        ),
+        _mcp_record(
+            expected_mcp_denial=True,
+            final_answer="This caller has no authorized access to that case.",
+            mcp_forbidden_snippets=["Globex"],
+        ),
+    ]
+
+    result = _mcp_authorization_metrics(records)["mcp_authorization"]
+
+    assert result["denial_leakage_rate"]["count"] == 2
+    assert result["denial_leakage_rate"]["rate"] == 0.5
+
+
+def test_mcp_authorization_grounding_rate_requires_mcp_remote_backed_evidence():
+    """A non-denial MCP-required row only counts as grounded with mcp evidence actually cited."""
+    records = [
+        _mcp_record(
+            requires_mcp_business_tool=True,
+            mcp_evidence_texts=["Case CASE-1001 status: in_progress"],
+            cited_sources=["mcp://business/CASE-1001"],
+            citation_attribution="explicit",
+        ),
+        _mcp_record(
+            requires_mcp_business_tool=True,
+            mcp_evidence_texts=[],
+            cited_sources=[],
+            citation_attribution="none",
+        ),
+    ]
+
+    result = _mcp_authorization_metrics(records)["mcp_authorization"]
+
+    assert result["grounding_rate"]["count"] == 2
+    assert result["grounding_rate"]["rate"] == 0.5
+
+
+def test_render_case_action_outcome_classifies_each_known_wording():
+    """Each deterministic evidence phrasing rag.agent.mcp_client produces maps to its outcome."""
+    assert (
+        _render_case_action_outcome("Case CASE-1001 status was changed from open to resolved.")
+        == "executed"
+    )
+    assert (
+        _render_case_action_outcome("Case CASE-1001 is already resolved; no change was made.")
+        == "already_in_status"
+    )
+    assert (
+        _render_case_action_outcome("... is not a valid transition. No change was made ...")
+        == "invalid_transition"
+    )
+    assert (
+        _render_case_action_outcome("... requires approval before it can be applied ...")
+        == "approval_required"
+    )
+    assert _render_case_action_outcome("no evidence at all") is None
+
+
+def test_case_action_outcome_accuracy_scores_only_expected_rows():
+    """Rows with no expected_case_action_outcome are excluded from the denominator entirely."""
+    records = [
+        {
+            "expected_case_action_outcome": "approval_required",
+            "mcp_evidence_texts": ["... requires approval before it can be applied ..."],
+        },
+        {
+            "expected_case_action_outcome": "invalid_transition",
+            "mcp_evidence_texts": ["Case status was changed from open to in_progress."],
+        },
+        {"expected_case_action_outcome": None, "mcp_evidence_texts": []},
+    ]
+
+    result = _case_action_outcome_metrics(records)["case_action_outcome_accuracy"]
+
+    assert result["count"] == 2
+    assert result["rate"] == 0.5
+    assert result["no_evidence_count"] == 0
