@@ -11,14 +11,15 @@ behavior is byte-identical to `/query`'s.
 from __future__ import annotations
 
 from datetime import date
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 from starlette.applications import Starlette
 
 from rag.agent.graph import run_agent
-from rag.agent.state import AgentState
+from rag.agent.state import AgentState, ToolCallRecord
+from rag.agent.tool_schemas import REMOTE_MCP_TOOL_NAMES
 from rag.api.auth import VerifiedIdentity
 from rag.api.deps import (
     get_config,
@@ -70,11 +71,46 @@ class AgentQueryRequest(BaseModel):
     case_approvals: list[CaseApproval] | None = Field(default=None, max_length=MAX_CASE_APPROVALS)
 
 
+class ToolCallDetail(BaseModel):
+    """One tool dispatch's safe, UI-facing summary.
+
+    Deliberately narrower than `ToolCallRecord`: never `args` or the raw
+    `error` message, only what a debug card needs to render (see
+    `21.0-UI-improvement`'s "safe cards" requirement) -- name, where it
+    ran, whether it succeeded, and how long it took. `execution` is
+    derived from `REMOTE_MCP_TOOL_NAMES`, the same static lookup
+    `rag.agent.graph._execute_tool` already uses to route the dispatch,
+    not a second, independently-maintained list.
+    """
+
+    tool_name: str
+    execution: Literal["local", "mcp_remote"]
+    success: bool
+    result_count: int
+    latency_ms: float
+
+
+def _tool_call_details(records: list[ToolCallRecord]) -> list[ToolCallDetail]:
+    """Build the safe per-tool-call summary from the agent run's full `tool_call_history`."""
+    return [
+        ToolCallDetail(
+            tool_name=record.tool_name,
+            execution="mcp_remote" if record.tool_name in REMOTE_MCP_TOOL_NAMES else "local",
+            success=record.success,
+            result_count=record.result_count,
+            latency_ms=record.latency_ms,
+        )
+        for record in records
+    ]
+
+
 class AgentQueryResponse(BaseModel):
     """Response body for `POST /agent/query`.
 
     `request_id` mirrors `QueryResponse.request_id` -- see that model's
-    docstring.
+    docstring. `tool_calls` stays a bare name list for backward
+    compatibility; `tool_call_details` is the additive, richer form (see
+    `ToolCallDetail`).
     """
 
     answer: str
@@ -83,6 +119,7 @@ class AgentQueryResponse(BaseModel):
     termination_reason: str | None
     steps: int
     tool_calls: list[str]
+    tool_call_details: list[ToolCallDetail] = Field(default_factory=list)
     retrieval_ms: float
     generation_ms: float
     total_ms: float
@@ -176,6 +213,7 @@ def agent_query(
                 attachment_name=c.attachment_name,
                 source_anchor=c.source_anchor,
                 vision_generated=c.vision_generated,
+                origin=c.origin,
             )
             for c in final_state.citations
         ],
@@ -183,6 +221,7 @@ def agent_query(
         termination_reason=final_state.termination_reason,
         steps=final_state.step_count,
         tool_calls=[record.tool_name for record in final_state.tool_call_history],
+        tool_call_details=_tool_call_details(final_state.tool_call_history),
         retrieval_ms=result.retrieval_ms,
         generation_ms=result.generation_ms,
         total_ms=result.total_ms,
