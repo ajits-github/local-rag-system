@@ -15,6 +15,8 @@ export default defineConfig({
     proxy: {
       "/query": BACKEND_ORIGIN,
       "/agent": BACKEND_ORIGIN,
+      "/feedback": BACKEND_ORIGIN,
+      "/info": BACKEND_ORIGIN,
       "/health": BACKEND_ORIGIN,
       "/metrics": BACKEND_ORIGIN,
       "/docs": BACKEND_ORIGIN,
