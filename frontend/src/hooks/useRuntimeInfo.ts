@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchRuntimeInfo } from "../api/runtimeInfo";
 import type { RuntimeInfo } from "../api/types";
 
@@ -10,11 +10,15 @@ interface RuntimeInfoState {
 }
 
 /**
- * Fetches GET /info on demand, not on mount: unlike useBackendFeatures
- * (which must always be visible for security awareness), runtime
- * configuration is opt-in developer/debug detail shown inside a
- * collapsed-by-default panel, so there is no reason to spend a request
- * on it before a caller actually expands that panel.
+ * Fetches GET /info once on mount, then again only on an explicit
+ * `load()` call (the panel's "Refresh" button).
+ *
+ * Loaded eagerly, unlike a purely on-demand fetch, because the compact
+ * runtime badge (RuntimeInfoPanel's collapsed-state summary, e.g. "qwen2.5:3b
+ * · Hybrid · RRF · MCP") needs this data to render at all -- the same
+ * "always know what the connected backend is actually running" rationale
+ * useBackendFeatures already applies to GET /'s FeatureFlags. The detailed
+ * field-by-field breakdown stays behind the panel's own collapsible toggle.
  */
 export function useRuntimeInfo() {
   const [state, setState] = useState<RuntimeInfoState>({
@@ -43,6 +47,11 @@ export function useRuntimeInfo() {
         });
       });
   }, []);
+
+  useEffect(() => {
+    load();
+    return () => abortRef.current?.abort();
+  }, [load]);
 
   return { ...state, load };
 }
