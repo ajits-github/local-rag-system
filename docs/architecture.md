@@ -2951,8 +2951,11 @@ that endpoint promises never to leak, so a new endpoint was the cleaner
 fix rather than relaxing that guarantee. Both endpoints exclude JWTs,
 signing keys, DB URLs, filesystem paths, internal tokens, and prompt
 text. The web UI's `RuntimeInfoPanel` renders `GET /info` inside a
-collapsed-by-default panel, fetched lazily on first expand rather than
-eagerly on mount like the always-visible `FeatureFlagsBar`.
+collapsed-by-default panel; the panel now fetches on mount (matching
+`FeatureFlagsBar`'s eager fetch) so its collapsed toggle can double as a
+compact "model · retrieval mode · fusion · MCP" badge without requiring
+an expand -- the detailed field-by-field breakdown still stays behind
+the toggle.
 
 ### Live agent execution events (SSE)
 
