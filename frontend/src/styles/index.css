@@ -127,6 +127,19 @@ body {
   cursor: not-allowed;
 }
 
+.developer-mode-badge {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--notice-border);
+  background: var(--notice-bg);
+  color: var(--notice-text);
+  border-radius: 999px;
+  padding: 0.2rem 0.6rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 .feature-flags-bar {
   display: flex;
   flex-wrap: wrap;
