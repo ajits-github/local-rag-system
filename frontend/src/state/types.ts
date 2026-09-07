@@ -6,6 +6,7 @@ import type {
   RagMode,
   SourceItem,
   TerminationReason,
+  ToolCallDetail,
 } from "../api/types";
 import type { RagApiErrorKind } from "../api/client";
 
@@ -13,6 +14,7 @@ export interface DebugInfo {
   route?: "classic_rag" | "agent";
   steps?: number;
   toolCalls?: string[];
+  toolCallDetails?: ToolCallDetail[];
   terminationReason?: TerminationReason | null;
   retrievalMs?: number;
   generationMs?: number;
@@ -67,6 +69,7 @@ export function debugFromAgentResponse(response: AgentQueryResponse): DebugInfo 
     route: response.route,
     steps: response.steps,
     toolCalls: response.tool_calls,
+    toolCallDetails: response.tool_call_details,
     terminationReason: response.termination_reason,
     retrievalMs: response.retrieval_ms,
     generationMs: response.generation_ms,
