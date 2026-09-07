@@ -37,41 +37,58 @@ describe("RuntimeInfoPanel", () => {
     vi.unstubAllGlobals();
   });
 
-  it("does not fetch until expanded", () => {
+  it("fetches on mount so the compact badge is populated without expanding", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, runtimeInfoBody()));
     vi.stubGlobal("fetch", fetchMock);
 
     render(<RuntimeInfoPanel />);
 
-    expect(screen.getByRole("button", { name: /Runtime configuration/ })).toBeInTheDocument();
-    expect(fetchMock).not.toHaveBeenCalled();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("button", { name: /qwen2\.5:1\.5b/ })).toBeInTheDocument();
   });
 
-  it("fetches and displays runtime configuration once expanded", async () => {
+  it("shows a compact model/retrieval/fusion badge in the collapsed toggle", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue(
-        jsonResponse(200, runtimeInfoBody({ retrieval_mode: "hybrid", sparse_retrieval_enabled: true, fusion_method: "rrf" }))
+        jsonResponse(
+          200,
+          runtimeInfoBody({ retrieval_mode: "hybrid", sparse_retrieval_enabled: true, fusion_method: "rrf", mcp_client_enabled: true })
+        )
       )
+    );
+
+    render(<RuntimeInfoPanel />);
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /qwen2\.5:1\.5b · Hybrid · RRF · MCP/ })).toBeInTheDocument()
+    );
+  });
+
+  it("does not show the detailed field breakdown until expanded", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(jsonResponse(200, runtimeInfoBody({ retrieval_mode: "hybrid", fusion_method: "rrf" })))
     );
 
     const user = userEvent.setup();
     render(<RuntimeInfoPanel />);
-    await user.click(screen.getByRole("button", { name: /Runtime configuration/ }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /Runtime:/ })).toBeInTheDocument());
 
-    await waitFor(() => expect(screen.getByText("hybrid")).toBeInTheDocument());
-    expect(screen.getByText("rrf")).toBeInTheDocument();
-    expect(screen.getByText(/qwen2.5:1.5b/)).toBeInTheDocument();
+    expect(screen.queryByText("Fusion method")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /Runtime:/ }));
+
+    expect(screen.getByText("Fusion method")).toBeInTheDocument();
   });
 
   it("shows an error state when the backend is unreachable", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
 
-    const user = userEvent.setup();
     render(<RuntimeInfoPanel />);
-    await user.click(screen.getByRole("button", { name: /Runtime configuration/ }));
 
-    await waitFor(() => expect(screen.getByText("Runtime configuration unavailable")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("(unavailable)")).toBeInTheDocument());
+    expect(screen.getByRole("button", { name: /Runtime configuration/ })).toBeInTheDocument();
   });
 
   it("re-fetches when the refresh button is clicked", async () => {
@@ -83,9 +100,9 @@ describe("RuntimeInfoPanel", () => {
 
     const user = userEvent.setup();
     render(<RuntimeInfoPanel />);
-    await user.click(screen.getByRole("button", { name: /Runtime configuration/ }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
 
+    await user.click(screen.getByRole("button", { name: /Runtime:/ }));
     await user.click(screen.getByRole("button", { name: "Refresh" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
