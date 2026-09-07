@@ -15,6 +15,12 @@
   --notice-bg: #fff7e6;
   --notice-border: #f0c36d;
   --notice-text: #7a5200;
+  --success-bg: #eafaf1;
+  --success-border: #86e0ae;
+  --success-text: #146c3c;
+  --critical-bg: #fff1e6;
+  --critical-border: #f5a86d;
+  --critical-text: #8a4200;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 }
 
@@ -35,6 +41,12 @@
     --notice-bg: #2a2410;
     --notice-border: #5c4a12;
     --notice-text: #f0cf7a;
+    --success-bg: #102a1c;
+    --success-border: #1f6b45;
+    --success-text: #7de8ac;
+    --critical-bg: #2c1c0f;
+    --critical-border: #7a4a1f;
+    --critical-text: #f5b978;
   }
 }
 
@@ -76,6 +88,7 @@ body {
   display: flex;
   align-items: center;
   gap: 0.75rem;
+  flex-wrap: wrap;
 }
 
 .mode-toggle {
@@ -647,4 +660,231 @@ body {
   font-size: 0.78rem;
   color: var(--text-muted);
   min-height: 1em;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Token status badge (header) */
+
+.token-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.token-status__pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  border-radius: 999px;
+  padding: 0.2rem 0.6rem;
+  font-size: 0.75rem;
+  white-space: nowrap;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.token-status--healthy .token-status__pill,
+.token-status--no_exp .token-status__pill {
+  border-color: var(--success-border);
+  color: var(--success-text);
+  background: var(--success-bg);
+}
+
+.token-status--expiring_soon .token-status__pill {
+  border-color: var(--notice-border);
+  color: var(--notice-text);
+  background: var(--notice-bg);
+}
+
+.token-status--critical .token-status__pill {
+  border-color: var(--critical-border);
+  color: var(--critical-text);
+  background: var(--critical-bg);
+}
+
+.token-status--expired .token-status__pill,
+.token-status--invalid .token-status__pill {
+  border-color: var(--error-border);
+  color: var(--error-text);
+  background: var(--error-bg);
+}
+
+.token-status__icon {
+  font-size: 0.7rem;
+}
+
+.token-status__replace {
+  border: 1px solid var(--error-border);
+  background: transparent;
+  color: var(--error-text);
+  border-radius: 6px;
+  padding: 0.2rem 0.5rem;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+/* Developer session summary (collapsed DevIdentityPanel with settings applied) */
+
+.dev-session-summary {
+  margin-top: 0.4rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.6rem;
+  font-size: 0.82rem;
+}
+
+.dev-session-summary__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.dev-session-summary__title {
+  font-weight: 600;
+}
+
+.dev-session-summary__edit {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  border-radius: 6px;
+  padding: 0.2rem 0.6rem;
+  cursor: pointer;
+  font-size: 0.78rem;
+}
+
+.dev-session-summary__status {
+  margin: 0.3rem 0 0;
+  color: var(--success-text);
+  font-weight: 600;
+}
+
+/* Dev identity form: validation errors and Apply action */
+
+.dev-identity-form__error {
+  margin: -0.25rem 0 0;
+  color: var(--error-text);
+  font-size: 0.75rem;
+}
+
+.dev-identity-form__actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 0.25rem;
+}
+
+.dev-identity-form__apply {
+  border: none;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border-radius: 8px;
+  padding: 0.4rem 1rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+/* Per-request debug panel sections */
+
+.debug-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin-top: 0.4rem;
+}
+
+.debug-section {
+  border-top: 1px solid var(--border);
+  padding-top: 0.4rem;
+}
+
+.debug-section:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.debug-section__title {
+  margin: 0 0 0.2rem;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.tool-call-list {
+  list-style: none;
+  margin: 0.3rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.tool-call-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.4rem 0.6rem;
+  font-size: 0.78rem;
+}
+
+.tool-call-card--failed {
+  border-color: var(--error-border);
+}
+
+.tool-call-card__name {
+  font-weight: 600;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.tool-call-card__meta {
+  margin: 0.25rem 0 0;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.1rem 0.6rem;
+  color: var(--text-muted);
+}
+
+.tool-call-card__meta dt {
+  font-weight: 500;
+}
+
+.tool-call-card__meta dd {
+  margin: 0;
+}
+
+/* Source origin badge (RAG/local vs MCP remote) */
+
+.origin-badge {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+
+.origin-badge--mcp {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* Runtime info panel compact-badge error suffix */
+
+.runtime-info__badge-error {
+  color: var(--error-text);
+  font-size: 0.75rem;
 }
