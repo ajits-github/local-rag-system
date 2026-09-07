@@ -41,6 +41,14 @@ export function FeatureFlagsBar() {
               >
                 <span className="feature-pill__dot" />
                 {label}
+                {/* Never rely on color/dot alone: an explicit glyph for "on", and a
+                    screen-reader-only word either way (title is a tooltip, not always read). */}
+                {on && (
+                  <span aria-hidden="true" className="feature-pill__check">
+                    ✓
+                  </span>
+                )}
+                <span className="sr-only">{on ? "enabled" : "disabled"}</span>
               </span>
             );
           })}
@@ -48,7 +56,7 @@ export function FeatureFlagsBar() {
             className="feature-pill feature-pill--info"
             title={`Vision provider: ${features.vision_provider}`}
           >
-            Vision: {features.vision_provider}
+            Vision: {features.vision_provider === "none" ? "off" : features.vision_provider}
           </span>
           {features.auth_enabled && features.insecure_dev_mode && (
             <span
