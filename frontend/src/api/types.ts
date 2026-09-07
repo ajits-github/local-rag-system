@@ -7,6 +7,9 @@
  */
 import { z } from "zod";
 
+export const SourceOriginSchema = z.enum(["retrieved", "expanded", "tool_fetched", "mcp_remote"]);
+export type SourceOrigin = z.infer<typeof SourceOriginSchema>;
+
 export const SourceItemSchema = z.object({
   chunk_id: z.string(),
   document_id: z.string(),
@@ -19,6 +22,7 @@ export const SourceItemSchema = z.object({
   attachment_name: z.string().nullable().optional(),
   source_anchor: z.string().nullable().optional(),
   vision_generated: z.boolean().default(false),
+  origin: SourceOriginSchema.default("retrieved"),
 });
 export type SourceItem = z.infer<typeof SourceItemSchema>;
 
@@ -41,6 +45,15 @@ export const TerminationReasonSchema = z.enum([
 ]);
 export type TerminationReason = z.infer<typeof TerminationReasonSchema>;
 
+export const ToolCallDetailSchema = z.object({
+  tool_name: z.string(),
+  execution: z.enum(["local", "mcp_remote"]),
+  success: z.boolean(),
+  result_count: z.number(),
+  latency_ms: z.number(),
+});
+export type ToolCallDetail = z.infer<typeof ToolCallDetailSchema>;
+
 export const AgentQueryResponseSchema = z.object({
   answer: z.string(),
   sources: z.array(SourceItemSchema),
@@ -48,6 +61,7 @@ export const AgentQueryResponseSchema = z.object({
   termination_reason: TerminationReasonSchema.nullable(),
   steps: z.number(),
   tool_calls: z.array(z.string()),
+  tool_call_details: z.array(ToolCallDetailSchema).default([]),
   retrieval_ms: z.number(),
   generation_ms: z.number(),
   total_ms: z.number(),
