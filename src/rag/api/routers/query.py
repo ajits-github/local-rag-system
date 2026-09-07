@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import date
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
@@ -52,6 +52,12 @@ class SourceItem(BaseModel):
     `vision_generated` are derived, non-sensitive structural metadata
     already stored on the chunk. `source`/`attachment_name`/`source_anchor`
     are relative, dataset-root-scoped paths, never absolute filesystem paths.
+    `origin` mirrors `SearchResult.origin`: `"retrieved"` (a normal ranked
+    result), `"expanded"` (relationship expansion), `"tool_fetched"` (an
+    agent tool's direct fetch), or `"mcp_remote"` (synthetic evidence from
+    an MCP business tool) -- lets the UI distinguish a RAG/local source
+    from an MCP remote/business one without guessing from `chunk_id`
+    shape.
     """
 
     chunk_id: str
@@ -65,6 +71,7 @@ class SourceItem(BaseModel):
     attachment_name: str | None = None
     source_anchor: str | None = None
     vision_generated: bool = False
+    origin: Literal["retrieved", "expanded", "tool_fetched", "mcp_remote"] = "retrieved"
 
 
 class QueryResponse(BaseModel):
