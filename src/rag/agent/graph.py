@@ -35,6 +35,14 @@ the relevant config is off despite a decision naming one anyway.
 dispatched, regardless of outcome, the tool-call loop ends and proceeds
 to synthesis rather than looping back to retry the same mutation.
 
+`classify_query`'s simple/complex routing is an LLM decision, but
+`_looks_like_case_mutation_request` is a deterministic backstop on top
+of it: a query that clearly asks to change a case's status is always
+routed to the agent path, regardless of what the model classified it
+as, since only that path can reach `update_case_status` at all. It never
+infers authorization or approval; those are unchanged, decided entirely
+inside the MCP business store.
+
 Node timing, tracing, and metrics wrap existing node calls via
 `_TimingLLM` and `_call_node` without changing any node's decision logic;
 this module is the only place that needs to know about that
