@@ -2,6 +2,7 @@ import { AgentActivityPanel } from "../AgentActivityPanel";
 import { DebugPanel } from "../DebugPanel";
 import { ErrorBanner } from "../ErrorBanner";
 import { SourcesPanel } from "../SourcesPanel";
+import { getUiModeConfig } from "../../config/uiMode";
 import type { ChatMessage } from "../../state/types";
 import { FeedbackControls } from "./FeedbackControls";
 import { Markdown } from "./Markdown";
@@ -17,6 +18,7 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
   const isUser = message.role === "user";
   const terminationReason = message.debug?.terminationReason;
   const terminationNotice = terminationReason ? TERMINATION_NOTICE[terminationReason] : undefined;
+  const { showDebugDetails } = getUiModeConfig();
 
   return (
     <div className={`message-bubble message-bubble--${message.role}`} data-status={message.status}>
@@ -56,9 +58,9 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
               </div>
             )}
             <Markdown text={message.text} />
-            <SourcesPanel sources={message.sources} />
+            <SourcesPanel sources={message.sources} showScore={showDebugDetails} />
             <FeedbackControls message={message} />
-            <DebugPanel debug={message.debug} />
+            {showDebugDetails && <DebugPanel debug={message.debug} />}
           </>
         )}
       </div>
