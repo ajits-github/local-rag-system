@@ -1,8 +1,17 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRuntimeInfo } from "../hooks/useRuntimeInfo";
+import type { RuntimeInfo } from "../api/types";
 
 function boolLabel(value: boolean): string {
   return value ? "enabled" : "disabled";
+}
+
+/** Short "model · retrieval mode · fusion · MCP" summary for the collapsed toggle. */
+function compactBadge(info: RuntimeInfo): string {
+  const parts = [info.generation_model, info.retrieval_mode === "hybrid" ? "Hybrid" : "Dense"];
+  if (info.fusion_method) parts.push(info.fusion_method.toUpperCase());
+  if (info.mcp_client_enabled || info.mcp_enabled) parts.push("MCP");
+  return parts.join(" · ");
 }
 
 /**
@@ -12,16 +21,15 @@ function boolLabel(value: boolean): string {
  * which shows *per-answer* data (route, latency, tool calls) for one
  * message -- this panel shows the same values for every message, since
  * they describe the backend process, not a single request.
+ *
+ * The collapsed toggle itself doubles as a compact badge (e.g.
+ * "qwen2.5:3b · Hybrid · RRF · MCP") once loaded, so the essentials are
+ * visible without expanding; the full field-by-field breakdown stays
+ * behind the toggle.
  */
 export function RuntimeInfoPanel() {
   const [expanded, setExpanded] = useState(false);
-  const { info, loading, error, loaded, load } = useRuntimeInfo();
-
-  useEffect(() => {
-    if (expanded && !loaded && !loading) {
-      load();
-    }
-  }, [expanded, loaded, loading, load]);
+  const { info, loading, error, load } = useRuntimeInfo();
 
   return (
     <div className="collapsible-panel collapsible-panel--runtime">
@@ -31,7 +39,13 @@ export function RuntimeInfoPanel() {
         onClick={() => setExpanded((v) => !v)}
         aria-expanded={expanded}
       >
-        {expanded ? "▾" : "▸"} Runtime configuration
+        {expanded ? "▾" : "▸"} {info ? `Runtime: ${compactBadge(info)}` : "Runtime configuration"}
+        {error && !loading && (
+          <span className="runtime-info__badge-error" role="status">
+            {" "}
+            (unavailable)
+          </span>
+        )}
       </button>
       {expanded && (
         <div className="runtime-info">
