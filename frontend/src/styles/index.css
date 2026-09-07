@@ -200,6 +200,11 @@ body {
   opacity: 1;
 }
 
+.feature-pill__check {
+  color: var(--accent);
+  font-weight: 700;
+}
+
 .feature-pill--info {
   color: var(--text-muted);
 }
