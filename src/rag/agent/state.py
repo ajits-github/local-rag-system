@@ -36,6 +36,7 @@ class Citation(BaseModel):
     attachment_name: str | None = None
     source_anchor: str | None = None
     vision_generated: bool = False
+    origin: Literal["retrieved", "expanded", "tool_fetched", "mcp_remote"] = "retrieved"
 
 
 class NodeInvocationTiming(BaseModel):
