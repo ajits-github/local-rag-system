@@ -1,12 +1,20 @@
 import userEvent from "@testing-library/user-event";
 import { screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeJwt, expInMinutes } from "../testHelpers";
 import { jsonResponse, renderChatWindow, routedFetchMock } from "./testUtils";
 
 describe("auth header handling", () => {
+  beforeEach(() => {
+    // Developer settings are gated behind developer mode; this suite
+    // exercises that panel through the real ChatWindow, so opt in
+    // explicitly rather than relying on the safe production default.
+    vi.stubEnv("VITE_UI_MODE", "developer");
+  });
+
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
   });
 
   it("attaches a Bearer token once applied, and disables manual tenant/roles while editing", async () => {
