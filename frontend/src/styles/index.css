@@ -580,10 +580,6 @@ body {
   color: var(--text-muted);
 }
 
-.runtime-info__status--error {
-  color: var(--error-text);
-}
-
 .runtime-info__refresh {
   margin-top: 0.5rem;
   border: 1px solid var(--border);
@@ -800,9 +796,9 @@ body {
 /* Developer session summary (collapsed DevIdentityPanel with settings applied) */
 
 .dev-session-summary {
-  margin-top: 0.4rem;
+  margin-top: 0.3rem;
   border-top: 1px solid var(--border);
-  padding-top: 0.6rem;
+  padding: 0.4rem 0;
   font-size: 0.82rem;
 }
 
@@ -827,10 +823,20 @@ body {
   font-size: 0.78rem;
 }
 
-.dev-session-summary__status {
+.dev-session-summary__line {
   margin: 0.3rem 0 0;
-  color: var(--success-text);
-  font-weight: 600;
+  color: var(--text-muted);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.dev-session-summary__field {
+  color: var(--text);
+}
+
+.dev-session-summary__sep {
+  margin: 0 0.4rem;
+  color: var(--text-muted);
 }
 
 /* Dev identity form: validation errors and Apply action */
@@ -942,11 +948,4 @@ body {
 .origin-badge--mcp {
   border-color: var(--accent);
   color: var(--accent);
-}
-
-/* Runtime info panel compact-badge error suffix */
-
-.runtime-info__badge-error {
-  color: var(--error-text);
-  font-size: 0.75rem;
 }
