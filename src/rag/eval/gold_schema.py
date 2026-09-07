@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterable
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -157,6 +158,37 @@ class GoldExample(BaseModel):
         `"pdf"`/`"docx"`/`"markdown"`), for per-format metric breakdowns
         independent of `ChunkMetadata.source_type` (which is derived from
         the retrieved chunk, not authored).
+    requires_specialized_tool : bool
+        Whether answering genuinely requires one of `get_document`/
+        `get_latest_document`/`get_related_context`/an MCP business tool,
+        as opposed to a plain `search_knowledge_base` call. Distinct from
+        `requires_latest_document_tool` (which already names that one
+        tool specifically) and `requires_multiple_retrieval_calls` (which
+        means repeated broad search, not a single-purpose fetch). Used by
+        `run_agent_eval.py`'s `_expected_route` alongside the other
+        agentic-signal flags.
+    requires_mcp_business_tool : bool
+        Whether the answer can only come from a remote MCP business tool
+        (`get_customer_case`/`get_case_status`/`update_case_status`),
+        because the RAG corpus has no customer-case data at all. Used for
+        MCP-specific grounding/denial metrics, distinct from
+        `requires_specialized_tool`'s routing-only purpose.
+    expected_mcp_denial : bool
+        Whether the scenario's caller identity is expected to be denied
+        by the business store's own tenant/role ACL (an unauthorized or
+        cross-tenant case-access attempt), so the tool call should
+        deterministically return no evidence rather than a tool failure.
+    mcp_forbidden_snippets : list[str]
+        Literal text (e.g. a customer name, case subject) that must never
+        appear in the final answer for an `expected_mcp_denial` scenario;
+        a direct leakage check independent of whether the tool call
+        itself was correctly denied.
+    expected_case_action_outcome : str or None
+        Expected `CaseActionOutcome.outcome` value
+        (`"executed"`/`"already_in_status"`/`"invalid_transition"`/
+        `"approval_required"`) for an `update_case_status` scenario,
+        classified from the tool's own deterministic evidence wording
+        (see `run_agent_eval.py`'s outcome-phrase matching).
 
     Notes
     -----
@@ -217,6 +249,13 @@ class GoldExample(BaseModel):
     visual_question_type: str | None = None
     evidence_mode: str | None = None
     source_format: str | None = None
+    requires_specialized_tool: bool = False
+    requires_mcp_business_tool: bool = False
+    expected_mcp_denial: bool = False
+    mcp_forbidden_snippets: list[str] = Field(default_factory=list)
+    expected_case_action_outcome: (
+        Literal["executed", "already_in_status", "invalid_transition", "approval_required"] | None
+    ) = None
 
 
 def load_gold_jsonl(path: str | Path) -> list[GoldExample]:
