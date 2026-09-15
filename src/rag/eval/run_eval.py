@@ -224,7 +224,7 @@ def _content_type_hit(
     Shared by `table_retrieval_hit_rate`/`visual_retrieval_hit_rate`: asks
     "was the *right kind* of structural element retrieved from the *right*
     document," not just "was any chunk of that type retrieved from
-    anywhere" -- a table from the wrong document doesn't count as a hit.
+    anywhere"; a table from the wrong document doesn't count as a hit.
     """
     for r in results:
         content_type = r.chunk.metadata.content_type or "prose"
@@ -241,8 +241,8 @@ def _page_hit(
     """Whether any `results` chunk matches both a relevant document and a relevant page number.
 
     `ChunkMetadata.page` is `None` for Markdown/text/HTML sources, which
-    never contributes a hit here regardless of `relevant_pages` -- exactly
-    the desired behavior, since those sources have no page to localize to.
+    never contributes a hit here regardless of `relevant_pages`; this is
+    intentional, since those sources have no page to localize to.
     """
     for r in results:
         if r.chunk.metadata.page in relevant_pages and any(
@@ -260,7 +260,7 @@ def _section_hit(
     Substring containment, not exact equality: an authored gold section
     label like "Review Purpose" is expected to match a retrieved
     `section_path` of "DocuFlow Processing Architecture Review > 1.
-    Review Purpose" -- gold authors a short, human label, not the full
+    Review Purpose". Gold authors a short, human label, not the full
     breadcrumb/numbering a heading-derived `section_path` actually carries.
     A documented heuristic, not a semantic-similarity claim.
     """
@@ -679,10 +679,10 @@ def _forged_role_accepted(example: GoldExample, config: AppConfig) -> bool | Non
     Exercises `api.routers.query._build_authorization_context` directly
     (a pure function of body/identity/config; no HTTP server, no
     network call needed) rather than the live API boundary, since that is
-    the exact function responsible for the "the API must no longer trust
-    caller-supplied tenant_id or roles when authentication is enabled"
-    requirement. `None` when the example has no `user_tenant`/`user_roles`
-    to build a verified identity from (nothing to check).
+    the exact function responsible for making a verified identity win over
+    caller-supplied `tenant_id`/`roles` once authentication is enabled.
+    `None` when the example has no `user_tenant`/`user_roles` to build a
+    verified identity from (nothing to check).
 
     Correct enforcement code makes this 0/N by construction (the same
     identity-wins-over-body logic drives both the real request handling

@@ -1,15 +1,13 @@
-"""Resolves the tenant_id a newly-ingested document should be stamped with.
+"""Resolve the tenant_id a newly-ingested document should be stamped with.
 
-Prevents a document with missing or mismatched governance front matter
-from silently becoming `tenant_id=NULL` (globally visible to every
-tenant) or being assigned to the wrong tenant. This enforces tenant
-scoping at ingest time; query-time scoping is enforced separately by
+Prevents an authenticated upload with missing or mismatched governance
+front matter from becoming `tenant_id=NULL` (globally visible to every
+tenant) or landing under the wrong tenant. This is ingest-time tenant
+scoping only; query-time scoping is enforced separately in
 `retrieval/authorization.py`.
 
-Deliberately decoupled from `rag.api.auth.VerifiedIdentity`: `rag.ingestion`
-never imports from `rag.api`. `IngestCallerContext` carries only the
-two primitive facts this module needs, built by the API router from a
-verified identity and passed in as plain data.
+`IngestCallerContext` carries only the two facts this module needs from
+a verified identity; `rag.ingestion` never imports `rag.api`.
 """
 
 from __future__ import annotations
@@ -31,9 +29,7 @@ class IngestCallerContext(BaseModel):
     is_privileged : bool
         Whether the caller holds a role in
         `security.authorization.cross_tenant_support_roles`, the same
-        role list retrieval-time cross-tenant access uses (see
-        `vectorstore.pgvector.build_authorization_where_clause`), reused
-        here rather than adding a second, parallel privilege list.
+        role list used for cross-tenant document access at query time.
     """
 
     tenant_id: str | None = None

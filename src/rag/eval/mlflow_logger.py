@@ -85,14 +85,15 @@ def _slug(value: Any, default: str = "na") -> str:
 def build_run_name(record: dict[str, Any]) -> str:
     """Build a human-readable MLflow run name from a record.
 
-    E.g. ``experiment_015_qwen2-5-3b_v2_hybrid_rel-exp``. Never changes
-    the MLflow-assigned run UUID (`run.info.run_id`): `run_name` is purely
-    the display label passed to `mlflow.start_run`. Built from fields
-    already present in `build_experiment_record`'s
-    schema (`scripts/record_experiment.py`), so no new record fields are
-    required; a record missing a field (e.g. an older, pre-multimodal
-    experiment with no `relationship_expansion_enabled`) just omits that
-    segment rather than failing.
+    Underscore-joined slug of experiment id, generation model, prompt
+    version, and retrieval provider (e.g.
+    ``<experiment_id>_<model>_<prompt_version>_<retrieval_provider>``),
+    with optional `rel-exp`/`agentic` suffixes. Never changes the
+    MLflow-assigned run UUID (`run.info.run_id`); `run_name` is purely
+    the display label passed to `mlflow.start_run`. Built entirely from
+    fields already present in the record schema
+    (`scripts/record_experiment.py`'s `build_experiment_record`), so a
+    record missing a field just omits that segment rather than failing.
 
     Parameters
     ----------

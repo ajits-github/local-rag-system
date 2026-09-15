@@ -43,10 +43,8 @@ _BOUND_TERMINATIONS = {"max_steps", "max_retrieval_attempts", "max_tool_calls"}
 _answer_quality_scorer = KeywordOverlapScorer()
 
 # AgentState.termination_reason's fixed Literal vocabulary (rag.agent.state).
-# Hardcoded, not introspected, matching this module's existing
-# _AGENT_PROMPT_FIELDS-style convention of a small fixed list kept in sync
-# by hand; a genuinely new termination reason would need a code change
-# here regardless of how it's discovered.
+# Hardcoded rather than introspected, so a new termination reason needs an
+# explicit code change here to be picked up.
 _TERMINATION_REASONS = [
     "synthesized",
     "max_steps",
@@ -104,11 +102,8 @@ def _cited_sources(final_answer: str | None, citations: list[str]) -> list[str] 
     return resolved or None
 
 
-# qwen2.5:3b frequently omits the requested "(Source N)" citation format
-# even while using the retrieved evidence correctly, so explicit citation
-# parsing alone under-counts grounding. Mirrors run_eval.py's
-# `_expansion_utilization` heuristic (same word-length/overlap
-# threshold): a triage-grade proxy, not a citation-compliance claim.
+# Threshold for _infer_cited_sources's keyword-overlap fallback; see
+# _resolve_citation_attribution for why a fallback is needed at all.
 _MIN_INFERRED_CITATION_OVERLAP = 3
 
 
@@ -213,7 +208,7 @@ def _render_case_action_outcome(evidence_text: str) -> str | None:
 
     Matches the exact, fixed phrasings `rag.agent.mcp_client.
     _render_case_action_outcome` produces for each `CaseActionOutcome.
-    outcome` value -- never a semantic/LLM judgment, since the tool's own
+    outcome` value. Never a semantic/LLM judgment, since the tool's own
     output text is itself a deterministic function of the outcome type.
     Returns `None` when no known phrasing is found (e.g. the tool was
     never called, or was denied outright with no evidence at all).
@@ -592,7 +587,7 @@ def _termination_reason_breakdown(records: list[dict[str, Any]]) -> dict[str, An
     also stamps `termination_reason = "synthesized"` on its single fast
     path, so including classic-routed rows would just dilute this
     agent-loop-specific breakdown by whatever fraction of the gold set
-    never entered the bounded loop at all -- `_routing_metrics` already
+    never entered the bounded loop at all; `_routing_metrics` already
     reports that split. `guardrail_termination_count`/`_rate` reuses the
     same `_BOUND_TERMINATIONS` set `_evidence_and_retry_metrics` scores
     `max_step_termination_rate` against, generalized here to every
@@ -685,7 +680,7 @@ def _specialized_tool_reachability_metrics(records: list[dict[str, Any]]) -> dic
     to `_TOOL_NAMES`'s fixed vocabulary; a tool gold never expects is
     reported with `count: 0` rather than omitted, so the full seven-tool
     surface is always visible in one place. This is a live-LLM
-    tool-*selection* signal, not a reachability *proof* -- see the
+    tool-*selection* signal, not a reachability *proof*; see the
     deterministic tool-dispatch tests (`test_agent_tool_tenant_isolation.py`,
     `test_mcp_business_case_actions.py`, `test_agent_mcp_client_stage2.py`)
     for whether each tool actually works when called.
@@ -711,12 +706,12 @@ def _mcp_authorization_metrics(records: list[dict[str, Any]]) -> dict[str, Any]:
       every dispatched MCP tool call in this run return zero results (the
       business store's own fail-closed behavior), rather than a tool
       failure or an unexpectedly non-empty result. `None` (excluded) for
-      a row that never dispatched an MCP tool at all -- that is a
+      a row that never dispatched an MCP tool at all; that is a
       tool-*selection* miss, already scored by `per_tool_reachability`,
       not an authorization failure.
     - `denial_leakage_rate`: for the same denial rows, did the final
       answer text leak any of the gold-authored `mcp_forbidden_snippets`
-      (e.g. a customer name) despite the tool call itself being denied --
+      (e.g. a customer name) despite the tool call itself being denied,
       a direct, textual security-failure check independent of whether the
       denial mechanism worked.
     - `grounding_rate`: for `requires_mcp_business_tool` rows that are
@@ -776,7 +771,7 @@ def _case_action_outcome_metrics(records: list[dict[str, Any]]) -> dict[str, Any
 
     Classifies the actual outcome from the tool's own deterministic
     evidence wording (`_render_case_action_outcome`), never from the
-    free-text final answer -- the wording the business store itself
+    free-text final answer: the wording the business store itself
     produces is a direct function of `CaseActionOutcome.outcome`, so this
     is a structural check, not a semantic judgment of the model's prose.
     """

@@ -1,11 +1,10 @@
 """Register a rag.eval.run_agent_eval (+ optional run_agent_ragas_eval) report.
 
 Distinct from scripts/record_experiment.py: the agent report's metric
-shape (routing_accuracy, tool_selection_accuracy, etc. at the top level,
-no retrieval@k/hit_rate@k nesting) doesn't fit that script's flat schema,
-so this writes its own experiments/results/agentic/<id>.json -- a
-subdirectory compare_experiments.py's non-recursive glob never sees,
-leaving the standard comparison table untouched.
+shape (routing_accuracy, tool_selection_accuracy, etc.) doesn't fit that
+script's flat schema, so this writes its own
+experiments/results/agentic/<id>.json, a subdirectory
+compare_experiments.py's non-recursive glob never sees.
 
 `--ragas-output`, if given, merges rag.eval.run_agent_ragas_eval's
 aggregate scores into the same record's ragas_* fields (its `judge`
@@ -13,20 +12,15 @@ provider/model too). Optional, since a deterministic-only run has
 nothing to merge.
 
 Records every agent-specific prompt's id/version/path/sha256 checksum
-(classify/decompose/tool_select/evidence_sufficiency/synthesize) alongside
-the classic-path generation prompt's own checksum, so the exact prompt set
-behind a given result is always reconstructable later.
+alongside the classic-path generation prompt's own, so the exact prompt
+set behind a given result is always reconstructable later.
 
-Also flattens rag.eval.run_agent_eval's per-node latency breakdown,
-termination-reason breakdown, and tool-usage breakdown (all aggregate,
-computed once per eval run from the existing AgentState.node_timings_ms/
-termination_reason/tool_call_history data -- no new instrumentation) into
-individually named fields, e.g. `agent_node_synthesize_latency_ms_mean`,
-`agent_termination_max_steps_rate`, `agent_tool_usage_get_document_count`.
-Every one of these fields draws from a small, fixed vocabulary (node
-names, termination reasons, tool names), so this never introduces an
-unbounded/high-cardinality set of MLflow metric names as eval runs
-accumulate.
+Also flattens rag.eval.run_agent_eval's per-node latency, termination-
+reason, and tool-usage breakdowns into individually named fields, e.g.
+`agent_node_synthesize_latency_ms_mean`, `agent_termination_max_steps_rate`.
+Each draws from a small, fixed vocabulary (node names, termination
+reasons, tool names), so this never introduces an unbounded set of
+MLflow metric names as eval runs accumulate.
 
 Usage:
     python -m rag.eval.run_agent_eval --gold data/eval/agentic_extension_gold.jsonl \
@@ -64,10 +58,9 @@ _AGENT_PROMPT_FIELDS = [
     ("synthesize", "synthesize_prompt_path"),
 ]
 
-# rag.agent.graph._call_node's fixed node-name vocabulary (see that
-# module's `_load_templates`/dispatch call sites). classic_rag-only runs
-# never populate node_latency_breakdown_ms at all, so every lookup below
-# is a graceful `.get(...)` chain, never a KeyError.
+# rag.agent.graph's fixed node-name vocabulary. classic_rag-only runs never
+# populate node_latency_breakdown_ms, so every lookup below is a graceful
+# `.get(...)` chain, never a KeyError.
 _AGENT_NODE_NAMES = [
     "classify",
     "decompose",

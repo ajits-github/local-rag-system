@@ -1,18 +1,13 @@
 """Build a targeted RAGAS sample for the rag_answer v3-vs-v5 prompt A/B.
 
-Deterministic, file-order-based selection (no randomness), mirroring
-build_ragas_sample15.py's approach but targeted at this specific A/B rather
-than stratified across the whole gold set:
+Deterministic, file-order-based selection (no randomness):
 
-  - Every row with a non-empty `forbidden_documents` (19 rows on the current
-    techfusion_gold.jsonl) -- the security/authorization set. This set
-    already overlaps heavily with injection_present, sensitive_data_present,
-    and requires_current_document (freshness), so it representatively
-    covers authorization/redaction/injection/freshness without a second,
-    separately-tuned selection per category.
-  - 6 plain benign rows (no forbidden_documents/injection_present/
-    sensitive_data_present/requires_current_document/safety_category),
-    covering the same question_type/difficulty/unanswerable axes as
+  - Every row with a non-empty `forbidden_documents`: the security/
+    authorization set. Already overlaps with injection_present/
+    sensitive_data_present/requires_current_document, so it covers those
+    categories too without a separate, dedicated selection per category.
+  - 6 plain benign rows (none of the flags above), spanning the same
+    question_type/difficulty/unanswerable axes as
     build_ragas_sample15.py's plain-bucket picks, so the sample isn't only
     security edge cases.
 

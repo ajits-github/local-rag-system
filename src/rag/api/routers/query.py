@@ -55,7 +55,7 @@ class SourceItem(BaseModel):
     `origin` mirrors `SearchResult.origin`: `"retrieved"` (a normal ranked
     result), `"expanded"` (relationship expansion), `"tool_fetched"` (an
     agent tool's direct fetch), or `"mcp_remote"` (synthetic evidence from
-    an MCP business tool) -- lets the UI distinguish a RAG/local source
+    an MCP business tool). Lets the UI distinguish a RAG/local source
     from an MCP remote/business one without guessing from `chunk_id`
     shape.
     """

@@ -1,11 +1,9 @@
 """Loader for `.docx` files: layout-aware structural extraction.
 
 Serializes headings/tables/images/page breaks into the same
-Markdown-equivalent syntax `StructuredMarkdownChunker` already
-understands (see that module's docstring and `loaders/pdf_loader.py`'s,
-which takes the same approach for PDFs); `DocxLoader.load()` still
-returns a `RawDocument` with a single `content: str`, unchanged
-interface.
+Markdown-equivalent syntax `StructuredMarkdownChunker` parses;
+`DocxLoader.load()` still returns a `RawDocument` with a single
+`content: str`.
 
 Unlike a PDF, a `.docx` body is already a flat, ordered sequence of
 paragraphs and tables (`document.element.body`'s children), so no
@@ -14,17 +12,14 @@ single linear walk. Three structural signals come from the OOXML tree
 rather than `python-docx`'s higher-level (paragraph-text-only) API:
 
 - **Page numbers**: a manual page break (`<w:br w:type="page"/>`) is the
-  only reliable page signal `python-docx` exposes; Word's own
-  reflow-based pagination isn't computable without a rendering engine.
-  Documents with no manual page breaks get `page=1` throughout (honest:
-  reflow position is genuinely unknowable, not silently guessed).
-- **Inline images**: found via `.//a:blip` on each paragraph's XML
-  (the standard OOXML image-reference element), resolved to raw bytes
-  through `document.part.related_parts[rId].blob`.
-- **Code/config blocks**: no dedicated Word style is used in this
-  project's corpus, so detection is by run-level monospace font name
-  (Consolas/Courier New/etc.) rather than `paragraph.style.name`;
-  see `_is_monospace_paragraph`.
+  only reliable page signal `python-docx` exposes; Word's reflow-based
+  pagination isn't computable without a rendering engine, so a document
+  with no manual page breaks gets `page=1` throughout.
+- **Inline images**: found via `.//a:blip` on each paragraph's XML,
+  resolved to raw bytes through `document.part.related_parts[rId].blob`.
+- **Code/config blocks**: no dedicated Word style exists in this
+  corpus, so detection is by run-level monospace font name
+  (Consolas/Courier New/etc.), see `_is_monospace_paragraph`.
 """
 
 from __future__ import annotations
@@ -57,9 +52,8 @@ def _as_utc(value: datetime | None, fallback: datetime) -> datetime:
 def _is_monospace_paragraph(paragraph: Paragraph) -> bool:
     """Whether every non-empty run in `paragraph` uses a monospace font.
 
-    The only code/config signal available in this project's DOCX corpus
-    (see module docstring); a paragraph with no runs at all is not
-    considered monospace.
+    This corpus's only code/config signal; a paragraph with no runs is
+    not considered monospace.
     """
     runs_with_text = [r for r in paragraph.runs if r.text]
     if not runs_with_text:

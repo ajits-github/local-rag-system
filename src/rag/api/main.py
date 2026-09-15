@@ -150,20 +150,14 @@ class RuntimeInfo(BaseModel):
     """Safe, non-secret snapshot of the effective runtime pipeline configuration.
 
     Complements `FeatureFlags`: that model summarizes security/agent
-    toggles for the always-visible feature-flags strip, while this model
-    additionally surfaces the concrete provider/model choices behind the
-    running pipeline (which model answered, whether BM25/reranking/MCP
-    are active), for the developer/debug UI. Kept on a separate `GET
-    /info` endpoint rather than folded into `GET /`: `GET /`'s own
-    regression test (`test_root_features_never_leak_secrets_or_identifying_config`)
-    deliberately asserts no model name ever appears there, and a model
-    name is not itself a secret but is exactly the kind of "identifying
-    configuration" that endpoint promises never to carry.
+    toggles, while this one exposes the concrete provider/model choices
+    behind the running pipeline (which model answered, whether
+    BM25/reranking/MCP are active) for a developer/debug UI. Kept on a
+    separate `GET /info` endpoint since `GET /` promises never to reveal
+    a model name or other identifying configuration.
 
-    Still bound by the same rule as `FeatureFlags`: never a JWT/signing
-    key, DB URL, filesystem path, internal token, raw auth context,
-    prompt text, or tenant data. Provider names and model identifiers are
-    the only "new" kind of information here relative to `FeatureFlags`.
+    Never exposes a JWT/signing key, DB URL, filesystem path, internal
+    token, raw auth context, prompt text, or tenant data.
 
     Attributes
     ----------

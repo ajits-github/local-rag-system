@@ -228,8 +228,8 @@ def build_feedback_schema_sql(*, table: str) -> str:
 
     A separate function from `build_schema_sql` (documents/chunks): the
     feedback table has no vector column, no embedding dimension, and no
-    relationship to the documents/chunks tables at all -- it just records
-    a caller's rating of an answer, keyed by that answer's `request_id`.
+    relationship to the documents/chunks tables at all. It just records a
+    caller's rating of an answer, keyed by that answer's `request_id`.
 
     Parameters
     ----------

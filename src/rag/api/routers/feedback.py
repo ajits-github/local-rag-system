@@ -1,44 +1,33 @@
 """`POST /feedback`: persist a caller's rating of a prior answer.
 
-Adds a closed feedback loop on top of the existing query/agent routes:
+Part of a closed feedback loop:
 
     answer -> thumbs up/down (+ optional structured reason/comment)
     -> this endpoint -> Postgres (`rag.feedback.store.FeedbackStore`)
-    -> a script-driven export for human review
-    -> optional, deliberate promotion into gold eval data
+    -> `scripts/export_feedback.py` for human review
+    -> optional, manual promotion into gold eval data
 
-See `scripts/export_feedback.py` and `docs/architecture.md`'s "Feedback
-loop" section for the read/curation side. Feedback is never auto-promoted
-to ground truth by this endpoint or anything it calls.
+Feedback is never auto-promoted to ground truth by this endpoint or
+anything it calls.
 
 Identity/tenant handling mirrors `routers/query.py`: a verified JWT
-identity (when `security.auth.enabled=True`) always wins over a
-body-supplied `tenant_id`; a mismatch is logged as `forged_claim_attempt`
-but never used (`rag.api.request_auth.resolve_trusted_tenant_id`).
-`request_id` is the correlation id every query/agent response already
-carries (`QueryResponse.request_id`/`AgentQueryResponse.request_id`,
-sourced from the same value as the `x-request-id` response header) --
-reused rather than inventing a new "answer id" concept. This endpoint
-does not validate that `request_id` refers to a real prior request: no
-server-side request log exists to check against, and adding one solely
-for this purpose would be a much larger change than this milestone's
-scope. `request_id` is therefore treated as an opaque, format-bounded
-correlation string a caller asserts, not an existence-verified reference
--- a deliberate, documented choice, not an oversight.
+identity always wins over a body-supplied `tenant_id`; a mismatch is
+logged as `forged_claim_attempt` but never used
+(`rag.api.request_auth.resolve_trusted_tenant_id`). `request_id` is the
+same correlation id every query/agent response already carries
+(`QueryResponse.request_id`/`AgentQueryResponse.request_id`, the
+`x-request-id` response header's value). It is not checked against a
+request log (none exists), so it is an opaque, caller-asserted
+correlation string, not a verified reference.
 
 Duplicate/update semantics: one feedback row per
 `(tenant_id, caller_key, request_id)`, enforced by a database `UNIQUE`
-constraint and an `INSERT ... ON CONFLICT DO UPDATE`
-(`FeedbackStore.submit`). `caller_key` is the verified JWT subject
-(pseudonymized, never the raw claim) when an identity is present, or the
-fixed literal `"anonymous"` otherwise -- there is no session/cookie
-concept in this stateless API to key on instead, so two different
-anonymous callers submitting feedback on the very same `request_id`
-(a per-response UUID never shown to anyone but the original caller)
-would share one row. This is a deliberate, documented limitation of
-operating with `security.auth.enabled=False`, not an oversight: a
-stable, distinguishable caller identity requires a verified identity,
-exactly like every other identity-dependent guarantee in this codebase.
+constraint and `INSERT ... ON CONFLICT DO UPDATE` (`FeedbackStore.submit`).
+`caller_key` is the verified JWT subject (pseudonymized) when an identity
+is present, or the fixed literal `"anonymous"` otherwise. With no
+session/cookie concept to key on, two different anonymous callers
+submitting feedback against the same `request_id` share one row, a known
+limitation when `security.auth.enabled=False`.
 """
 
 from __future__ import annotations
@@ -67,8 +56,8 @@ router = APIRouter()
 _ALL_REASONS = set(NEGATIVE_FEEDBACK_REASONS) | set(POSITIVE_FEEDBACK_REASONS)
 
 # A hard structural bound for identifier-shaped fields (tenant/dataset ids,
-# chunk ids, tool names) -- unlike comment/query/answer, these have no
-# config-driven runtime limit, so without this a caller could still send an
+# chunk ids, tool names): unlike comment/query/answer, these have no
+# config-driven runtime limit, so without this a caller could send an
 # unbounded string into an indexed Postgres column via one of these fields.
 _IdentifierStr = Annotated[str, Field(max_length=200)]
 
@@ -86,9 +75,9 @@ class FeedbackRequest(BaseModel):
     when no verified JWT identity is present.
 
     Nothing here carries chain-of-thought, raw prompts, hidden tool
-    reasoning, a JWT, or an `AuthorizationContext` -- only what a caller
+    reasoning, a JWT, or an `AuthorizationContext`: only what a caller
     already saw in a query/agent response (`answer`, `query`,
-    `cited_source_ids`, `tool_calls` -- the latter is just tool *names*,
+    `cited_source_ids`, `tool_calls`, the latter just tool *names*,
     already public on `AgentQueryResponse.tool_calls`, never reasoning or
     tool arguments).
     """
@@ -111,9 +100,9 @@ class FeedbackRequest(BaseModel):
     def _reason_matches_rating(self) -> FeedbackRequest:
         """Reject a reason from the wrong rating's enum, or one outside the fixed vocabulary.
 
-        A small, stable, closed vocabulary per this milestone's own
-        instruction: a positive rating cannot carry a negative-only
-        reason like `incorrect_answer`, and vice versa.
+        A small, stable, closed vocabulary: a positive rating cannot
+        carry a negative-only reason like `incorrect_answer`, and vice
+        versa.
         """
         if self.reason is None:
             return self
@@ -189,15 +178,15 @@ def _require_feedback_enabled(config: AppConfig = Depends(get_config)) -> AppCon
     """Reject with 404 before any other dependency resolves, when feedback is disabled.
 
     Declared as `submit_feedback`'s first non-body dependency, mirroring
-    `agent_stream.py`'s `_build_validated_agent_state` precedent: FastAPI
-    resolves `Depends()` parameters in signature order and stops at the
-    first one that raises. Without this, `get_feedback_store()` (an
-    `lru_cache`d singleton that eagerly opens a Postgres connection pool in
+    `agent_stream.py`'s `_build_validated_agent_state`: FastAPI resolves
+    `Depends()` parameters in signature order and stops at the first one
+    that raises. Without this, `get_feedback_store()` (an `lru_cache`d
+    singleton that eagerly opens a Postgres connection pool in
     `FeedbackStore.__init__`) would still be resolved on every call even
     when `config.feedback.enabled=False`, so a deployment that intends
-    feedback to be fully absent could still fail on an unreachable database
-    instead of cleanly 404ing -- the same "disabled means never touched"
-    guarantee `mcp.enabled=False` already gives `/mcp`.
+    feedback to be fully absent could fail on an unreachable database
+    instead of cleanly 404ing, the same guarantee `mcp.enabled=False`
+    already gives `/mcp`.
 
     Parameters
     ----------
@@ -224,9 +213,8 @@ def _resolve_caller_key(identity: VerifiedIdentity | None) -> str:
     """Return a stable, non-reversible key identifying the caller, for dedup purposes.
 
     The verified JWT subject's pseudonymous hash when an identity is
-    present, otherwise the fixed literal `"anonymous"` -- see this
-    module's docstring for why an unauthenticated caller cannot get a
-    stronger guarantee than that in this stateless API.
+    present, otherwise the fixed literal `"anonymous"` (see this
+    module's docstring for the anonymous-collision limitation).
     """
     if identity is None:
         return "anonymous"

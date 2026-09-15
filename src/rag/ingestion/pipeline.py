@@ -32,22 +32,16 @@ def _source_is_under_root(source: str, root: Path) -> bool:
 
     Scopes directory-ingestion deletion detection to documents that could
     plausibly have come from this ingestion root, so a document ingested
-    through a different root or via `POST /ingest` is never mistaken for a
-    deletion just because this walk didn't discover it.
+    through a different root, or via `POST /ingest`, is never mistaken
+    for a deletion just because this walk didn't discover it.
 
-    Comparison is resolved-path-based, not raw string prefix matching, so
-    relative vs. absolute paths agree and a sibling directory sharing a
-    prefix (`knowledge_base` vs. `knowledge_base2`) is never mistaken for a
-    descendant. Backslashes are normalized to `/` first so a source
-    recorded with Windows-style separators still compares correctly
-    against a POSIX root, or vice versa.
-
-    Note: this only decides membership for this run's deletion diff, given
-    whatever `source` strings are already persisted; `document_id` itself
-    stays keyed on the literal `source` string, so discovering the same
-    physical file under a different spelling than what's stored replaces
-    the old entry rather than recognizing it as unchanged (a bounded,
-    self-correcting outcome, not data loss or duplication).
+    Comparison is resolved-path-based, not string-prefix, so a sibling
+    directory sharing a name prefix (`knowledge_base` vs.
+    `knowledge_base2`) is never mistaken for a descendant, and
+    Windows-style backslashes normalize to `/` before comparing against a
+    POSIX root. A source rediscovered under a different spelling than
+    what's stored is treated as a new document rather than recognized as
+    unchanged: self-correcting, not data loss.
 
     Parameters
     ----------
@@ -224,19 +218,13 @@ class IngestionPipeline:
     def ingest_path(self, path: Path, dataset_id: str) -> IngestionStats:
         """Ingest a single file, or recursively ingest a directory tree.
 
-        Every chunk written is tagged with `dataset_id`, isolating it from
-        every other dataset at retrieval time. When walking a directory,
-        each file's path relative to `path` is additionally recorded as
-        the chunk metadata's `category`.
+        Every chunk is tagged with `dataset_id`; walking a directory also
+        tags each chunk's `category` from the file's path relative to
+        `path`.
 
-        For a directory target, also detects documents deleted since the
-        last ingestion (diffing the pre-run set of known sources, scoped to
-        this root via `_source_is_under_root`, against what's discovered
-        this run) and deletes them via `delete_documents_by_source`. A
-        document ingested through a different root, or via `POST /ingest`,
-        is never included in that diff, so it's never mistaken for a
-        deletion just because this walk didn't discover it. Skipped for a
-        single-file target.
+        For a directory target only, also detects documents removed since
+        the last ingestion of this root (see `_source_is_under_root`) and
+        deletes them via `delete_documents_by_source`.
 
         Parameters
         ----------

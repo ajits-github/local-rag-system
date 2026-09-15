@@ -1,8 +1,5 @@
 """Validate a gold JSONL file before running evaluation against it.
 
-Loaded like the other scripts/*.py modules (not a package) via a sys.path
-insert onto src/, matching init_db.py/record_experiment.py's pattern.
-
 Checks, in order:
   1. Record count vs --expect-count (warning only; the file may grow).
   2. Every relevant_documents entry resolves to a real file (hard fail).
@@ -16,9 +13,8 @@ Checks, in order:
      normalized) somewhere in its relevant_documents' raw file text
      (warning only; a verbatim substring match can under-count real
      support). Matched against the file's raw bytes, not the
-     loader-parsed/cleaned text, because a reference can legitimately come
-     from YAML front-matter that TextLoader strips before chunking (e.g. an
-     "owner: ..." field used to answer an ownership question).
+     loader-parsed/cleaned text, since a reference can legitimately come
+     from YAML front matter that TextLoader strips before chunking.
 
 Exit code is non-zero iff checks 2, 4, or 5 find a problem.
 

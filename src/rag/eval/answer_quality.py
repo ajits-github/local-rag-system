@@ -1,8 +1,7 @@
 """Answer-quality scoring plug point.
 
-KeywordOverlapScorer is a cheap placeholder so the eval CLI has something to
-report today. Swap in an LLM-judge (e.g. via the same Ollama LLM used for
-generation) by implementing AnswerQualityScorer. See README Roadmap.
+KeywordOverlapScorer is a cheap placeholder. Swap in an LLM-judge by
+implementing AnswerQualityScorer.
 """
 
 from __future__ import annotations
@@ -45,7 +44,7 @@ class KeywordOverlapScorer(AnswerQualityScorer):
     def score(
         self, question: str, generated_answer: str, reference_answer: str | None = None
     ) -> float:
-        """See `AnswerQualityScorer.score`.
+        """Return the fraction of reference keywords also present in the generated answer.
 
         Returns 0.0 when `reference_answer` is missing or has no words
         longer than 3 characters to compare against.

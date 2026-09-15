@@ -214,10 +214,10 @@ def resolve_case_approvals(
     """Return `case_approvals` only when the verified caller holds an approval role.
 
     Never trusts an unauthenticated caller or one lacking a configured
-    approval role; a rejected attempt is audit-logged (reusing
+    approval role. A rejected attempt is audit-logged (reusing
     `authorization_denied`, the same event other elevated-capability
-    denials use) but not treated as an error -- the request still
-    proceeds, simply without the requested approval attached.
+    denials use); the request still proceeds, simply without the
+    requested approval attached.
 
     Parameters
     ----------

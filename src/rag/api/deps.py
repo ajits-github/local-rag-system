@@ -109,9 +109,8 @@ def get_mcp_asgi_app() -> Starlette | None:
 def get_feedback_store() -> FeedbackStore:
     """Return the process-wide `FeedbackStore` singleton.
 
-    A separate connection pool from `get_vectorstore()`'s -- feedback
-    persistence is deliberately decoupled from the retrieval path (see
-    `rag.feedback.store`'s module docstring).
+    Uses its own connection pool, separate from `get_vectorstore()`'s:
+    feedback persistence is decoupled from the retrieval path.
     """
     config = get_config()
     return FeedbackStore(config.database_url(), table=config.feedback.table_name)

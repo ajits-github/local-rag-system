@@ -1,13 +1,10 @@
 """Corpus/gold lineage snapshot: what exactly was scored, for one eval run.
 
-Before recording an experiment, capture `dataset_id`/`corpus_version`/
-document count/chunk count/image count/canonical gold-record count/
-gold-file digest/a deterministic corpus digest, so two experiments
-claiming to run against the same dataset can be checked for whether they
+Captures `dataset_id`/`corpus_version`/document/chunk/image counts/gold-
+record count/gold-file digest/a deterministic corpus digest, so two
+experiments claiming the same dataset can be checked for whether they
 actually scored the same corpus and gold file. Read-only against
-`VectorStore`; never mutates anything. `corpus_version` is a free-form
-string the caller supplies. No version-numbering scheme is invented
-here.
+`VectorStore`. `corpus_version` is a free-form string the caller supplies.
 """
 
 from __future__ import annotations

@@ -1,10 +1,7 @@
-"""Shared Markdown-equivalent-syntax rendering helpers for layout-aware loaders.
+"""Markdown-equivalent-syntax rendering helpers shared by `PDFLoader` and `DocxLoader`.
 
-`PDFLoader`/`DocxLoader` both serialize extracted structure into the same
-syntax `StructuredMarkdownChunker` parses (see that module's docstring);
-this module holds the couple of rendering rules that are genuinely
-identical between the two (table syntax, a lightweight language sniff for
-otherwise-untagged code/config blocks) so neither loader duplicates them.
+Holds the rendering rules identical between the two: pipe-table syntax
+and a lightweight language sniff for untagged code/config blocks.
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""Validated argument schemas for the agent's six tools.
+"""Validated argument schemas for the agent's seven tools.
 
 Every model is `extra="forbid"`, a deliberate deviation from this
 codebase's usual `extra="ignore"` default (`QueryRequest`, `GoldExample`,
