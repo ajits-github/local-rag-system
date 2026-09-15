@@ -234,10 +234,8 @@ class LiveEventsConfig(BaseModel):
 class ObservabilityConfig(BaseModel):
     """Root config block for operational telemetry: metrics, tracing, live events.
 
-    Deliberately independent of `MLflowConfig`. Operational telemetry
-    (this block) and experiment tracking (`MLflowConfig`) have different
-    responsibilities and neither replaces the other (see
-    `docs/architecture.md`'s "Observability" section).
+    Independent of `MLflowConfig`: operational telemetry and experiment
+    tracking are separate concerns, and neither replaces the other.
     """
 
     metrics: MetricsConfig = Field(default_factory=MetricsConfig)
@@ -284,10 +282,10 @@ class RetrievalConfig(BaseModel):
         Candidate pool depth fetched from the vector store before
         reranking.
     generation_context_top_n : int
-        Ranked primary chunks kept for generation, applied after the
-        optional rerank step. See docs/architecture.md's "Retrieval
-        Cutoff Semantics" section for how this relates to
-        `reranker.top_n`.
+        Ranked primary chunks kept for generation, applied uniformly
+        after the optional rerank step. Independent of `reranker.top_n`
+        (how many a real reranker keeps after rescoring); this cutoff
+        applies even when `reranker.provider == "none"`.
     hybrid : HybridRetrievalConfig
         Hybrid-retrieval-specific settings.
     relationship_expansion : RelationshipExpansionConfig
@@ -306,12 +304,12 @@ class RetrievalConfig(BaseModel):
 class LayoutParsingConfig(BaseModel):
     """PDF/DOCX structural-extraction tunables (headings, tables, images, pages).
 
-    `pdf_parser` is the swap point named in this milestone's design: the
-    only implementation today is `"pdfplumber"` (MIT-licensed, used for
-    word-level font sizes, table extraction, and page numbers), but
-    `loaders/pdf_loader.py` reads this field rather than hardcoding the
-    library, so a future parser can be added without touching the
-    chunker or the rest of ingestion.
+    `pdf_parser` is the swap point for this stage: currently only
+    `"pdfplumber"` is implemented (MIT-licensed; used for word-level font
+    sizes, table extraction, and page numbers), but `loaders/pdf_loader.py`
+    reads this field rather than hardcoding the library, so a future
+    parser can be added without touching the chunker or the rest of
+    ingestion.
     """
 
     pdf_parser: Literal["pdfplumber"] = "pdfplumber"
@@ -387,8 +385,9 @@ class JWTConfig(BaseModel):
     leeway_seconds : int
         Clock-skew tolerance for expiration checks.
     required_claims : list[str]
-        Claims that must be present; a token missing any is rejected as
-        malformed regardless of signature validity.
+        Claims that must be present; a token missing any is rejected with
+        reason `missing_claim` (see `AuthFailureReason`), independent of
+        signature validity.
     """
 
     algorithm: Literal["HS256", "RS256", "ES256"] = "HS256"
@@ -464,8 +463,10 @@ class RateLimitConfig(BaseModel):
     requests_per_minute : int
         Allowed requests per minute, per bucket.
     key : {"tenant", "ip"}
-        Bucketing key. `"tenant"` uses the verified identity's
-        `tenant_id` when present, falling back to client IP.
+        Bucketing key. Not currently read by the bucketing function
+        (`api/deps.py:_rate_limit_key`), which always buckets by the
+        verified identity's `tenant_id` when present, falling back to
+        client IP.
 
     Notes
     -----
@@ -776,22 +777,17 @@ class McpConfig(BaseModel):
     Notes
     -----
     Identity is governed entirely by `security.auth`; there is no
-    separate `mcp.auth.*` block. An MCP tool call is authenticated by
+    separate `mcp.auth.*` block, so an MCP tool call is authenticated by
     the same `security.auth.enabled`/`insecure_dev_mode`/`jwt` rules
-    `POST /query` already uses (see `rag.mcp.identity`), so the two
-    surfaces can never drift into different security postures.
+    `POST /query` already uses (see `rag.mcp.identity`).
+
     `get_customer_case`/`get_case_status` (`rag.mcp.business.store`) have
-    no config toggle of their own: they are a fixed, always-present part
-    of the server once `mcp.enabled` is `True`, and their tenant/role
-    authorization is unconditional, unlike document-level
-    `security.authorization.enabled`, which has a kill-switch for a
-    legacy, untenanted corpus that doesn't apply to this synthetic,
-    always-tenanted dataset. Because that authorization is unconditional
-    and identity-driven, `mcp.client.enabled=True` requires
-    `security.auth.enabled=True` (checked at startup; see
-    `rag.agent.mcp_client.validate_startup_config`): with auth disabled
-    there is no trustworthy tenant/role context to attach to an
-    agent-originated business-tool call.
+    no config toggle of their own and their tenant/role authorization is
+    always enforced, with no equivalent of
+    `security.authorization.enabled`'s kill-switch. Because that
+    authorization depends on a trustworthy identity, `mcp.client.enabled=True`
+    requires `security.auth.enabled=True`, checked at startup (see
+    `rag.agent.mcp_client.validate_startup_config`).
     """
 
     enabled: bool = False

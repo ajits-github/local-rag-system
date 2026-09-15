@@ -41,16 +41,14 @@ class DecomposeDecision(BaseModel):
 class ToolSelectionDecision(BaseModel):
     """`select_tool` node's output: which tool to dispatch, and its raw arguments.
 
-    `tool_args` is intentionally untyped here. It is validated against
-    the matching `rag.agent.tool_schemas` model (`extra="forbid"`) by the
-    graph driver immediately after this decision is parsed, never trusted
-    as-is. `get_customer_case`/`get_case_status`/`update_case_status` are
-    the three remote MCP business tools; the model chooses a tool purely
-    by name, exactly as for the four local tools, and this Literal
-    accepts all three regardless of `config.mcp.client.enabled`/`config.
-    mcp.business_actions.enabled`. `rag.agent.graph._execute_tool` is
-    what fails a remote-tool or disabled-write-action decision closed,
-    not this schema.
+    `tool_args` is intentionally untyped: it is validated against the
+    matching `rag.agent.tool_schemas` model (`extra="forbid"`) by the
+    graph driver immediately after parsing, never trusted as-is. The
+    Literal accepts the three remote MCP business tools
+    (`get_customer_case`/`get_case_status`/`update_case_status`)
+    regardless of whether MCP or business actions are enabled;
+    `rag.agent.graph._execute_tool`, not this schema, fails a
+    disabled-tool decision closed.
     """
 
     tool_name: Literal[

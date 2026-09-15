@@ -1,20 +1,16 @@
 """Export feedback rows for human review and eval-curation, as JSONL or CSV.
 
-Not a public API endpoint by design (this milestone's own instruction is
-explicit: no broadly-accessible `GET /feedback`). This is the smallest
-practical internal/admin mechanism to inspect feedback, following this
-repo's existing `scripts/` convention (compare `record_experiment.py`,
-`compare_experiments.py`).
+No public `GET /feedback` endpoint exists; this is the internal/admin
+mechanism to inspect feedback, following this repo's `scripts/` convention
+(compare `record_experiment.py`, `compare_experiments.py`).
 
-Never writes to a gold dataset, and never decides that a row is "correct."
-Feedback rows are a starting point for human review, not a substitute for
-it -- promoting a specific example into a gold eval file (e.g.
-`data/eval/techfusion_gold.jsonl`) remains a separate, deliberate,
-hand-authored step. See `docs/architecture.md`'s "Feedback loop" section.
+Never writes to a gold dataset and never decides that a row is "correct":
+promoting an example into a gold eval file remains a separate,
+hand-authored step.
 
 `--tenant-id` is required unless `--all-tenants` is passed explicitly: the
-default CLI invocation must not silently export every tenant's query/
-answer/comment text just because no scope was given.
+default invocation must not silently export every tenant's query/answer/
+comment text just because no scope was given.
 
 Usage:
     python scripts/export_feedback.py --format jsonl --rating negative \

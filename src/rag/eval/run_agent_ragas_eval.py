@@ -140,7 +140,7 @@ def run_agent_ragas(
     Returns
     -------
     dict[str, Any]
-        `{"generated_at", "num_examples", "agent_summary", "ragas"}` --
+        `{"generated_at", "num_examples", "agent_summary", "ragas"}`.
         `agent_summary` is the same deterministic report
         `run_agent_eval.evaluate_agent` produces (routing/tool/evidence
         metrics), included so this report is self-sufficient without

@@ -3,15 +3,11 @@
 Compares metrics in a `rag.eval.run_eval` JSON report against the explicit
 thresholds in `config/eval_gates.yaml` and exits non-zero the moment any
 *blocking* gate fails. Every threshold's baseline/floor/rationale lives in
-that YAML file, never as a magic number in CI YAML or in this script -- see
-docs/ci_eval_gates.md for the full design and how to update a baseline.
+that YAML file, never as a magic number in CI YAML or in this script.
 
 Usage
 -----
     python scripts/check_eval_gates.py --report path/to/report.json
-
-To reproduce the report this reads, see docs/ci_eval_gates.md's "Run the
-gate locally" section.
 """
 
 from __future__ import annotations
@@ -30,7 +26,7 @@ from rag.path_matching import source_matches_relevant
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_GATES_PATH = REPO_ROOT / "config" / "eval_gates.yaml"
 
-# Absorbs float accumulation noise only -- never widens an intentional floor/ceiling.
+# Absorbs float accumulation noise only; never widens an intentional floor/ceiling.
 _EPSILON = 1e-9
 
 
@@ -122,9 +118,9 @@ def load_report(report_path: Path) -> dict[str, Any]:
 def evaluate_gate(gate: dict[str, Any], report: dict[str, Any]) -> GateResult:
     """Check one gate definition against one report.
 
-    Never raises on a missing/malformed metric -- both are reported as
-    their own status (`MISSING` / `MALFORMED`) so one bad report produces a
-    readable failure line instead of a traceback.
+    Never raises on a missing/malformed metric: both are reported as their
+    own status (`MISSING`/`MALFORMED`), producing a readable failure line
+    instead of a traceback.
     """
     direction = gate["direction"]
     blocking = gate.get("blocking", True)

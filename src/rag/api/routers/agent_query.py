@@ -1,11 +1,10 @@
 """`POST /agent/query`: answer a question via the bounded agentic RAG workflow.
 
-A separate endpoint from `POST /query` (not a mode flag). See
-`docs/architecture.md`'s "Agentic RAG" section for the tradeoff. Reuses,
-rather than reimplements, `/query`'s exact JWT-precedence and DoS-limit
-logic (`rag.api.request_auth`) and the same DI singletons
-(`rag.api.deps`), so this route's identity/authorization/rate-limit/audit
-behavior is byte-identical to `/query`'s.
+A separate endpoint from `POST /query`, not a mode flag. Reuses, rather
+than reimplements, `/query`'s exact JWT-precedence and DoS-limit logic
+(`rag.api.request_auth`) and the same DI singletons (`rag.api.deps`), so
+this route's identity/authorization/rate-limit/audit behavior is
+byte-identical to `/query`'s.
 """
 
 from __future__ import annotations
@@ -75,12 +74,10 @@ class ToolCallDetail(BaseModel):
     """One tool dispatch's safe, UI-facing summary.
 
     Deliberately narrower than `ToolCallRecord`: never `args` or the raw
-    `error` message, only what a debug card needs to render (see
-    `21.0-UI-improvement`'s "safe cards" requirement) -- name, where it
-    ran, whether it succeeded, and how long it took. `execution` is
-    derived from `REMOTE_MCP_TOOL_NAMES`, the same static lookup
-    `rag.agent.graph._execute_tool` already uses to route the dispatch,
-    not a second, independently-maintained list.
+    `error` message, only name, where it ran, whether it succeeded, and
+    how long it took. `execution` is derived from `REMOTE_MCP_TOOL_NAMES`,
+    the same lookup `rag.agent.graph._execute_tool` uses to route the
+    dispatch, not a second, independently-maintained list.
     """
 
     tool_name: str
@@ -107,10 +104,9 @@ def _tool_call_details(records: list[ToolCallRecord]) -> list[ToolCallDetail]:
 class AgentQueryResponse(BaseModel):
     """Response body for `POST /agent/query`.
 
-    `request_id` mirrors `QueryResponse.request_id` -- see that model's
-    docstring. `tool_calls` stays a bare name list for backward
-    compatibility; `tool_call_details` is the additive, richer form (see
-    `ToolCallDetail`).
+    `request_id` mirrors `QueryResponse.request_id`. `tool_calls` stays a
+    bare name list for backward compatibility; `tool_call_details` is the
+    richer form (see `ToolCallDetail`).
     """
 
     answer: str

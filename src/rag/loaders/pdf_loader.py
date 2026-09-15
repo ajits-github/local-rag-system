@@ -1,26 +1,23 @@
 """Loader for `.pdf` files: layout-aware structural extraction.
 
 Serializes headings/tables/images/page numbers into the same
-Markdown-equivalent syntax `StructuredMarkdownChunker` already
-understands (see that module's docstring) instead of building a
-parallel element/chunk model; `PDFLoader.load()` still returns a
-`RawDocument` with a single `content: str`, unchanged interface.
+Markdown-equivalent syntax `StructuredMarkdownChunker` parses, instead
+of a parallel element/chunk model; `PDFLoader.load()` still returns a
+`RawDocument` with a single `content: str`.
 
-`pdfplumber` (`config.ingestion.layout_parsing.pdf_parser`, the only
-parser implemented so far) supplies word-level font sizes (heading
-detection), table extraction, and page/image geometry. `pypdf` still
-supplies document-info metadata (title/author, unchanged from before
-this milestone) and raw embedded-image bytes for the fallback asset
-path (see `loaders.base.resolve_image_asset`).
+`pdfplumber` supplies word-level font sizes (heading detection), table
+extraction, and page/image geometry. `pypdf` supplies document-info
+metadata and raw embedded-image bytes for the fallback asset path
+(`loaders.base.resolve_image_asset`).
 
-Heading detection is a font-size-ratio heuristic (a line whose dominant
-word size is `>= body_size * heading_font_size_ratio`, short enough to
-plausibly be a heading, and not already claimed by a table), not a real
-layout model. Two ratio tiers
-(`heading_font_size_ratio` / `title_font_size_ratio`) give a title level
-(`#`) and a section level (`##`); anything deeper collapses to `##`,
-so `section_path` for a PDF is at most two levels deep even where the
-source visually has more.
+Heading detection is a font-size-ratio heuristic, not a real layout
+model: a short line whose dominant word size is
+`>= body_size * heading_font_size_ratio` and not already claimed by a
+table counts as a heading. Two ratio tiers
+(`heading_font_size_ratio` / `title_font_size_ratio`) give a title
+level (`#`) and a section level (`##`); anything deeper collapses to
+`##`, so a PDF's `section_path` is at most two levels deep even where
+the source visually has more.
 """
 
 from __future__ import annotations
@@ -377,8 +374,7 @@ class PDFLoader(Loader):
             0-based image count within this page so far, used to index
             into `pypdf_images` for the byte-extraction fallback (assumes
             `pdfplumber`'s and `pypdf`'s per-page image enumeration order
-            match, true for these simple, single-column documents; see
-            the module docstring).
+            match, true for these simple, single-column documents).
         pypdf_images : list
             This page's `pypdf` embedded-image objects.
         caption : str | None

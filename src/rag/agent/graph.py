@@ -1,52 +1,8 @@
-"""Hand-rolled, explicitly-bounded agent graph driver. Not LangGraph.
+"""Bounded agent orchestration for classic and agentic RAG.
 
-A plain Python `while` loop over node functions, each taking/returning an
-`AgentState`, bounded by three independent counters
-(`max_agent_steps`/`max_retrieval_attempts`/`max_tool_calls`) rather than
-one blended framework `recursion_limit`.
-
-    START -> classify_query -> simple? yes -> classic_rag -> final
-                             no -> decompose -> select_tool -> execute_tool
-                                        -> evaluate_evidence
-                                           sufficient -> synthesize -> final
-                                           insufficient (bounded) -> reformulate
-                                                                          -> select_tool (loop)
-
-Every tool call's evidence passes through `RetrievalPipeline.sanitize_evidence`
-in `_execute_tool` before being appended to state, uniformly across tools,
-so no tool can bypass field redaction/injection detection by construction.
-
-Seven tools exist: four local, in-process ones dispatched by
-`_dispatch_tool`, plus three remote business-support tools
-(`get_customer_case`/`get_case_status`/`update_case_status`) dispatched
-via a real MCP client call through `_dispatch_mcp_tool` and
-`rag.agent.mcp_client`. `select_tool` picks a tool purely by name; it
-never reasons about "local vs remote" as a separate concept, since that
-split is a static, server-side lookup
-(`rag.agent.tool_schemas.REMOTE_MCP_TOOL_NAMES`) `_execute_tool` checks
-before dispatch. The two read tools are only ever offered to the model
-when `config.mcp.client.enabled=True`; `update_case_status` additionally
-requires `config.mcp.business_actions.enabled=True` (a different
-tool-select prompt template is loaded per combination; see
-`_load_templates`). `_execute_tool` fails a remote-tool or disabled-
-write-action decision closed, as an ordinary recorded tool failure, if
-the relevant config is off despite a decision naming one anyway.
-`update_case_status` is also treated as the last tool call of a run: once
-dispatched, regardless of outcome, the tool-call loop ends and proceeds
-to synthesis rather than looping back to retry the same mutation.
-
-`classify_query`'s simple/complex routing is an LLM decision, but
-`_looks_like_case_mutation_request` is a deterministic backstop on top
-of it: a query that clearly asks to change a case's status is always
-routed to the agent path, regardless of what the model classified it
-as, since only that path can reach `update_case_status` at all. It never
-infers authorization or approval; those are unchanged, decided entirely
-inside the MCP business store.
-
-Node timing, tracing, and metrics wrap existing node calls via
-`_TimingLLM` and `_call_node` without changing any node's decision logic;
-this module is the only place that needs to know about that
-instrumentation.
+The module routes simple queries to classic RAG and complex queries through
+decomposition, tool use, evidence evaluation, and synthesis. Execution is
+bounded by configured step, retrieval, and tool-call limits.
 """
 
 from __future__ import annotations
@@ -126,42 +82,26 @@ class NodeTimingStats(BaseModel):
 
 
 class AgentRunResult(BaseModel):
-    """The outcome of one `run_agent` call: final state plus API-facing summary fields.
+    """Summary of one agent or classic-RAG run.
 
-    `retrieval_ms`/`generation_ms` are exact (read from `pipeline.answer()`'s
-    own breakdown) on the `"classic_rag"` route. On the `"agent"` route
-    they are an approximation kept for backward compatibility:
-    `retrieval_ms` sums every tool call's own latency, and `generation_ms`
-    is everything else added together: every LLM decision call
-    (classify/decompose/select_tool/evaluate_evidence/synthesize)
-    collapsed into one number, since they all go through the same `LLM`
-    instance. This is *not* a single generation call's duration; for a
-    real per-node breakdown (including the LLM-inference-vs-overhead
-    split within each node), use `node_timings_ms` instead. `total_ms` is
-    always exact wall-clock time.
+    Timing fields are exact for classic RAG. On the agent route,
+    `retrieval_ms` sums tool-call latency and `generation_ms` is the
+    remaining time across every LLM decision call; use `node_timings_ms`
+    for a real per-node breakdown. `total_ms` is always exact.
 
     Attributes
     ----------
     node_timings_ms : dict[str, NodeTimingStats]
-        Per-node-type aggregate timing (`classify`/`decompose`/
-        `tool_select`/`tool_execute`/`evidence_sufficiency`/`synthesize`),
-        empty on the `"classic_rag"` route (that route has no per-node
-        structure; see `pipeline.answer()`'s own `latency_breakdown_ms`
-        instead).
+        Aggregate timing by agent node type; empty on the `"classic_rag"`
+        route.
     llm_call_count : int
-        Total `LLM.generate()` calls made this run (including JSON-parse
-        retries). `1` on the `"classic_rag"` route.
+        Total `LLM.generate()` calls made this run.
     node_token_usage : dict[str, dict[str, int]]
-        Per-node-type `{"prompt": int, "completion": int}` token totals.
+        Prompt/completion token totals by node type.
     classic_sources : list[dict[str, Any]]
-        `pipeline.answer()`'s raw `source_dict`-shaped `"sources"` list,
-        populated only on the `"classic_rag"` route (empty on `"agent"`,
-        where the same content already lives in
-        `state.retrieved_evidence`). `state.citations` alone can't stand
-        in for this: it's a lossy `Citation` (id/source/category/score),
-        with no `content` field, so a caller needing the actual retrieved
-        text for the classic route (e.g. RAGAS context-building) needs
-        this instead of re-deriving it from citations.
+        Retrieved source payloads for the classic-RAG route (empty on
+        `"agent"`, where the same content lives in
+        `state.retrieved_evidence`).
     """
 
     state: AgentState
@@ -176,15 +116,7 @@ class AgentRunResult(BaseModel):
 
 
 class _TimingLLM(LLM):
-    """Wraps an `LLM`, accumulating wall-clock time spent in `generate()`.
-
-    Never changes what's generated. Every call, including JSON-parse
-    retries, is forwarded to the wrapped instance unchanged, with
-    `total_llm_ms` accumulating across all of them. `__getattr__`
-    forwards everything else (notably `last_prompt_tokens`/
-    `last_completion_tokens`) to the wrapped instance unchanged, so
-    token accounting keeps working without modification.
-    """
+    """Wrap an LLM and accumulate generation latency and call count."""
 
     def __init__(self, llm: LLM) -> None:
         self._llm = llm
@@ -214,16 +146,10 @@ def _load_template(path: str) -> PromptTemplate:
 
 
 def _load_templates(config: AppConfig) -> dict[str, PromptTemplate]:
-    """Load all five agent decision-point templates, per `config.agent.*_prompt_path`.
+    """Load the five agent decision-point templates from `config.agent.*_prompt_path`.
 
-    `tool_select` loads one of three separate template files, never a
-    runtime-conditional insertion into a shared one: the 4-local-tool
-    prompt (`tool_select_prompt_path`) when `mcp.client.enabled=False`;
-    the 6-tool prompt including the two read business tools
-    (`tool_select_mcp_prompt_path`) when `mcp.client.enabled=True` and
-    `mcp.business_actions.enabled=False`; the 7-tool prompt additionally
-    including `update_case_status`
-    (`tool_select_mcp_actions_prompt_path`) when both are `True`.
+    `tool_select` resolves to one of three prompt variants depending on
+    `config.mcp.client.enabled`/`config.mcp.business_actions.enabled`.
     """
     agent_cfg = config.agent
     if config.mcp.client.enabled and config.mcp.business_actions.enabled:
@@ -434,14 +360,11 @@ def _increment_step(state: AgentState) -> None:
 
 
 def _check_step_bound(state: AgentState, agent_cfg: AgentConfig) -> bool:
-    """Return True and label `max_steps` (if not already labeled) once the step ceiling is hit.
+    """Return True and label `max_steps` (once) once the step ceiling is reached.
 
-    Does not increment `step_count`. Callers must call `_increment_step`
-    first. Split from step-incrementing so a terminal condition reached on
-    the very last allowed step (e.g. `evidence_sufficient=True`) can be
-    checked *before* this bound-driven label is applied; see the
-    `evidence_sufficiency` call site in `run_agent`'s loop, the one place
-    this ordering matters.
+    Does not increment `step_count`; callers must call `_increment_step`
+    first. Split out so a node reaching a real terminal condition on the
+    last allowed step isn't mislabeled `max_steps`.
     """
     if state.step_count >= agent_cfg.max_agent_steps:
         if state.termination_reason is None:
@@ -468,38 +391,12 @@ _CASE_STATUS_TARGET_RE = re.compile(r"\b(status|state|open|in.progress|resolved|
 
 
 def _looks_like_case_mutation_request(query: str) -> bool:
-    """Detect phrasing that clearly asks to change a business case's status.
+    """Return whether the query clearly requests a case-status mutation.
 
-    A deterministic backstop, not a substitute for `agent_classify_v2`'s
-    own judgment: `_classify_query` still calls the LLM first, but a
-    request this function flags is always routed to the agent path
-    regardless of what the model classified it as. Needed because a
-    prompt-only fix cannot guarantee compliance -- the same reasoning
-    behind `field_policy.sanitize_redaction_markers_in_answer`'s
-    existence. The specialized-tool evaluation found `agent_classify_v2`
-    misrouting phrasings like "please close case X" as "simple", which
-    skips the agent loop -- and therefore MCP's `update_case_status` --
-    entirely, even though the write action itself is proven correct,
-    deterministically, whenever it is actually dispatched.
-
-    This function only ever widens routing toward the agent path; it
-    never routes a request away from it, and it never infers
-    authorization or approval -- those stay exactly where they already
-    lived, inside the MCP business store's own transition table and
-    approval check.
-
-    Parameters
-    ----------
-    query : str
-        The caller's original question.
-
-    Returns
-    -------
-    bool
-        `True` when the query names a case and either a direct mutation
-        verb ("close"/"reopen"/"resolve") or a directive verb
-        ("set"/"change"/"update"/"mark"/"move"/"transition") paired with
-        a status/state word or a literal status value.
+    Matching requests are routed through the agent path so server-side
+    authorization, transition, and approval rules can run; this only
+    ever widens routing toward the agent path, never infers authorization
+    or approval itself.
     """
     lowered = query.lower()
     if "case" not in lowered:
@@ -514,14 +411,7 @@ def _looks_like_case_mutation_request(query: str) -> bool:
 def _classify_query(
     state: AgentState, llm: LLM, template: PromptTemplate, max_retries: int
 ) -> AgentState:
-    """`classify_query` node: route as simple/complex. Defaults to `"simple"` on parse failure.
-
-    `_looks_like_case_mutation_request` overrides the LLM's own
-    classification to `"complex"` whenever the query clearly asks to
-    change a business case's status, regardless of what the model
-    decided -- see that function's docstring for why this cannot be left
-    to prompt wording alone.
-    """
+    """Classify the query and force explicit case mutations onto the agent route."""
     decision = run_decision(
         llm, template, ClassifyDecision, max_retries, query=state.original_query
     )
@@ -628,15 +518,7 @@ def _dispatch_mcp_tool(
     config: AppConfig,
     mcp_app: Any | None,
 ) -> list[SearchResult]:
-    """Call `rag.agent.mcp_client` for the two remote business tools, as a real MCP client call.
-
-    Structurally separate from `_dispatch_tool` (the local, unmodified
-    tool switch); see `rag.agent.tool_schemas.REMOTE_MCP_TOOL_NAMES` for
-    which tool names route here instead. `_execute_tool` already
-    validates `args` and wraps this call in the same generic
-    try/except/tracing/metrics envelope every dispatch goes through, so
-    this stays a thin pass-through with no error handling of its own.
-    """
+    """Dispatch one remote MCP business tool via `rag.agent.mcp_client`."""
     return mcp_client.dispatch_remote_tool_sync(
         tool_name,
         args,
@@ -660,17 +542,12 @@ def _execute_tool(
     mcp_app: Any | None = None,
     on_event: OnAgentEvent | None = None,
 ) -> AgentState:
-    """`execute_tool` node: validate arguments, dispatch, sanitize, and record the outcome.
+    """Validate, dispatch, sanitize, and record one tool call.
 
-    Every tool's output is sanitized (field redaction, injection
-    flagging) via `RetrievalPipeline.sanitize_evidence`, called with the
-    caller's *resolved* authorization context (not the raw
-    `state.authorization_context`) so redaction matches the context the
-    tool retrieval itself used, before being appended to
-    `state.retrieved_evidence`. This is the single point every tool's
-    evidence passes through, so no tool can bypass it. A validation
-    failure or any tool-execution error is recorded as a failed
-    `ToolCallRecord` and returned safely; it never propagates.
+    Tool output is sanitized via `RetrievalPipeline.sanitize_evidence`
+    using the resolved authorization context before entering agent
+    evidence, so no tool can bypass redaction. Validation and execution
+    failures are recorded as a failed tool call rather than propagated.
     """
     t0 = time.perf_counter()
     arg_model = TOOL_ARG_MODELS[decision.tool_name]
@@ -859,15 +736,11 @@ def _order_evidence_for_synthesis(evidence: list[SearchResult]) -> list[SearchRe
 
 
 def _synthesize(state: AgentState, llm: LLM, template: PromptTemplate) -> AgentState:
-    """`synthesize` node: render accumulated evidence into a cited final answer.
+    """Render accumulated evidence into a cited final answer.
 
-    Evidence is reordered first (see `_order_evidence_for_synthesis`) so
-    an authoritative source is always presented, and numbered, ahead of
-    any conflicting untrusted source. The raw LLM output is passed
-    through `sanitize_redaction_markers_in_answer` before being stored,
-    the same deterministic backstop the classic-RAG path applies; this is
-    the only agentic-path node that produces caller-facing prose, so it's
-    the only one that needs it.
+    Evidence is reordered first (see `_order_evidence_for_synthesis`), and
+    the generated answer is passed through
+    `sanitize_redaction_markers_in_answer` before being stored.
     """
     ordered_evidence = _order_evidence_for_synthesis(state.retrieved_evidence)
     context = build_context(ordered_evidence)
@@ -1001,42 +874,28 @@ def run_agent(
     mcp_app: Any | None = None,
     on_event: OnAgentEvent | None = None,
 ) -> AgentRunResult:
-    """Run the bounded agent graph for one query, or the classic-RAG fast path.
+    """Run one bounded RAG request.
 
-    When `config.agent.enabled` is `False`, always takes the
-    `"classic_rag"` route with zero extra LLM calls (the same coarse
-    kill-switch convention as `AuthorizationConfig`/`FieldRedactionConfig`).
-    Otherwise `classify_query` always runs first (one LLM decision call,
-    even for a question that turns out simple); a `"simple"` result (or a
-    classify-step bound/parse failure) still falls through to the same
-    `classic_rag` node. A `"complex"` result proceeds to `decompose` and
-    the bounded `select_tool -> execute_tool -> evaluate_evidence` loop,
-    gated by three independent counters
-    (`max_agent_steps`/`max_retrieval_attempts`/`max_tool_calls`); see
-    the module docstring for the full graph shape.
+    Simple queries use the classic-RAG path. Complex queries use
+    decomposition, tool selection, bounded execution, evidence
+    evaluation, and synthesis. `config.agent.enabled=False` always takes
+    the classic-RAG path with no extra LLM calls.
 
     Parameters
     ----------
     state : AgentState
         Initial state; `original_query`/`authorization_context`/`filters`
-        must already be set by the caller.
+        must already be set.
     pipeline, vectorstore, embedder, llm : injected singletons
-        Reused, never reconstructed, from the same DI wiring the API
-        layer already uses.
+        Reused from the existing DI wiring.
     config : AppConfig
-        Application configuration; `config.agent` supplies every bound.
+        `config.agent` supplies every bound.
     mcp_app : Any | None, optional
-        The in-process MCP ASGI app object (see
-        `rag.api.deps.get_mcp_asgi_app`), threaded through to
-        `rag.agent.mcp_client` for the two remote business tools when
-        `config.mcp.client.enabled=True` and
-        `config.mcp.client.transport="asgi"` (the default). Unused, and
-        safe to leave `None`, whenever `mcp.client.enabled=False`.
+        The in-process MCP ASGI app, threaded through for the remote
+        business tools; unused when `mcp.client.enabled=False`.
     on_event : OnAgentEvent | None, optional
-        Called with a safe `AgentEvent` at each state-machine transition,
-        if set. Used by `POST /agent/query/stream` to stream live
-        progress; `/agent/query` itself never sets this. Never raises out
-        of `run_agent` even if the callback itself raises.
+        Called with a safe `AgentEvent` at each state transition, if set.
+        Never raises out of `run_agent` even if the callback itself does.
 
     Returns
     -------

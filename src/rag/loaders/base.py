@@ -116,22 +116,17 @@ def resolve_image_asset(
 ) -> str:
     """Resolve a Markdown-emittable relative path for one embedded PDF/DOCX image.
 
-    Shared by `PDFLoader`/`DocxLoader`: prefers an existing sibling
-    `assets/` directory next to `document_path` (see `_matching_assets`
-    for how candidates are narrowed to this document when the folder is
-    shared, then paired positionally with embedded images in document
-    order), the convention this project's evaluation corpora already use
-    for pre-supplied figures. Falls back to writing the image's own bytes
-    (from `image_bytes_factory`, called only on a fallback, so a
-    PDF/DOCX with no pre-existing `assets/` folder still ingests
-    successfully) into a new `assets/` directory using a generic
-    `<document-stem>-figure-{n:02d}<ext>` name.
+    Prefers an existing sibling `assets/` directory next to
+    `document_path` (candidates narrowed via `_matching_assets`, then
+    paired positionally with embedded images in document order), the
+    convention this project's evaluation corpora use for pre-supplied
+    figures. Falls back to writing the image's own bytes (from
+    `image_bytes_factory`, called only in this fallback) into a new
+    `assets/` directory as `<document-stem>-figure-{n:02d}<ext>`.
 
-    Called on every ingestion of the document (the checksum-unchanged
-    short-circuit in `IngestionPipeline.ingest_file` happens after
-    `Loader.load()` runs), so the fallback write is idempotent by
-    construction: same index always resolves to the same deterministic
-    filename with the same bytes, just re-written.
+    Runs on every ingestion of the document, so the fallback write must
+    be idempotent: the same index always resolves to the same filename
+    with the same bytes.
 
     Parameters
     ----------

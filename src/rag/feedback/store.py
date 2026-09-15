@@ -1,14 +1,9 @@
 """Postgres persistence for user feedback.
 
-Uses its own small `ThreadedConnectionPool`, following the exact
-connection-lifecycle pattern `vectorstore.pgvector.PgVectorStore`
-establishes (`_connection()`: checkout, guaranteed `putconn` in
-`finally`), but this is deliberately not a `VectorStore` implementation:
-feedback has no embedding/similarity-search/authorization-predicate
-concept, just a plain, narrow write/read table. A separate pool (rather
-than sharing `PgVectorStore`'s) keeps feedback persistence decoupled from
-the retrieval path -- the two can fail, scale, or be reconfigured
-independently.
+Uses its own small connection pool, not `PgVectorStore`'s: feedback has no
+embedding/similarity-search/authorization concept, and a separate pool
+keeps it able to fail, scale, or be reconfigured independently of the
+retrieval path.
 """
 
 from __future__ import annotations
@@ -51,13 +46,11 @@ _COLUMNS = (
 
 @dataclass
 class FeedbackWriteInput:
-    """Everything `FeedbackStore.submit` needs, already validated/trust-resolved by the router.
+    """Already-validated, trust-resolved input for `FeedbackStore.submit`.
 
-    `tenant_id`/`caller_key` are the router's already-trusted values
-    (`api/routers/feedback.py`'s `resolve_trusted_tenant_id`/
-    `_resolve_caller_key`), never the client's own unverified claim.
-    Nothing here carries a JWT, an `AuthorizationContext`, chain-of-
-    thought, or raw prompts -- only the fields this dataclass declares.
+    `tenant_id`/`caller_key` are the router's already-verified values,
+    never an unverified client claim. Carries no JWT,
+    `AuthorizationContext`, or raw prompt/reasoning text.
     """
 
     tenant_id: str | None
@@ -123,7 +116,7 @@ class FeedbackStore:
 
         Dedup/update key: `(tenant_id, caller_key, request_id)`, backed
         by a database `UNIQUE` constraint plus `INSERT ... ON CONFLICT
-        DO UPDATE` -- atomic under concurrent submissions, unlike a
+        DO UPDATE`, atomic under concurrent submissions unlike a
         SELECT-then-INSERT/UPDATE app-level check. `tenant_id` is stored
         as `''` rather than `NULL` specifically so this key can
         participate in that constraint: Postgres treats every `NULL` as
@@ -215,9 +208,8 @@ class FeedbackStore:
     ) -> list[FeedbackRecord]:
         """Read feedback rows for eval-curation export, newest first.
 
-        Not exposed as a public API endpoint by design -- this milestone
-        deliberately does not add a broadly-accessible `GET /feedback`;
-        see `scripts/export_feedback.py`.
+        No public `GET /feedback` endpoint exists by design;
+        `scripts/export_feedback.py` is the intended caller.
 
         Parameters
         ----------

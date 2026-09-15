@@ -33,10 +33,9 @@ class VisionProvider(ABC):
         """Identifier for the instruction prompt this provider sends with each image.
 
         Part of the image-description cache key alongside `provider_name`/
-        `model_name` (see `ingestion.writer.Writer._with_vision_siblings`),
-        so editing the prompt text invalidates cached descriptions the same
-        way switching provider/model does, rather than silently serving
-        descriptions generated under different instructions.
+        `model_name`, so editing the prompt text invalidates cached
+        descriptions instead of silently serving ones generated under
+        different instructions.
         """
 
     @abstractmethod

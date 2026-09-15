@@ -1,4 +1,4 @@
-"""Agent-side MCP client for the remote business tools (MCP Stage 2).
+"""Agent-side MCP client for the remote business tools.
 
 Every other agent tool (`search_knowledge_base`/`get_document`/
 `get_latest_document`/`get_related_context`) stays a direct, in-process

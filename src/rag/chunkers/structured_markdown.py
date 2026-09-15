@@ -2,46 +2,33 @@
 
 Prevents `RecursiveCharacterChunker` from slicing through structured
 blocks once a document exceeds `chunk_size`. Active for
-`source_type in {"markdown", "pdf", "docx"}`; everything else passes
-straight through to the composed `RecursiveCharacterChunker`, which also
-handles every prose run within a structured document. A prose-only
-Markdown document therefore produces chunk text identical to
-`RecursiveCharacterChunker` used directly.
+`source_type in {"markdown", "pdf", "docx"}`; everything else, and every
+prose run within a structured document, is delegated to the composed
+`RecursiveCharacterChunker`. A prose-only Markdown document therefore
+chunks identically to `RecursiveCharacterChunker` used directly.
 
-`PDFLoader`/`DocxLoader` serialize their extracted structure into this
-same Markdown-equivalent syntax (headings, pipe tables, fenced code,
-standalone image lines with emphasis-wrapped captions) rather than this
-chunker gaining a second parsing path, normalizing onto one structural
-grammar instead of a parallel element model. The one PDF/DOCX-specific
-addition is a `<!--page:N-->` sentinel line, emitted once per source
-page (PDF) or manual page break (DOCX); never visible in chunk text, it
-only sets the `page` field on every `ChunkSpan` produced until the next
-marker. Markdown/HTML/text documents never contain this sentinel, so
-`page` stays `None` for them.
+`PDFLoader`/`DocxLoader` serialize extracted structure into this same
+Markdown-equivalent syntax (headings, pipe tables, fenced code,
+standalone image lines with emphasis-wrapped captions). Their one
+addition is a `<!--page:N-->` sentinel line, stripped from chunk text,
+which tags the `page` field on every `ChunkSpan` until the next marker;
+Markdown/HTML/text documents never contain it, so `page` stays `None`.
 
-`split()` walks the document once, line by line, applying these rules in
-priority order:
+`split()` walks the document once, line by line, in this priority order:
 
-1. An open fence (```` ``` ```` ... ```` ``` ````) always wins first and is
-   consumed verbatim. A `|a|b|`-looking line or a `#` comment *inside* a
-   code sample is never reinterpreted, because the fence scanner never
-   hands those lines to the table/header detectors.
-2. Outside a fence, `#`, `|`, ```` ``` ````, and a standalone `![...](...)`
-   image line are mutually exclusive leading tokens, so header/table-start/
-   fence-start/image-line detection never genuinely competes for the same
-   line.
-3. The only real ambiguity is chart-vs-plain-fence, and image-vs-plain-
-   image: a ```` ```text ```` fence only becomes `content_type="chart"`,
-   and a standalone image line only picks up a `content_type="image"`
-   caption, when immediately followed (at most one blank line) by a
-   paragraph wholly wrapped in `*...*`/`_..._` emphasis. Both cases share
-   the same caption-lookahead helper (`_peek_caption`); otherwise a fence is
-   `code`/`configuration` per its language tag, and a bare image line is
-   still its own `content_type="image"` span, just without a caption.
-4. An image link *embedded inline within a prose paragraph* (not alone on
-   its own line) does not create a block boundary. That's still just
-   attachment tagging, a property layered onto whichever prose sub-chunk(s)
-   literally contain the link, computed after normal prose splitting.
+1. An open fence always wins first and is consumed verbatim, so a
+   table-like or header-like line inside a code sample is never
+   reinterpreted.
+2. Outside a fence, `#`, `|`, fence-start, and a standalone
+   `![...](...)` image line are mutually exclusive leading tokens.
+3. The only real ambiguity is chart-vs-plain-fence and
+   image-vs-plain-image: a ```` ```text ```` fence or a standalone image
+   line only gets a caption / `content_type="chart"` when immediately
+   followed (at most one blank line) by a paragraph wholly wrapped in
+   `*...*`/`_..._` emphasis (`_peek_caption`).
+4. An image link embedded inline within a prose paragraph does not
+   create a block boundary; it's just attachment tagging on the
+   containing prose sub-chunk(s).
 """
 
 from __future__ import annotations
@@ -59,12 +46,10 @@ _TABLE_SEPARATOR_RE = re.compile(r"^\s*\|?(?:\s*:?-{1,}:?\s*\|)+\s*:?-{1,}:?\s*\
 _FENCE_START_RE = re.compile(r"^```(\S*)[ \t]*$")
 _FENCE_END_RE = re.compile(r"^```[ \t]*$")
 _MARKDOWN_LINK_RE = re.compile(r"!?\[([^\]\[]*)\]\(([^()\s]+)\)")
-# A line that is *only* an image reference (as opposed to an image link
-# embedded inline within a prose paragraph, which `_tag_attachments` still
-# handles). Matches the consistent pattern in the multimodal KB documents:
-# an image markdown line on its own, optionally followed by an
-# emphasis-wrapped caption paragraph. The same shape `_consume_fence`
-# already recognizes for chart fence+caption.
+# A line that is *only* an image reference, not one embedded inline in a
+# prose paragraph (that case still goes through `_tag_attachments`).
+# Optionally followed by an emphasis-wrapped caption paragraph, the same
+# shape `_consume_fence` recognizes for chart fence+caption.
 _IMAGE_LINE_RE = re.compile(r"^!\[([^\]\[]*)\]\(([^()\s]+)\)\s*$")
 _PAGE_MARKER_RE = re.compile(r"^<!--\s*page:(\d+)\s*-->\s*$")
 _STRUCTURED_SOURCE_TYPES = {"markdown", "pdf", "docx"}
@@ -127,9 +112,9 @@ class StructuredMarkdownChunker(Chunker):
         max_atomic_block_chars : int, optional
             Maximum characters a fenced code/config block or a table
             row-group may reach before being split, by default 2000.
-            deliberately decoupled from `chunk_size`, since real fenced
-            blocks can exceed a prose-tuned `chunk_size` while still
-            being "small" in row/line-count terms.
+            Deliberately decoupled from `chunk_size`: a fenced block can
+            exceed a prose-tuned `chunk_size` while still being small in
+            row/line-count terms.
         """
         self._prose_chunker = RecursiveCharacterChunker(chunk_size, chunk_overlap)
         self._table_row_group_size = table_row_group_size

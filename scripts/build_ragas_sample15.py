@@ -1,15 +1,12 @@
 """Build a stratified 15-question RAGAS sample from techfusion_gold.jsonl.
 
 Deterministic, file-order-based selection (no randomness):
-  - 1 question from each of the 9 authored specialty `content_type` buckets
-    (architecture_diagram, chart, table_image, image_only,
-    caption_answerable, relationship_aware, text_only, text_plus_image,
-    unanswerable_visual). The first occurrence of each in file order.
-  - 6 questions from the plain (content_type unset) bucket, covering the
-    axes that bucket varies on: question_type (multi_hop/single_document),
-    difficulty (easy/medium/hard), and unanswerable (True/False). So the
-    sample isn't only edge-case multimodal questions but also represents
-    the ordinary-retrieval majority of the gold set.
+  - 1 question from each of the 9 specialty `content_type` buckets (see
+    `SPECIALTY_BUCKETS`), first occurrence in file order.
+  - 6 questions from the plain (content_type unset) bucket, spanning
+    question_type/difficulty/unanswerable so the sample also represents
+    the ordinary-retrieval majority of the gold set, not just edge-case
+    multimodal questions.
 
 All fields are passed through untouched from the source row. Re-run this
 to regenerate data/eval/techfusion_gold_v2_ragas_sample15.jsonl if

@@ -180,11 +180,9 @@ class RetrievalPipeline:
 
         Public so agent tools that call `VectorStore` directly
         (`rag.agent.tools.get_document`/`get_latest_document`/
-        `get_related_context`) can resolve `auth` through the exact same
-        logic `retrieve()` and `retrieve_attribution()` apply internally.
-        This keeps direct tool fetches aligned with the pipeline's
-        authorization-enabled switch before any context reaches
-        `VectorStore`.
+        `get_related_context`) can apply the same authorization-enabled
+        switch and freshness resolution that `retrieve()` and
+        `retrieve_attribution()` use internally.
 
         Parameters
         ----------
@@ -635,6 +633,9 @@ class RetrievalPipeline:
         ----------
         results : list[SearchResult]
             The reranked, directly-retrieved results to expand.
+        auth : AuthorizationContext | None, optional
+            Applied to the parent/neighbor chunk lookups; same semantics
+            as `retrieve`'s `auth` parameter.
 
         Returns
         -------

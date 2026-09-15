@@ -57,7 +57,7 @@ def build_document_content_types(
     dict[str, set[str]]
         Maps each resolvable relative path to the set of `content_type`
         values its chunks were tagged with (e.g. `{"prose", "table"}`).
-        Paths that don't resolve to a file on disk are skipped silently --
+        Paths that don't resolve to a file on disk are skipped silently;
         `scripts/validate_gold_file.py` is responsible for flagging that.
     """
     cleaner = DefaultCleaner()

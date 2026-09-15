@@ -20,13 +20,9 @@ logger = logging.getLogger("rag.api")
 class RequestIDMiddleware(BaseHTTPMiddleware):
     """Sets the request-id contextvar for a request's lifetime and records its telemetry.
 
-    Also the one place HTTP-level observability lives: opens a root
-    OpenTelemetry span per request (so agent-graph spans opened deeper in
-    the call stack nest under it) and records
-    `rag_http_requests_total`/`rag_http_request_duration_seconds`. This
-    method already computes `duration_ms` and has `method`/route in
-    scope, so it's the natural single place for both, rather than a
-    second middleware duplicating the same bookkeeping.
+    Also opens a root OpenTelemetry span per request (so agent-graph
+    spans opened deeper in the call stack nest under it) and records
+    `rag_http_requests_total`/`rag_http_request_duration_seconds`.
     """
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
@@ -76,7 +72,7 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
             )
             # Logged while `span` is still the active span (before span_cm.__exit__
             # below detaches it), so JSONFormatter's ambient trace_id/span_id lookup
-            # actually finds it -- logging after __exit__ would silently omit them.
+            # finds it; logging after __exit__ would silently omit them.
             logger.info(
                 "request_handled",
                 extra={

@@ -4,9 +4,9 @@ Reads every experiments/results/*.json record (written by
 scripts/record_experiment.py), saves the *full* table to
 experiments/reports/comparison.md, and splices only the most recent
 `README_HIGHLIGHT_COUNT` experiments into README.md between the
-EXPERIMENTS_TABLE markers -- the full table has grown too long to serve
-as a readable front door, so the README is deliberately kept to a
-rolling recent-history window instead of every record ever recorded.
+EXPERIMENTS_TABLE markers. The full table has grown too long to serve as
+a readable front door, so the README stays a rolling recent-history
+window instead of every record ever recorded.
 
 Usage:
     python scripts/compare_experiments.py
