@@ -4,6 +4,8 @@ import pytest
 from pydantic import ValidationError
 
 from rag.agent.tool_schemas import (
+    _MAX_IDENTIFIER_LENGTH,
+    _MAX_QUERY_LENGTH,
     TOOL_ARG_MODELS,
     GetCaseStatusArgs,
     GetCustomerCaseArgs,
@@ -101,6 +103,40 @@ def test_get_case_status_args_rejects_smuggled_auth_field():
     """extra='forbid' rejects an LLM-supplied roles-shaped key on GetCaseStatusArgs."""
     with pytest.raises(ValidationError):
         GetCaseStatusArgs.model_validate({"case_id": "CASE-1001", "roles": ["security_admin"]})
+
+
+# --- Fix 4 (batch 3): every LLM-writable string field carries a max_length --
+
+
+def test_search_knowledge_base_query_has_a_max_length():
+    """The free-text query field is bounded, matching DoSLimitsConfig.max_query_length."""
+    args = SearchKnowledgeBaseArgs.model_validate({"query": "a" * _MAX_QUERY_LENGTH})
+    assert len(args.query) == _MAX_QUERY_LENGTH
+
+    with pytest.raises(ValidationError):
+        SearchKnowledgeBaseArgs.model_validate({"query": "a" * (_MAX_QUERY_LENGTH + 1)})
+
+
+@pytest.mark.parametrize(
+    ("model", "field", "extra_kwargs"),
+    [
+        (GetDocumentArgs, "source", {}),
+        (GetLatestDocumentArgs, "source", {}),
+        (GetRelatedContextArgs, "chunk_id", {}),
+        (GetCustomerCaseArgs, "case_id", {}),
+        (GetCaseStatusArgs, "case_id", {}),
+        (UpdateCaseStatusArgs, "case_id", {"new_status": "closed"}),
+    ],
+)
+def test_identifier_shaped_fields_have_a_tight_max_length(model, field, extra_kwargs):
+    """source/chunk_id/case_id fields reject an oversized value, unlike the pre-fix schemas."""
+    oversized = "a" * (_MAX_IDENTIFIER_LENGTH + 1)
+    with pytest.raises(ValidationError):
+        model.model_validate({field: oversized, **extra_kwargs})
+
+    at_bound = "a" * _MAX_IDENTIFIER_LENGTH
+    instance = model.model_validate({field: at_bound, **extra_kwargs})
+    assert len(getattr(instance, field)) == _MAX_IDENTIFIER_LENGTH
 
 
 def test_update_case_status_args_accepts_only_case_id_and_new_status():
