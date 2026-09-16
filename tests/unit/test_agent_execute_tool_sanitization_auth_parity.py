@@ -47,6 +47,11 @@ def _chunk() -> Chunk:
 class FakeVectorStore:
     """Serves the same sensitive chunk via both the dense-search and get_chunks_by_source paths."""
 
+    def __init__(self) -> None:
+        """Start with no recorded list_document_versions()/get_chunks_by_ids() calls."""
+        self.list_document_versions_calls: list[str] = []
+        self.get_chunks_by_ids_calls: list[dict] = []
+
     def health_check(self) -> bool:
         """Report healthy, always."""
         return True
@@ -65,8 +70,18 @@ class FakeVectorStore:
         """Return the one fixed chunk, ignoring source/dataset_id/limit."""
         return [_chunk()]
 
+    def get_chunks_by_ids(self, chunk_ids, auth=None):
+        """Record the call and return the fixed chunk when its id is requested."""
+        self.get_chunks_by_ids_calls.append({"chunk_ids": chunk_ids, "auth": auth})
+        return [_chunk()] if _CHUNK_ID in chunk_ids else []
+
+    def get_chunks_by_section(self, document_id, section_path, auth=None):
+        """No siblings; only get_related_context's seed-fetch/dispatch success is probed here."""
+        return []
+
     def list_document_versions(self, dataset_id):
-        """No versions; freshness resolution is not what these tests probe."""
+        """Record the call; no versions, freshness resolution is not what these tests probe."""
+        self.list_document_versions_calls.append(dataset_id)
         return []
 
 
@@ -209,3 +224,108 @@ def test_get_document_preserves_the_field_when_authorization_enabled_and_role_is
     )
 
     assert _SECRET in result.state.retrieved_evidence[0].chunk.content
+
+
+def _run_direct_fetch_tool_once(tool_call_json: str) -> FakeVectorStore:
+    """Run one agent turn dispatching a single direct-fetch tool call, authorization enabled.
+
+    Returns the `FakeVectorStore` so the caller can inspect its recorded
+    `list_document_versions()` calls. `dataset_id`/a non-`None` caller auth
+    are both present, and `security.authorization.enabled=True`, so this
+    exercises the one scenario where `_execute_tool`'s post-dispatch
+    `resolve_auth` call would otherwise redundantly re-fetch document
+    versions the tool itself already fetched to resolve `auth`.
+    """
+    llm = ScriptedLLM(
+        [
+            '{"query_type": "complex"}',
+            '{"subquestions": ["q1"]}',
+            tool_call_json,
+            '{"sufficient": true}',
+            "final answer",
+        ]
+    )
+    config = _config()
+    config.security.authorization.enabled = True
+    vectorstore = FakeVectorStore()
+    embedder = FakeEmbedder()
+    pipeline = RetrievalPipeline(config, vectorstore=vectorstore, embedder=embedder)
+    caller_with_admin_role = AuthorizationContext(
+        tenant_id="tenant_alpha", roles=["tenant_alpha_admin"]
+    )
+    state = AgentState(
+        original_query="what is the admin token",
+        authorization_context=caller_with_admin_role,
+        filters={"dataset_id": "ds1"},
+    )
+
+    result = run_agent(
+        state, pipeline=pipeline, vectorstore=vectorstore, embedder=embedder, llm=llm, config=config
+    )
+
+    # Not every direct-fetch tool necessarily gathers evidence (e.g.
+    # get_related_context legitimately returns nothing when relationship
+    # expansion is off, the config default); what matters here is that
+    # the dispatch itself succeeded, so _execute_tool's post-dispatch
+    # resolve_auth/sanitize_evidence call actually ran.
+    assert result.state.tool_call_history[0].success is True
+    return vectorstore
+
+
+def test_get_document_resolves_auth_freshness_only_once_per_dispatch():
+    """get_document's own resolve_auth call and _execute_tool's post-dispatch one share one fetch.
+
+    Regression test for a real duplicate-work finding: before this fix,
+    get_document resolved auth once internally (for its own VectorStore
+    call) and _execute_tool resolved it again afterward (for
+    sanitize_evidence), each triggering its own
+    VectorStore.list_document_versions round trip even though both calls
+    use the same auth/dataset_id and always resolve to the same result.
+    """
+    vectorstore = _run_direct_fetch_tool_once(
+        f'{{"tool_name": "get_document", "tool_args": {{"source": "{_SOURCE}"}}}}'
+    )
+
+    assert vectorstore.list_document_versions_calls == ["ds1"]
+
+
+def test_get_latest_document_resolves_auth_freshness_only_once_per_dispatch():
+    """Same regression coverage as get_document, for get_latest_document.
+
+    get_latest_document already reused its own pre-fetched versions list
+    for its own internal resolve_auth call (avoiding a fetch there); this
+    proves _execute_tool's post-dispatch resolve_auth call now reuses that
+    same list too, instead of fetching a second time.
+    """
+    vectorstore = _run_direct_fetch_tool_once(
+        f'{{"tool_name": "get_latest_document", "tool_args": {{"source": "{_SOURCE}"}}}}'
+    )
+
+    assert vectorstore.list_document_versions_calls == ["ds1"]
+
+
+def test_get_related_context_resolves_auth_freshness_only_once_per_dispatch():
+    """Same regression coverage as get_document, for get_related_context."""
+    vectorstore = _run_direct_fetch_tool_once(
+        f'{{"tool_name": "get_related_context", "tool_args": {{"chunk_id": "{_CHUNK_ID}"}}}}'
+    )
+
+    assert vectorstore.list_document_versions_calls == ["ds1"]
+
+
+def test_search_knowledge_base_dispatch_is_unaffected_by_the_versions_prefetch_optimization():
+    """search_knowledge_base isn't a direct-fetch tool; its resolve_auth call count is unchanged.
+
+    Scopes the fix precisely: only the three direct-fetch tools
+    (get_document/get_latest_document/get_related_context) get the
+    versions-prefetch sharing. search_knowledge_base resolves auth inside
+    RetrievalPipeline.retrieve() itself, which this test doesn't touch;
+    it only proves _execute_tool's own post-dispatch call still runs
+    (list_document_versions is still called at least once), not that the
+    total call count changed.
+    """
+    vectorstore = _run_direct_fetch_tool_once(
+        '{"tool_name": "search_knowledge_base", "tool_args": {"query": "admin token"}}'
+    )
+
+    assert len(vectorstore.list_document_versions_calls) >= 1

@@ -68,7 +68,7 @@ from rag.observability import metrics as observability_metrics
 from rag.observability import tracing
 from rag.retrieval.authorization import AuthorizationContext
 from rag.retrieval.pipeline import RetrievalPipeline
-from rag.schemas import SearchResult
+from rag.schemas import DocumentVersionInfo, SearchResult
 from rag.vectorstore.base import VectorStore
 
 logger = logging.getLogger(__name__)
@@ -78,6 +78,14 @@ _ToolName = Literal[
 ]
 _BusinessToolName = Literal["get_customer_case", "get_case_status", "update_case_status"]
 _T = TypeVar("_T")
+
+#: The three tools that call `VectorStore` directly and resolve `auth`
+#: themselves (see `rag.agent.tools`'s module docstring), mirroring
+#: `rag.agent.graph.DIRECT_FETCH_TOOL_NAMES`. Not imported from there to
+#: avoid coupling this module to `rag.agent.graph` for one small constant;
+#: `_run_tool` uses this to decide whether pre-fetching `versions` for
+#: reuse across both `resolve_auth` calls is applicable.
+_DIRECT_FETCH_TOOL_NAMES = frozenset({"get_document", "get_latest_document", "get_related_context"})
 
 
 class _Unset:
@@ -225,10 +233,16 @@ def build_mcp_server(
         filters: dict[str, Any] | None,
         dataset_id: str | None,
         query: str,
+        versions: list[DocumentVersionInfo] | None = None,
     ) -> list[SearchResult]:
         """Call the matching `rag.agent.tools` function.
 
-        The same dispatch `agent.graph._dispatch_tool` makes.
+        The same dispatch `agent.graph._dispatch_tool` makes. `versions`
+        is forwarded to the three direct-fetch tools (see
+        `agent.graph.DIRECT_FETCH_TOOL_NAMES`) so they can reuse a
+        `versions` list `_run_tool` already fetched for its own
+        post-dispatch `resolve_auth` call, instead of each fetching its
+        own; ignored by `search_knowledge_base`.
         """
         if tool_name == "search_knowledge_base":
             clamped_top_k = min(args.top_k, config.agent.max_tool_top_k)
@@ -245,6 +259,7 @@ def build_mcp_server(
                 auth,
                 config.agent.max_chunks_per_document_fetch,
                 config.agent.max_chunks_per_document_fetch_hard_ceiling,
+                versions=versions,
             )
             return [SearchResult(chunk=c, score=1.0, origin="tool_fetched") for c in chunks]
         if tool_name == "get_latest_document":
@@ -258,10 +273,13 @@ def build_mcp_server(
                 auth,
                 config.agent.max_chunks_per_document_fetch,
                 config.agent.max_chunks_per_document_fetch_hard_ceiling,
+                versions=versions,
             )
             return [SearchResult(chunk=c, score=1.0, origin="tool_fetched") for c in chunks]
         if tool_name == "get_related_context":
-            chunks = tools.get_related_context(args, pipeline, vectorstore, auth, dataset_id)
+            chunks = tools.get_related_context(
+                args, pipeline, vectorstore, auth, dataset_id, versions=versions
+            )
             return [SearchResult(chunk=c, score=1.0, origin="tool_fetched") for c in chunks]
         raise ValueError(
             f"Unknown tool: {tool_name}"
@@ -306,12 +324,37 @@ def build_mcp_server(
 
         All four RAG tool handlers route through this function, so
         sanitization is applied centrally and no tool can bypass it.
+
+        For the three direct-fetch tools (`_DIRECT_FETCH_TOOL_NAMES`),
+        `dataset_id`'s document versions are fetched once, up front, and
+        reused for both the tool's own internal `resolve_auth` call and
+        this function's post-dispatch one below -- both resolve to the
+        same freshness exclusions given the same `auth`/`dataset_id`, so
+        sharing one `VectorStore.list_document_versions` fetch avoids a
+        redundant round trip. Skipped (stays `None`, matching prior
+        behavior) whenever `resolve_auth` wouldn't touch the database
+        anyway: no `auth`, no `dataset_id`, or the authorization
+        kill-switch is off.
         """
         t0 = time.perf_counter()
+        versions: list[DocumentVersionInfo] | None = None
+        if (
+            tool_name in _DIRECT_FETCH_TOOL_NAMES
+            and dataset_id
+            and auth is not None
+            and pipeline.authorization_enabled
+        ):
+            versions = vectorstore.list_document_versions(dataset_id)
         try:
             with tracing.start_span(tool_name, attributes={"tool_name": tool_name}) as span:
                 results = _dispatch(
-                    tool_name, args, auth=auth, filters=filters, dataset_id=dataset_id, query=query
+                    tool_name,
+                    args,
+                    auth=auth,
+                    filters=filters,
+                    dataset_id=dataset_id,
+                    query=query,
+                    versions=versions,
                 )
                 tracing.set_attributes(span, {"tool_success": True, "result_count": len(results)})
         except tools.ToolExecutionError as exc:
@@ -341,7 +384,7 @@ def build_mcp_server(
             raise  # an unanticipated failure: let the SDK report it generically, never leak details
 
         effective_auth = pipeline.resolve_auth(
-            auth, {"dataset_id": dataset_id} if dataset_id else None
+            auth, {"dataset_id": dataset_id} if dataset_id else None, versions=versions
         )
         sanitized = pipeline.sanitize_evidence(results, effective_auth)
         latency_seconds = time.perf_counter() - t0

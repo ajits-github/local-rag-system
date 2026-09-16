@@ -94,7 +94,7 @@ class FakePipeline:
         """Return results unchanged; not exercised by these tests."""
         return results
 
-    def resolve_auth(self, auth, filters=None):
+    def resolve_auth(self, auth, filters=None, *, versions=None):
         """Return `auth` unchanged; authorization resolution is outside this file's scope."""
         return auth
 

@@ -50,9 +50,9 @@ class FakePipeline:
         )
         return self.retrieve_results
 
-    def resolve_auth(self, auth, filters=None):
+    def resolve_auth(self, auth, filters=None, *, versions=None):
         """Record the call; return `resolve_auth_result` if set, else `auth` unchanged."""
-        self.resolve_auth_calls.append({"auth": auth, "filters": filters})
+        self.resolve_auth_calls.append({"auth": auth, "filters": filters, "versions": versions})
         return auth if self._resolve_auth_result is ... else self._resolve_auth_result
 
     def expand_with_relationships(self, results, auth=None):
@@ -171,7 +171,7 @@ def test_get_related_context_uses_resolved_auth_not_the_raw_auth_it_was_given():
 
     assert vectorstore.get_chunks_by_ids_calls == [{"chunk_ids": ["c1"], "auth": resolved}]
     assert pipeline.expand_calls[0]["auth"] == resolved
-    assert pipeline.resolve_auth_calls == [{"auth": raw_auth, "filters": None}]
+    assert pipeline.resolve_auth_calls == [{"auth": raw_auth, "filters": None, "versions": None}]
 
 
 def test_get_related_context_threads_dataset_id_into_resolve_auth_filters():
@@ -187,7 +187,9 @@ def test_get_related_context_threads_dataset_id_into_resolve_auth_filters():
 
     get_related_context(GetRelatedContextArgs(chunk_id="c1"), pipeline, vectorstore, auth, "ds1")
 
-    assert pipeline.resolve_auth_calls == [{"auth": auth, "filters": {"dataset_id": "ds1"}}]
+    assert pipeline.resolve_auth_calls == [
+        {"auth": auth, "filters": {"dataset_id": "ds1"}, "versions": None}
+    ]
 
 
 def test_get_related_context_returns_empty_when_seed_not_found():

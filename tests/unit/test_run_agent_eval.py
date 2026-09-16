@@ -78,7 +78,7 @@ class FakePipeline:
         self.retrieve_calls += 1
         return [SearchResult(chunk=_chunk(), score=0.9)]
 
-    def resolve_auth(self, auth, filters=None):
+    def resolve_auth(self, auth, filters=None, *, versions=None):
         """Return `auth` unchanged; authorization parity is tested elsewhere."""
         return auth
 
@@ -398,7 +398,7 @@ class TwoChunkPipeline:
             SearchResult(chunk=tangential, score=0.5),
         ]
 
-    def resolve_auth(self, auth, filters=None):
+    def resolve_auth(self, auth, filters=None, *, versions=None):
         """Return `auth` unchanged; authorization parity is tested elsewhere."""
         return auth
 
