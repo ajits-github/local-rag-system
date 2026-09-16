@@ -70,6 +70,35 @@ def test_validate_startup_config_rejects_client_enabled_with_auth_disabled():
         mcp_client.validate_startup_config(config)
 
 
+def test_validate_startup_config_rejects_insecure_dev_mode_with_auth_enabled():
+    """mcp.client.enabled=True + insecure_dev_mode=True fails startup even with auth enabled.
+
+    Regression test: a request with no Authorization header is allowed
+    through with identity=None under insecure_dev_mode, after which
+    build_authorization_context falls back to fully attacker-supplied,
+    unverified tenant_id/roles from the request body -- which
+    dispatch_remote_tool_sync's own `auth.tenant_id is None` check cannot
+    catch, since a forged non-None tenant_id passes it regardless of
+    whether it came from a verified JWT.
+    """
+    config = _secure_config(**{"mcp.client.enabled": True, "security.auth.insecure_dev_mode": True})
+    with pytest.raises(RuntimeError, match="insecure_dev_mode"):
+        mcp_client.validate_startup_config(config)
+
+
+def test_validate_startup_config_rejects_insecure_dev_mode_with_auth_disabled():
+    """The insecure_dev_mode rejection fires regardless of security.auth.enabled's value."""
+    config = _config(
+        **{
+            "mcp.client.enabled": True,
+            "security.auth.enabled": False,
+            "security.auth.insecure_dev_mode": True,
+        }
+    )
+    with pytest.raises(RuntimeError, match="insecure_dev_mode"):
+        mcp_client.validate_startup_config(config)
+
+
 def test_validate_startup_config_rejects_non_hs256_algorithm():
     """Internal token minting needs a symmetric signing key; RS256/ES256 fails startup."""
     config = _secure_config(**{"security.auth.jwt.algorithm": "RS256", "mcp.client.enabled": True})

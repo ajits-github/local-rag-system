@@ -81,16 +81,30 @@ def validate_startup_config(config: AppConfig) -> None:
     ------
     RuntimeError
         If `mcp.client.enabled=True` and any of the following hold:
-        `security.auth.enabled=False` (no trustworthy identity to attach
-        to a business-tool call); `security.auth.jwt.algorithm` is not
-        `HS256` (internal token minting needs a symmetric signing key,
-        and RS256/ES256 config only holds a public, verify-only key);
-        or `mcp.client.transport="asgi"` while `mcp.enabled=False` (the
+        `security.auth.insecure_dev_mode=True` (an unauthenticated
+        request could reach MCP dispatch with a forged identity,
+        regardless of `security.auth.enabled`); `security.auth.enabled=
+        False` (no trustworthy identity to attach to a business-tool
+        call); `security.auth.jwt.algorithm` is not `HS256` (internal
+        token minting needs a symmetric signing key, and RS256/ES256
+        config only holds a public, verify-only key); or
+        `mcp.client.transport="asgi"` while `mcp.enabled=False` (the
         in-process transport has no server object to bind to).
     """
     client_cfg = config.mcp.client
     if not client_cfg.enabled:
         return
+    if config.security.auth.insecure_dev_mode:
+        raise RuntimeError(
+            "mcp.client.enabled=True requires security.auth.insecure_dev_mode=False: "
+            "insecure_dev_mode allows a request with no Authorization header through "
+            "with identity=None, after which build_authorization_context falls back "
+            "to fully attacker-supplied, unverified tenant_id/roles from the request "
+            "body. That forged context would then be signed into a validly-signed "
+            "internal MCP service token, defeating the whole point of requiring a "
+            "verified identity for MCP client dispatch. Disable insecure_dev_mode, "
+            "or disable mcp.client."
+        )
     if not config.security.auth.enabled:
         raise RuntimeError(
             "mcp.client.enabled=True requires security.auth.enabled=True: the Stage "
