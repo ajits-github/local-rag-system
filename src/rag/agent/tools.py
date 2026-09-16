@@ -13,7 +13,14 @@ so each resolves `auth` via `RetrievalPipeline.resolve_auth` before passing
 it to `VectorStore`, the same authorization-enabled kill-switch and
 freshness resolution `retrieve()` already applies internally.
 `search_knowledge_base` needs no such call: `pipeline.retrieve()` already
-resolves `auth` itself.
+resolves `auth` itself. All three accept an optional pre-fetched
+`versions` list, passed straight through to `resolve_auth`, so a caller
+that must resolve `auth` a second time for the same dispatch (e.g.
+`rag.agent.graph._execute_tool`/`rag.mcp.server._run_tool`, both of
+which re-resolve `auth` for `sanitize_evidence` after the tool already
+resolved it once for its own `VectorStore` call) can share one
+`VectorStore.list_document_versions` fetch instead of triggering it
+twice; omitted, each function fetches it itself, unchanged from before.
 
 `get_document`/`get_latest_document` bound how much of a document they load
 into agent state: a server-controlled hard SQL `LIMIT`
@@ -37,7 +44,7 @@ from rag.embedders.base import Embedder
 from rag.retrieval.authorization import AuthorizationContext
 from rag.retrieval.freshness import resolve_current_document_source
 from rag.retrieval.pipeline import RetrievalPipeline
-from rag.schemas import Chunk, SearchResult
+from rag.schemas import Chunk, DocumentVersionInfo, SearchResult
 from rag.vectorstore.base import VectorStore
 
 
@@ -118,12 +125,25 @@ def get_document(
     auth: AuthorizationContext | None,
     max_chunks: int,
     max_chunks_hard_ceiling: int,
+    versions: list[DocumentVersionInfo] | None = None,
 ) -> list[Chunk]:
     """Fetch a specific authorized document by its `source` path, bounded and relevance-selected.
 
     `auth` is resolved via `pipeline.resolve_auth` (kill-switch and
     freshness, scoped to `dataset_id`) before reaching `VectorStore`, the
     same as `search_knowledge_base`'s underlying `retrieve()` call.
+
+    Parameters
+    ----------
+    versions : list[DocumentVersionInfo] | None, optional
+        Pre-fetched `dataset_id` document versions, passed straight
+        through to `pipeline.resolve_auth`. Lets a caller that resolves
+        `auth` a second time for the same dispatch (e.g.
+        `rag.agent.graph._execute_tool`'s post-dispatch
+        `sanitize_evidence` call) share one `VectorStore.
+        list_document_versions` fetch instead of triggering it twice.
+        Fetched by `resolve_auth` itself when omitted, unchanged from
+        prior behavior.
 
     Raises
     ------
@@ -133,7 +153,7 @@ def get_document(
     """
     if not dataset_id:
         raise ToolExecutionError("get_document requires a dataset_id filter")
-    effective_auth = pipeline.resolve_auth(auth, {"dataset_id": dataset_id})
+    effective_auth = pipeline.resolve_auth(auth, {"dataset_id": dataset_id}, versions=versions)
     chunks = vectorstore.get_chunks_by_source(
         args.source, dataset_id, auth=effective_auth, limit=max_chunks_hard_ceiling
     )
@@ -150,6 +170,7 @@ def get_latest_document(
     auth: AuthorizationContext | None,
     max_chunks: int,
     max_chunks_hard_ceiling: int,
+    versions: list[DocumentVersionInfo] | None = None,
 ) -> list[Chunk]:
     """Resolve `args.source` to its currently-effective version, then fetch it.
 
@@ -166,6 +187,18 @@ def get_latest_document(
     fetched for source resolution rather than letting `resolve_auth`
     fetch it a second time.
 
+    Parameters
+    ----------
+    versions : list[DocumentVersionInfo] | None, optional
+        Pre-fetched `dataset_id` document versions. When given, both
+        this tool's own source resolution and `resolve_auth`'s freshness
+        resolution reuse it instead of calling
+        `VectorStore.list_document_versions` again -- lets a caller that
+        resolves `auth` a second time for the same dispatch (e.g.
+        `rag.agent.graph._execute_tool`'s post-dispatch
+        `sanitize_evidence` call) share this same fetch. Fetched here
+        when omitted, unchanged from prior behavior.
+
     Raises
     ------
     ToolExecutionError
@@ -173,9 +206,13 @@ def get_latest_document(
     """
     if not dataset_id:
         raise ToolExecutionError("get_latest_document requires a dataset_id filter")
-    versions = vectorstore.list_document_versions(dataset_id)
-    resolved_source = resolve_current_document_source(args.source, versions)
-    effective_auth = pipeline.resolve_auth(auth, {"dataset_id": dataset_id}, versions=versions)
+    resolved_versions = (
+        versions if versions is not None else vectorstore.list_document_versions(dataset_id)
+    )
+    resolved_source = resolve_current_document_source(args.source, resolved_versions)
+    effective_auth = pipeline.resolve_auth(
+        auth, {"dataset_id": dataset_id}, versions=resolved_versions
+    )
     chunks = vectorstore.get_chunks_by_source(
         resolved_source, dataset_id, auth=effective_auth, limit=max_chunks_hard_ceiling
     )
@@ -188,6 +225,7 @@ def get_related_context(
     vectorstore: VectorStore,
     auth: AuthorizationContext | None,
     dataset_id: str | None = None,
+    versions: list[DocumentVersionInfo] | None = None,
 ) -> list[Chunk]:
     """Fetch parent/neighbor context for an already-retrieved chunk.
 
@@ -218,6 +256,15 @@ def get_related_context(
         exclusion resolution in `resolve_auth`, matching
         `get_document`/`get_latest_document`; when omitted, tenant/role
         enforcement still applies, just without freshness resolution.
+    versions : list[DocumentVersionInfo] | None, optional
+        Pre-fetched `dataset_id` document versions, passed straight
+        through to `pipeline.resolve_auth`. Lets a caller that resolves
+        `auth` a second time for the same dispatch (e.g.
+        `rag.agent.graph._execute_tool`'s post-dispatch
+        `sanitize_evidence` call) share one `VectorStore.
+        list_document_versions` fetch instead of triggering it twice.
+        Fetched by `resolve_auth` itself when omitted, unchanged from
+        prior behavior.
 
     Returns
     -------
@@ -226,7 +273,7 @@ def get_related_context(
         the seed chunk doesn't resolve or has no related content.
     """
     filters = {"dataset_id": dataset_id} if dataset_id else None
-    effective_auth = pipeline.resolve_auth(auth, filters)
+    effective_auth = pipeline.resolve_auth(auth, filters, versions=versions)
     seed_chunks = vectorstore.get_chunks_by_ids([args.chunk_id], auth=effective_auth)
     if not seed_chunks:
         return []

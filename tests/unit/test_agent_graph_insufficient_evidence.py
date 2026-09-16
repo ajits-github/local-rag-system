@@ -41,7 +41,7 @@ class EmptyResultsPipeline:
         self.retrieve_calls += 1
         return []  # every search comes back empty
 
-    def resolve_auth(self, auth, filters=None):
+    def resolve_auth(self, auth, filters=None, *, versions=None):
         """Return `auth` unchanged; authorization parity is tested elsewhere."""
         return auth
 

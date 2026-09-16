@@ -40,7 +40,7 @@ from rag.observability import tracing
 from rag.prompts.loader import PromptTemplate, load_prompt_template
 from rag.retrieval.field_policy import sanitize_redaction_markers_in_answer
 from rag.retrieval.pipeline import RetrievalPipeline, build_context
-from rag.schemas import SearchResult
+from rag.schemas import DocumentVersionInfo, SearchResult
 from rag.vectorstore.base import VectorStore
 
 logger = logging.getLogger(__name__)
@@ -451,6 +451,15 @@ def _select_tool(
     )
 
 
+#: The three tools that call `VectorStore` directly and therefore resolve
+#: `auth` themselves (see `rag.agent.tools`'s module docstring), as opposed
+#: to `search_knowledge_base`, which delegates auth resolution to
+#: `RetrievalPipeline.retrieve()`. `_execute_tool` uses this to decide
+#: whether pre-fetching `versions` for reuse across both `resolve_auth`
+#: calls is applicable.
+DIRECT_FETCH_TOOL_NAMES = frozenset({"get_document", "get_latest_document", "get_related_context"})
+
+
 def _dispatch_tool(
     tool_name: str,
     args: Any,
@@ -461,12 +470,20 @@ def _dispatch_tool(
     embedder: Embedder,
     dataset_id: str | None,
     agent_cfg: AgentConfig,
+    versions: list[DocumentVersionInfo] | None = None,
 ) -> list[SearchResult]:
     """Call the matching `rag.agent.tools` function and wrap its output as `SearchResult`s.
 
     `search_knowledge_base`'s `top_k` is clamped to `agent_cfg.max_tool_top_k`
     here, in addition to `SearchKnowledgeBaseArgs`'s own `Field(le=...)`
     bound, so the runtime config is always the final ceiling.
+
+    `versions`, when given, is forwarded to the three direct-fetch tools
+    (see `DIRECT_FETCH_TOOL_NAMES`) so they can skip their own
+    `VectorStore.list_document_versions` fetch; `_execute_tool` pre-fetches
+    it once and reuses it for its own post-dispatch `resolve_auth` call
+    too. Ignored by `search_knowledge_base`, which resolves `auth`
+    (and any versions it needs) inside `retrieve()` itself.
     """
     if tool_name == "search_knowledge_base":
         clamped_top_k = min(args.top_k, agent_cfg.max_tool_top_k)
@@ -487,6 +504,7 @@ def _dispatch_tool(
             state.authorization_context,
             agent_cfg.max_chunks_per_document_fetch,
             agent_cfg.max_chunks_per_document_fetch_hard_ceiling,
+            versions=versions,
         )
         return [SearchResult(chunk=c, score=1.0, origin="tool_fetched") for c in chunks]
     if tool_name == "get_latest_document":
@@ -500,11 +518,12 @@ def _dispatch_tool(
             state.authorization_context,
             agent_cfg.max_chunks_per_document_fetch,
             agent_cfg.max_chunks_per_document_fetch_hard_ceiling,
+            versions=versions,
         )
         return [SearchResult(chunk=c, score=1.0, origin="tool_fetched") for c in chunks]
     if tool_name == "get_related_context":
         chunks = tools.get_related_context(
-            args, pipeline, vectorstore, state.authorization_context, dataset_id
+            args, pipeline, vectorstore, state.authorization_context, dataset_id, versions=versions
         )
         return [SearchResult(chunk=c, score=1.0, origin="tool_fetched") for c in chunks]
     raise ValueError(f"Unknown tool: {tool_name}")  # unreachable: tool_name is Literal-validated
@@ -618,6 +637,27 @@ def _execute_tool(
         )
         return state
 
+    # Pre-fetch document versions once, when they'll actually be used: the
+    # three direct-fetch tools resolve `auth` themselves (needing this list
+    # for freshness), and the post-dispatch `resolve_auth` call below
+    # resolves `auth` again for `sanitize_evidence`. Both calls, given the
+    # same `state.authorization_context`/`dataset_id`, resolve to the same
+    # freshness exclusions, so sharing one fetch here (instead of each
+    # `resolve_auth` call fetching its own) avoids a redundant
+    # `VectorStore.list_document_versions` round trip per dispatch. Gated
+    # on `pipeline.authorization_enabled`: when the kill-switch is off,
+    # `resolve_auth` never touches the database regardless, so fetching
+    # here would only add a wasted query.
+    versions: list[DocumentVersionInfo] | None = None
+    if (
+        not is_remote_tool
+        and decision.tool_name in DIRECT_FETCH_TOOL_NAMES
+        and dataset_id
+        and state.authorization_context is not None
+        and pipeline.authorization_enabled
+    ):
+        versions = vectorstore.list_document_versions(dataset_id)
+
     _emit_event(on_event, "tool_started", state, tool_name=decision.tool_name)
     try:
         with tracing.start_span(
@@ -637,6 +677,7 @@ def _execute_tool(
                     embedder=embedder,
                     dataset_id=dataset_id,
                     agent_cfg=agent_cfg,
+                    versions=versions,
                 )
             tracing.set_attributes(span, {"tool_success": True, "result_count": len(results)})
     except Exception as exc:  # tool failure must never crash the request
@@ -666,7 +707,9 @@ def _execute_tool(
         return state
 
     effective_auth = pipeline.resolve_auth(
-        state.authorization_context, {"dataset_id": dataset_id} if dataset_id else None
+        state.authorization_context,
+        {"dataset_id": dataset_id} if dataset_id else None,
+        versions=versions,
     )
     sanitized = pipeline.sanitize_evidence(results, effective_auth)
     state.retrieved_evidence.extend(sanitized)

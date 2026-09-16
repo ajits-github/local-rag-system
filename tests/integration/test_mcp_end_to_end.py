@@ -60,6 +60,12 @@ class _FakePipeline:
         self.retrieve_calls: list[dict] = []
         self.resolve_auth_calls: list[dict] = []
         self.sanitize_calls: list[dict] = []
+        # This file proves MCP transport/dispatch/sanitize wiring, not the
+        # authorization-enabled DB-driven freshness path (see module
+        # docstring), so the versions-prefetch optimization in
+        # rag.mcp.server._run_tool stays inert here; _FakeVectorStore has
+        # no list_document_versions to exercise anyway.
+        self.authorization_enabled = False
 
     def retrieve(self, query, filters=None, candidate_k=None, auth=None):
         self.retrieve_calls.append(

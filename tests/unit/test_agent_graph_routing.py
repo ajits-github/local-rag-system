@@ -76,7 +76,7 @@ class FakePipeline:
         self.retrieve_calls.append({"query": query, "filters": filters, "auth": auth})
         return self.retrieve_results
 
-    def resolve_auth(self, auth, filters=None):
+    def resolve_auth(self, auth, filters=None, *, versions=None):
         """Return `auth` unchanged; authorization parity is tested elsewhere."""
         return auth
 

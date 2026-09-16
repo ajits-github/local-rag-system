@@ -169,6 +169,21 @@ class RetrievalPipeline:
         # zero roles (fail-closed) rather than unrestricted.
         self._field_redaction_enabled = config.security.field_redaction.enabled
 
+    @property
+    def authorization_enabled(self) -> bool:
+        """Whether `config.security.authorization.enabled` was set at construction.
+
+        Read-only mirror of the private kill-switch `resolve_auth` checks
+        internally. Exposed so a caller that needs to resolve auth more
+        than once for the same request (e.g. `rag.agent.graph._execute_tool`,
+        `rag.mcp.server._run_tool`) can decide whether pre-fetching
+        `versions` to share across those calls is actually worthwhile --
+        when this is `False`, `resolve_auth` never touches the database
+        regardless of how many times it's called, so pre-fetching would
+        only add a wasted query.
+        """
+        return self._authorization_enabled
+
     def resolve_auth(
         self,
         auth: AuthorizationContext | None,
