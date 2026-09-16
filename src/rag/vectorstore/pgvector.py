@@ -590,7 +590,7 @@ class PgVectorStore(VectorStore):
                    embedding {self._distance_op} %s::vector AS distance
             FROM {self._chunks_table}
             {where_sql}
-            ORDER BY embedding {self._distance_op} %s::vector
+            ORDER BY embedding {self._distance_op} %s::vector, chunk_id ASC
             LIMIT %s
         """
 

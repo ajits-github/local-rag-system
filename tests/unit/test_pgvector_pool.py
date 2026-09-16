@@ -29,6 +29,7 @@ class FakeCursor:
 
     def __init__(self, fail: Exception | None = None) -> None:
         self._fail = fail
+        self.last_sql: str | None = None
 
     def __enter__(self) -> FakeCursor:
         """Support `with conn.cursor() as cur:`."""
@@ -38,8 +39,9 @@ class FakeCursor:
         """Never suppress exceptions raised inside the `with` block."""
         return False
 
-    def execute(self, *args: object, **kwargs: object) -> None:
-        """Raise `self._fail` if configured, otherwise do nothing."""
+    def execute(self, sql: str, *args: object, **kwargs: object) -> None:
+        """Record the executed SQL, then raise `self._fail` if configured."""
+        self.last_sql = sql
         if self._fail is not None:
             raise self._fail
 
@@ -58,10 +60,12 @@ class FakeConnection:
     def __init__(self, cursor_fail: Exception | None = None) -> None:
         self.closed = False
         self._cursor_fail = cursor_fail
+        self.last_cursor: FakeCursor | None = None
 
     def cursor(self) -> FakeCursor:
-        """Return a fresh fake cursor."""
-        return FakeCursor(fail=self._cursor_fail)
+        """Return a fresh fake cursor, remembered as `self.last_cursor`."""
+        self.last_cursor = FakeCursor(fail=self._cursor_fail)
+        return self.last_cursor
 
     def __enter__(self) -> FakeConnection:
         """Support `with conn:` transaction-scope usage."""
@@ -169,6 +173,28 @@ def test_repeated_search_calls_do_not_leak_connections(fake_pool, monkeypatch):
         assert store.search(query_embedding=[0.1, 0.2], top_k=5) == []
 
     assert len(store._pool._available) == 2  # noqa: SLF001
+
+
+def test_search_orders_by_distance_then_chunk_id_for_determinism(fake_pool, monkeypatch):
+    """search()'s SQL breaks exact-distance ties on chunk_id, not undefined row order.
+
+    Regression test: the ORDER BY clause used to sort by distance alone,
+    so two chunks at an exact distance tie resolved via whatever order
+    Postgres happened to return matching rows in, not a documented rule --
+    harmless at real embedding precision, but not fully deterministic
+    (e.g. for CI eval-gate reproducibility).
+    """
+    monkeypatch.setattr("rag.vectorstore.pgvector.register_vector", lambda conn: None)
+    store = _store(maxconn=2)
+    # getconn() pops from the end of _available, so the last entry is the
+    # one search() will actually check out.
+    connection = store._pool._available[-1]  # noqa: SLF001
+
+    assert store.search(query_embedding=[0.1, 0.2], top_k=5) == []
+
+    executed_sql = connection.last_cursor.last_sql
+    assert executed_sql is not None
+    assert "ORDER BY embedding <=> %s::vector, chunk_id ASC" in executed_sql
 
 
 def test_search_returns_connection_when_query_execution_fails(fake_pool, monkeypatch):
