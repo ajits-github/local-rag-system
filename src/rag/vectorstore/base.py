@@ -327,6 +327,39 @@ class VectorStore(ABC):
         """
 
     @abstractmethod
+    def count_excluded_by_authorization(
+        self, filters: dict[str, Any] | None, auth: AuthorizationContext
+    ) -> int:
+        """Count chunks that `filters` alone would match but `auth`'s predicate excludes.
+
+        A diagnostic method, not part of the hot retrieval path: intended
+        to be called only when a caller (`RetrievalPipeline`) already
+        suspects authorization is masking a genuine retrieval miss (an
+        empty or notably small result set), to distinguish "nothing
+        relevant exists" from "something relevant exists but was denied."
+        Two `COUNT(*)` queries (with and without the authorization
+        predicate applied), never a full row fetch.
+
+        Parameters
+        ----------
+        filters : dict[str, Any] | None
+            The same exact-match metadata filters passed to `search`/
+            `search_keyword` for this query.
+        auth : AuthorizationContext
+            The resolved authorization context whose predicate's effect
+            should be measured. Never `None` -- a caller with no
+            authorization context has nothing to measure the exclusion
+            of.
+
+        Returns
+        -------
+        int
+            Number of chunks matching `filters` that `auth`'s predicate
+            excludes. `0` means authorization excluded nothing (a thin
+            result set reflects a genuine retrieval miss, not a denial).
+        """
+
+    @abstractmethod
     def get_chunks_by_ids(
         self, chunk_ids: list[str], auth: AuthorizationContext | None = None
     ) -> list[Chunk]:

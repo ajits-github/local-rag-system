@@ -7,6 +7,7 @@ and builds separated system/user prompt turns for the LLM.
 
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any
 
@@ -30,6 +31,8 @@ from rag.retrieval.fusion import reciprocal_rank_fusion
 from rag.retrieval.injection_detection import detect_injection
 from rag.schemas import Chunk, DocumentVersionInfo, RetrievalAttribution, SearchResult
 from rag.vectorstore.base import VectorStore
+
+logger = logging.getLogger(__name__)
 
 
 def source_label(result: SearchResult) -> str:
@@ -230,6 +233,71 @@ class RetrievalPipeline:
                 as_of=auth.as_of.isoformat() if auth.as_of else None,
             )
         return auth.model_copy(update={"resolved_excluded_document_ids": sorted(excluded)})
+
+    def _audit_authorization_exclusions(
+        self,
+        candidates: list[SearchResult],
+        fetch_k: int,
+        filters: dict[str, Any] | None,
+        effective_auth: AuthorizationContext | None,
+    ) -> None:
+        """Log an `authorization_denied` audit event when auth masked a genuine result.
+
+        Document-level authorization runs entirely as a SQL predicate
+        inside Postgres (see `vectorstore/pgvector.py`'s
+        `build_authorization_where_clause`), so nothing in this pipeline
+        otherwise learns whether a thin or empty result set reflects "no
+        relevant documents exist" versus "relevant documents exist but
+        were denied." Gated to avoid a second query on the common case:
+        only runs when a resolved authorization context is active *and*
+        the primary result set came back thinner than requested (empty,
+        or fewer than `fetch_k`) -- a full result set gives no signal
+        either way and is skipped entirely.
+
+        Parameters
+        ----------
+        candidates : list[SearchResult]
+            The primary (dense-only or hybrid-fused) result list, before
+            reranking/generation-context truncation.
+        fetch_k : int
+            The `top_k` actually requested from the vector store for this
+            query.
+        filters : dict[str, Any] | None
+            The same filters passed to `search`/`search_keyword`.
+        effective_auth : AuthorizationContext | None
+            The resolved authorization context for this query (see
+            `resolve_auth`); `None` when unrestricted or when
+            authorization is disabled, in which case this is a no-op.
+
+        Notes
+        -----
+        A `VectorStore` implementation that doesn't provide
+        `count_excluded_by_authorization` (e.g. a minimal test double
+        that doesn't subclass the ABC), or one whose call raises for any
+        reason, is caught and logged rather than allowed to break
+        retrieval -- this is a diagnostic addition, not a correctness
+        requirement of `retrieve()` itself.
+        """
+        if effective_auth is None or len(candidates) >= fetch_k:
+            return
+        try:
+            excluded_count = self._vectorstore.count_excluded_by_authorization(
+                filters, effective_auth
+            )
+        except Exception:
+            logger.warning("Failed to compute authorization-exclusion count", exc_info=True)
+            return
+        if excluded_count <= 0:
+            return
+        log_audit_event(
+            "authorization_denied",
+            tenant_id=effective_auth.tenant_id,
+            dataset_id=(filters or {}).get("dataset_id"),
+            excluded_chunk_count=excluded_count,
+            result_count=len(candidates),
+            requested_count=fetch_k,
+        )
+        observability_metrics.observe_authorization_denial()
 
     @staticmethod
     def _flag_injections(results: list[SearchResult]) -> list[SearchResult]:
@@ -523,6 +591,8 @@ class RetrievalPipeline:
                 query_embedding, top_k=fetch_k, filters=filters, auth=effective_auth
             )
             stage_ms["dense_search_ms"] = (time.perf_counter() - t) * 1000
+
+        self._audit_authorization_exclusions(candidates, fetch_k, filters, effective_auth)
 
         n_rerank = reranker_top_n if reranker_top_n is not None else self._config.reranker.top_n
         t = time.perf_counter()

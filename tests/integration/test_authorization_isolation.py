@@ -11,6 +11,7 @@ semantic-similarity-cannot-bypass-ACL).
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import date
 from pathlib import Path
@@ -112,6 +113,57 @@ def test_role_mismatch_within_same_tenant_is_still_denied(require_postgres, conf
             auth=auth,
         )
         assert results == []
+    finally:
+        pipeline._vectorstore.delete_document(result["document_id"])
+
+
+def test_role_mismatch_denial_is_audited_as_authorization_denied(
+    require_postgres, config, tmp_path: Path, caplog
+):
+    """A query authorization legitimately excludes at least one document logs authorization_denied.
+
+    Complements `test_role_mismatch_within_same_tenant_is_still_denied`'s
+    ACL proof: document-level authorization runs entirely as a SQL
+    predicate, so nothing in Python otherwise learns whether an empty/thin
+    result reflects "nothing relevant exists" or "something relevant
+    exists but was denied." This proves the diagnostic audit trail
+    (`RetrievalPipeline._audit_authorization_exclusions` /
+    `VectorStore.count_excluded_by_authorization`) actually fires, exactly
+    once, for the excluded document.
+    """
+    ns = f"pytest-authz-{uuid.uuid4()}"
+    secure = _secure_config(config)
+    pipeline = IngestionPipeline(secure)
+
+    path = _write_doc(
+        tmp_path,
+        "restricted-audit.md",
+        {"tenant_id": "internal_techfusion", "allowed_roles": ["security_admin"]},
+        "The restricted maintenance window is Tuesdays at 2am.",
+    )
+    result = pipeline.ingest_file(path, ns)
+
+    retrieval = RetrievalPipeline(secure)
+    auth = AuthorizationContext(tenant_id="internal_techfusion", roles=["employee"])
+    try:
+        with caplog.at_level(logging.INFO, logger="rag.audit"):
+            results = retrieval.retrieve(
+                "What is the restricted maintenance window?",
+                filters={"dataset_id": ns},
+                candidate_k=10,
+                generation_context_top_n=10,
+                auth=auth,
+            )
+        assert results == []
+
+        authorization_denied_records = [
+            r for r in caplog.records if r.getMessage() == "authorization_denied"
+        ]
+        assert len(authorization_denied_records) == 1
+        record = authorization_denied_records[0]
+        assert record.tenant_id == "internal_techfusion"
+        assert record.dataset_id == ns
+        assert record.excluded_chunk_count >= 1
     finally:
         pipeline._vectorstore.delete_document(result["document_id"])
 
