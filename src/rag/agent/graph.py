@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 import time
 from collections.abc import Callable
 from functools import lru_cache, partial
@@ -873,6 +874,7 @@ def run_agent(
     config: AppConfig,
     mcp_app: Any | None = None,
     on_event: OnAgentEvent | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> AgentRunResult:
     """Run one bounded RAG request.
 
@@ -896,6 +898,18 @@ def run_agent(
     on_event : OnAgentEvent | None, optional
         Called with a safe `AgentEvent` at each state transition, if set.
         Never raises out of `run_agent` even if the callback itself does.
+    cancel_event : threading.Event | None, optional
+        A cooperative cancellation signal, checked once per iteration of
+        the bounded tool-call loop (between `tool_select`/`tool_execute`/
+        `evidence_sufficiency` node executions). When set, the run stops
+        as soon as the current iteration's checkpoint is reached, labels
+        `termination_reason="cancelled"`, and skips the final synthesis
+        LLM call entirely (unlike every other termination reason, which
+        still makes a best-effort synthesis call). Intended for a caller
+        (e.g. `POST /agent/query/stream`) that detects its client
+        disconnected and no longer needs the answer. `None` (the default)
+        never cancels. Does not interrupt a node call already in
+        progress; cancellation is checked only between iterations.
 
     Returns
     -------
@@ -1005,6 +1019,14 @@ def run_agent(
         return _finish(_agent_result(state, t_start))
 
     while True:
+        if cancel_event is not None and cancel_event.is_set():
+            # Cooperative cancellation checkpoint: the caller (e.g. a disconnected
+            # SSE client) no longer needs this run's answer. Never interrupts a
+            # node call already in progress, only stops the next one from
+            # starting -- so this bounds, rather than eliminates, wasted work.
+            state.termination_reason = "cancelled"
+            break
+
         if state.tool_call_count >= agent_cfg.max_tool_calls:
             state.termination_reason = "max_tool_calls"
             log_audit_event("agent_max_tool_calls_reached", tool_calls=state.tool_call_count)
@@ -1089,5 +1111,13 @@ def run_agent(
         # Otherwise current_query has been reformulated (if the decision supplied
         # one) and the loop continues back to select_tool.
 
-    state = _finalize_timed(state, timed_llm, templates, on_event, t_start)
+    if state.termination_reason == "cancelled":
+        # Skip the final synthesis LLM call entirely: nobody is waiting on the
+        # answer, so making one more model call would defeat the point of
+        # cancelling. Every other termination reason still makes a best-effort
+        # synthesis call from whatever evidence was gathered.
+        state.final_answer = None
+        state.citations = []
+    else:
+        state = _finalize_timed(state, timed_llm, templates, on_event, t_start)
     return _finish(_agent_result(state, t_start))
