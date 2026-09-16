@@ -8,17 +8,19 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 from rag.api.auth import VerifiedIdentity
-from rag.api.deps import get_config, get_current_identity, get_ingestion_pipeline
+from rag.api.deps import get_config, get_current_identity, get_ingestion_pipeline, get_rate_limiter
 from rag.audit import log_audit_event, pseudonymous_subject
 from rag.config import AppConfig
 from rag.ingestion.governance import IngestCallerContext, IngestGovernanceError
 from rag.ingestion.pipeline import IngestionPipeline
 
 router = APIRouter()
+_limiter = get_rate_limiter()
 
 # Uploads land here under their original filename (path components stripped,
 # see `_safe_upload_path`), so re-uploading the same file keeps the same
@@ -238,8 +240,18 @@ async def _ingest_upload_atomically(
     physical_path = staging_dir / dest.name
     try:
         await _save_upload_bounded(upload, physical_path, max_upload_bytes)
-        result = pipeline.ingest_file(
-            physical_path, dataset_id, caller=caller, source_override=str(dest)
+        # ingest_file is fully synchronous (disk I/O, chunking, embedding-model
+        # inference, DB writes) and can run for the full ingestion duration.
+        # Calling it directly on the event loop thread would block every other
+        # in-flight request (/query, /health, open SSE streams) for that whole
+        # time; run_in_threadpool offloads it the same way FastAPI would
+        # auto-threadpool this route if it were a plain `def` instead of `async def`.
+        result = await run_in_threadpool(
+            pipeline.ingest_file,
+            physical_path,
+            dataset_id,
+            caller=caller,
+            source_override=str(dest),
         )
     except Exception:
         shutil.rmtree(staging_dir, ignore_errors=True)
@@ -281,10 +293,25 @@ def _build_ingest_caller_context(
     return IngestCallerContext(tenant_id=identity.tenant_id, is_privileged=privileged)
 
 
+def _ingest_rate_limit_string() -> str:
+    """Return a stricter per-minute budget than `/query`'s, for `/ingest`'s higher per-request cost.
+
+    `/ingest` does file I/O, chunking, embedding-model inference, and DB
+    writes per call, all considerably more expensive than a single
+    retrieval+generation call. Budgeted at a quarter of the shared
+    `security.rate_limit.requests_per_minute` value (minimum 1/minute)
+    rather than reusing that same budget outright.
+    """
+    per_minute = max(1, get_config().security.rate_limit.requests_per_minute // 4)
+    return f"{per_minute}/minute"
+
+
 @router.post("/ingest", response_model=list[IngestResult])
+@_limiter.limit(_ingest_rate_limit_string)
 async def ingest(
+    request: Request,
     dataset_id: str = Form(
-        ..., description="Namespace tag stored on every chunk (e.g. 'techfusion')."
+        ..., max_length=200, description="Namespace tag stored on every chunk (e.g. 'techfusion')."
     ),
     files: list[UploadFile] = File(...),
     identity: VerifiedIdentity | None = Depends(get_current_identity),
@@ -295,6 +322,8 @@ async def ingest(
 
     Parameters
     ----------
+    request : Request
+        The raw HTTP request, required by `slowapi`'s rate-limit decorator.
     dataset_id : str
         Namespace tag stored on every chunk.
     files : list[UploadFile]

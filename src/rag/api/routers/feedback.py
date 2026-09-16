@@ -35,11 +35,16 @@ from __future__ import annotations
 import time
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from rag.api.auth import VerifiedIdentity
-from rag.api.deps import get_config, get_current_identity, get_feedback_store
+from rag.api.deps import (
+    get_config,
+    get_current_identity,
+    get_feedback_store,
+    get_rate_limiter,
+)
 from rag.api.request_auth import resolve_trusted_tenant_id
 from rag.audit import log_audit_event, pseudonymous_subject
 from rag.config import AppConfig
@@ -52,6 +57,7 @@ from rag.feedback.store import FeedbackStore, FeedbackWriteInput
 from rag.observability.metrics import observe_error, observe_feedback_submission
 
 router = APIRouter()
+_limiter = get_rate_limiter()
 
 _ALL_REASONS = set(NEGATIVE_FEEDBACK_REASONS) | set(POSITIVE_FEEDBACK_REASONS)
 
@@ -221,8 +227,19 @@ def _resolve_caller_key(identity: VerifiedIdentity | None) -> str:
     return pseudonymous_subject(identity.subject)
 
 
+def _feedback_rate_limit_string() -> str:
+    """Return the current `requests_per_minute` config value as a slowapi limit string.
+
+    Same shared budget as `/query`: a feedback submission is a small,
+    single-row write, not an expensive retrieval/generation call.
+    """
+    return f"{get_config().security.rate_limit.requests_per_minute}/minute"
+
+
 @router.post("/feedback", response_model=FeedbackAck)
+@_limiter.limit(_feedback_rate_limit_string)
 def submit_feedback(
+    request: Request,
     body: FeedbackRequest,
     config: AppConfig = Depends(_require_feedback_enabled),
     identity: VerifiedIdentity | None = Depends(get_current_identity),
@@ -232,6 +249,8 @@ def submit_feedback(
 
     Parameters
     ----------
+    request : Request
+        The raw HTTP request, required by `slowapi`'s rate-limit decorator.
     body : FeedbackRequest
         The rating, plus optional reason/comment/lineage fields.
     config : AppConfig
