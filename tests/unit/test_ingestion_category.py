@@ -39,6 +39,11 @@ class FakeVectorStore:
         """Record `chunks` in `written_chunks` for assertions."""
         self.written_chunks.extend(chunks)
 
+    def replace_document_chunks(self, document_id: str, checksum: str, chunks: list[Chunk]) -> None:
+        """Delete `document_id`'s old chunks, then record the new ones (test double: non-atomic)."""
+        self.delete_chunks_by_document_id(document_id)
+        self.add_chunks(chunks)
+
     def search(self, *args, **kwargs):
         """Return no results, always; unused by these tests."""
         return []

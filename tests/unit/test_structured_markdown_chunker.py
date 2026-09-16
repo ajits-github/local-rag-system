@@ -63,6 +63,49 @@ def test_large_table_splits_into_row_groups_with_repeated_headers():
     assert all("| Name | Value |" in s.text for s in spans)
 
 
+def test_adjacent_tables_with_no_blank_line_produce_two_separate_spans():
+    """Two Markdown tables with zero blank line between them are not merged into one span.
+
+    Regression test: `_TABLE_ROW_RE` matches any pipe-delimited line,
+    including a second table's own header row and separator row, so the
+    data-row-collection loop used to keep consuming them as bogus data
+    rows of the first table -- silently swallowing the second table's real
+    header/content into one corrupted span.
+    """
+    chunker = StructuredMarkdownChunker()
+    text = (
+        "| Name | Value |\n|---|---|\n| a | 1 |\n| b | 2 |\n"
+        "| City | Population |\n|---|---|\n| X | 100 |\n| Y | 200 |"
+    )
+
+    spans = chunker.split(text, source_type="markdown")
+
+    assert len(spans) == 2
+    assert [s.content_type for s in spans] == ["table", "table"]
+    first, second = spans
+    assert first.table_headers == ["Name", "Value"]
+    assert "| a | 1 |" in first.text
+    assert "| b | 2 |" in first.text
+    assert "City" not in first.text
+    assert second.table_headers == ["City", "Population"]
+    assert "| X | 100 |" in second.text
+    assert "| Y | 200 |" in second.text
+    assert "Name" not in second.text
+
+
+def test_adjacent_tables_separated_by_a_blank_line_also_produce_two_spans():
+    """Control case: a blank line between two tables also yields two separate spans."""
+    chunker = StructuredMarkdownChunker()
+    text = "| Name | Value |\n|---|---|\n| a | 1 |\n\n| City | Population |\n|---|---|\n| X | 100 |"
+
+    spans = chunker.split(text, source_type="markdown")
+
+    table_spans = [s for s in spans if s.content_type == "table"]
+    assert len(table_spans) == 2
+    assert table_spans[0].table_headers == ["Name", "Value"]
+    assert table_spans[1].table_headers == ["City", "Population"]
+
+
 def test_fenced_code_block_is_kept_atomic_with_language_tag():
     """A fenced code block becomes one content_type='code' span, tagging its language."""
     chunker = StructuredMarkdownChunker()

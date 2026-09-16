@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 
 from rag.schemas import Chunk, ChunkMetadata
@@ -25,20 +27,62 @@ def test_health_check_reports_true_when_reachable(require_postgres, config):
 
 
 def test_document_id_is_stable_across_edits(require_postgres, config):
-    """document_id stays constant across checksum changes; only `changed` flips."""
+    """document_id stays constant across checksum changes; only `changed` flips.
+
+    `get_or_create_document_id` no longer durably commits a checksum on
+    its own (see its docstring): a document only stops reading `changed`
+    on its next call once `replace_document_chunks` has actually
+    committed that checksum, atomically with its chunks. This is the
+    fix for the CRITICAL ingestion-atomicity bug -- a standalone checksum
+    commit ahead of a chunk write that might still fail is exactly the
+    corruption window that used to exist.
+    """
     store = _store(config)
     source = f"test-source-{uuid.uuid4()}"
 
     doc_id_1, changed_1 = store.get_or_create_document_id(source, "checksum-a", TEST_DATASET_ID)
+    store.replace_document_chunks(doc_id_1, "checksum-a", [])
     doc_id_2, changed_2 = store.get_or_create_document_id(source, "checksum-a", TEST_DATASET_ID)
     doc_id_3, changed_3 = store.get_or_create_document_id(source, "checksum-b", TEST_DATASET_ID)
+    store.replace_document_chunks(doc_id_3, "checksum-b", [])
+    doc_id_4, changed_4 = store.get_or_create_document_id(source, "checksum-b", TEST_DATASET_ID)
 
-    assert doc_id_1 == doc_id_2 == doc_id_3
+    assert doc_id_1 == doc_id_2 == doc_id_3 == doc_id_4
     assert changed_1 is True
     assert changed_2 is False
     assert changed_3 is True
+    assert changed_4 is False
 
     store.delete_document(doc_id_1)
+
+
+def test_concurrent_first_time_inserts_of_the_same_new_document_do_not_raise(
+    require_postgres, config
+):
+    """Two racing first-time get_or_create_document_id calls for the same new document.
+
+    Both must succeed and agree on document_id, rather than one raising an
+    unhandled `UniqueViolation` from a bare SELECT-then-INSERT. Regression
+    test for the concurrent-insert race half of the CRITICAL
+    ingestion-atomicity fix.
+    """
+    store = _store(config)
+    source = f"test-source-{uuid.uuid4()}"
+    barrier = threading.Barrier(2)
+
+    def _attempt() -> tuple[str, bool]:
+        barrier.wait(timeout=5)
+        return store.get_or_create_document_id(source, "same-checksum", TEST_DATASET_ID)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = [future.result() for future in [executor.submit(_attempt) for _ in range(2)]]
+
+    document_ids = {document_id for document_id, _changed in results}
+    try:
+        assert len(document_ids) == 1  # both races resolved to the same, canonical document_id
+        assert all(changed is True for _document_id, changed in results)
+    finally:
+        store.delete_document(document_ids.pop())
 
 
 def test_same_source_in_different_datasets_does_not_collide(require_postgres, config):

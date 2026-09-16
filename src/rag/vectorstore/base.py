@@ -63,7 +63,23 @@ class VectorStore(ABC):
 
         document_id itself never changes across edits to the same source.
         Identity is scoped per dataset_id, so the same relative path can
-        exist in two different datasets without colliding.
+        exist in two different datasets without colliding. Implementations
+        must resolve a brand-new `(source, dataset_id)` race-safely: two
+        concurrent first-time callers for the same new document must both
+        return successfully and agree on the same document_id, never raise
+        an unhandled uniqueness-constraint error.
+
+        Deliberately does not durably commit `checksum` itself (a real
+        backend may register the row under a placeholder/pending checksum
+        instead). The real checksum is only ever committed by
+        `replace_document_chunks`, atomically with the chunks it belongs
+        to, so a failure between resolving the document_id and finishing
+        the chunk write can never leave a checksum "ahead of" its chunks
+        (which would make every future re-ingestion attempt wrongly see
+        `changed=False` and silently skip repairing itself). Callers
+        should treat `changed` as relative to the last checksum actually
+        committed via `replace_document_chunks`, not merely the last value
+        passed to this method.
 
         Parameters
         ----------
@@ -78,22 +94,55 @@ class VectorStore(ABC):
         -------
         tuple[str, bool]
             ``(document_id, changed)`` where `changed` is True when this is
-            a new source or its checksum differs from what's on record.
-            i.e. the writer stage should replace that document's chunks.
+            a new source or its checksum differs from the last checksum
+            successfully committed via `replace_document_chunks`. i.e. the
+            writer stage should (re)embed and replace that document's
+            chunks.
         """
 
     @abstractmethod
     def delete_chunks_by_document_id(self, document_id: str) -> None:
         """Remove all chunks for a document, keeping its `documents` row.
 
-        Used mid-re-ingestion, right before writing that document's fresh
-        chunks under the same document_id. NOT for full teardown; use
+        A standalone primitive kept for callers that need to clear a
+        document's chunks without also touching its checksum (e.g. test
+        doubles, or `delete_document`-adjacent cleanup). Normal
+        re-ingestion should prefer `replace_document_chunks`, which folds
+        this same delete into one atomic transaction with the checksum
+        commit and the new chunk insert. NOT for full teardown; use
         `delete_document` for that.
 
         Parameters
         ----------
         document_id : str
             The document whose chunks should be removed.
+        """
+
+    @abstractmethod
+    def replace_document_chunks(self, document_id: str, checksum: str, chunks: list[Chunk]) -> None:
+        """Atomically commit a document's checksum and replace its chunks.
+
+        The one write path `IngestionPipeline.ingest_file` uses once a
+        document's content has been (re)embedded: commits `checksum`,
+        deletes any existing chunks for `document_id`, and inserts
+        `chunks`, all as one atomic unit of work. Implementations that can
+        back this with a single database transaction MUST do so -- this is
+        what makes the checksum and chunk state agree even if the process
+        is interrupted mid-write; see `get_or_create_document_id`'s
+        docstring for the corruption this prevents. A failure partway
+        through must leave neither the checksum nor the chunks changed, so
+        a retry correctly sees `changed=True` again and repairs itself.
+
+        Parameters
+        ----------
+        document_id : str
+            The document whose checksum/chunks are being replaced.
+        checksum : str
+            sha256 of the content `chunks` were derived from. Committed
+            together with `chunks`, never independently.
+        chunks : list[Chunk]
+            The new chunks to persist, replacing any existing ones for
+            `document_id`. Each chunk must already have its embedding set.
         """
 
     @abstractmethod

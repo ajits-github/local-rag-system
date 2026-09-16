@@ -1,4 +1,12 @@
-"""Ingestion stage 5: embed chunk texts and persist them to the vector store."""
+"""Ingestion stage 5: embed chunk texts and build persistable Chunk objects.
+
+Deliberately does NOT persist the built chunks itself (previously it did,
+via `VectorStore.add_chunks`, called separately from and non-atomically
+with `IngestionPipeline.ingest_file`'s checksum commit). Persistence now
+happens as one atomic step, `VectorStore.replace_document_chunks`, called
+by `ingest_file` once this stage's chunks are ready -- see that method's
+docstring for the data-loss bug this closes.
+"""
 
 from __future__ import annotations
 
@@ -20,7 +28,11 @@ _IMAGE_ALT_TEXT_RE = re.compile(r"^!\[([^\]\[]*)\]")
 
 
 class Writer:
-    """Embeds chunk texts and persists them to the vector store."""
+    """Embeds chunk texts and builds the resulting `Chunk` objects.
+
+    Does not persist them; see the module docstring for why persistence
+    was moved to `VectorStore.replace_document_chunks`.
+    """
 
     def __init__(
         self,
@@ -60,7 +72,12 @@ class Writer:
         dataset_id: str,
         category: str | None = None,
     ) -> list[Chunk]:
-        """Embed `chunk_spans`, build `Chunk`s from `document`'s metadata, and persist them.
+        """Embed `chunk_spans` and build `Chunk`s from `document`'s metadata.
+
+        Does not persist the result; the caller (`IngestionPipeline.
+        ingest_file`) is responsible for passing the returned chunks to
+        `VectorStore.replace_document_chunks` so the checksum commit and
+        chunk write happen atomically.
 
         Parameters
         ----------
@@ -78,7 +95,7 @@ class Writer:
         Returns
         -------
         list[Chunk]
-            The persisted chunks, each with its embedding set.
+            The built chunks, each with its embedding set, not yet persisted.
         """
         if self._vision_provider is not None:
             chunk_spans = self._with_vision_siblings(chunk_spans, document)
@@ -138,7 +155,6 @@ class Writer:
             )
             for i, (span, embedding) in enumerate(zip(chunk_spans, embeddings, strict=True))
         ]
-        self._vectorstore.add_chunks(chunks)
         return chunks
 
     @staticmethod
