@@ -190,6 +190,14 @@ class StructuredMarkdownChunker(Chunker):
                 j = i + 2
                 data_rows: list[str] = []
                 while j < n and _TABLE_ROW_RE.match(lines[j]):
+                    # A pipe-row immediately followed by its own separator
+                    # row is a NEW table's header, not a data row of the
+                    # table being built here (e.g. two tables with no
+                    # blank line between them). Stop this table's data-row
+                    # collection so the outer loop re-examines this line
+                    # and starts a fresh table span for it.
+                    if j + 1 < n and _TABLE_SEPARATOR_RE.match(lines[j + 1]):
+                        break
                     data_rows.append(lines[j])
                     j += 1
                 before = len(spans)
