@@ -85,7 +85,13 @@ class FeedbackStore:
     """Small, dedicated Postgres store for the `feedback` table."""
 
     def __init__(
-        self, dsn: str, table: str = "feedback", minconn: int = 1, maxconn: int = 3
+        self,
+        dsn: str,
+        table: str = "feedback",
+        minconn: int = 1,
+        maxconn: int = 3,
+        connect_timeout_seconds: int = 5,
+        statement_timeout_ms: int = 30_000,
     ) -> None:
         """Open a threaded connection pool against `dsn`.
 
@@ -98,9 +104,23 @@ class FeedbackStore:
         minconn, maxconn : int, optional
             Pool bounds. Small on purpose: feedback writes are low-volume
             and never share a pool with the vectorstore/embedding path.
+        connect_timeout_seconds : int, optional
+            `psycopg2.connect`'s `connect_timeout`, in seconds, by default
+            5, matching `PgVectorStore`'s own default.
+        statement_timeout_ms : int, optional
+            Postgres's own `statement_timeout`, in milliseconds, applied
+            via `options='-c statement_timeout=<ms>'` on every new
+            connection, by default 30000, matching `PgVectorStore`'s own
+            default.
         """
         self._table = table
-        self._pool = ThreadedConnectionPool(minconn, maxconn, dsn)
+        self._pool = ThreadedConnectionPool(
+            minconn,
+            maxconn,
+            dsn,
+            connect_timeout=connect_timeout_seconds,
+            options=f"-c statement_timeout={statement_timeout_ms}",
+        )
 
     @contextmanager
     def _connection(self) -> Iterator[PgConnection]:

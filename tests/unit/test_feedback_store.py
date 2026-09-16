@@ -76,9 +76,10 @@ class FakeConnection:
 class FakePool:
     """Fixed-capacity stand-in for `psycopg2.pool.ThreadedConnectionPool`."""
 
-    def __init__(self, minconn: int, maxconn: int, dsn: str) -> None:
+    def __init__(self, minconn: int, maxconn: int, dsn: str, **kwargs: Any) -> None:
         self.maxconn = maxconn
         self._available = [FakeConnection() for _ in range(maxconn)]
+        self.connect_kwargs = kwargs
 
     def getconn(self) -> FakeConnection:
         """Check out a connection, or raise PoolError if none remain."""

@@ -190,6 +190,7 @@ class AgentState(BaseModel):
             "max_retrieval_attempts",
             "max_tool_calls",
             "insufficient_evidence",
+            "cancelled",
         ]
         | None
     ) = None

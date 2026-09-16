@@ -10,13 +10,19 @@ response instead.
 
 `run_agent` is synchronous and runs in Starlette's worker threadpool so the
 event loop stays free to stream events as they arrive. A client disconnect
-stops further streaming but cannot cancel the already-running agent turn.
+sets a cooperative `threading.Event` that `run_agent`'s bounded tool-call
+loop checks once per iteration (see `rag.agent.graph.run_agent`'s
+`cancel_event` parameter), so an abandoned stream stops making further
+LLM/DB/retrieval calls once the current iteration's checkpoint is reached,
+rather than always running to completion. It does not interrupt a node
+call already in progress.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -86,12 +92,15 @@ def _run_agent_in_thread(
     mcp_app: Starlette | None,
     queue: asyncio.Queue[Any],
     loop: asyncio.AbstractEventLoop,
+    cancel_event: threading.Event,
 ) -> None:
     """Run `run_agent` synchronously, pushing events and the final result onto `queue`.
 
     Executed in a worker thread (via `run_in_threadpool`); `queue` belongs
     to the event loop thread, so every push is scheduled back onto the
     loop with `call_soon_threadsafe` rather than called directly.
+    `cancel_event` is threaded straight through to `run_agent`, which
+    checks it cooperatively between bounded tool-call loop iterations.
     """
 
     def _on_event(event: AgentEvent) -> None:
@@ -107,6 +116,7 @@ def _run_agent_in_thread(
             config=config,
             mcp_app=mcp_app,
             on_event=_on_event,
+            cancel_event=cancel_event,
         )
         loop.call_soon_threadsafe(queue.put_nowait, result)
     except Exception as exc:  # never let a worker-thread exception hang the stream
@@ -187,6 +197,7 @@ async def _stream_agent_query(
     """
     queue: asyncio.Queue[Any] = asyncio.Queue()
     loop = asyncio.get_running_loop()
+    cancel_event = threading.Event()
     task = asyncio.ensure_future(
         run_in_threadpool(
             _run_agent_in_thread,
@@ -199,6 +210,7 @@ async def _stream_agent_query(
             mcp_app=mcp_app,
             queue=queue,
             loop=loop,
+            cancel_event=cancel_event,
         )
     )
 
@@ -208,6 +220,12 @@ async def _stream_agent_query(
             if item is _QUEUE_DONE:
                 break
             if await request.is_disconnected():
+                # Signal the worker thread's run_agent() to stop at its next
+                # cooperative checkpoint instead of running to completion for a
+                # client that's no longer listening. The `finally: await task`
+                # below still waits for that checkpoint to actually be reached
+                # (a node call already in progress is never interrupted mid-flight).
+                cancel_event.set()
                 break
             if isinstance(item, AgentEvent):
                 if item.event_type in ("completed", "terminated"):

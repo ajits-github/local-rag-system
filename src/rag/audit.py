@@ -49,6 +49,9 @@ AuthEventType = Literal[
     "case_action_executed",
     "case_action_invalid_transition",
     "feedback_submitted",
+    "database_pool_exhausted",
+    "database_integrity_violation",
+    "invalid_filter_field_rejected",
 ]
 
 

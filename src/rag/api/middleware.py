@@ -59,7 +59,13 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
             duration_ms = round((time.monotonic() - start) * 1000, 2)
             status_code = response.status_code if response is not None else 500
             route = request.scope.get("route")
-            path_label = getattr(route, "path", None) or request.url.path
+            # Starlette never sets scope["route"] for an unmatched (404) request, so
+            # `route` is None there. Falling back to the raw, caller-controlled
+            # request.url.path would let any unauthenticated caller grow the
+            # Prometheus registry with an unbounded number of distinct, permanent
+            # label series (one per distinct nonexistent path probed). A fixed
+            # sentinel keeps the "path" label's cardinality bounded regardless.
+            path_label = getattr(route, "path", None) or "unmatched"
             route_name = getattr(route, "name", None)
             tracing.set_attributes(
                 span,

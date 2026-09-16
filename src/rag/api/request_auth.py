@@ -18,6 +18,7 @@ from rag.audit import log_audit_event, pseudonymous_subject
 from rag.config import AppConfig
 from rag.mcp.business.schemas import CaseApproval
 from rag.retrieval.authorization import AuthorizationContext
+from rag.vectorstore.base import ALLOWED_FILTER_FIELDS
 
 
 def build_authorization_context(
@@ -145,7 +146,8 @@ def enforce_dos_limits(
     ------
     HTTPException
         422, when `query`/`top_k`/`filters` exceed their configured bound,
-        or when `top_k` is less than 1.
+        when `top_k` is less than 1, or when `filters` names a key outside
+        `rag.vectorstore.base.ALLOWED_FILTER_FIELDS`.
     """
     limits = config.security.dos_limits
     if len(query) > limits.max_query_length:
@@ -169,6 +171,21 @@ def enforce_dos_limits(
             raise HTTPException(
                 status_code=422,
                 detail=f"filters exceeds maximum size of {limits.max_filters_bytes} bytes",
+            )
+        # Validated here, at the request boundary, rather than left to surface
+        # from PgVectorStore._build_where_clause's bare ValueError: an unknown
+        # filter key must be a clean 422, never an unhandled 500 with an
+        # internal exception message in the response body. Reuses the exact
+        # same whitelist the vectorstore itself enforces, so this can never
+        # drift into rejecting (or silently allowing) a different set of keys.
+        unknown_keys = sorted(set(filters) - ALLOWED_FILTER_FIELDS)
+        if unknown_keys:
+            log_audit_event(
+                "invalid_filter_field_rejected", field="filters", unknown_keys=unknown_keys
+            )
+            raise HTTPException(
+                status_code=422,
+                detail=f"Unknown filter field(s): {', '.join(unknown_keys)}",
             )
 
 
