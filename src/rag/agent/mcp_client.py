@@ -257,7 +257,15 @@ async def _call_tool_async(
         transport=transport, headers=headers, timeout=client_cfg.timeout_seconds
     ) as http_client:
         async with streamable_http_client(base_url, http_client=http_client) as (read, write):
-            async with ClientSession(read, write) as session:
+            async with ClientSession(
+                read, write, read_timeout_seconds=client_cfg.timeout_seconds
+            ) as session:
+                # `read_timeout_seconds` above is the session-wide default every
+                # send_request() call falls back to when it gets no per-call
+                # override (initialize()'s handshake included) -- without it,
+                # ClientSession defaults to None (unbounded), and the default
+                # ASGI transport has no timeout handling of its own either, so
+                # nothing at any layer would bound the handshake.
                 await session.initialize()
                 result = await session.call_tool(
                     tool_name,
