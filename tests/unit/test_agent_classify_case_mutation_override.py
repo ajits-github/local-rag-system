@@ -175,11 +175,32 @@ def test_case_mutation_phrasing_is_detected(query):
         "As a Tenant Alpha operator, what is case CASE-1002 about?",
         "What is the maximum file size allowed for a single upload?",
         "How many days after cancellation is a customer's account data deleted?",
+        # Batch-3 fix: a directive verb ("update") paired only with the bare
+        # word "status" (no actual status value) is a read-only question,
+        # not a mutation request -- this used to be a false positive.
+        "Can you give me an update on case CASE-1001's status?",
     ],
 )
 def test_read_only_and_ordinary_questions_are_not_flagged(query):
     """Read-only case questions and ordinary knowledge questions never trigger the override."""
     assert _looks_like_case_mutation_request(query) is False
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        # Batch-3 fix: no literal "case" substring, so the pre-fix guard
+        # (`"case" not in lowered: return False`) short-circuited before
+        # ever reaching the mutation-verb check -- the exact failure mode
+        # this deterministic override exists to close, just narrowed to
+        # phrasings that happen to use the word "case".
+        "close ticket 1001",
+        "please reopen issue 1001",
+    ],
+)
+def test_case_mutation_phrasing_without_the_word_case_is_still_detected(query):
+    """A mutation verb paired with a case-reference synonym still triggers the override."""
+    assert _looks_like_case_mutation_request(query) is True
 
 
 @pytest.mark.parametrize(

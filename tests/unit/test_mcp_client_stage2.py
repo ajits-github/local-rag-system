@@ -11,8 +11,10 @@ against a real MCP server object is covered separately in
 
 from __future__ import annotations
 
+import contextlib
 import time
 
+import anyio
 import jwt
 import pytest
 
@@ -341,6 +343,77 @@ def test_dispatch_remote_tool_sync_fails_closed_for_update_case_status_with_no_a
             config=config,
             mcp_app=None,
         )
+
+
+# --- ClientSession's handshake is bounded by a read timeout (fix: batch 3) --
+
+
+@contextlib.asynccontextmanager
+async def _hanging_transport(base_url, *, http_client):
+    """Fake transport whose read side never delivers a response.
+
+    Mirrors the `(read, write)` memory-object-stream pair
+    `streamable_http_client` normally yields, but nothing ever writes into
+    the read side -- simulating a hung/slow MCP server during
+    `session.initialize()`'s handshake. `base_url`/`http_client` are
+    accepted (matching the real signature `_call_tool_async` calls with)
+    but unused.
+    """
+    _unused_send, read_receive = anyio.create_memory_object_stream(1)
+    write_send, _unused_receive = anyio.create_memory_object_stream(10)
+    try:
+        yield read_receive, write_send
+    finally:
+        read_receive.close()
+        write_send.close()
+
+
+def test_call_tool_async_handshake_is_bounded_by_configured_timeout_not_unbounded(monkeypatch):
+    """Regression test for the missing `ClientSession(..., read_timeout_seconds=...)`.
+
+    Before the fix, `ClientSession(read, write)` was constructed with no
+    `read_timeout_seconds`, so `session.initialize()` (the handshake)
+    fell back to the SDK's own default of `None` (unbounded) instead of
+    `config.mcp.client.timeout_seconds` -- confirmed directly against the
+    installed `mcp` SDK: `send_request()`'s per-call timeout falls back to
+    `self._session_read_timeout_seconds`, which is only ever set from the
+    constructor argument. A hung/slow MCP server during the handshake
+    could therefore block the calling thread inside `anyio.run(...)`
+    indefinitely. With the fix, a transport whose read side never
+    delivers a response fails within (well under) the configured timeout
+    instead of hanging.
+    """
+    monkeypatch.setattr(mcp_client, "streamable_http_client", _hanging_transport)
+    config = _secure_config(
+        **{
+            "mcp.client.enabled": True,
+            "mcp.enabled": True,
+            "mcp.client.timeout_seconds": 0.2,
+        }
+    )
+    auth = AuthorizationContext(tenant_id="tenant_alpha", roles=["op"])
+
+    started = time.monotonic()
+    # Deliberately blind: anyio's task-group machinery can wrap the timeout
+    # as an ExceptionGroup, a bare TimeoutError, or an mcp.shared.exceptions.
+    # McpError depending on SDK/anyio version -- the assertion under test is
+    # "raises something and returns control", not any specific exception
+    # shape, so pinning a narrower type here would make this test brittle
+    # against upgrades rather than more precise.
+    with pytest.raises(Exception):  # noqa: B017
+        mcp_client.dispatch_remote_tool_sync(
+            "get_customer_case",
+            GetCustomerCaseArgs(case_id="CASE-1001"),
+            auth=auth,
+            config=config,
+            mcp_app=object(),  # never touched: the fake transport ignores it
+        )
+    elapsed = time.monotonic() - started
+
+    # Bounded by config.mcp.client.timeout_seconds (0.2s), with generous
+    # slack for test-runner scheduling -- not the unbounded hang the bug
+    # allowed (this test's own budget stays well under a second either way).
+    assert elapsed < 5.0
 
 
 # --- synthetic evidence: structurally inert for document-specific behaviors --

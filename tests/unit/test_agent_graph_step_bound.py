@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from rag.agent.graph import run_agent
+from rag.agent.graph import _LOW_CONFIDENCE_EVIDENCE_ANSWER, run_agent
 from rag.agent.state import AgentState
 from rag.config import load_config
 from rag.schemas import Chunk, ChunkMetadata, SearchResult
@@ -223,6 +223,15 @@ def test_step_bound_reached_with_genuinely_insufficient_evidence_is_still_max_st
     Same step arithmetic as the convergence test above, but the final
     evidence_sufficiency call reports insufficient. the bound must still
     win and label this run "max_steps", exactly as before the fix.
+
+    Batch-3 fix: hitting max_steps with the model's own last verdict being
+    "insufficient" must not fall through to a full LLM synthesis call
+    either (see test_agent_graph_retry_bound.py's
+    test_retrieval_attempts_bounded_and_terminates_with_evidence_gathered
+    for the max_retrieval_attempts sibling of this same fix) -- the answer
+    is the deterministic `_LOW_CONFIDENCE_EVIDENCE_ANSWER`, and the queued
+    "best-effort answer despite insufficiency" synthesize response is never
+    requested.
     """
     llm = ScriptedLLM(
         [
@@ -247,4 +256,6 @@ def test_step_bound_reached_with_genuinely_insufficient_evidence_is_still_max_st
 
     assert result.state.step_count == 5
     assert result.state.termination_reason == "max_steps"
-    assert result.state.final_answer == "best-effort answer despite insufficiency"
+    assert result.state.final_answer == _LOW_CONFIDENCE_EVIDENCE_ANSWER
+    assert len(llm.calls) == 4
+    assert len(result.state.citations) == 1

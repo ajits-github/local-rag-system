@@ -8,7 +8,13 @@ auditable `ValidationError` rather than being silently dropped. Every
 LLM-writable numeric field also carries a hard `Field(ge=..., le=...)`
 range; no schema exposes a chunk-count/limit field at all, since those are
 entirely server-controlled (see `rag.config.AgentConfig` and
-`rag.agent.tools`).
+`rag.agent.tools`). Every LLM-writable string field carries a
+`Field(max_length=...)` too, the same discipline applied to the numeric
+fields: a free-text field (`query`) gets a generous bound
+(`_MAX_QUERY_LENGTH`, matching `DoSLimitsConfig.max_query_length`'s
+existing precedent), and an identifier-shaped field (`source`,
+`chunk_id`, `case_id`) gets a much tighter one (`_MAX_IDENTIFIER_LENGTH`,
+matching the convention already used in `rag.api.routers.feedback`).
 
 Four schemas (`SearchKnowledgeBaseArgs`/`GetDocumentArgs`/
 `GetLatestDocumentArgs`/`GetRelatedContextArgs`) back the local,
@@ -34,6 +40,13 @@ from rag.mcp.business.schemas import CaseStatus
 
 ContentTypeFilter = Literal["prose", "table", "code", "configuration", "image", "chart"]
 
+# Generous bound for a free-text field, matching DoSLimitsConfig.max_query_length's
+# existing precedent for a caller-supplied query string elsewhere in this codebase.
+_MAX_QUERY_LENGTH = 2000
+# Tight bound for an identifier-shaped field (a document path, chunk id, or case
+# id), matching the convention already used in rag.api.routers.feedback.
+_MAX_IDENTIFIER_LENGTH = 200
+
 
 class SearchKnowledgeBaseArgs(BaseModel):
     """Arguments for the `search_knowledge_base` tool.
@@ -49,7 +62,7 @@ class SearchKnowledgeBaseArgs(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    query: str
+    query: str = Field(max_length=_MAX_QUERY_LENGTH)
     top_k: int = Field(default=5, ge=1, le=20)
     content_type: ContentTypeFilter | None = None
 
@@ -59,7 +72,7 @@ class GetDocumentArgs(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    source: str
+    source: str = Field(max_length=_MAX_IDENTIFIER_LENGTH)
 
 
 class GetLatestDocumentArgs(BaseModel):
@@ -67,7 +80,7 @@ class GetLatestDocumentArgs(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    source: str
+    source: str = Field(max_length=_MAX_IDENTIFIER_LENGTH)
 
 
 class GetRelatedContextArgs(BaseModel):
@@ -75,7 +88,7 @@ class GetRelatedContextArgs(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    chunk_id: str
+    chunk_id: str = Field(max_length=_MAX_IDENTIFIER_LENGTH)
 
 
 class GetCustomerCaseArgs(BaseModel):
@@ -88,7 +101,7 @@ class GetCustomerCaseArgs(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    case_id: str
+    case_id: str = Field(max_length=_MAX_IDENTIFIER_LENGTH)
 
 
 class GetCaseStatusArgs(BaseModel):
@@ -96,7 +109,7 @@ class GetCaseStatusArgs(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    case_id: str
+    case_id: str = Field(max_length=_MAX_IDENTIFIER_LENGTH)
 
 
 class UpdateCaseStatusArgs(BaseModel):
@@ -110,7 +123,7 @@ class UpdateCaseStatusArgs(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    case_id: str
+    case_id: str = Field(max_length=_MAX_IDENTIFIER_LENGTH)
     new_status: CaseStatus
 
 

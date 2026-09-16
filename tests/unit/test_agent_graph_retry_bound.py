@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from rag.agent.graph import run_agent
+from rag.agent.graph import _LOW_CONFIDENCE_EVIDENCE_ANSWER, run_agent
 from rag.agent.state import AgentState
 from rag.config import load_config
 from rag.schemas import Chunk, ChunkMetadata, SearchResult
@@ -100,7 +100,16 @@ def _agent_config(**overrides):
 
 
 def test_retrieval_attempts_bounded_and_terminates_with_evidence_gathered():
-    """The retry loop stops at max_retrieval_attempts and still synthesizes gathered evidence."""
+    """The retry loop stops at max_retrieval_attempts and returns a deterministic, hedged answer.
+
+    Fix (batch 3): a run that exhausts max_retrieval_attempts with the
+    model's own last verdict being "insufficient evidence" no longer gets a
+    full, confident-looking LLM synthesis call -- it must not depend
+    solely on the synthesize prompt's own wording to hedge. The gathered
+    evidence is still cited, but the answer text is the fixed
+    `_LOW_CONFIDENCE_EVIDENCE_ANSWER`, and no synthesize LLM call is made
+    (the queued "best-effort answer" response is never popped).
+    """
     llm = ScriptedLLM(
         [
             '{"query_type": "complex"}',
@@ -111,7 +120,8 @@ def test_retrieval_attempts_bounded_and_terminates_with_evidence_gathered():
             # attempt 2 (max_retrieval_attempts=2 -> this is the last allowed attempt)
             '{"tool_name": "search_knowledge_base", "tool_args": {"query": "q1 retry"}}',
             '{"sufficient": false, "reformulated_query": "q1 retry again"}',
-            # finalize
+            # never reached: no synthesize call is made once the bound is hit
+            # with insufficient evidence
             "best-effort answer",
         ]
     )
@@ -132,4 +142,10 @@ def test_retrieval_attempts_bounded_and_terminates_with_evidence_gathered():
     assert len(pipeline.retrieve_calls) == 2
     # Never a third retrieval attempt, even though evidence stayed insufficient.
     assert pipeline.retrieve_calls[1]["query"] == "q1 retry"
-    assert result.state.final_answer == "best-effort answer"
+    # Deterministic low-confidence path taken, not the scripted synthesize response.
+    assert result.state.final_answer == _LOW_CONFIDENCE_EVIDENCE_ANSWER
+    assert len(llm.calls) == 6
+    # Gathered evidence is still cited, even though the answer is hedged
+    # (one citation per successful tool_execute call: two retrieval attempts).
+    assert len(result.state.citations) == 2
+    assert all(c.chunk_id == "doc-1_0" for c in result.state.citations)
