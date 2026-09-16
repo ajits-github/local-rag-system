@@ -172,6 +172,7 @@ jobs:
         run: |
           pytest -v --junitxml=pytest-security-regression.xml \
             tests/unit/test_authorization.py \
+            tests/unit/test_pgvector_where_clause.py \
             tests/unit/test_field_policy.py \
             tests/unit/test_agent_tools_authorization_parity.py \
             tests/unit/test_api_query_auth_boundary.py \
