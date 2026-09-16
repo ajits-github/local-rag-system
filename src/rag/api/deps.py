@@ -110,10 +110,20 @@ def get_feedback_store() -> FeedbackStore:
     """Return the process-wide `FeedbackStore` singleton.
 
     Uses its own connection pool, separate from `get_vectorstore()`'s:
-    feedback persistence is decoupled from the retrieval path.
+    feedback persistence is decoupled from the retrieval path. Pool size
+    is config-driven from `config.feedback`; connect/statement timeouts
+    are shared with `config.vectorstore`'s own settings, since both pools
+    connect to the same Postgres instance.
     """
     config = get_config()
-    return FeedbackStore(config.database_url(), table=config.feedback.table_name)
+    return FeedbackStore(
+        config.database_url(),
+        table=config.feedback.table_name,
+        minconn=config.feedback.minconn,
+        maxconn=config.feedback.maxconn,
+        connect_timeout_seconds=config.vectorstore.connect_timeout_seconds,
+        statement_timeout_ms=config.vectorstore.statement_timeout_ms,
+    )
 
 
 def get_current_identity(

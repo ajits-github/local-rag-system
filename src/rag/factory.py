@@ -76,6 +76,10 @@ def build_vectorstore(config: AppConfig) -> VectorStore:
             documents_table=config.vectorstore.documents_table,
             chunks_table=config.vectorstore.chunks_table,
             distance_metric=config.vectorstore.distance_metric,
+            minconn=config.vectorstore.minconn,
+            maxconn=config.vectorstore.maxconn,
+            connect_timeout_seconds=config.vectorstore.connect_timeout_seconds,
+            statement_timeout_ms=config.vectorstore.statement_timeout_ms,
             cross_tenant_support_roles=config.security.authorization.cross_tenant_support_roles,
         )
     raise ValueError(f"Unknown vectorstore provider: {config.vectorstore.provider}")

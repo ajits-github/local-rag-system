@@ -40,13 +40,47 @@ class EmbeddingConfig(BaseModel):
 
 
 class VectorStoreConfig(BaseModel):
-    """Vector store provider selection and table/connection settings."""
+    """Vector store provider selection and table/connection settings.
+
+    Attributes
+    ----------
+    provider : {"pgvector"}
+        The vector store backend.
+    connection_env_var : str
+        Name of the environment variable holding the Postgres DSN.
+    documents_table, chunks_table : str
+        Table names.
+    distance_metric : {"cosine", "l2", "inner_product"}
+        Distance metric used for vector similarity search.
+    minconn, maxconn : int
+        `psycopg2.pool.ThreadedConnectionPool` bounds for `PgVectorStore`'s
+        own pool. `FeedbackStore`'s pool size is configured independently
+        on `FeedbackConfig`, since that pool is deliberately small and
+        separate. Raised slightly above the previous hardcoded defaults
+        (`minconn=1`, `maxconn=5`) to give a small burst of concurrent
+        requests more headroom before exhausting the pool.
+    connect_timeout_seconds : int
+        `psycopg2.connect`'s `connect_timeout`, in seconds: how long a
+        pooled connection attempt waits before giving up, so a genuinely
+        unreachable Postgres instance fails fast instead of hanging a
+        request indefinitely.
+    statement_timeout_ms : int
+        Postgres's own `statement_timeout` (via `options='-c
+        statement_timeout=<ms>'` on every new connection), in
+        milliseconds: how long the server lets a single query run before
+        cancelling it, so a pathological/runaway query can't hold a pooled
+        connection (and a request) open forever.
+    """
 
     provider: Literal["pgvector"] = "pgvector"
     connection_env_var: str = "DATABASE_URL"
     documents_table: str = "documents"
     chunks_table: str = "chunks"
     distance_metric: Literal["cosine", "l2", "inner_product"] = "cosine"
+    minconn: int = 1
+    maxconn: int = 10
+    connect_timeout_seconds: int = 5
+    statement_timeout_ms: int = 30_000
 
 
 class StructuredMarkdownConfig(BaseModel):
@@ -825,6 +859,11 @@ class FeedbackConfig(BaseModel):
         feedback is a different endpoint with its own bound.
     max_answer_text_length : int
         Maximum allowed `answer` length, in characters.
+    minconn, maxconn : int
+        `psycopg2.pool.ThreadedConnectionPool` bounds for `FeedbackStore`'s
+        own, deliberately small and separate pool (see that class's
+        docstring). Matches the previous hardcoded defaults (`minconn=1`,
+        `maxconn=3`).
     max_cited_sources : int
         Maximum number of entries allowed in `cited_source_ids`/
         `tool_calls`.
@@ -846,6 +885,8 @@ class FeedbackConfig(BaseModel):
     max_query_text_length: int = 2000
     max_answer_text_length: int = 8000
     max_cited_sources: int = 20
+    minconn: int = 1
+    maxconn: int = 3
 
 
 class AppConfig(BaseModel):

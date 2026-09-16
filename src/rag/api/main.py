@@ -5,8 +5,10 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
 
+import psycopg2.errors
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
+from psycopg2.pool import PoolError
 from pydantic import BaseModel
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
@@ -19,6 +21,7 @@ from rag.audit import log_audit_event
 from rag.config import AppConfig
 from rag.logging_config import configure_logging
 from rag.mcp.asgi import mount_mcp_app
+from rag.observability import metrics as observability_metrics
 from rag.observability.tracing import configure_tracing
 
 _config = get_config()
@@ -293,7 +296,64 @@ def _handle_rate_limit_exceeded(request: Request, exc: Exception) -> JSONRespons
     return JSONResponse(status_code=429, content={"detail": f"Rate limit exceeded: {detail}"})
 
 
+def _handle_pool_error(request: Request, exc: Exception) -> JSONResponse:
+    """Return a clean 503 when the DB connection pool is exhausted, no internal detail leaked.
+
+    `psycopg2.pool.ThreadedConnectionPool.getconn()` raises `PoolError`
+    immediately on exhaustion rather than queuing the caller, so a burst
+    of concurrent DB-touching requests beyond the pool's `maxconn` would
+    otherwise surface as an unhandled 500 with an internal exception
+    message in the response body.
+
+    Parameters
+    ----------
+    request : Request
+        The request that hit an exhausted pool.
+    exc : Exception
+        The `PoolError` raised. Typed as the base `Exception` to match
+        `Starlette.add_exception_handler`'s expected handler signature.
+
+    Returns
+    -------
+    JSONResponse
+        A 503 response with a generic detail message.
+    """
+    log_audit_event("database_pool_exhausted", path=request.url.path)
+    observability_metrics.observe_error("database")
+    return JSONResponse(status_code=503, content={"detail": "Service temporarily unavailable"})
+
+
+def _handle_integrity_error(request: Request, exc: Exception) -> JSONResponse:
+    """Return a clean 503 for a DB integrity-constraint violation, no internal detail leaked.
+
+    Catches `psycopg2.errors.IntegrityError` (and its subclasses, e.g.
+    `UniqueViolation`) as defense-in-depth: whether or not a given write
+    path already resolves this at the application level (e.g. an atomic
+    upsert), an uncaught constraint violation must never surface as an
+    unhandled 500 with a raw database error message in the response body.
+
+    Parameters
+    ----------
+    request : Request
+        The request whose write violated a DB constraint.
+    exc : Exception
+        The `IntegrityError` raised. Typed as the base `Exception` to
+        match `Starlette.add_exception_handler`'s expected handler
+        signature.
+
+    Returns
+    -------
+    JSONResponse
+        A 503 response with a generic detail message.
+    """
+    log_audit_event("database_integrity_violation", path=request.url.path)
+    observability_metrics.observe_error("database")
+    return JSONResponse(status_code=503, content={"detail": "Service temporarily unavailable"})
+
+
 app.add_exception_handler(RateLimitExceeded, _handle_rate_limit_exceeded)
+app.add_exception_handler(PoolError, _handle_pool_error)
+app.add_exception_handler(psycopg2.errors.IntegrityError, _handle_integrity_error)
 app.add_middleware(SlowAPIMiddleware)
 
 app.include_router(health.router)

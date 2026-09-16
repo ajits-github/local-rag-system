@@ -268,6 +268,8 @@ class PgVectorStore(VectorStore):
         minconn: int = 1,
         maxconn: int = 5,
         cross_tenant_support_roles: list[str] | None = None,
+        connect_timeout_seconds: int = 5,
+        statement_timeout_ms: int = 30_000,
     ) -> None:
         """Open a threaded connection pool against `dsn`.
 
@@ -289,11 +291,25 @@ class PgVectorStore(VectorStore):
         cross_tenant_support_roles : list[str] | None, optional
             Server policy for `build_authorization_where_clause`, by
             default `["techfusion_support"]` when omitted.
+        connect_timeout_seconds : int, optional
+            `psycopg2.connect`'s `connect_timeout`, in seconds, by default
+            5. Bounds how long opening a new pooled connection can block.
+        statement_timeout_ms : int, optional
+            Postgres's own `statement_timeout`, in milliseconds, applied
+            via `options='-c statement_timeout=<ms>'` on every new
+            connection, by default 30000. Bounds how long any single query
+            can hold a pooled connection open.
         """
         self._documents_table = documents_table
         self._chunks_table = chunks_table
         self._distance_op = _DISTANCE_OPERATORS[distance_metric]
-        self._pool = ThreadedConnectionPool(minconn, maxconn, dsn)
+        self._pool = ThreadedConnectionPool(
+            minconn,
+            maxconn,
+            dsn,
+            connect_timeout=connect_timeout_seconds,
+            options=f"-c statement_timeout={statement_timeout_ms}",
+        )
         self._cross_tenant_support_roles = (
             cross_tenant_support_roles
             if cross_tenant_support_roles is not None
