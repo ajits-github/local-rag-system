@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
+import pytest
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
@@ -10,6 +12,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from starlette.datastructures import Headers
 
+import rag.api.deps as deps
 from rag.api.auth import VerifiedIdentity
 from rag.api.deps import _rate_limit_key, get_rate_limiter
 
@@ -44,6 +47,43 @@ def test_key_falls_back_to_client_ip_when_no_identity():
     key = _rate_limit_key(request)
 
     assert key.startswith("ip:")
+
+
+def _fake_config_with_rate_limit_key(key: str) -> SimpleNamespace:
+    """Build a minimal object exposing only the attribute path `_rate_limit_key` reads."""
+    return SimpleNamespace(security=SimpleNamespace(rate_limit=SimpleNamespace(key=key)))
+
+
+def test_key_ip_buckets_by_client_ip_even_with_a_tenant_identity_present(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """`security.rate_limit.key: ip` always buckets by client IP, overriding tenant bucketing.
+
+    Confirms `_rate_limit_key` actually reads `config.security.rate_limit.key`
+    rather than unconditionally preferring tenant_id -- the bug this fix
+    closes (the field used to be configured but ignored).
+    """
+    monkeypatch.setattr(deps, "get_config", lambda: _fake_config_with_rate_limit_key("ip"))
+    request = Request(_scope())
+    request.state.identity = VerifiedIdentity(subject="alice", tenant_id="tenant_alpha", roles=[])
+
+    key = _rate_limit_key(request)
+
+    assert key.startswith("ip:")
+    assert "tenant_alpha" not in key
+
+
+def test_key_tenant_still_prefers_tenant_when_explicitly_configured(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """`security.rate_limit.key: tenant` (the default) keeps the existing tenant-first behavior."""
+    monkeypatch.setattr(deps, "get_config", lambda: _fake_config_with_rate_limit_key("tenant"))
+    request = Request(_scope())
+    request.state.identity = VerifiedIdentity(subject="alice", tenant_id="tenant_alpha", roles=[])
+
+    key = _rate_limit_key(request)
+
+    assert key == "tenant:tenant_alpha"
 
 
 def test_disabled_by_default_limiter_never_blocks():

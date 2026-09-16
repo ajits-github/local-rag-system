@@ -181,9 +181,18 @@ def get_current_identity(
 
 
 def _rate_limit_key(request: Request) -> str:
-    """Bucket rate-limit counters by tenant (if identified), else client IP."""
+    """Bucket rate-limit counters per `security.rate_limit.key`.
+
+    `"ip"` always buckets by client IP, regardless of identity. `"tenant"`
+    (the default) buckets by the verified identity's `tenant_id` when
+    present, falling back to client IP otherwise. The config value is
+    read once, at process start (`get_config()` is itself `lru_cache`d),
+    matching every other config-derived singleton in this module -- a
+    key-mode change requires a process restart, same as `enabled`.
+    """
+    key_mode = get_config().security.rate_limit.key
     identity: VerifiedIdentity | None = getattr(request.state, "identity", None)
-    if identity is not None and identity.tenant_id is not None:
+    if key_mode == "tenant" and identity is not None and identity.tenant_id is not None:
         return f"tenant:{identity.tenant_id}"
     return f"ip:{get_remote_address(request)}"
 
@@ -192,9 +201,9 @@ def _rate_limit_key(request: Request) -> str:
 def get_rate_limiter() -> Limiter:
     """Return the process-wide `slowapi.Limiter` singleton (in-memory backend).
 
-    Bucketed per tenant when a verified identity is present, else per
-    client IP. `enabled` is
-    read from config once at construction time (no hot-reload, matching
-    every other config-derived singleton in this module).
+    Bucketed per `security.rate_limit.key` (see `_rate_limit_key`).
+    `enabled` is read from config once at construction time (no
+    hot-reload, matching every other config-derived singleton in this
+    module).
     """
     return Limiter(key_func=_rate_limit_key, enabled=get_config().security.rate_limit.enabled)
