@@ -50,6 +50,11 @@ _EVIDENCE_SUMMARY_CHARS = 400
 _INSUFFICIENT_EVIDENCE_ANSWER = (
     "I don't have enough authorized, retrieved evidence to answer this question confidently."
 )
+_LOW_CONFIDENCE_EVIDENCE_ANSWER = (
+    "I was not able to gather enough evidence to answer this question with confidence "
+    "after exhausting the allowed retrieval attempts. The sources below may be partially "
+    "relevant, but this should be treated as a low-confidence, unverified answer."
+)
 
 OnAgentEvent = Callable[[AgentEvent], None]
 
@@ -735,19 +740,9 @@ def _order_evidence_for_synthesis(evidence: list[SearchResult]) -> list[SearchRe
     )
 
 
-def _synthesize(state: AgentState, llm: LLM, template: PromptTemplate) -> AgentState:
-    """Render accumulated evidence into a cited final answer.
-
-    Evidence is reordered first (see `_order_evidence_for_synthesis`), and
-    the generated answer is passed through
-    `sanitize_redaction_markers_in_answer` before being stored.
-    """
-    ordered_evidence = _order_evidence_for_synthesis(state.retrieved_evidence)
-    context = build_context(ordered_evidence)
-    system, user = template.render(context=context, query=state.original_query)
-    state.final_answer = sanitize_redaction_markers_in_answer(llm.generate(system, user))
-    _accumulate_tokens(state, llm, "synthesize")
-    state.citations = [
+def _citations_from_evidence(evidence: list[SearchResult]) -> list[Citation]:
+    """Build one `Citation` per `SearchResult`, in the given order."""
+    return [
         Citation(
             chunk_id=r.chunk.metadata.chunk_id,
             document_id=r.chunk.metadata.document_id,
@@ -762,8 +757,23 @@ def _synthesize(state: AgentState, llm: LLM, template: PromptTemplate) -> AgentS
             vision_generated=r.chunk.metadata.vision_generated,
             origin=r.origin,
         )
-        for r in ordered_evidence
+        for r in evidence
     ]
+
+
+def _synthesize(state: AgentState, llm: LLM, template: PromptTemplate) -> AgentState:
+    """Render accumulated evidence into a cited final answer.
+
+    Evidence is reordered first (see `_order_evidence_for_synthesis`), and
+    the generated answer is passed through
+    `sanitize_redaction_markers_in_answer` before being stored.
+    """
+    ordered_evidence = _order_evidence_for_synthesis(state.retrieved_evidence)
+    context = build_context(ordered_evidence)
+    system, user = template.render(context=context, query=state.original_query)
+    state.final_answer = sanitize_redaction_markers_in_answer(llm.generate(system, user))
+    _accumulate_tokens(state, llm, "synthesize")
+    state.citations = _citations_from_evidence(ordered_evidence)
     if state.termination_reason is None:
         state.termination_reason = "synthesized"
     return state
@@ -778,11 +788,61 @@ def _insufficient_evidence_response(state: AgentState) -> AgentState:
     return state
 
 
+def _bound_reached_with_insufficient_evidence(state: AgentState) -> bool:
+    """Return True when a step/retrieval-attempt ceiling was hit right after a "not enough" verdict.
+
+    Scoped deliberately to `max_steps`/`max_retrieval_attempts`: these are
+    the only two termination reasons that can immediately follow
+    `_evaluate_evidence` setting `evidence_sufficient=False` (see the
+    `run_agent` loop -- a genuine convergence is checked and broken out of
+    *before* either bound check runs, so this never fires for a real
+    "sufficient" answer). A `max_tool_calls` cutoff, a failed tool-selection
+    JSON parse, or a just-completed write-action tool call can also stop the
+    loop with a stale `evidence_sufficient=False` left over from an earlier
+    iteration, so this deliberately checks `termination_reason` too rather
+    than testing `evidence_sufficient` alone -- those cases still get a full
+    synthesis call, exactly as before this function existed.
+    """
+    return state.evidence_sufficient is False and state.termination_reason in (
+        "max_steps",
+        "max_retrieval_attempts",
+    )
+
+
+def _low_confidence_evidence_response(state: AgentState) -> AgentState:
+    """Terminal node when a step/attempt ceiling is hit with insufficient, non-empty evidence.
+
+    Distinct from `_insufficient_evidence_response` (which only fires when no
+    evidence was ever gathered): some evidence was gathered here, so it is
+    still cited, but the answer text is a fixed, deterministic hedge rather
+    than a full LLM synthesis call. The model's own last evidence-
+    sufficiency verdict already said this evidence is not enough; relying on
+    `agent_synthesize_v2.yaml`'s own prompt rule to hedge accordingly in
+    that exact situation is not a reliable guarantee -- the same reasoning
+    already applied to `sanitize_redaction_markers_in_answer` and
+    `_looks_like_case_mutation_request` elsewhere in this module. No
+    further LLM call is made; `state.termination_reason` is left as
+    whatever the caller already set (`max_steps`/`max_retrieval_attempts`).
+    """
+    state.final_answer = _LOW_CONFIDENCE_EVIDENCE_ANSWER
+    state.citations = _citations_from_evidence(state.retrieved_evidence)
+    return state
+
+
 def _finalize(state: AgentState, llm: LLM, synthesize_template: PromptTemplate) -> AgentState:
-    """Route to `synthesize` if evidence was gathered, else the insufficient-evidence response."""
-    if state.retrieved_evidence:
-        return _synthesize(state, llm, synthesize_template)
-    return _insufficient_evidence_response(state)
+    """Route to the deterministic responses, or `synthesize`, based on what evidence exists.
+
+    No evidence at all -> `_insufficient_evidence_response`. Evidence
+    exists but the model's own last verdict said it was not enough, at a
+    genuine step/attempt ceiling -> `_low_confidence_evidence_response`
+    (see `_bound_reached_with_insufficient_evidence`). Otherwise -> a full
+    `_synthesize` LLM call.
+    """
+    if not state.retrieved_evidence:
+        return _insufficient_evidence_response(state)
+    if _bound_reached_with_insufficient_evidence(state):
+        return _low_confidence_evidence_response(state)
+    return _synthesize(state, llm, synthesize_template)
 
 
 def _finalize_timed(
@@ -793,15 +853,17 @@ def _finalize_timed(
     t_start: float,
 ) -> AgentState:
     """`run_agent`'s entrypoint into `_finalize`, timing the `synthesize` node when it runs."""
-    if state.retrieved_evidence:
-        _emit_event(on_event, "synthesis_started", state, t_start=t_start)
-        return _call_node(
-            "synthesize",
-            state,
-            lambda: _synthesize(state, timed_llm, templates["synthesize"]),
-            timed_llm=timed_llm,
-        )
-    return _insufficient_evidence_response(state)
+    if not state.retrieved_evidence:
+        return _insufficient_evidence_response(state)
+    if _bound_reached_with_insufficient_evidence(state):
+        return _low_confidence_evidence_response(state)
+    _emit_event(on_event, "synthesis_started", state, t_start=t_start)
+    return _call_node(
+        "synthesize",
+        state,
+        lambda: _synthesize(state, timed_llm, templates["synthesize"]),
+        timed_llm=timed_llm,
+    )
 
 
 def _run_classic_rag(
