@@ -49,7 +49,7 @@ def test_render_table_includes_row_per_record():
     table = compare_experiments.render_table([_record()])
     expected_row = (
         "| experiment_001 | baseline | dense | qwen2.5:1.5b | all-MiniLM-L6-v2 | none | - | - "
-        "| 0.891 | 0.967 | 0.978 | 0.847 | 0.432 | - | - | - | - | 3.7s | techfusion "
+        "| 0.891 | 0.967 | 0.978 | 0.847 | 0.432 | - | - | - | - | 3.7s | techfusion | ? "
         "| 2026-08-05 |"
     )
     assert expected_row in table
@@ -130,10 +130,31 @@ def test_render_table_handles_missing_metrics_gracefully():
     row = table.splitlines()[-1]
     expected_row = (
         "| experiment_001 | baseline | dense | qwen2.5:1.5b | all-MiniLM-L6-v2 | none | - | - "
-        "| 0.891 | 0.967 | 0.978 | 0.847 | - | - | - | - | - | - | techfusion "
+        "| 0.891 | 0.967 | 0.978 | 0.847 | - | - | - | - | - | - | techfusion | ? "
         "| 2026-08-05 |"
     )
     assert row == expected_row
+
+
+def test_render_table_shows_gold_n_when_present():
+    """render_table shows corpus_gold_record_count in a visible N column."""
+    table = compare_experiments.render_table([_record(corpus_gold_record_count=25)])
+    row = table.splitlines()[-1]
+    assert "| techfusion | 25 | 2026-08-05 |" in row
+
+
+def test_render_table_shows_question_mark_for_unknown_gold_n():
+    """render_table shows "?" (not "-") for a genuinely unknown sample size."""
+    table = compare_experiments.render_table([_record()])
+    row = table.splitlines()[-1]
+    assert "| techfusion | ? | 2026-08-05 |" in row
+
+
+def test_render_table_header_includes_n_column():
+    """The rendered header names the new sample-size column "N"."""
+    table = compare_experiments.render_table([_record()])
+    header = table.splitlines()[0]
+    assert "| N |" in header
 
 
 def test_load_records_sorts_by_experiment_id(tmp_path: Path):

@@ -34,6 +34,7 @@ def compute_corpus_lineage(
     dataset_id: str,
     corpus_version: str,
     gold_path: Path,
+    gold_record_count: int | None = None,
 ) -> dict[str, Any]:
     """Snapshot corpus/gold identity for `dataset_id`, as of right now.
 
@@ -47,6 +48,15 @@ def compute_corpus_lineage(
         Caller-supplied free-form version label; not auto-generated.
     gold_path : Path
         Path to the gold JSONL file this eval run scores against.
+    gold_record_count : int | None, optional
+        Override for the reported gold record count. When `None` (the
+        default), counts every non-blank line in `gold_path` -- correct
+        for a run that scores the whole gold file. A caller that only
+        scores a *sample* of it (e.g. `run_ragas_eval.run_ragas`'s
+        `--sample-size` slice) must pass the actual number of examples
+        scored here instead, so a reader of the recorded experiment can
+        tell a 15-question sample from an 84-question full-corpus run
+        rather than reading both as the same gold file's total size.
 
     Returns
     -------
@@ -66,7 +76,11 @@ def compute_corpus_lineage(
     versions = vectorstore.list_document_versions(dataset_id)
 
     gold_bytes = gold_path.read_bytes()
-    gold_record_count = sum(1 for line in gold_bytes.splitlines() if line.strip())
+    resolved_gold_record_count = (
+        gold_record_count
+        if gold_record_count is not None
+        else sum(1 for line in gold_bytes.splitlines() if line.strip())
+    )
 
     return {
         "dataset_id": dataset_id,
@@ -77,7 +91,7 @@ def compute_corpus_lineage(
         "active_document_count": sum(1 for v in versions if v.status == "active"),
         "superseded_document_count": sum(1 for v in versions if v.status == "superseded"),
         "tenant_count": len({v.tenant_id for v in versions if v.tenant_id}),
-        "gold_record_count": gold_record_count,
+        "gold_record_count": resolved_gold_record_count,
         "gold_file_sha256": hashlib.sha256(gold_bytes).hexdigest(),
         "corpus_digest": _corpus_digest(checksums),
     }

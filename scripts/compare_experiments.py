@@ -99,8 +99,8 @@ def render_table(records: list[dict[str, Any]]) -> str:
         "| Prompt | Rel.Exp | Recall@5 | Recall@10 "
         "| Hit Rate@10 | MRR | Answer quality | Supp.Ctx Hit | Img Hit "
         "| RAGAS Faithful | RAGAS Correct "
-        "| Total latency | Dataset | Date |\n"
-        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"
+        "| Total latency | Dataset | N | Date |\n"
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"
     )
     rows = [header]
     for r in records:
@@ -117,6 +117,11 @@ def render_table(records: list[dict[str, Any]]) -> str:
         total_latency_ms = r.get("total_latency_ms")
         total_latency = f"{total_latency_ms / 1000:.1f}s" if total_latency_ms is not None else "-"
         date = (r.get("timestamp") or "")[:10] or "-"
+        # "?" (not "-") for a genuinely unknown sample size, distinct from a
+        # metric that's simply absent -- a reader should never mistake an
+        # unknown N for a deliberately blank field.
+        gold_n = r.get("corpus_gold_record_count")
+        n_display = str(gold_n) if gold_n is not None else "?"
         rows.append(
             f"| {r.get('experiment_id', '?')} | {r.get('label') or r.get('experiment_id', '?')} "
             f"| {retrieval_provider} "
@@ -129,7 +134,7 @@ def render_table(records: list[dict[str, Any]]) -> str:
             f"| {_fmt(r.get('relevant_image_hit_rate'))} "
             f"| {_fmt(r.get('ragas_faithfulness'))} | {_fmt(r.get('ragas_answer_correctness'))} "
             f"| {total_latency} "
-            f"| {r.get('dataset_id', '?')} | {date} |"
+            f"| {r.get('dataset_id', '?')} | {n_display} | {date} |"
         )
     return "\n".join(rows)
 
