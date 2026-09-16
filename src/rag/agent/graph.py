@@ -392,7 +392,15 @@ _CASE_MUTATION_DIRECTIVE_RE = re.compile(
     r"\b(set|sets|setting|change|changes|changing|update|updates|updating|"
     r"mark|marks|marking|move|moves|moving|transition|transitions|transitioning)\b"
 )
-_CASE_STATUS_TARGET_RE = re.compile(r"\b(status|state|open|in.progress|resolved|closed)\b")
+# An explicit status VALUE, not the bare word "status"/"state": a directive
+# verb paired only with the bare word ("give me an update on ... status")
+# reads at least as often as a read-only question as a mutation request, so
+# the directive branch below requires an actual target value to fire.
+_CASE_STATUS_VALUE_RE = re.compile(r"\b(open|in.progress|resolved|closed)\b")
+# Case-identifying reference words a mutation request plausibly names its
+# subject with. Deliberately small and literal, mirroring the verb/directive
+# lists above -- "case" alone missed phrasings like "close ticket 1001".
+_CASE_REFERENCE_RE = re.compile(r"\b(case|ticket|request|issue)\b")
 
 
 def _looks_like_case_mutation_request(query: str) -> bool:
@@ -402,14 +410,26 @@ def _looks_like_case_mutation_request(query: str) -> bool:
     authorization, transition, and approval rules can run; this only
     ever widens routing toward the agent path, never infers authorization
     or approval itself.
+
+    Two conservative refinements on top of the base verb/directive check:
+    the directive branch (`update`/`change`/`mark`/...) requires an
+    explicit status *value* (`open`/`in_progress`/`resolved`/`closed`),
+    not just the bare word "status"/"state" -- otherwise a purely
+    informational question like "Can you give me an update on case
+    CASE-1001's status?" was misrouted onto the agent path. And the
+    case-identifying literal accepts a small synonym set
+    (case/ticket/request/issue), not just "case" -- otherwise a mutation
+    phrased without the word "case" (e.g. "close ticket 1001") fell
+    through entirely to the LLM's own classification, the exact failure
+    mode this deterministic override exists to close.
     """
     lowered = query.lower()
-    if "case" not in lowered:
+    if not _CASE_REFERENCE_RE.search(lowered):
         return False
     if _CASE_MUTATION_VERB_RE.search(lowered):
         return True
     return bool(
-        _CASE_MUTATION_DIRECTIVE_RE.search(lowered) and _CASE_STATUS_TARGET_RE.search(lowered)
+        _CASE_MUTATION_DIRECTIVE_RE.search(lowered) and _CASE_STATUS_VALUE_RE.search(lowered)
     )
 
 
