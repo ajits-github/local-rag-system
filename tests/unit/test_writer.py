@@ -131,15 +131,23 @@ def test_per_span_metadata_varies_chunk_to_chunk():
     assert chunks[2].metadata.code_language is None
 
 
-def test_write_persists_chunks_to_vectorstore():
-    """write() calls add_chunks with every constructed Chunk."""
+def test_write_builds_chunks_without_persisting_them():
+    """write() builds and returns Chunks but never calls add_chunks itself.
+
+    Persistence moved to `IngestionPipeline.ingest_file`, which passes
+    write()'s returned chunks to `VectorStore.replace_document_chunks` so
+    the checksum commit and chunk write happen atomically (see that
+    method's docstring). `write()` staying persistence-free is what makes
+    that possible: it can be called before the vectorstore write without
+    any risk of a partial, already-committed chunk write.
+    """
     vectorstore = FakeVectorStore()
     writer = Writer(FakeEmbedder(), vectorstore)
     spans = [ChunkSpan(text="one"), ChunkSpan(text="two")]
 
     chunks = writer.write(_raw_document(), "doc-1", spans, dataset_id="ds")
 
-    assert vectorstore.written_chunks == chunks
+    assert vectorstore.written_chunks == []
     assert [c.id for c in chunks] == ["doc-1_0", "doc-1_1"]
 
 

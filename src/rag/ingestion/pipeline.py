@@ -195,13 +195,17 @@ class IngestionPipeline:
             )
             return {"document_id": document_id, "chunks_written": 0, "changed": False}
 
-        self._vectorstore.delete_chunks_by_document_id(document_id)
-
         cleaned = self._cleaner.clean(raw_document.content)
         chunk_spans = self._chunker.split(cleaned, source_type=raw_document.source_type)
         chunks = self._writer.write(
             raw_document, document_id, chunk_spans, dataset_id=dataset_id, category=category
         )
+        # Commits the checksum and replaces this document's chunks in one
+        # atomic transaction (see `VectorStore.replace_document_chunks`'s
+        # docstring) -- the checksum is never durably written standalone,
+        # so a failure here can never leave it advanced past what `chunks`
+        # actually holds.
+        self._vectorstore.replace_document_chunks(document_id, checksum, chunks)
 
         logger.info(
             "ingested_document",

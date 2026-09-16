@@ -23,6 +23,112 @@ from rag.vectorstore.base import ALLOWED_FILTER_FIELDS, VectorStore
 _DISTANCE_OPERATORS = {"cosine": "<=>", "l2": "<->", "inner_product": "<#>"}
 _TOKEN_RE = re.compile(r"\w+")
 
+# Placeholder `documents.checksum` value for a row whose real checksum has
+# not yet been durably committed together with its chunks (see
+# `PgVectorStore.get_or_create_document_id`/`replace_document_chunks`). A
+# real checksum is always a 64-character sha256 hex digest, so this can
+# never collide with one -- a document holding this sentinel is always
+# correctly reported as `changed` on its next `get_or_create_document_id`
+# call, whether it's brand new or mid-retry after an interrupted write.
+_PENDING_CHECKSUM = ""
+
+_INSERT_CHUNKS_SQL_TEMPLATE = """INSERT INTO {chunks_table}
+    (chunk_id, document_id, chunk_index, content, embedding,
+     source, source_type, title, author, url,
+     created_at, last_modified, language, category, dataset_id,
+     content_type, section_path, code_language, table_headers,
+     attachment_name, source_anchor, parent_chunk_id,
+     vision_generated, vision_description, sensitive_field_ids,
+     tenant_id, allowed_roles, classification, status,
+     document_version, effective_from, trust_level,
+     doc_source_type, supersedes_source, page)
+    VALUES %s
+    ON CONFLICT (chunk_id) DO UPDATE SET
+        content = EXCLUDED.content,
+        embedding = EXCLUDED.embedding,
+        last_modified = EXCLUDED.last_modified,
+        category = EXCLUDED.category,
+        dataset_id = EXCLUDED.dataset_id,
+        content_type = EXCLUDED.content_type,
+        section_path = EXCLUDED.section_path,
+        code_language = EXCLUDED.code_language,
+        table_headers = EXCLUDED.table_headers,
+        attachment_name = EXCLUDED.attachment_name,
+        source_anchor = EXCLUDED.source_anchor,
+        parent_chunk_id = EXCLUDED.parent_chunk_id,
+        vision_generated = EXCLUDED.vision_generated,
+        vision_description = EXCLUDED.vision_description,
+        sensitive_field_ids = EXCLUDED.sensitive_field_ids,
+        tenant_id = EXCLUDED.tenant_id,
+        allowed_roles = EXCLUDED.allowed_roles,
+        classification = EXCLUDED.classification,
+        status = EXCLUDED.status,
+        document_version = EXCLUDED.document_version,
+        effective_from = EXCLUDED.effective_from,
+        trust_level = EXCLUDED.trust_level,
+        doc_source_type = EXCLUDED.doc_source_type,
+        supersedes_source = EXCLUDED.supersedes_source,
+        page = EXCLUDED.page"""
+
+
+def _chunk_rows(chunks: list[Chunk]) -> list[tuple[Any, ...]]:
+    """Build the `_INSERT_CHUNKS_SQL_TEMPLATE`-shaped row tuples for `chunks`.
+
+    Shared by `add_chunks` and `replace_document_chunks` so both insert
+    paths stay in sync with the same column order.
+
+    Parameters
+    ----------
+    chunks : list[Chunk]
+        Chunks to convert, each with its embedding already set.
+
+    Returns
+    -------
+    list[tuple[Any, ...]]
+        One row tuple per chunk, in `_INSERT_CHUNKS_SQL_TEMPLATE` column order.
+    """
+    return [
+        (
+            c.metadata.chunk_id,
+            c.metadata.document_id,
+            c.metadata.chunk_index,
+            c.content,
+            c.embedding,
+            c.metadata.source,
+            c.metadata.source_type,
+            c.metadata.title,
+            c.metadata.author,
+            c.metadata.url,
+            c.metadata.created_at,
+            c.metadata.last_modified,
+            c.metadata.language,
+            c.metadata.category,
+            c.metadata.dataset_id,
+            c.metadata.content_type,
+            c.metadata.section_path,
+            c.metadata.code_language,
+            c.metadata.table_headers,
+            c.metadata.attachment_name,
+            c.metadata.source_anchor,
+            c.metadata.parent_chunk_id,
+            c.metadata.vision_generated,
+            c.metadata.vision_description,
+            c.metadata.sensitive_field_ids,
+            c.metadata.tenant_id,
+            c.metadata.allowed_roles,
+            c.metadata.classification,
+            c.metadata.status,
+            c.metadata.document_version,
+            c.metadata.effective_from,
+            c.metadata.trust_level,
+            c.metadata.doc_source_type,
+            c.metadata.supersedes_source,
+            c.metadata.page,
+        )
+        for c in chunks
+    ]
+
+
 # Columns shared by search()'s and search_keyword()'s SELECTs (everything
 # except the dense-only `embedding`/`distance` and keyword-only ranking).
 _METADATA_COLUMNS = """chunk_id, document_id, chunk_index, content,
@@ -333,37 +439,57 @@ class PgVectorStore(VectorStore):
     def get_or_create_document_id(
         self, source: str, checksum: str, dataset_id: str
     ) -> tuple[str, bool]:
-        """See `VectorStore.get_or_create_document_id`."""
+        """See `VectorStore.get_or_create_document_id`.
+
+        Resolves (or creates) the document_id atomically and race-safely:
+        `INSERT ... ON CONFLICT (source, dataset_id) DO NOTHING` means two
+        concurrent first-time callers for the same brand-new
+        `(source, dataset_id)` both resolve to the SAME winning
+        document_id, instead of the loser raising an unhandled
+        `UniqueViolation` from a bare `SELECT`-then-`INSERT`.
+
+        Deliberately does NOT persist the real `checksum` here (a brand
+        new row is inserted with the `_PENDING_CHECKSUM` sentinel, not
+        `checksum` itself; an existing row's checksum is only read, never
+        written). The real checksum is only ever committed by
+        `replace_document_chunks`, in the same transaction as the chunks
+        it belongs to -- see that method's docstring for the corruption
+        this closes (a checksum committed standalone, ahead of chunks that
+        then fail to write, used to leave `changed` reading `False`
+        forever on retry).
+        """
+        candidate_id = str(uuid.uuid4())
+        now = datetime.now(UTC)
         with self._connection() as conn:
             with conn, conn.cursor() as cur:
                 cur.execute(
-                    f"""SELECT document_id, checksum FROM {self._documents_table}
-                        WHERE source = %s AND dataset_id = %s""",
-                    (source, dataset_id),
+                    f"""INSERT INTO {self._documents_table}
+                        (document_id, source, dataset_id, checksum,
+                         created_at, last_modified)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (source, dataset_id) DO NOTHING
+                        RETURNING document_id, checksum""",
+                    (candidate_id, source, dataset_id, _PENDING_CHECKSUM, now, now),
                 )
                 row = cur.fetchone()
-                now = datetime.now(UTC)
-
                 if row is None:
-                    document_id = str(uuid.uuid4())
                     cur.execute(
-                        f"""INSERT INTO {self._documents_table}
-                            (document_id, source, dataset_id, checksum,
-                             created_at, last_modified)
-                            VALUES (%s, %s, %s, %s, %s, %s)""",
-                        (document_id, source, dataset_id, checksum, now, now),
+                        f"""SELECT document_id, checksum FROM {self._documents_table}
+                            WHERE source = %s AND dataset_id = %s""",
+                        (source, dataset_id),
                     )
-                    return document_id, True
-
+                    row = cur.fetchone()
+                # The fallback SELECT above only runs after the INSERT hit
+                # ON CONFLICT, meaning a row for (source, dataset_id)
+                # definitely exists; a still-empty result would indicate a
+                # concurrent delete racing this call, which this codebase
+                # has no code path for during normal ingestion.
+                assert row is not None, (
+                    f"documents row for (source={source!r}, dataset_id={dataset_id!r}) "
+                    "vanished between the conflicting INSERT and the fallback SELECT"
+                )
                 document_id, existing_checksum = row
                 changed = existing_checksum != checksum
-                if changed:
-                    cur.execute(
-                        f"""UPDATE {self._documents_table}
-                            SET checksum = %s, last_modified = %s
-                            WHERE document_id = %s""",
-                        (checksum, now, document_id),
-                    )
                 return str(document_id), changed
 
     def delete_chunks_by_document_id(self, document_id: str) -> None:
@@ -374,6 +500,52 @@ class PgVectorStore(VectorStore):
                     f"DELETE FROM {self._chunks_table} WHERE document_id = %s",
                     (document_id,),
                 )
+
+    def replace_document_chunks(self, document_id: str, checksum: str, chunks: list[Chunk]) -> None:
+        """See `VectorStore.replace_document_chunks`.
+
+        Commits the document's checksum, deletes its old chunks, and
+        inserts its new ones in ONE transaction (one pooled connection,
+        one `with conn:` scope), closing the CRITICAL data-loss bug this
+        was written to fix: previously, `get_or_create_document_id`
+        committed the new checksum in its own, already-closed transaction,
+        and chunk embedding/deletion/insertion happened afterward across
+        separate transactions of their own. A failure anywhere in that
+        window (an embedder OOM, a dropped DB connection, a killed
+        process) left `documents.checksum` already advanced to the new
+        value while `chunks` held stale or zero rows for that document --
+        and because the checksum already matched, every subsequent
+        re-ingestion attempt (including a deliberate retry) saw
+        `changed=False` and silently skipped rewriting chunks forever.
+
+        With this method as the only place `checksum` is ever durably
+        written (see `get_or_create_document_id`'s docstring), a failure
+        at any point in this transaction rolls back the checksum update
+        together with the chunk delete/insert, so `documents.checksum`
+        never advances past what `chunks` actually holds. The next
+        `get_or_create_document_id` call correctly reports `changed=True`
+        again and the write is retried, rather than being silently and
+        permanently skipped.
+        """
+        now = datetime.now(UTC)
+        with self._connection() as conn:
+            with conn, conn.cursor() as cur:
+                cur.execute(
+                    f"""UPDATE {self._documents_table}
+                        SET checksum = %s, last_modified = %s
+                        WHERE document_id = %s""",
+                    (checksum, now, document_id),
+                )
+                cur.execute(
+                    f"DELETE FROM {self._chunks_table} WHERE document_id = %s",
+                    (document_id,),
+                )
+                if chunks:
+                    psycopg2.extras.execute_values(
+                        cur,
+                        _INSERT_CHUNKS_SQL_TEMPLATE.format(chunks_table=self._chunks_table),
+                        _chunk_rows(chunks),
+                    )
 
     def delete_document(self, document_id: str) -> None:
         """See `VectorStore.delete_document`."""
@@ -482,86 +654,10 @@ class PgVectorStore(VectorStore):
             return
         with self._connection() as conn:
             with conn, conn.cursor() as cur:
-                rows = [
-                    (
-                        c.metadata.chunk_id,
-                        c.metadata.document_id,
-                        c.metadata.chunk_index,
-                        c.content,
-                        c.embedding,
-                        c.metadata.source,
-                        c.metadata.source_type,
-                        c.metadata.title,
-                        c.metadata.author,
-                        c.metadata.url,
-                        c.metadata.created_at,
-                        c.metadata.last_modified,
-                        c.metadata.language,
-                        c.metadata.category,
-                        c.metadata.dataset_id,
-                        c.metadata.content_type,
-                        c.metadata.section_path,
-                        c.metadata.code_language,
-                        c.metadata.table_headers,
-                        c.metadata.attachment_name,
-                        c.metadata.source_anchor,
-                        c.metadata.parent_chunk_id,
-                        c.metadata.vision_generated,
-                        c.metadata.vision_description,
-                        c.metadata.sensitive_field_ids,
-                        c.metadata.tenant_id,
-                        c.metadata.allowed_roles,
-                        c.metadata.classification,
-                        c.metadata.status,
-                        c.metadata.document_version,
-                        c.metadata.effective_from,
-                        c.metadata.trust_level,
-                        c.metadata.doc_source_type,
-                        c.metadata.supersedes_source,
-                        c.metadata.page,
-                    )
-                    for c in chunks
-                ]
                 psycopg2.extras.execute_values(
                     cur,
-                    f"""INSERT INTO {self._chunks_table}
-                        (chunk_id, document_id, chunk_index, content, embedding,
-                         source, source_type, title, author, url,
-                         created_at, last_modified, language, category, dataset_id,
-                         content_type, section_path, code_language, table_headers,
-                         attachment_name, source_anchor, parent_chunk_id,
-                         vision_generated, vision_description, sensitive_field_ids,
-                         tenant_id, allowed_roles, classification, status,
-                         document_version, effective_from, trust_level,
-                         doc_source_type, supersedes_source, page)
-                        VALUES %s
-                        ON CONFLICT (chunk_id) DO UPDATE SET
-                            content = EXCLUDED.content,
-                            embedding = EXCLUDED.embedding,
-                            last_modified = EXCLUDED.last_modified,
-                            category = EXCLUDED.category,
-                            dataset_id = EXCLUDED.dataset_id,
-                            content_type = EXCLUDED.content_type,
-                            section_path = EXCLUDED.section_path,
-                            code_language = EXCLUDED.code_language,
-                            table_headers = EXCLUDED.table_headers,
-                            attachment_name = EXCLUDED.attachment_name,
-                            source_anchor = EXCLUDED.source_anchor,
-                            parent_chunk_id = EXCLUDED.parent_chunk_id,
-                            vision_generated = EXCLUDED.vision_generated,
-                            vision_description = EXCLUDED.vision_description,
-                            sensitive_field_ids = EXCLUDED.sensitive_field_ids,
-                            tenant_id = EXCLUDED.tenant_id,
-                            allowed_roles = EXCLUDED.allowed_roles,
-                            classification = EXCLUDED.classification,
-                            status = EXCLUDED.status,
-                            document_version = EXCLUDED.document_version,
-                            effective_from = EXCLUDED.effective_from,
-                            trust_level = EXCLUDED.trust_level,
-                            doc_source_type = EXCLUDED.doc_source_type,
-                            supersedes_source = EXCLUDED.supersedes_source,
-                            page = EXCLUDED.page""",
-                    rows,
+                    _INSERT_CHUNKS_SQL_TEMPLATE.format(chunks_table=self._chunks_table),
+                    _chunk_rows(chunks),
                 )
 
     def search(
