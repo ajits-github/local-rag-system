@@ -554,8 +554,21 @@ def _execute_tool(
     try:
         args = arg_model.model_validate(decision.tool_args)
     except ValidationError as exc:
+        # Pydantic v2's default str(ValidationError) embeds each offending
+        # field's (truncated) input_value -- tool args originate from the
+        # LLM's own JSON decision, itself potentially influenced by
+        # prompt-injected retrieved content, so that could leak a bounded
+        # fragment of adversarial/retrieved text into the audit log.
+        # errors(include_input=False) reports only the error shape
+        # (field path + error type), matching the general tool-dispatch
+        # failure path below, which logs only error_type for the same reason.
+        error_shape = [
+            {"loc": e["loc"], "type": e["type"]} for e in exc.errors(include_input=False)
+        ]
         log_audit_event(
-            "agent_tool_argument_rejected", tool_name=decision.tool_name, reason=str(exc)[:200]
+            "agent_tool_argument_rejected",
+            tool_name=decision.tool_name,
+            reason=str(error_shape)[:200],
         )
         latency_ms = (time.perf_counter() - t0) * 1000
         state.tool_call_history.append(
