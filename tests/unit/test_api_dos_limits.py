@@ -5,7 +5,13 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from rag.api.deps import get_config, get_retrieval_pipeline
+from rag.api.deps import (
+    get_config,
+    get_embedder,
+    get_llm,
+    get_retrieval_pipeline,
+    get_vectorstore,
+)
 from rag.api.main import app
 from rag.config import load_config
 
@@ -141,3 +147,108 @@ def test_oversized_upload_returns_413(tmp_path, monkeypatch):
     finally:
         app.dependency_overrides.pop(get_config, None)
         app.dependency_overrides.pop(get_ingestion_pipeline, None)
+
+
+def test_oversized_dataset_id_returns_422(tmp_path, monkeypatch):
+    """A dataset_id form field longer than 200 characters is rejected with 422.
+
+    `dataset_id` previously had no `max_length` at all, unlike
+    `feedback.py`'s identifier fields (capped at 200 chars).
+    """
+    from rag.api.deps import get_ingestion_pipeline
+
+    monkeypatch.setattr("rag.api.routers.ingest.UPLOAD_DIR", tmp_path)
+
+    class _NeverCalledIngestionPipeline:
+        def ingest_file(self, path, dataset_id, caller=None, source_override=None):
+            raise AssertionError("ingest_file should never be reached for an oversized dataset_id")
+
+    app.dependency_overrides[get_ingestion_pipeline] = lambda: _NeverCalledIngestionPipeline()
+    try:
+        client = TestClient(app)
+        response = client.post(
+            "/ingest",
+            data={"dataset_id": "x" * 201},
+            files={"files": ("a.md", b"# hello", "text/markdown")},
+        )
+        assert response.status_code == 422
+        assert list(tmp_path.glob("*")) == []
+    finally:
+        app.dependency_overrides.pop(get_ingestion_pipeline, None)
+
+
+def test_unknown_filter_key_returns_422_not_500(client_and_pipeline):
+    """An unrecognized filters key is rejected with a clear 422, not an unhandled 500.
+
+    Before this fix, `PgVectorStore._build_where_clause` raised a bare
+    `ValueError` for a filter key outside `ALLOWED_FILTER_FIELDS`, which
+    nothing caught before it reached FastAPI's default unhandled-exception
+    path (an internal-error 500). This is now validated up front, at the
+    request boundary, before retrieval ever runs.
+    """
+    client, pipeline, _config = client_and_pipeline
+
+    response = client.post("/query", json={"query": "hi", "filters": {"bogus_field": "x"}})
+
+    assert response.status_code == 422
+    assert "bogus_field" in response.text
+    assert pipeline.calls == []
+
+
+class _FakeVectorStore:
+    """Minimal VectorStore double; never reached by a request rejected at the boundary."""
+
+    def health_check(self) -> bool:
+        """Report healthy, always."""
+        return True
+
+
+class _FakeEmbedder:
+    """Minimal Embedder double; never reached by a request rejected at the boundary."""
+
+    def embed_query(self, text):
+        """Return a placeholder vector."""
+        return [0.0]
+
+    def embed_documents(self, texts):
+        """Return one placeholder vector per input text."""
+        return [[0.0] for _ in texts]
+
+
+class _FakeLLM:
+    """Minimal LLM double; never reached by a request rejected at the boundary."""
+
+    def health_check(self) -> bool:
+        """Report healthy, always."""
+        return True
+
+    def generate(self, system: str, user: str) -> str:
+        """Never actually called in this test; present only to satisfy the LLM interface."""
+        raise AssertionError("generate() should never be reached for a rejected request")
+
+
+def test_agent_query_unknown_filter_key_returns_422_not_500():
+    """POST /agent/query rejects an unrecognized filters key with 422, matching /query."""
+    config = load_config()
+    pipeline = _RecordingPipeline()
+    app.dependency_overrides[get_config] = lambda: config
+    app.dependency_overrides[get_retrieval_pipeline] = lambda: pipeline
+    app.dependency_overrides[get_vectorstore] = lambda: _FakeVectorStore()
+    app.dependency_overrides[get_embedder] = lambda: _FakeEmbedder()
+    app.dependency_overrides[get_llm] = lambda: _FakeLLM()
+    try:
+        client = TestClient(app)
+
+        response = client.post(
+            "/agent/query", json={"query": "hi", "filters": {"bogus_field": "x"}}
+        )
+
+        assert response.status_code == 422
+        assert "bogus_field" in response.text
+        assert pipeline.calls == []
+    finally:
+        app.dependency_overrides.pop(get_config, None)
+        app.dependency_overrides.pop(get_retrieval_pipeline, None)
+        app.dependency_overrides.pop(get_vectorstore, None)
+        app.dependency_overrides.pop(get_embedder, None)
+        app.dependency_overrides.pop(get_llm, None)
