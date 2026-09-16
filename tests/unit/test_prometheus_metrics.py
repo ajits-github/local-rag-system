@@ -89,3 +89,29 @@ def test_metrics_endpoint_returns_404_when_disabled():
         assert response.status_code == 404
     finally:
         app.dependency_overrides.pop(get_config, None)
+
+
+def test_unmatched_routes_record_a_fixed_sentinel_label_not_the_raw_path():
+    """An unauthenticated caller cannot grow the `path` label's cardinality via 404 probes.
+
+    Before the fix, `RequestIDMiddleware` fell back to the raw, caller-
+    controlled `request.url.path` whenever Starlette left `scope["route"]`
+    unset (any unmatched/404 request), so hitting N distinct nonexistent
+    paths created N new, permanent Prometheus label series. This proves
+    two distinct bogus paths both collapse onto one fixed `"unmatched"`
+    label instead.
+    """
+    client = _client_with_config(enabled=True)
+    try:
+        first = client.get("/this-path-does-not-exist-abc123")
+        second = client.get("/another-bogus-path-xyz789")
+        assert first.status_code == 404
+        assert second.status_code == 404
+
+        text = client.get("/metrics").text
+
+        assert 'path="unmatched"' in text
+        assert "this-path-does-not-exist-abc123" not in text
+        assert "another-bogus-path-xyz789" not in text
+    finally:
+        app.dependency_overrides.pop(get_config, None)
