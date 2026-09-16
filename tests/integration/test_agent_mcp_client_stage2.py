@@ -9,14 +9,14 @@ as `tests/integration/test_mcp_end_to_end.py`) for the local-tool side,
 which these tests never exercise, and the real `rag.mcp.business.store`
 synthetic dataset for the business-tool side. No Postgres/Ollama needed --
 self-contained, always runs (the business store has no such dependency
-either). `_reset_case_store` restores the shared, in-memory case dataset
-after every test, since the `update_case_status` tests genuinely mutate it.
+either). The shared, autouse `_reset_case_store` fixture
+(`tests/conftest.py`) restores the in-memory case dataset after every
+test, since the `update_case_status` tests genuinely mutate it.
 """
 
 from __future__ import annotations
 
 import asyncio
-import copy
 import time
 
 import jwt
@@ -31,14 +31,6 @@ from rag.mcp.business.schemas import CaseApproval
 from rag.retrieval.authorization import AuthorizationContext
 
 _SECRET = "agent-mcp-stage2-e2e-secret-not-real"
-
-
-@pytest.fixture(autouse=True)
-def _reset_case_store():
-    original = copy.deepcopy(business_store._SYNTHETIC_CASES)
-    yield
-    business_store._SYNTHETIC_CASES.clear()
-    business_store._SYNTHETIC_CASES.update(original)
 
 
 class _FakeEmbedder:

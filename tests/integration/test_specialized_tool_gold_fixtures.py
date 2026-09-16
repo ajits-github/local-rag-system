@@ -13,8 +13,9 @@ Two independent groups:
 
 - MCP business-tool scenarios (the eight `specialized_mcp_case_read`/
   `specialized_mcp_case_action` gold rows): call `rag.mcp.business.store`
-  directly, no Postgres/Ollama needed. `_reset_case_store` restores the
-  shared in-memory `_SYNTHETIC_CASES` dict after every test, matching
+  directly, no Postgres/Ollama needed. The shared, autouse
+  `_reset_case_store` fixture (`tests/conftest.py`) restores the
+  in-memory `_SYNTHETIC_CASES` dict after every test, matching
   `test_mcp_business_case_actions.py`'s established pattern -- this suite
   adds no new mutation risk beyond what that file already accepts.
 - Local specialized-tool scenarios (the six `specialized_get_document`/
@@ -37,10 +38,6 @@ Two independent groups:
 """
 
 from __future__ import annotations
-
-import copy
-
-import pytest
 
 from rag.agent.tool_schemas import GetDocumentArgs, GetLatestDocumentArgs, GetRelatedContextArgs
 from rag.agent.tools import get_document, get_latest_document, get_related_context
@@ -95,14 +92,6 @@ def _secure_config(config):
 
 
 # --- MCP business-tool scenarios ------------------------------------------------------
-
-
-@pytest.fixture(autouse=True)
-def _reset_case_store():
-    original = copy.deepcopy(business_store._SYNTHETIC_CASES)
-    yield
-    business_store._SYNTHETIC_CASES.clear()
-    business_store._SYNTHETIC_CASES.update(original)
 
 
 def test_gold_case_status_success_case_1001_tenant_alpha_operator():
