@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import os
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
 
@@ -21,10 +23,65 @@ from rag.logging_config import configure_logging
 from rag.mcp.asgi import mount_mcp_app
 from rag.observability.tracing import configure_tracing
 
+logger = logging.getLogger(__name__)
+
+
+def _detect_worker_count() -> int | None:
+    """Best-effort process-worker-count signal from the `WEB_CONCURRENCY` env var.
+
+    `WEB_CONCURRENCY` is a common Gunicorn/Uvicorn convention for the
+    number of worker processes a supervisor spawns; nothing guarantees an
+    operator sets it, so `None` means "unknown," never "one."
+
+    Returns
+    -------
+    int | None
+        The parsed worker count, or `None` when unset or unparseable.
+    """
+    raw = os.environ.get("WEB_CONCURRENCY")
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return None
+
+
+def _warn_if_multi_worker_mcp_business_actions(config: AppConfig) -> None:
+    """Warn (never raise) when >1 worker is likely running with a mutating MCP tool enabled.
+
+    `rag.mcp.business.store`'s in-memory `_SYNTHETIC_CASES` dict and every
+    `api/deps.py` `lru_cache` singleton are process-local: with
+    `--workers N > 1`, each worker process would silently hold its own,
+    independently-mutated copy of the case store, breaking cross-worker
+    consistency for `update_case_status` with no error at all. Nothing in
+    this deployment currently sets `--workers` above 1, and the
+    `WEB_CONCURRENCY` convention isn't universally set/reliable, so this
+    only ever logs a warning, never raises -- a false negative (an actual
+    multi-worker deployment this check can't see) is possible, but a
+    false positive should never block startup.
+
+    Parameters
+    ----------
+    config : AppConfig
+        Application configuration.
+    """
+    if not config.mcp.business_actions.enabled:
+        return
+    worker_count = _detect_worker_count()
+    if worker_count is None or worker_count <= 1:
+        return
+    logger.warning(
+        "mcp_business_actions_multi_worker_risk",
+        extra={"worker_count": worker_count},
+    )
+
+
 _config = get_config()
 configure_logging(_config.app.log_level)
 configure_tracing(_config)
 _validate_mcp_client_startup_config(_config)
+_warn_if_multi_worker_mcp_business_actions(_config)
 
 # Built before the FastAPI app itself: when MCP is enabled, the app's own
 # lifespan (below) must also enter this sub-app's lifespan, since Starlette
