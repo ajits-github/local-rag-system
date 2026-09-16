@@ -23,7 +23,7 @@ export interface DebugInfo {
   requestId?: string;
 }
 
-export type MessageStatus = "pending" | "streaming" | "done" | "error";
+export type MessageStatus = "pending" | "streaming" | "done" | "error" | "cancelled";
 
 /** Local state for one message's feedback controls; mirrors POST /feedback's own rating/reason/comment shape. */
 export interface FeedbackState {

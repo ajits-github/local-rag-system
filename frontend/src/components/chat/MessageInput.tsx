@@ -13,8 +13,8 @@ const MAX_TEXTAREA_HEIGHT_PX = 160;
 
 export const MessageInput = forwardRef<
   MessageInputHandle,
-  { onSend: (text: string) => void; disabled: boolean }
->(function MessageInput({ onSend, disabled }, ref) {
+  { onSend: (text: string) => void; onCancel: () => void; disabled: boolean }
+>(function MessageInput({ onSend, onCancel, disabled }, ref) {
   const [value, setValue] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -61,9 +61,19 @@ export const MessageInput = forwardRef<
         disabled={disabled}
         aria-label="Message"
       />
-      <button type="button" onClick={submit} disabled={disabled || !value.trim()}>
-        Send
-      </button>
+      {disabled ? (
+        // Repurposes the send button into a Stop control while a request is
+        // in flight, matching common chat-UI conventions -- it stays
+        // enabled (the textarea alone reflects the disabled/busy state) so
+        // the in-flight request can actually be cancelled.
+        <button type="button" onClick={onCancel} className="message-input__stop-button">
+          Stop
+        </button>
+      ) : (
+        <button type="button" onClick={submit} disabled={!value.trim()}>
+          Send
+        </button>
+      )}
     </div>
   );
 });

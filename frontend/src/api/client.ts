@@ -13,7 +13,13 @@ export type RagApiErrorKind =
   | "not_found"
   | "backend_unavailable"
   | "malformed_response"
-  | "server_error";
+  | "server_error"
+  | "cancelled";
+
+/** True for the native AbortError a fetch (or its body-stream reader) rejects with when aborted. */
+export function isAbortError(err: unknown): boolean {
+  return err instanceof Error && err.name === "AbortError";
+}
 
 export class RagApiError extends Error {
   readonly kind: RagApiErrorKind;
@@ -124,6 +130,9 @@ export async function postJson(
       signal: options.signal,
     });
   } catch (cause) {
+    if (isAbortError(cause)) {
+      throw new RagApiError("cancelled", "Request was cancelled.");
+    }
     throw new RagApiError(
       "backend_unavailable",
       "Could not reach the backend. Is the API running?",

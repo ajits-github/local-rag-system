@@ -55,6 +55,7 @@ type ChatAction =
       insufficientEvidence: boolean;
     }
   | { type: "FAIL_ASSISTANT_MESSAGE"; id: string; kind: RagApiErrorKind; message: string }
+  | { type: "CANCEL_ASSISTANT_MESSAGE"; id: string }
   | { type: "SET_FEEDBACK"; id: string; feedback: FeedbackState }
   | { type: "NEW_CHAT" };
 
@@ -142,6 +143,11 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
             ? { ...m, status: "error", errorKind: action.kind, errorMessage: action.message }
             : m
         ),
+      };
+    case "CANCEL_ASSISTANT_MESSAGE":
+      return {
+        ...state,
+        messages: state.messages.map((m) => (m.id === action.id ? { ...m, status: "cancelled" } : m)),
       };
     case "SET_FEEDBACK":
       return {

@@ -1,4 +1,4 @@
-import { buildHeaders, getApiBase, RagApiError, type RequestOptions } from "./client";
+import { buildHeaders, getApiBase, isAbortError, RagApiError, type RequestOptions } from "./client";
 import { readSseFrames } from "../utils/sse";
 import {
   AgentEventSchema,
@@ -46,6 +46,9 @@ export async function postAgentQuery(
     body: JSON.stringify(buildAgentQueryRequestBody(query, identity)),
     signal: options.signal,
   }).catch((cause) => {
+    if (isAbortError(cause)) {
+      throw new RagApiError("cancelled", "Request was cancelled.");
+    }
     throw new RagApiError(
       "backend_unavailable",
       "Could not reach the backend. Is the API running?",
@@ -102,6 +105,9 @@ export async function* streamAgentQuery(
       signal: options.signal,
     });
   } catch (cause) {
+    if (isAbortError(cause)) {
+      throw new RagApiError("cancelled", "Request was cancelled.");
+    }
     throw new RagApiError(
       "backend_unavailable",
       "Could not reach the backend. Is the API running?",

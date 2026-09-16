@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import { postAgentQuery, streamAgentQuery } from "../api/agentQuery";
-import { RagApiError } from "../api/client";
+import { isAbortError, RagApiError } from "../api/client";
 import { postQuery } from "../api/query";
 import type { AgentQueryResponse, QueryResponse } from "../api/types";
 import { useChat } from "../state/chatContext";
@@ -92,6 +92,15 @@ export function useSendMessage() {
           throw err;
         }
       } catch (err) {
+        // A user-initiated cancel() surfaces either as a RagApiError("cancelled")
+        // (the initial fetch was aborted) or a raw AbortError propagating
+        // straight out of readSseFrames' body-stream reader (aborted
+        // mid-stream, after the response was already received) -- both are
+        // the same benign, expected outcome, never a real failure.
+        if ((err instanceof RagApiError && err.kind === "cancelled") || isAbortError(err)) {
+          dispatch({ type: "CANCEL_ASSISTANT_MESSAGE", id: assistantId });
+          return;
+        }
         const kind = err instanceof RagApiError ? err.kind : "server_error";
         const message = err instanceof Error ? err.message : "Something went wrong.";
         dispatch({ type: "FAIL_ASSISTANT_MESSAGE", id: assistantId, kind, message });

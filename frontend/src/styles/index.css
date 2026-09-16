@@ -563,6 +563,12 @@ body {
   cursor: not-allowed;
 }
 
+.message-input__stop-button {
+  background: var(--bg-elevated);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
 .collapsible-panel--dev {
   border: none;
 }
