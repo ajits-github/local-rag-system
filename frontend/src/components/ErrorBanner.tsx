@@ -9,6 +9,11 @@ const ERROR_COPY: Record<RagApiErrorKind, string> = {
   backend_unavailable: "Could not reach the backend. Is the API running (and is Ollama running for generation)?",
   malformed_response: "The server returned a response the UI could not understand.",
   server_error: "The server reported an error.",
+  // Not normally reached: useSendMessage intercepts a "cancelled" RagApiError
+  // and dispatches CANCEL_ASSISTANT_MESSAGE instead, which MessageBubble
+  // renders as its own neutral notice, not this banner. Kept here only so
+  // this Record stays exhaustive over every RagApiErrorKind.
+  cancelled: "Request cancelled.",
 };
 
 // Only meaningful in developer mode, where the panel it points at

@@ -45,6 +45,12 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
           <ErrorBanner kind={message.errorKind} message={message.errorMessage} />
         )}
 
+        {!isUser && message.status === "cancelled" && (
+          <div className="notice notice--cancelled" role="status">
+            Request cancelled.
+          </div>
+        )}
+
         {!isUser && message.status === "done" && (
           <>
             {message.insufficientEvidence && (

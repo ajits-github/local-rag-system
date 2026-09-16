@@ -2,12 +2,14 @@
 #
 # config/default.yaml optimizes for "clone repo, docker compose up, try
 # the demo" -- every security control ships off (authorization,
-# field_redaction, auth, rate_limit), tracing is off, and the agentic
-# path still points at the pre-fix v1 classify/synthesize prompts plus
-# the smallest local model (qwen2.5:1.5b). That is a reasonable default
-# for a local portfolio/dev setup, but it is a demo posture, not a
-# production-safe one -- nothing about it should be read as "secure by
-# default."
+# field_redaction, auth, rate_limit), tracing is off, and generation
+# still uses the smallest local model (qwen2.5:1.5b). default.yaml's
+# agent classify/synthesize prompts were bumped to v2 alongside this
+# file's own promotion (agentic-rag-reeval milestone, experiment_032),
+# so that axis no longer differs between the two files. That is still a
+# reasonable default for a local portfolio/dev setup, but it is a demo
+# posture, not a production-safe one -- nothing about it should be read
+# as "secure by default."
 #
 # This file is the counterpart: every security control this project has
 # actually built and validated, turned on. Point the running API at it
@@ -219,13 +221,13 @@ agent:
   max_tool_top_k: 20
   max_chunks_per_document_fetch: 10
   max_chunks_per_document_fetch_hard_ceiling: 50
-  classify_prompt_path: src/rag/prompts/templates/agent_classify_v2.yaml # not default.yaml's v1 --
+  classify_prompt_path: src/rag/prompts/templates/agent_classify_v2.yaml # matches default.yaml --
   # tightens the simple/complex boundary (agentic-rag-reeval milestone, experiment_032)
   decompose_prompt_path: src/rag/prompts/templates/agent_decompose_v1.yaml
   tool_select_prompt_path: src/rag/prompts/templates/agent_tool_select_v3.yaml # matches default.yaml's
   # already-promoted chunk_id-exposure fix
   evidence_sufficiency_prompt_path: src/rag/prompts/templates/agent_evidence_sufficiency_v1.yaml
-  synthesize_prompt_path: src/rag/prompts/templates/agent_synthesize_v2.yaml # not default.yaml's v1 --
+  synthesize_prompt_path: src/rag/prompts/templates/agent_synthesize_v2.yaml # matches default.yaml --
   # the concrete fix for the injection-compliance failure this profile exists to close;
   # see this file's header comment and ISSUES.md.
 

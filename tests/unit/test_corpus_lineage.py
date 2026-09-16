@@ -91,3 +91,27 @@ def test_compute_corpus_lineage_tenant_count_ignores_none(tmp_path: Path):
     ]
     lineage = compute_corpus_lineage(_FakeVectorStore({}, {}, {}, versions), "ds", "v1", gold_path)
     assert lineage["tenant_count"] == 2
+
+
+def test_compute_corpus_lineage_gold_record_count_override_reflects_sample_size(tmp_path: Path):
+    """An explicit gold_record_count reports the sample actually scored, not the full gold file.
+
+    `run_ragas_eval.run_ragas` only scores a `--sample-size` slice of a
+    much larger gold file; without this override, `gold_record_count`
+    would silently report the full file's row count (e.g. 84) even
+    though only 25 rows were actually judged.
+    """
+    gold_path = _write_gold(
+        tmp_path, ['{"question": "q1"}', '{"question": "q2"}', '{"question": "q3"}']
+    )
+    lineage = compute_corpus_lineage(
+        _FakeVectorStore({}, {}, {}, []), "ds", "v1", gold_path, gold_record_count=1
+    )
+    assert lineage["gold_record_count"] == 1
+
+
+def test_compute_corpus_lineage_gold_record_count_defaults_to_full_file_count(tmp_path: Path):
+    """With no override, gold_record_count still counts every non-blank line (unchanged default)."""
+    gold_path = _write_gold(tmp_path, ['{"question": "q1"}', '{"question": "q2"}'])
+    lineage = compute_corpus_lineage(_FakeVectorStore({}, {}, {}, []), "ds", "v1", gold_path)
+    assert lineage["gold_record_count"] == 2

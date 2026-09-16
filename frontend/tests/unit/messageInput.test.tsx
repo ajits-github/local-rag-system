@@ -7,12 +7,13 @@ import { MessageInput, type MessageInputHandle } from "../../src/components/chat
 function Harness({ disabled = false }: { disabled?: boolean }) {
   const ref = useRef<MessageInputHandle>(null);
   const onSend = vi.fn();
+  const onCancel = vi.fn();
   return (
     <>
       <button type="button" onClick={() => ref.current?.setValue("populated from outside")}>
         populate
       </button>
-      <MessageInput ref={ref} onSend={onSend} disabled={disabled} />
+      <MessageInput ref={ref} onSend={onSend} onCancel={onCancel} disabled={disabled} />
     </>
   );
 }
@@ -20,7 +21,7 @@ function Harness({ disabled = false }: { disabled?: boolean }) {
 describe("MessageInput", () => {
   it("sends on Enter and clears the field", async () => {
     const onSend = vi.fn();
-    render(<MessageInput onSend={onSend} disabled={false} />);
+    render(<MessageInput onSend={onSend} onCancel={vi.fn()} disabled={false} />);
     const user = userEvent.setup();
 
     await user.type(screen.getByLabelText("Message"), "hello there{Enter}");
@@ -31,7 +32,7 @@ describe("MessageInput", () => {
 
   it("does not send on Shift+Enter, and inserts a newline instead", async () => {
     const onSend = vi.fn();
-    render(<MessageInput onSend={onSend} disabled={false} />);
+    render(<MessageInput onSend={onSend} onCancel={vi.fn()} disabled={false} />);
     const user = userEvent.setup();
 
     await user.type(screen.getByLabelText("Message"), "line one{Shift>}{Enter}{/Shift}line two");
@@ -40,18 +41,46 @@ describe("MessageInput", () => {
     expect(screen.getByLabelText("Message")).toHaveValue("line one\nline two");
   });
 
-  it("disables the textarea and Send button while disabled, and never sends whitespace-only text", async () => {
+  it("disables the textarea while disabled, and never sends whitespace-only text", async () => {
     const onSend = vi.fn();
-    const { rerender } = render(<MessageInput onSend={onSend} disabled={true} />);
+    const { rerender } = render(
+      <MessageInput onSend={onSend} onCancel={vi.fn()} disabled={true} />
+    );
     expect(screen.getByLabelText("Message")).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
 
-    rerender(<MessageInput onSend={onSend} disabled={false} />);
+    rerender(<MessageInput onSend={onSend} onCancel={vi.fn()} disabled={false} />);
     expect(screen.getByRole("button", { name: "Send" })).toBeDisabled(); // still empty
 
     const user = userEvent.setup();
     await user.type(screen.getByLabelText("Message"), "   ");
     expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+  });
+
+  it("shows an enabled Stop button instead of Send while disabled (sending), and calls onCancel", async () => {
+    const onSend = vi.fn();
+    const onCancel = vi.fn();
+    render(<MessageInput onSend={onSend} onCancel={onCancel} disabled={true} />);
+    const user = userEvent.setup();
+
+    expect(screen.queryByRole("button", { name: "Send" })).not.toBeInTheDocument();
+    const stopButton = screen.getByRole("button", { name: "Stop" });
+    expect(stopButton).toBeEnabled();
+
+    await user.click(stopButton);
+
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the Send button again once no longer disabled", () => {
+    const { rerender } = render(
+      <MessageInput onSend={vi.fn()} onCancel={vi.fn()} disabled={true} />
+    );
+    expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument();
+
+    rerender(<MessageInput onSend={vi.fn()} onCancel={vi.fn()} disabled={false} />);
+
+    expect(screen.queryByRole("button", { name: "Stop" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send" })).toBeInTheDocument();
   });
 
   it("lets a caller populate the field via the imperative handle without sending it", async () => {
@@ -67,7 +96,7 @@ describe("MessageInput", () => {
   });
 
   it("grows the textarea height with content, capped at a maximum", async () => {
-    render(<MessageInput onSend={vi.fn()} disabled={false} />);
+    render(<MessageInput onSend={vi.fn()} onCancel={vi.fn()} disabled={false} />);
     const textarea = screen.getByLabelText("Message") as HTMLTextAreaElement;
 
     // jsdom has no real layout engine, so scrollHeight is stubbed here to

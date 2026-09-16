@@ -23,10 +23,11 @@ from typing import Any
 from rag.audit import log_audit_event
 from rag.config import AppConfig, load_config
 from rag.eval import ragas_cache, ragas_scorer
+from rag.eval.corpus_lineage import compute_corpus_lineage
 from rag.eval.egress_policy import apply_egress_policy
 from rag.eval.gold_schema import GoldExample, load_gold_jsonl
 from rag.eval.run_eval import _config_summary, evaluate
-from rag.factory import build_embedder, build_judge_llm
+from rag.factory import build_embedder, build_judge_llm, build_vectorstore
 from rag.generation.base import LLM
 from rag.retrieval.pipeline import RetrievalPipeline
 
@@ -163,10 +164,16 @@ def run_ragas(
     Returns
     -------
     dict[str, Any]
-        The same shape as `run_eval.run()`'s report, plus a `"ragas"` key.
+        The same shape as `run_eval.run()`'s report (including
+        `corpus_lineage`), plus a `"ragas"` key. `corpus_lineage.
+        gold_record_count` reflects the actual number of examples scored
+        in this run (the `sample_size` slice), not the full gold file's
+        row count -- see `compute_corpus_lineage`'s `gold_record_count`
+        parameter.
     """
     config = load_config(config_path) if config_path else load_config()
-    pipeline = RetrievalPipeline(config)
+    vectorstore = build_vectorstore(config)
+    pipeline = RetrievalPipeline(config, vectorstore=vectorstore)
     examples = load_gold_jsonl(gold_path)[:sample_size]
     base_result = evaluate(pipeline, examples, dataset_id, run_generation=True, config=config)
 
@@ -188,9 +195,13 @@ def run_ragas(
         }
     )
 
+    lineage = compute_corpus_lineage(
+        vectorstore, dataset_id, "unspecified", gold_path, gold_record_count=len(examples)
+    )
     return {
         "generated_at": datetime.now(UTC).isoformat(),
         "config": _config_summary(config),
+        "corpus_lineage": lineage,
         **base_result,
         "ragas": ragas_result,
     }

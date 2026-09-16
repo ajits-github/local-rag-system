@@ -26,7 +26,7 @@ def _make_result(chunk_id: str, content: str, source: str, score: float) -> Sear
 
 
 class _FakeVectorStore:
-    """Duck-typed VectorStore double: only implements what retrieve() calls."""
+    """Duck-typed VectorStore double: implements what retrieve() and compute_corpus_lineage call."""
 
     def __init__(self, results: list[SearchResult]) -> None:
         """Store the fixed results this double's search() will return."""
@@ -35,6 +35,22 @@ class _FakeVectorStore:
     def search(self, query_embedding, top_k, filters=None, auth=None) -> list[SearchResult]:
         """Return the fixed results, ignoring the query embedding/filters."""
         return self._results[:top_k]
+
+    def get_document_checksums(self, dataset_id: str) -> dict[str, str]:
+        """Return an empty checksum map -- these tests don't exercise corpus-lineage counts."""
+        return {}
+
+    def count_chunks_by_document(self, dataset_id: str) -> dict[str, int]:
+        """Return an empty per-document chunk count map."""
+        return {}
+
+    def count_chunks_by_content_type(self, dataset_id: str) -> dict[str, int]:
+        """Return an empty content-type count map."""
+        return {}
+
+    def list_document_versions(self, dataset_id: str) -> list[Any]:
+        """Return no document version metadata."""
+        return []
 
 
 class _FakeEmbedder:
@@ -137,13 +153,22 @@ def _fake_ragas_score(rows, judge_llm, embedder, cache=None) -> dict[str, Any]:
 
 
 def _patch_pipeline_backends(monkeypatch, results: list[SearchResult]) -> None:
-    """Redirect RetrievalPipeline's internal factory calls to fakes."""
-    monkeypatch.setattr(
-        "rag.retrieval.pipeline.build_vectorstore", lambda config: _FakeVectorStore(results)
-    )
+    """Redirect RetrievalPipeline's internal factory calls, and run_ragas_eval's own.
+
+    `run_ragas_eval.run_ragas` builds its own `VectorStore` directly (via
+    `rag.factory.build_vectorstore`, imported into `rag.eval.run_ragas_eval`)
+    so it can compute corpus lineage alongside the `RetrievalPipeline` it
+    also builds from that same instance -- both patched here to the same
+    fake so no real Postgres connection is ever attempted.
+    """
+    fake_vectorstore = _FakeVectorStore(results)
+    monkeypatch.setattr("rag.retrieval.pipeline.build_vectorstore", lambda config: fake_vectorstore)
     monkeypatch.setattr("rag.retrieval.pipeline.build_embedder", lambda config: _FakeEmbedder())
     monkeypatch.setattr("rag.retrieval.pipeline.build_reranker", lambda config: _FakeReranker())
     monkeypatch.setattr("rag.retrieval.pipeline.build_llm", lambda config: _FakeLLM())
+    monkeypatch.setattr(
+        "rag.eval.run_ragas_eval.build_vectorstore", lambda config: fake_vectorstore
+    )
 
 
 def _patch_ragas_backends(monkeypatch, judge_llm: _FakeLLM, cache: Any = None) -> None:
@@ -173,6 +198,25 @@ def test_run_ragas_slices_examples_to_sample_size(tmp_path, monkeypatch):
 
     assert report["num_examples"] == 2
     assert len(report["per_example"]) == 2
+
+
+def test_run_ragas_corpus_lineage_gold_record_count_reflects_sample_not_full_gold_file(
+    tmp_path, monkeypatch
+):
+    """corpus_lineage.gold_record_count reports the sample size actually scored.
+
+    The gold file itself has 3 rows; a sample_size=2 run must report 2,
+    not 3 -- otherwise a reader of the recorded experiment would read a
+    partial-sample run as if it covered the whole gold file.
+    """
+    gold_path = _write_gold(tmp_path)
+    results = [_make_result("c1", "content", "a.md", 1.0)]
+    _patch_pipeline_backends(monkeypatch, results)
+    _patch_ragas_backends(monkeypatch, _FakeLLM())
+
+    report = run_ragas_eval.run_ragas(gold_path, None, "test-dataset", sample_size=2)
+
+    assert report["corpus_lineage"]["gold_record_count"] == 2
 
 
 def test_run_ragas_skips_examples_missing_expected_answer(tmp_path, monkeypatch):

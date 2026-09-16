@@ -759,6 +759,33 @@ class PgVectorStore(VectorStore):
             results.append(SearchResult(chunk=chunk, score=float(scores[i])))
         return results
 
+    def count_excluded_by_authorization(
+        self, filters: dict[str, Any] | None, auth: AuthorizationContext
+    ) -> int:
+        """See `VectorStore.count_excluded_by_authorization`.
+
+        Two lightweight `SELECT COUNT(*)` queries over the same pooled
+        connection: one with only `filters` applied, one with `filters`
+        plus the authorization predicate. Never fetches or ranks rows.
+        """
+        where_sql, filter_params = _build_where_clause(filters)
+        auth_sql, auth_params = build_authorization_where_clause(
+            auth, self._cross_tenant_support_roles
+        )
+        restricted_sql = _combine_where_clauses(where_sql, auth_sql)
+
+        with self._connection() as conn, conn.cursor() as cur:
+            cur.execute(f"SELECT COUNT(*) FROM {self._chunks_table} {where_sql}", filter_params)
+            unrestricted_row = cur.fetchone()
+            unrestricted_count = unrestricted_row[0] if unrestricted_row else 0
+            cur.execute(
+                f"SELECT COUNT(*) FROM {self._chunks_table} {restricted_sql}",
+                [*filter_params, *auth_params],
+            )
+            restricted_row = cur.fetchone()
+            restricted_count = restricted_row[0] if restricted_row else 0
+        return max(unrestricted_count - restricted_count, 0)
+
     def get_chunks_by_ids(
         self, chunk_ids: list[str], auth: AuthorizationContext | None = None
     ) -> list[Chunk]:

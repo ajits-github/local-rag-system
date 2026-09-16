@@ -497,10 +497,10 @@ class RateLimitConfig(BaseModel):
     requests_per_minute : int
         Allowed requests per minute, per bucket.
     key : {"tenant", "ip"}
-        Bucketing key. Not currently read by the bucketing function
-        (`api/deps.py:_rate_limit_key`), which always buckets by the
-        verified identity's `tenant_id` when present, falling back to
-        client IP.
+        Bucketing key, read by `api/deps.py:_rate_limit_key`. `"tenant"`
+        (the default) buckets by the verified identity's `tenant_id` when
+        present, falling back to client IP; `"ip"` always buckets by
+        client IP, even when a verified identity is present.
 
     Notes
     -----

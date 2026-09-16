@@ -1,15 +1,15 @@
 """Unit tests for `rag.mcp.business.store.update_case_status`, the one write action.
 
 Mirrors `test_mcp_business_case_store.py`'s "plain function, no MCP
-protocol needed" convention. `_reset_case_store` restores the shared
-in-memory `_SYNTHETIC_CASES` dict after every test, since
-`update_case_status` is the first function in this module that mutates
-it and other test modules assume its seeded, unmutated state.
+protocol needed" convention. The shared, autouse `_reset_case_store`
+fixture (`tests/conftest.py`) restores the in-memory `_SYNTHETIC_CASES`
+dict after every test, since `update_case_status` is the first function
+in this module that mutates it and other test modules assume its seeded,
+unmutated state.
 """
 
 from __future__ import annotations
 
-import copy
 import logging
 
 import pytest
@@ -24,14 +24,6 @@ _SUPPORT_ROLES = ["techfusion_support"]
 
 def _identity(tenant_id: str, roles: list[str]) -> VerifiedIdentity:
     return VerifiedIdentity(subject="alice", tenant_id=tenant_id, roles=roles)
-
-
-@pytest.fixture(autouse=True)
-def _reset_case_store():
-    original = copy.deepcopy(store_module._SYNTHETIC_CASES)
-    yield
-    store_module._SYNTHETIC_CASES.clear()
-    store_module._SYNTHETIC_CASES.update(original)
 
 
 def _status_of(case_id: str) -> str:

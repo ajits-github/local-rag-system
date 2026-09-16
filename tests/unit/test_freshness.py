@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import logging
 from datetime import date
 
 from rag.retrieval.freshness import resolve_current_document_source, resolve_excluded_document_ids
 from rag.schemas import DocumentVersionInfo
 
 
-def _v(doc_id, source, status=None, effective_from=None, supersedes_source=None):
+def _v(doc_id, source, status=None, effective_from=None, supersedes_source=None, tenant_id=None):
     return DocumentVersionInfo(
         document_id=doc_id,
         source=source,
@@ -14,6 +15,7 @@ def _v(doc_id, source, status=None, effective_from=None, supersedes_source=None)
         document_version=None,
         effective_from=effective_from,
         supersedes_source=supersedes_source,
+        tenant_id=tenant_id,
     )
 
 
@@ -194,3 +196,116 @@ def test_resolve_current_document_source_no_active_member_falls_back_to_requeste
         _v("d2", "policy-v2.md", status="draft", supersedes_source="policy-v1.md"),
     ]
     assert resolve_current_document_source("policy-v1.md", versions) == "policy-v1.md"
+
+
+def test_different_tenants_with_matching_filenames_never_form_one_family():
+    """Two documents from different tenants sharing a same-tail filename never union.
+
+    Within one dataset_id, tenant_alpha's own pricing.md and tenant_beta's
+    own pricing.md could otherwise suffix-match into one version family
+    via a coincidental (or malicious) supersedes_source value, wrongly
+    excluding an unrelated tenant's current document from "current"
+    results. Document-level ACL is unaffected either way (this is a
+    freshness-resolution concern, not an authorization bypass) -- the
+    fix is that neither document ends up excluded here at all.
+    """
+    versions = [
+        _v("d1", "pricing.md", status="active", tenant_id="tenant_alpha"),
+        _v(
+            "d2",
+            "pricing.md",
+            status="active",
+            supersedes_source="pricing.md",
+            tenant_id="tenant_beta",
+        ),
+    ]
+    excluded = resolve_excluded_document_ids(versions, as_of=None, include_superseded=False)
+    assert excluded == set()
+    # Neither document redirects into the other tenant's version either.
+    assert resolve_current_document_source("pricing.md", versions) in {"pricing.md"}
+
+
+def test_same_tenant_matching_filenames_still_form_a_family():
+    """A shared tenant_id doesn't block a genuine same-tenant version family."""
+    versions = [
+        _v("d1", "pricing.md", status="superseded", tenant_id="tenant_alpha"),
+        _v(
+            "d2",
+            "pricing-v2.md",
+            status="active",
+            supersedes_source="pricing.md",
+            tenant_id="tenant_alpha",
+        ),
+    ]
+    excluded = resolve_excluded_document_ids(versions, as_of=None, include_superseded=False)
+    assert excluded == {"d1"}
+
+
+def test_null_tenant_id_still_links_normally():
+    """A None tenant_id on either side never blocks a family link (pre-governance content)."""
+    versions = [
+        _v("d1", "policy-v1.md", status="superseded", tenant_id=None),
+        _v(
+            "d2",
+            "policy-v2.md",
+            status="active",
+            supersedes_source="policy-v1.md",
+            tenant_id="tenant_alpha",
+        ),
+    ]
+    excluded = resolve_excluded_document_ids(versions, as_of=None, include_superseded=False)
+    assert excluded == {"d1"}
+
+
+def test_as_of_tie_on_effective_from_breaks_deterministically_by_document_id():
+    """Two family members tied on effective_from resolve to the same winner regardless of order.
+
+    document_id "d2" > "d1" lexicographically, so d2 must win either way.
+    """
+    tied_date = date(2026, 1, 1)
+    versions_a = [
+        _v("d1", "policy-a.md", effective_from=tied_date),
+        _v("d2", "policy-b.md", effective_from=tied_date, supersedes_source="policy-a.md"),
+    ]
+    versions_b = list(reversed(versions_a))
+
+    excluded_a = resolve_excluded_document_ids(
+        versions_a, as_of=tied_date, include_superseded=False
+    )
+    excluded_b = resolve_excluded_document_ids(
+        versions_b, as_of=tied_date, include_superseded=False
+    )
+
+    assert excluded_a == excluded_b == {"d1"}
+
+
+def test_multiple_simultaneously_active_members_logs_a_warning(caplog):
+    """Two family members both status=active logs a data-integrity warning, doesn't raise."""
+    versions = [
+        _v("d1", "policy-v1.md", status="active"),
+        _v("d2", "policy-v2.md", status="active", supersedes_source="policy-v1.md"),
+    ]
+    with caplog.at_level(logging.WARNING, logger="rag.retrieval.freshness"):
+        excluded = resolve_excluded_document_ids(versions, as_of=None, include_superseded=False)
+
+    # Both stay retrievable -- the function never guesses which one to exclude.
+    assert excluded == set()
+    assert any(
+        "freshness_multiple_active_family_members" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+def test_single_active_member_logs_no_warning(caplog):
+    """The ordinary, correct case (exactly one active member) never logs the integrity warning."""
+    versions = [
+        _v("d1", "policy-v1.md", status="superseded"),
+        _v("d2", "policy-v2.md", status="active", supersedes_source="policy-v1.md"),
+    ]
+    with caplog.at_level(logging.WARNING, logger="rag.retrieval.freshness"):
+        resolve_excluded_document_ids(versions, as_of=None, include_superseded=False)
+
+    assert not any(
+        "freshness_multiple_active_family_members" in record.getMessage()
+        for record in caplog.records
+    )

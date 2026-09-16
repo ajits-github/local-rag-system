@@ -1,7 +1,13 @@
 import userEvent from "@testing-library/user-event";
 import { screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { jsonResponse, renderChatWindow, routedFetchMock } from "./testUtils";
+import {
+  jsonResponse,
+  renderChatWindow,
+  rootInfoResponse,
+  routedFetchMock,
+  runtimeInfoResponse,
+} from "./testUtils";
 
 async function sendMessage(text = "hello") {
   const user = userEvent.setup();
@@ -63,5 +69,39 @@ describe("error states", () => {
     renderChatWindow();
     await sendMessage();
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/could not understand/));
+  });
+
+  it("cancels an in-flight request via the Stop button and shows a neutral cancelled notice, not an error", async () => {
+    // Simulates a real aborted fetch(): the /query call never resolves on
+    // its own, only rejecting once the request's AbortSignal fires (which
+    // clicking Stop triggers via useSendMessage's cancel()).
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string, init?: RequestInit) => {
+        if (url === "/") return Promise.resolve(rootInfoResponse());
+        if (url === "/info") return Promise.resolve(runtimeInfoResponse());
+        if (url === "/query") {
+          return new Promise((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => {
+              const abortError = new Error("The operation was aborted.");
+              abortError.name = "AbortError";
+              reject(abortError);
+            });
+          });
+        }
+        throw new Error(`Unmocked fetch call to ${url}`);
+      })
+    );
+    renderChatWindow();
+    await sendMessage();
+
+    const stopButton = await screen.findByRole("button", { name: "Stop" });
+    const user = userEvent.setup();
+    await user.click(stopButton);
+
+    await waitFor(() => expect(screen.getByText("Request cancelled.")).toBeInTheDocument());
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    // The composer returns to its normal Send state, ready for another message.
+    expect(screen.getByRole("button", { name: "Send" })).toBeInTheDocument();
   });
 });

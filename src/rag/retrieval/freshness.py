@@ -15,20 +15,42 @@ Limitations, by design rather than oversight:
   family is excluded, rather than guessing a version by date.
 - A family member with no `effective_from` is never excluded by
   `as_of`-based resolution.
+- A tie on `effective_from` between two family members is broken
+  deterministically by `document_id` (lexicographically greatest wins),
+  never by incoming list order or database row order.
 """
 
 from __future__ import annotations
 
+import logging
 from datetime import date
 
 from rag.path_matching import source_matches_relevant
 from rag.schemas import DocumentVersionInfo
 
+logger = logging.getLogger(__name__)
+
 
 def _links_to(candidate: DocumentVersionInfo, target: DocumentVersionInfo) -> bool:
-    """Whether `candidate.supersedes_source` refers to `target` by path suffix."""
+    """Whether `candidate.supersedes_source` refers to `target` by path suffix.
+
+    Two documents with different, non-null `tenant_id`s never link, even
+    when their `source`/`supersedes_source` happen to share a matching
+    suffix (e.g. two tenants each authoring their own `pricing.md`) --
+    this prevents unrelated cross-tenant documents from being unioned
+    into one version family and wrongly excluding one another. A `None`
+    `tenant_id` on either side (pre-governance-metadata content) never
+    blocks the match, matching this project's existing "`None` = fully
+    unrestricted" convention for the other governance fields.
+    """
     supersedes_source = candidate.supersedes_source
     if supersedes_source is None:
+        return False
+    if (
+        candidate.tenant_id is not None
+        and target.tenant_id is not None
+        and candidate.tenant_id != target.tenant_id
+    ):
         return False
     return source_matches_relevant(target.source, supersedes_source)
 
@@ -63,17 +85,34 @@ def _build_families(versions: list[DocumentVersionInfo]) -> list[list[DocumentVe
 
 
 def _excluded_for_current(family: list[DocumentVersionInfo]) -> set[str]:
-    """Exclude every non-active member of `family`, unless none is active."""
+    """Exclude every non-active member of `family`, unless none is active.
+
+    Logs a warning (never raises) when more than one family member is
+    simultaneously `status="active"` -- likely a corpus-authoring error
+    (a version family should have at most one current member), but not
+    one this function can safely resolve on its own, so both stay
+    retrievable rather than arbitrarily excluding one.
+    """
     active_ids = {v.document_id for v in family if (v.status or "").strip().lower() == "active"}
     if not active_ids:
         return set()
+    if len(active_ids) > 1:
+        logger.warning(
+            "freshness_multiple_active_family_members",
+            extra={
+                "document_ids": sorted(active_ids),
+                "sources": sorted(v.source for v in family if v.document_id in active_ids),
+            },
+        )
     return {v.document_id for v in family} - active_ids
 
 
 def _excluded_for_as_of(family: list[DocumentVersionInfo], as_of: date) -> set[str]:
     """Keep only the family member effective on `as_of`; exclude the rest.
 
-    Members with no `effective_from` are never excluded.
+    Members with no `effective_from` are never excluded. A tie on
+    `effective_from` is broken deterministically by `document_id`
+    (lexicographically greatest wins) rather than by list/row order.
     """
     dated = [(v, v.effective_from) for v in family if v.effective_from is not None]
     if not dated:
@@ -81,7 +120,7 @@ def _excluded_for_as_of(family: list[DocumentVersionInfo], as_of: date) -> set[s
     eligible = [(v, effective_from) for v, effective_from in dated if effective_from <= as_of]
     if not eligible:
         return {v.document_id for v, _ in dated}
-    winner, _ = max(eligible, key=lambda pair: pair[1])
+    winner, _ = max(eligible, key=lambda pair: (pair[1], pair[0].document_id))
     return {v.document_id for v, _ in dated if v.document_id != winner.document_id}
 
 
@@ -148,11 +187,13 @@ def resolve_current_document_source(
         return candidates[0].source
     # More than one candidate remains (rare - e.g. multiple family members
     # share effective_from); prefer the most recently effective one rather
-    # than guessing arbitrarily.
+    # than guessing arbitrarily, breaking any remaining tie deterministically
+    # by document_id (lexicographically greatest wins), same rule as
+    # `_excluded_for_as_of`.
     dated = [v for v in candidates if v.effective_from is not None]
     if not dated:
         return matched.source
-    return max(dated, key=lambda v: v.effective_from).source  # type: ignore[arg-type,return-value]
+    return max(dated, key=lambda v: (v.effective_from, v.document_id)).source
 
 
 def resolve_excluded_document_ids(

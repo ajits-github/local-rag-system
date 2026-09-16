@@ -19,7 +19,7 @@ import { MessageList } from "./MessageList";
  */
 export function ChatWindow() {
   const { state, dispatch } = useChat();
-  const { sendMessage, isSending } = useSendMessage();
+  const { sendMessage, cancel, isSending } = useSendMessage();
   const devIdentityRef = useRef<DevIdentityPanelHandle>(null);
   const messageInputRef = useRef<MessageInputHandle>(null);
   const { showDeveloperSettings, showRuntimeDetails, showDeveloperModeIndicator } = getUiModeConfig();
@@ -73,7 +73,7 @@ export function ChatWindow() {
         onExampleQuery={(text) => messageInputRef.current?.setValue(text)}
       />
 
-      <MessageInput ref={messageInputRef} onSend={sendMessage} disabled={isSending} />
+      <MessageInput ref={messageInputRef} onSend={sendMessage} onCancel={cancel} disabled={isSending} />
     </div>
   );
 }

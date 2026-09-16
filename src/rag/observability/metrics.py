@@ -108,6 +108,14 @@ RETRIEVAL_LATENCY_SECONDS = Histogram(
     registry=REGISTRY,
 )
 
+AUTHORIZATION_DENIALS_TOTAL = Counter(
+    "rag_authorization_denials_total",
+    "Retrieval queries where the authorization predicate excluded at least "
+    "one otherwise-matching chunk (detected only on a thin/empty result set; "
+    "see RetrievalPipeline._retrieve_timed_inner).",
+    registry=REGISTRY,
+)
+
 AGENT_TERMINATION_REASON_TOTAL = Counter(
     "rag_agent_termination_reason_total",
     "Agent run termination reasons.",
@@ -198,6 +206,12 @@ def observe_retrieval_latency(provider: str, latency_seconds: float) -> None:
 
 
 @_defensive
+def observe_authorization_denial() -> None:
+    """Record one retrieval query where authorization excluded at least one matching chunk."""
+    AUTHORIZATION_DENIALS_TOTAL.inc()
+
+
+@_defensive
 def observe_termination_reason(reason: str) -> None:
     """Record one agent run's termination reason."""
     AGENT_TERMINATION_REASON_TOTAL.labels(reason=reason).inc()
@@ -249,6 +263,7 @@ __all__ = [
     "CONTENT_TYPE_LATEST",
     "REGISTRY",
     "observe_agent_request",
+    "observe_authorization_denial",
     "observe_error",
     "observe_evidence_sufficiency",
     "observe_feedback_submission",

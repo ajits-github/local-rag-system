@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 
 from rag.config import load_config
@@ -55,12 +56,25 @@ class FakeVectorStore:
     """
 
     def __init__(
-        self, results: list[SearchResult], keyword_results: list[SearchResult] | None = None
+        self,
+        results: list[SearchResult],
+        keyword_results: list[SearchResult] | None = None,
+        excluded_by_authorization: int = 0,
     ) -> None:
-        """Store the fixed results this double's search()/search_keyword() will return."""
+        """Store the fixed results this double's search()/search_keyword() will return.
+
+        Parameters
+        ----------
+        excluded_by_authorization : int, optional
+            Fixed return value for `count_excluded_by_authorization`, by
+            default 0 (authorization excludes nothing). Set to a positive
+            value in tests exercising the authorization-denial audit path.
+        """
         self._results = results
         self._keyword_results = keyword_results if keyword_results is not None else []
+        self._excluded_by_authorization = excluded_by_authorization
         self.calls: list[tuple[str, dict]] = []
+        self.count_excluded_by_authorization_calls: list[tuple[dict | None, object]] = []
 
     def health_check(self) -> bool:
         """Report healthy, always."""
@@ -95,6 +109,11 @@ class FakeVectorStore:
     def list_document_versions(self, dataset_id: str):
         """Unused by RetrievalPipeline unless a test exercises authorization/freshness."""
         return []
+
+    def count_excluded_by_authorization(self, filters, auth) -> int:
+        """Record the call and return the fixed excluded count."""
+        self.count_excluded_by_authorization_calls.append((filters, auth))
+        return self._excluded_by_authorization
 
 
 class FakeEmbedder:
@@ -708,6 +727,151 @@ def test_authorization_enabled_resolves_freshness_exclusions_from_dataset_id_fil
 
     passed_auth = vectorstore.calls[0][1]["auth"]
     assert passed_auth.resolved_excluded_document_ids == ["d1"]  # v2 is effective on 2026-08-14
+
+
+def test_authorization_denial_audited_when_thin_result_and_exclusions_exist(caplog):
+    """A thin result set under active auth, with real exclusions, logs authorization_denied.
+
+    Document-level ACL runs entirely as a SQL predicate, so nothing in
+    Python otherwise learns whether a thin result reflects "nothing
+    relevant exists" or "something relevant exists but was denied." This
+    is the diagnostic count query (`count_excluded_by_authorization`)
+    closing that gap.
+    """
+    from rag.retrieval.authorization import AuthorizationContext
+
+    results = [_make_result("c1", "Alpha content.", source="a.md", score=0.9)]
+    vectorstore = FakeVectorStore(results, excluded_by_authorization=3)
+    config = load_config().model_copy(deep=True)
+    config.security.authorization.enabled = True
+    pipeline = RetrievalPipeline(
+        config, vectorstore=vectorstore, embedder=FakeEmbedder(), reranker=FakeReranker()
+    )
+    auth = AuthorizationContext(tenant_id="tenant_alpha", roles=["operator"])
+
+    with caplog.at_level(logging.INFO, logger="rag.audit"):
+        pipeline.retrieve("query", candidate_k=5, auth=auth)
+
+    assert vectorstore.count_excluded_by_authorization_calls  # the diagnostic query ran
+    assert any("authorization_denied" in record.getMessage() for record in caplog.records)
+
+
+def test_authorization_denial_not_audited_when_nothing_excluded(caplog):
+    """A thin result set under authorization, but zero real exclusions, logs nothing.
+
+    Distinguishes a genuine retrieval miss (nothing relevant in the
+    corpus at all) from an authorization denial -- only the latter is
+    audit-worthy.
+    """
+    from rag.retrieval.authorization import AuthorizationContext
+
+    results = [_make_result("c1", "Alpha content.", source="a.md", score=0.9)]
+    vectorstore = FakeVectorStore(results, excluded_by_authorization=0)
+    config = load_config().model_copy(deep=True)
+    config.security.authorization.enabled = True
+    pipeline = RetrievalPipeline(
+        config, vectorstore=vectorstore, embedder=FakeEmbedder(), reranker=FakeReranker()
+    )
+    auth = AuthorizationContext(tenant_id="tenant_alpha", roles=["operator"])
+
+    with caplog.at_level(logging.INFO, logger="rag.audit"):
+        pipeline.retrieve("query", candidate_k=5, auth=auth)
+
+    assert vectorstore.count_excluded_by_authorization_calls  # diagnostic still ran
+    assert not any("authorization_denied" in record.getMessage() for record in caplog.records)
+
+
+def test_authorization_denial_check_skipped_when_result_set_is_full(caplog):
+    """A full result set (== the requested candidate_k) never triggers the diagnostic query.
+
+    Avoids a second query on the common case: a full result set gives no
+    signal either way about whether authorization excluded anything
+    beyond what was already returned.
+    """
+    from rag.retrieval.authorization import AuthorizationContext
+
+    results = _make_indexed_results(5)
+    vectorstore = FakeVectorStore(results, excluded_by_authorization=3)
+    config = load_config().model_copy(deep=True)
+    config.security.authorization.enabled = True
+    pipeline = RetrievalPipeline(
+        config, vectorstore=vectorstore, embedder=FakeEmbedder(), reranker=FakeReranker()
+    )
+    auth = AuthorizationContext(tenant_id="tenant_alpha", roles=["operator"])
+
+    with caplog.at_level(logging.INFO, logger="rag.audit"):
+        pipeline.retrieve("query", candidate_k=5, auth=auth)
+
+    assert vectorstore.count_excluded_by_authorization_calls == []
+    assert not any("authorization_denied" in record.getMessage() for record in caplog.records)
+
+
+def test_authorization_denial_check_skipped_when_authorization_disabled(caplog):
+    """With authorization disabled (the shipped default), the diagnostic query never runs.
+
+    `resolve_auth` returns `None` whenever `security.authorization.enabled`
+    is `False`, regardless of how thin the result set is.
+    """
+    from rag.retrieval.authorization import AuthorizationContext
+
+    results = [_make_result("c1", "Alpha content.", source="a.md", score=0.9)]
+    vectorstore = FakeVectorStore(results, excluded_by_authorization=3)
+    pipeline = RetrievalPipeline(
+        load_config(), vectorstore=vectorstore, embedder=FakeEmbedder(), reranker=FakeReranker()
+    )
+    auth = AuthorizationContext(tenant_id="tenant_alpha", roles=["operator"])
+
+    with caplog.at_level(logging.INFO, logger="rag.audit"):
+        pipeline.retrieve("query", candidate_k=5, auth=auth)
+
+    assert vectorstore.count_excluded_by_authorization_calls == []
+
+
+class _LegacyVectorStoreWithoutExclusionCount:
+    """A minimal VectorStore double predating count_excluded_by_authorization entirely.
+
+    Proves the audit-diagnostic addition never breaks a caller that
+    hasn't implemented the new method yet (see `RetrievalPipeline.
+    _audit_authorization_exclusions`'s defensive `try`/`except`).
+    """
+
+    def __init__(self, results: list[SearchResult]) -> None:
+        self._results = results
+
+    def health_check(self) -> bool:
+        return True
+
+    def search(self, query_embedding, top_k, filters=None, auth=None) -> list[SearchResult]:
+        return self._results[:top_k]
+
+    def search_keyword(self, query, top_k, filters=None, auth=None) -> list[SearchResult]:
+        return []
+
+    def list_document_versions(self, dataset_id: str):
+        return []
+
+
+def test_authorization_denial_check_tolerates_a_vectorstore_missing_the_method():
+    """A VectorStore double with no count_excluded_by_authorization method never breaks retrieve().
+
+    This is a diagnostic addition, not a correctness requirement of
+    retrieve() itself -- a minimal double that predates this method must
+    still work.
+    """
+    from rag.retrieval.authorization import AuthorizationContext
+
+    results = [_make_result("c1", "Alpha content.", source="a.md", score=0.9)]
+    vectorstore = _LegacyVectorStoreWithoutExclusionCount(results)
+    config = load_config().model_copy(deep=True)
+    config.security.authorization.enabled = True
+    pipeline = RetrievalPipeline(
+        config, vectorstore=vectorstore, embedder=FakeEmbedder(), reranker=FakeReranker()
+    )
+    auth = AuthorizationContext(tenant_id="tenant_alpha", roles=["operator"])
+
+    results_out = pipeline.retrieve("query", candidate_k=5, auth=auth)
+
+    assert len(results_out) == 1  # retrieval itself is unaffected
 
 
 def test_retrieve_flags_injection_suspected_on_results():
