@@ -44,7 +44,7 @@ def test_default_config_loads_agent_section():
     """
     config = load_config()
     assert config.agent.enabled is True
-    assert config.agent.classify_prompt_path.endswith("agent_classify_v1.yaml")
+    assert config.agent.classify_prompt_path.endswith("agent_classify_v2.yaml")
 
 
 def test_agent_prompt_template_path_resolves_relative_to_repo_root():
@@ -52,7 +52,7 @@ def test_agent_prompt_template_path_resolves_relative_to_repo_root():
     config = load_config()
     resolved = config.agent_prompt_template_path(config.agent.synthesize_prompt_path)
     assert resolved.is_file()
-    assert resolved.name == "agent_synthesize_v1.yaml"
+    assert resolved.name == "agent_synthesize_v2.yaml"
 
 
 def test_secure_rag_baseline_configs_are_unaffected_by_the_new_agent_section():
