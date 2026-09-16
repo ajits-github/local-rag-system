@@ -52,7 +52,7 @@ class FakePipeline:
         self.retrieve_call_count += 1
         return [SearchResult(chunk=_chunk(), score=0.5)]
 
-    def resolve_auth(self, auth, filters=None):
+    def resolve_auth(self, auth, filters=None, *, versions=None):
         """Return `auth` unchanged; authorization parity is tested elsewhere."""
         return auth
 

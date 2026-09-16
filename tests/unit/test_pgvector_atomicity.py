@@ -132,7 +132,7 @@ def _store(monkeypatch: pytest.MonkeyPatch, conn: _FaultConnection) -> PgVectorS
     """Build a PgVectorStore wired to a fixed fault-injecting connection."""
     monkeypatch.setattr(
         "rag.vectorstore.pgvector.ThreadedConnectionPool",
-        lambda minconn, maxconn, dsn: _FixedPool(minconn, maxconn, dsn, connection=conn),
+        lambda minconn, maxconn, dsn, **_kwargs: _FixedPool(minconn, maxconn, dsn, connection=conn),
     )
     monkeypatch.setattr("rag.vectorstore.pgvector.register_vector", lambda c: None)
     # Patched via the real module object (not a dotted string target) so this
