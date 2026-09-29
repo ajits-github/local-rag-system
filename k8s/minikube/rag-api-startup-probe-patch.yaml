@@ -1,0 +1,41 @@
+# Patches base/rag-api-deployment.yaml's startupProbe for this host's
+# observed cold-start time, without touching liveness/readiness semantics
+# at all -- only startupProbe's own budget changes.
+#
+# Observed directly during the first deployment onto this minikube
+# cluster: the rag-api container's cold start (importing torch/
+# transformers/sentence-transformers with no pre-baked model cache, on a
+# host with demonstrably slow container-filesystem I/O -- the same
+# characteristic seen throughout this project's kind/WSL2 investigation,
+# see ISSUES.md) took 5-8+ minutes before the process printed even its
+# first log line. The base manifest's startupProbe budget (2 minutes) is
+# a reasonable generic default, not tuned to this one host's unusually
+# slow disk -- this patch is where that host-specific tolerance belongs
+# instead, per explicit instruction: never inflate the common base
+# config for every environment because of one slow host.
+#
+# 900s (periodSeconds 10 x failureThreshold 90). A first attempt at 600s
+# was tried and measured directly against a real rollout on this host: it
+# was too tight -- the very first cold-start attempt (coldest possible
+# case, no warm node-level page cache from a prior run) needed slightly
+# more than 600s and was killed right at the budget's edge, forcing one
+# extra restart before a second attempt succeeded inside a fresh 600s
+# window. 900s gives real margin above that observed ~600-650s worst
+# case instead of cutting it close a second time.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rag-api
+  namespace: rag
+spec:
+  template:
+    spec:
+      containers:
+        - name: rag-api
+          startupProbe:
+            httpGet:
+              path: /livez
+              port: 8000
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 90

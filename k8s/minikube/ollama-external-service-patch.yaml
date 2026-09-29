@@ -1,0 +1,18 @@
+# Patches base/ollama-external-service.yaml for minikube. Functionally,
+# host.docker.internal already resolves identically here too (verified:
+# both names resolve to the same 192.168.65.254 on this minikube
+# --driver=docker instance, since it happens to run on Docker Desktop,
+# which hands out host.docker.internal to every container it hosts, not
+# just kind's). But that's an incidental property of this one driver,
+# not something minikube promises. host.minikube.internal is minikube's
+# own documented, driver-agnostic mechanism for reaching the host from
+# inside the cluster, so it's the correct choice here rather than
+# depending on the Docker Desktop coincidence carrying over to a
+# different driver later.
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama-host
+  namespace: rag
+spec:
+  externalName: host.minikube.internal

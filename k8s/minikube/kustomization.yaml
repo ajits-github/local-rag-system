@@ -1,0 +1,33 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# minikube overlay on top of the shared k8s/base manifests. Every
+# resource here is identical to what k8s/kind uses except three things
+# that genuinely differ on this host's minikube setup: how the cluster
+# reaches the host (ollama-external-service-patch.yaml, see that file's
+# own comment), the image tag used to keep minikube's node-local
+# containerd image store visibly distinct from kind's (both stores are
+# isolated from Docker Desktop's own image store and from each other, so
+# a shared tag would work too -- this is for human clarity when listing
+# images, not a technical requirement), and rag-api's startupProbe
+# budget (rag-api-startup-probe-patch.yaml, see that file's own comment
+# -- this host's cold start is unusually slow; the base manifest's
+# generic startupProbe timing is intentionally left alone).
+resources:
+  - ../base
+
+patches:
+  - path: ollama-external-service-patch.yaml
+    target:
+      kind: Service
+      name: ollama-host
+  - path: rag-api-startup-probe-patch.yaml
+    target:
+      kind: Deployment
+      name: rag-api
+
+images:
+  - name: local-rag-api
+    newTag: minikube
+  - name: local-rag-frontend
+    newTag: minikube
