@@ -1,0 +1,29 @@
+# distributed_state_experiment's own dependencies.
+#
+# Deliberately NOT a separate venv (unlike langgraph_experiment/'s
+# .venv-langgraph): that experiment needs its own venv because
+# langgraph>=1.2 requires langchain-core>=1.4,<2, a real, confirmed
+# conflict with this repo's own pinned langchain>=0.3,<0.4. Nothing here
+# conflicts with the main project's pyproject.toml (redis>=5.0 is in fact
+# now a core dependency there -- see that file's own comment), so this
+# experiment installs straight into the same environment as the main
+# package with no isolation needed.
+#
+#   pip install -r distributed_state_experiment/requirements.txt
+
+# redis is already a core dependency of the main package (pyproject.toml)
+# as of this milestone; listed again here so this directory is installable
+# on its own (e.g. in a minimal CI job that never installs the full
+# sentence-transformers/torch stack).
+redis>=5.0
+
+# fakeredis[lua] backs every test in tests/ and the fake_redis_server.py
+# stand-in used for every executed experiment in this session. The [lua]
+# extra pulls in `lupa` (a prebuilt wheel was available for this session's
+# Python/platform), needed for register_script/EVAL support -- without it,
+# fakeredis still supports strings/streams/sorted-sets/pub-sub, but any
+# Lua-script-based limiter test would fail with "unknown command 'evalsha'"
+# (confirmed directly in this session before adding the [lua] extra).
+fakeredis[lua]>=2.30
+
+pytest>=8.0
