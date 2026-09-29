@@ -1,0 +1,91 @@
+# IMPORTANT, read before assuming these do anything: kind's default CNI
+# (kindnet) does NOT enforce NetworkPolicy at all -- these objects will
+# apply cleanly and be entirely inert. They're included to demonstrate the
+# API shape and the reasoning; to actually see traffic get blocked you
+# need a policy-enforcing CNI. See k8s/README.md's "Optional: NetworkPolicy
+# enforcement with Calico" section for a kind config that swaps kindnet
+# for Calico.
+#
+# Design: default-deny INGRESS only (not egress). A full default-deny
+# (both directions) would also need an explicit DNS-egress allow rule
+# (kube-system, port 53) just to keep name resolution working, and would
+# still be unable to meaningfully restrict egress to ollama-host: that
+# Service is type ExternalName, which is pure DNS indirection -- traffic
+# to it leaves the pod addressed at whatever IP host.docker.internal
+# resolved to, not "the ollama-host Service," so NetworkPolicy (which
+# selects by pod/namespace, not by Service object) cannot target it
+# without a separate ipBlock CIDR rule. Ingress-only default-deny avoids
+# that whole complication while still demonstrating the core concept:
+# unsolicited inbound traffic is denied unless explicitly allowed.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: rag
+spec:
+  podSelector: {} # every pod in this namespace
+  policyTypes:
+    - Ingress
+---
+# The ingress-nginx controller lives in its own "ingress-nginx" namespace.
+# Kubernetes auto-labels every namespace with kubernetes.io/metadata.name
+# since 1.21, so this namespaceSelector needs no manual labeling step.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-to-frontend
+  namespace: rag
+spec:
+  podSelector:
+    matchLabels:
+      app: frontend
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-frontend-to-rag-api
+  namespace: rag
+spec:
+  podSelector:
+    matchLabels:
+      app: rag-api
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: frontend
+      ports:
+        - protocol: TCP
+          port: 8000
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-rag-api-to-postgres
+  namespace: rag
+spec:
+  podSelector:
+    matchLabels:
+      app: postgres
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: rag-api
+      ports:
+        - protocol: TCP
+          port: 5432
