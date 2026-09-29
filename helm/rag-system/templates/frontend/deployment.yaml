@@ -1,0 +1,142 @@
+# RAG_API_UPSTREAM_HOST is set (not left to the image's own "rag-api"
+# default) because nginx's resolver directive skips /etc/resolv.conf's
+# search-domain expansion -- the bare "rag-api" name that works under
+# Docker Compose's embedded DNS fails to resolve against Kubernetes'
+# CoreDNS. See frontend/nginx.conf.template's own comment for the full
+# diagnosis (also in ISSUES.md).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  labels:
+    {{- include "rag-system.labels" . | nindent 4 }}
+    app: frontend
+spec:
+  replicas: {{ .Values.frontend.replicaCount }}
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        {{- include "rag-system.selectorLabels" . | nindent 8 }}
+        app: frontend
+    spec:
+      serviceAccountName: {{ include "rag-system.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      securityContext:
+        {{- toYaml .Values.frontend.podSecurityContext | nindent 8 }}
+      {{- if .Values.frontend.topologySpreadConstraints.enabled }}
+      topologySpreadConstraints:
+        - maxSkew: {{ .Values.frontend.topologySpreadConstraints.maxSkew }}
+          topologyKey: {{ .Values.frontend.topologySpreadConstraints.topologyKey }}
+          whenUnsatisfiable: {{ .Values.frontend.topologySpreadConstraints.whenUnsatisfiable }}
+          labelSelector:
+            matchLabels:
+              app: frontend
+      {{- end }}
+      {{- with .Values.frontend.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.frontend.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.frontend.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.frontend.securityContext.readOnlyRootFilesystem }}
+      # The stock nginx:1.27-alpine entrypoint scripts (envsubst-on-templates,
+      # worker_processes autotune) and this project's own docker-entrypoint.sh
+      # (rewrites index.html's window.__RAG_API_BASE__) all write into
+      # /usr/share/nginx/html and /etc/nginx at container start -- both are
+      # baked into the image's own root filesystem layer. With
+      # readOnlyRootFilesystem: true that layer can't be written to, so this
+      # initContainer (running the identical image, before the restriction
+      # applies to it) seeds writable emptyDir copies of both paths first;
+      # the main container then mounts those emptyDirs over the same paths.
+      # No entrypoint script or application code changes -- they run exactly
+      # as before, just against volume-backed paths instead of the image layer.
+      initContainers:
+        - name: seed-writable-nginx-dirs
+          image: "{{ .Values.frontend.image.repository }}:{{ .Values.frontend.image.tag }}"
+          imagePullPolicy: {{ .Values.frontend.image.pullPolicy }}
+          command:
+            - sh
+            - -c
+            - "cp -a /usr/share/nginx/html/. /work/html/ && cp -a /etc/nginx/. /work/etc-nginx/"
+          securityContext:
+            runAsNonRoot: {{ .Values.frontend.securityContext.runAsNonRoot }}
+            runAsUser: {{ .Values.frontend.securityContext.runAsUser }}
+            runAsGroup: {{ .Values.frontend.securityContext.runAsGroup }}
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: nginx-html
+              mountPath: /work/html
+            - name: nginx-etc
+              mountPath: /work/etc-nginx
+      {{- end }}
+      containers:
+        - name: frontend
+          image: "{{ .Values.frontend.image.repository }}:{{ .Values.frontend.image.tag }}"
+          imagePullPolicy: {{ .Values.frontend.image.pullPolicy }}
+          env:
+            - name: RAG_API_UPSTREAM_HOST
+              value: rag-api.{{ .Release.Namespace }}.svc.cluster.local
+          ports:
+            - name: http
+              containerPort: 80
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            # Kubernetes' own default timeoutSeconds is 1 -- too tight for a
+            # CPU-contended host (observed for real running this chart: a
+            # loaded minikube node made nginx occasionally miss a 1s
+            # deadline, which the kubelet logs as a plain probe timeout, not
+            # a crash -- and the pod flaps Ready/NotReady and eventually
+            # restarts even though nginx itself never actually failed).
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            timeoutSeconds: 3
+          resources:
+            {{- toYaml .Values.frontend.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.frontend.securityContext | nindent 12 }}
+          {{- if .Values.frontend.securityContext.readOnlyRootFilesystem }}
+          volumeMounts:
+            - name: nginx-html
+              mountPath: /usr/share/nginx/html
+            - name: nginx-etc
+              mountPath: /etc/nginx
+            - name: nginx-cache
+              mountPath: /var/cache/nginx
+            - name: nginx-run
+              mountPath: /var/run
+            - name: tmp
+              mountPath: /tmp
+          {{- end }}
+      {{- if .Values.frontend.securityContext.readOnlyRootFilesystem }}
+      volumes:
+        - name: nginx-html
+          emptyDir: {}
+        - name: nginx-etc
+          emptyDir: {}
+        - name: nginx-cache
+          emptyDir: {}
+        - name: nginx-run
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+      {{- end }}
