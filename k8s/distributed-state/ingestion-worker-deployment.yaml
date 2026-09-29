@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ingestion-worker
+  namespace: rag
+  labels:
+    app: ingestion-worker
+spec:
+  # This is the field Experiments 11-12 exercise:
+  #   kubectl scale deployment/ingestion-worker -n rag --replicas=3
+  # Each replica is its own consumer-group member (--name defaults to the
+  # pod's own hostname, unique per pod automatically -- see the container
+  # command below), so scaling this number directly scales claim
+  # throughput against the shared Redis Stream, exactly like this
+  # session's own `run_experiments.py` 1-worker-vs-3-worker local-process
+  # proxy measured (see distributed_state_experiment/README.md's
+  # Experiments 11-12 section for that proxy's real numbers and why real
+  # `kubectl scale` was not exercised in this session).
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ingestion-worker
+  template:
+    metadata:
+      labels:
+        app: ingestion-worker
+    spec:
+      initContainers:
+        - name: wait-for-redis
+          image: busybox:1.36
+          command: ["sh", "-c", "until nc -z redis 6379; do echo waiting for redis...; sleep 2; done"]
+      containers:
+        - name: ingestion-worker
+          image: distributed-state-worker:kind
+          imagePullPolicy: IfNotPresent
+          # Each pod names itself after its own stable pod identity so
+          # every replica gets a distinct consumer-group name without any
+          # manual per-replica config -- the same reasoning a StatefulSet's
+          # ordinal naming exists for, achieved here with the downward API
+          # instead since these workers are stateless and don't need
+          # StatefulSet's stable-storage/ordering guarantees.
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          command:
+            - python
+            - -m
+            - distributed_state_experiment.cli.run_worker
+            - --redis-url
+            - redis://redis:6379/0
+            - --name
+            - $(POD_NAME)
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+      terminationGracePeriodSeconds: 30 # gives run_forever()'s SIGTERM handler room to drain
+      # in-flight jobs (see IngestionWorker.run_forever's docstring) before Kubernetes SIGKILLs the
+      # pod -- the graceful-shutdown half of experiments 4-5, exercised at the orchestration layer.

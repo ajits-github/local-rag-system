@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: rag
+  labels:
+    app: redis
+spec:
+  # Exactly 1 replica, deliberately: a plain redis:7-alpine Deployment has
+  # no clustering/replication of its own, so more than one replica would
+  # just be two independent, disagreeing Redis instances behind one
+  # Service -- the same process-local-state bug this whole experiment
+  # exists to demonstrate, reintroduced one layer down. A real multi-
+  # replica Redis needs Sentinel or Cluster mode, out of scope for this
+  # learning exercise (see distributed_state_experiment/README.md).
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  strategy:
+    type: Recreate # a rolling update of a single stateful Redis pod is not meaningfully
+    # safer than a clean recreate; avoids two Redis pods briefly disagreeing during rollout.
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          imagePullPolicy: IfNotPresent
+          command: ["redis-server", "--appendonly", "no", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+          ports:
+            - containerPort: 6379
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 320Mi

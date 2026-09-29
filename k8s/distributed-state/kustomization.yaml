@@ -1,0 +1,23 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# Additive overlay on top of k8s/base, matching that directory's own
+# `-f`-layering convention (see docker-compose.observability.yml's
+# equivalent Compose-side pattern). Never applied by a bare
+# `kubectl apply -k k8s/base` alone.
+#
+# Apply both together:
+#   kubectl apply -k k8s/base
+#   kubectl apply -k k8s/distributed-state
+#
+# Written and reviewed in this session; NOT applied against a real
+# cluster here (see distributed_state_experiment/README.md's "What was
+# executed vs. simulated" section and k8s/README.md's own established
+# "flag what wasn't verified" convention). k8s/base's own namespace.yaml
+# already creates the "rag" namespace these manifests target.
+resources:
+  - redis-deployment.yaml
+  - redis-service.yaml
+  - ingestion-worker-deployment.yaml
+images:
+  - name: distributed-state-worker
+    newTag: kind

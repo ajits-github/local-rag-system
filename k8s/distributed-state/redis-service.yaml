@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: rag
+spec:
+  selector:
+    app: redis
+  ports:
+    - port: 6379
+      targetPort: 6379
+  # ClusterIP (the default): only reachable from inside the cluster, by
+  # the rag-api pods and the ingestion-worker pods, via the DNS name
+  # "redis" (or "redis.rag.svc.cluster.local") -- never exposed outside
+  # the cluster, unlike docker-compose.redis.yml's host-port publish
+  # (that file is for native-script access during local dev; this one
+  # is not).
