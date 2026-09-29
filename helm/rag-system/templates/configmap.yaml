@@ -1,0 +1,20 @@
+# Non-secret configuration only, mirrors k8s/base/configmap-app.yaml's own
+# comment: the password/JWT-signing-material equivalents live in secret.yaml.
+#
+# Fixed name "rag-config", not release-prefixed -- see README's "Why object
+# names are fixed, not release-prefixed" section. envFrom in
+# rag-api/deployment.yaml and postgres/statefulset.yaml reference this exact
+# name directly.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rag-config
+  labels:
+    {{- include "rag-system.labels" . | nindent 4 }}
+data:
+  LOG_LEVEL: {{ .Values.config.logLevel | quote }}
+  RAG_CONFIG_PATH: {{ .Values.config.ragConfigPath | quote }}
+  POSTGRES_DB: {{ .Values.config.postgresDb | quote }}
+  POSTGRES_USER: {{ .Values.config.postgresUser | quote }}
+  OLLAMA_BASE_URL: {{ .Values.config.ollamaBaseUrl | default (printf "http://ollama-host.%s.svc.cluster.local:11434" .Release.Namespace) | quote }}
+  OTEL_EXPORTER_OTLP_ENDPOINT: {{ .Values.config.otelExporterOtlpEndpoint | default (printf "http://jaeger.%s.svc.cluster.local:4318" .Release.Namespace) | quote }}
