@@ -1,0 +1,20 @@
+# Headless (clusterIP: None): gives postgres-0 a stable DNS name
+# (postgres-0.postgres.<namespace>.svc.cluster.local) that survives pod
+# recreation. Fixed name "postgres" -- DATABASE_URL (secret.yaml) and the
+# wait-for-postgres initContainers (rag-api/deployment.yaml, jobs/init-db-job.yaml)
+# both hardcode it. See README's "Why object names are fixed" section.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  labels:
+    {{- include "rag-system.labels" . | nindent 4 }}
+    app: postgres
+spec:
+  clusterIP: None
+  selector:
+    app: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
