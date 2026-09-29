@@ -6,7 +6,7 @@
 # or: make frontend-up
 #
 # The frontend container's nginx reverse-proxies /query, /agent/*, /health,
-# /metrics, /docs to rag-api:8000 (see frontend/nginx.conf), so the browser
+# /metrics, /docs to rag-api:8000 (see frontend/nginx.conf.template), so the browser
 # only ever talks to one origin and rag-api never needs CORS middleware
 # added to it. Combine with docker-compose.observability.yml for all three:
 #   docker compose -f docker-compose.yml -f docker-compose.frontend.yml \
