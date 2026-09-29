@@ -137,6 +137,13 @@ security:
     enabled: false # no-op when false; in-process/single-instance limiter, see docs/architecture.md
     requests_per_minute: 60
     key: tenant # swap point: tenant | ip
+    backend: memory # swap point: memory (process-local, wrong under >1 replica) | redis (shared
+    # counter across replicas; see distributed_state_experiment/README.md for a reproduced
+    # demonstration of the memory-backend failure mode and the Redis fix)
+    redis_url_env_var: RATE_LIMIT_REDIS_URL # only read when backend: redis
+    strategy: fixed-window # swap point: fixed-window | moving-window | sliding-window-counter
+    redis_fail_mode: fail_open # swap point: fail_open | fail_closed; only meaningful when backend: redis
+    redis_key_prefix: rag_rate_limit
   egress_policy:
     enabled: false # no-op when false; gates hosted RAGAS judge calls only, see docs/architecture.md
     block_unredacted_sensitive_fields: true
