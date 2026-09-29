@@ -1,0 +1,29 @@
+# Ollama deliberately stays native on the host in this project (see
+# CLAUDE.md's "Containerized runtime" section) -- there is no Ollama
+# Deployment/Pod here, on purpose. A Kubernetes Service can still name a
+# destination *outside* the cluster: type ExternalName is pure DNS
+# indirection (a CNAME), no selector, no pod backing it, no ClusterIP.
+#
+# host.docker.internal is Docker Desktop's DNS name for the Windows host,
+# resolvable from inside a kind node container (same Docker daemon) the
+# same way it already is for the plain docker-compose stack
+# (CONTAINER_OLLAMA_BASE_URL). If it does not resolve in your setup (a
+# known kind/CoreDNS-forwarding quirk on some Docker Desktop versions),
+# verify with:
+#   kubectl run -it --rm dnsutils --image=busybox:1.36 --restart=Never -n rag \
+#     -- nslookup host.docker.internal
+# and if that fails, replace `externalName` below with the Docker gateway
+# IP for the "kind" network (`docker network inspect kind` on Windows,
+# under IPAM -> Config -> Gateway) or your host's LAN IP running Ollama.
+#
+# minikube alternative: minikube's own driver exposes `host.minikube.internal`
+# for the same purpose -- swap externalName if you're on minikube instead
+# of kind.
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama-host
+  namespace: rag
+spec:
+  type: ExternalName
+  externalName: host.docker.internal
