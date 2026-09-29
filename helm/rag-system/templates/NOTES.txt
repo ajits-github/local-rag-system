@@ -1,0 +1,36 @@
+{{ .Chart.Name }} {{ .Chart.Version }} has been {{ if eq .Release.IsInstall true }}installed{{ else }}upgraded{{ end }} as release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
+
+Check rollout status:
+  kubectl rollout status deployment/rag-api -n {{ .Release.Namespace }}
+  kubectl rollout status deployment/frontend -n {{ .Release.Namespace }}
+  kubectl get pods -n {{ .Release.Namespace }} -w
+
+{{- if .Values.initDbJob.enabled }}
+
+The schema-init Job ran as a post-install/post-upgrade hook. Check it if pods
+aren't becoming ready:
+  kubectl logs job/init-db -n {{ .Release.Namespace }}
+{{- else }}
+
+initDbJob.enabled is false -- if this is a fresh Postgres volume, initialize
+the schema once with:
+  helm upgrade {{ .Release.Name }} <chart> -n {{ .Release.Namespace }} --reuse-values --set initDbJob.enabled=true
+{{- end }}
+
+Reach the app:
+{{- if .Values.ingress.enabled }}
+  curl -H "Host: {{ .Values.ingress.host }}" http://<ingress-controller-ip>/health
+{{- else }}
+  kubectl port-forward -n {{ .Release.Namespace }} svc/frontend 8080:{{ .Values.frontend.service.port }}
+  # then open http://localhost:8080
+{{- end }}
+
+Run the post-install smoke test:
+  helm test {{ .Release.Name }} -n {{ .Release.Namespace }}
+
+See this release's actual values (what's really running, not just this
+file's defaults):
+  helm get values {{ .Release.Name }} -n {{ .Release.Namespace }}
+
+See helm/rag-system/README.md for the full walkthrough: install, upgrade,
+rollback, and the production-grade hardening this chart applies by default.

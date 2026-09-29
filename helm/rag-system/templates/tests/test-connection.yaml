@@ -1,0 +1,26 @@
+# `helm test <release> -n <namespace>` runs any Pod annotated
+# helm.sh/hook: test and reports pass/fail from its exit code -- a
+# post-install smoke check, distinct from readiness/liveness probes (which
+# gate traffic to already-running pods, not release health as a whole).
+# This one hits rag-api's own /readyz directly (real dependency check:
+# vectorstore + LLM both reachable), not just /livez.
+{{- if .Values.tests.enabled }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "rag-system.fullname" . }}-test-connection
+  labels:
+    {{- include "rag-system.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  containers:
+    - name: readyz-check
+      image: busybox:1.36
+      command:
+        - sh
+        - -c
+        - wget -q -O - --timeout=10 http://rag-api:{{ .Values.ragApi.service.port }}/readyz
+{{- end }}
