@@ -1,0 +1,41 @@
+# scripts/init_db.py is never baked into the rag-api image (the Dockerfile
+# only COPYs src/ and config/), so the script is embedded here from a chart-
+# local snapshot (helm/rag-system/files/init_db.py) via Helm's .Files.Get --
+# the same "generator input must live inside the referencing tool's own
+# root" restriction kustomize hit (see k8s/jobs/init-db-job.yaml's comment)
+# applies to Helm's .Files too, so this is a deliberate, documented copy,
+# not a live reference. If scripts/init_db.py changes, re-copy it here:
+#   cp scripts/init_db.py helm/rag-system/files/init_db.py
+# init_db.py's own DDL is idempotent (see its module docstring), so a stale
+# copy fails safe -- worst case it re-applies already-applied migrations.
+# A hook resource too, not a plain one, and in the SAME phase as
+# init-db-job.yaml's Job (post-install/post-upgrade) -- a real bug hit and
+# fixed while demoing this chart: this ConfigMap used to be pre-install
+# while the Job was fixed to post-install (see that file's own comment for
+# why the Job had to move). Helm's hook-delete-policy: hook-succeeded
+# deletes a hook resource once its own phase's hooks finish -- for a
+# ConfigMap that's essentially immediately, since creating it always
+# "succeeds". Leaving this one in the pre-install phase after moving the
+# Job to post-install meant it was created and deleted again during the
+# pre-install phase, long before the post-install Job ever ran, so the
+# Job's mount failed with "configmap init-db-script not found" -- an
+# outright missing-resource error, not a timing race. Both hook resources
+# must share the same phase for one to reliably see the other. Helm runs
+# same-phase hooks in ascending hook-weight order, so weight "-5" here
+# against the Job's weight "0" still guarantees this ConfigMap lands first
+# within that shared phase.
+{{- if .Values.initDbJob.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: init-db-script
+  labels:
+    {{- include "rag-system.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+data:
+  init_db.py: |
+{{ .Files.Get "files/init_db.py" | indent 4 }}
+{{- end }}

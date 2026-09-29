@@ -1,0 +1,87 @@
+# A post-install/post-upgrade Helm hook, not a plain resource -- Helm runs
+# hook resources separately from the main manifest, in hook-weight order,
+# and waits for them to reach a terminal state before continuing the
+# install/upgrade. hook-delete-policy: before-hook-creation deletes any
+# previous run's completed Job first (a Job's pod template is immutable, so
+# without this, a second `helm upgrade` would fail to even create the new
+# Job object); hook-succeeded also cleans up after a successful run so
+# `kubectl get jobs -n rag` doesn't accumulate one completed Job per release.
+# A failed run is deliberately left in place (no hook-failed policy) so its
+# logs stay inspectable via `kubectl logs job/init-db -n rag`.
+#
+# `post-install`, not `pre-install` -- a real bug hit and fixed while
+# demoing this chart, not a theoretical concern. Helm runs pre-install
+# hooks BEFORE any of the chart's own templates are created, so on a truly
+# fresh `helm install` the `postgres` Service this Job's wait-for-postgres
+# loop resolves does not exist yet -- `nc -z postgres 5432` fails immediately
+# with "bad address 'postgres'" (not a timeout, an outright DNS failure),
+# and the Job (and therefore the whole install) hangs until
+# `backoffLimit`/the outer hook wait times out. `pre-upgrade` never showed
+# this, since by the second release the Service already exists from the
+# first install -- which is exactly how this stayed hidden through initial
+# development and only surfaced on a genuinely fresh install. `post-install`
+# runs after the chart's own Service/StatefulSet are created, so DNS
+# resolves immediately; the existing wait-for-postgres polling loop still
+# does the real job of waiting for the postgres *pod* to actually accept
+# connections, not just for the Service object to exist.
+{{- if .Values.initDbJob.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: init-db
+  labels:
+    {{- include "rag-system.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      # `app: init-db` -- a real bug hit and fixed while demoing this chart:
+      # this Job's pod had no label at all matching
+      # networkpolicy.yaml's `allow-rag-api-to-postgres` selector
+      # (`podSelector: {app: rag-api}`), so with `networkPolicy.enabled: true`
+      # (the default) the namespace's default-deny-ingress policy silently
+      # dropped every connection attempt to postgres -- observed directly as
+      # `nc -z postgres 5432` hanging until "Connection timed out" (a dropped
+      # packet, not "connection refused", which is what pointed at a
+      # NetworkPolicy rather than postgres itself: DNS resolved correctly,
+      # the Service's Endpoints listed the pod as ready, and the identical
+      # target was reachable from the rag-api pod at the same time). This
+      # also falsifies this chart's own networkpolicy.yaml comment claiming
+      # minikube's docker-driver CNI does not enforce NetworkPolicy at all --
+      # on this cluster/minikube version it demonstrably does. See
+      # networkpolicy.yaml's own updated comment and the matching new
+      # ingress rule added there for this label.
+      labels:
+        app: init-db
+    spec:
+      restartPolicy: Never
+      initContainers:
+        - name: wait-for-postgres
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - until nc -z postgres 5432; do echo "waiting for postgres..."; sleep 2; done
+      containers:
+        - name: init-db
+          image: "{{ .Values.ragApi.image.repository }}:{{ .Values.ragApi.image.tag }}"
+          imagePullPolicy: {{ .Values.ragApi.image.pullPolicy }}
+          command: ["python", "/scripts/init_db.py"]
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "rag-system.secretName" . }}
+                  key: DATABASE_URL
+          volumeMounts:
+            - name: init-db-script
+              mountPath: /scripts
+      volumes:
+        - name: init-db-script
+          configMap:
+            name: init-db-script
+{{- end }}
