@@ -488,7 +488,7 @@ class DoSLimitsConfig(BaseModel):
 
 
 class RateLimitConfig(BaseModel):
-    """Per-caller request-rate limiting (`slowapi`, in-memory backend).
+    """Per-caller request-rate limiting (`slowapi`; in-memory or Redis backend).
 
     Attributes
     ----------
@@ -500,17 +500,78 @@ class RateLimitConfig(BaseModel):
         Bucketing key, read by `api/deps.py:_rate_limit_key`. `"tenant"`
         (the default) buckets by the verified identity's `tenant_id` when
         present, falling back to client IP; `"ip"` always buckets by
-        client IP, even when a verified identity is present.
+        client IP, even when a verified identity is present. Bounded
+        cardinality either way: the number of distinct tenants or client
+        IPs actually seen, never a raw query/path/token value.
+    backend : {"memory", "redis"}
+        `"memory"` (the default) is `slowapi`'s process-local `MemoryStorage`
+        -- correct for a single replica, silently wrong under >1 replica
+        behind a load balancer (see `distributed_state_experiment/README.md`
+        for a reproduced demonstration of exactly this failure mode).
+        `"redis"` shares counters across every replica via the `limits`
+        library's `RedisStorage` (already a transitive dependency of
+        `slowapi`), which performs the check-and-increment as a single Lua
+        script server-side (`incr_expire.lua` for the fixed-window
+        strategy, confirmed directly against the installed
+        `limits==5.8.0` package source, not assumed) -- there is no
+        separate GET-then-SET round trip for a second replica to race
+        against.
+    redis_url_env_var : str
+        Name of the environment variable holding the Redis connection URL
+        (e.g. `redis://localhost:6379/0`), only read when `backend="redis"`.
+        Never hardcoded here, matching every other connection string in
+        this config (see `vectorstore.connection_env_var`).
+    strategy : {"fixed-window", "moving-window", "sliding-window-counter"}
+        The `limits` library rate-limiting strategy, only meaningful when
+        `backend="redis"` (the in-memory `slowapi` default already uses
+        fixed-window). `"fixed-window"` is the default: cheapest (one Lua
+        call per request) and the easiest to reason about, at the cost of
+        allowing up to 2x the nominal limit across a window boundary (a
+        burst right at the boundary of two adjacent windows). `"moving-window"`
+        and `"sliding-window-counter"` remove that boundary burst at the
+        cost of extra Redis-side bookkeeping per request; not the default
+        because the boundary-burst tradeoff is judged acceptable for this
+        system's own traffic shape (interactive query/agent calls, not a
+        billing-grade quota).
+    redis_fail_mode : {"fail_open", "fail_closed"}
+        What happens to a request when Redis itself is unreachable, only
+        meaningful when `backend="redis"`. `"fail_open"` (the default):
+        the request proceeds, degrading to a process-local in-memory
+        limiter for the duration of the outage (`slowapi`'s own
+        `in_memory_fallback_enabled`) rather than either blocking all
+        traffic or enforcing no limit at all. `"fail_closed"`: the request
+        is rejected with an explicit 503 (`api/main.py`'s
+        `redis.exceptions.RedisError` handler) rather than silently
+        falling back to weaker enforcement. See
+        `distributed_state_experiment/README.md`'s Part 5 Q3 for the full
+        reasoning: a rate limiter protects availability/fairness, not
+        confidentiality, so the default here is deliberately the opposite
+        of `security.field_redaction`'s fail-closed default (which
+        protects against leaking a secret, a fundamentally different risk
+        the wrong direction would take).
+    redis_key_prefix : str
+        Prefix prepended to every Redis key `limits` creates for this
+        limiter, so this experiment's keys are trivially identifiable and
+        `redis-cli --scan --pattern "<prefix>*"` never touches unrelated
+        keys in a shared Redis instance.
 
     Notes
     -----
-    In-memory state is process-local; with more than one API replica,
-    each enforces its own independent limit.
+    `backend="memory"`'s in-memory state is process-local; with more than
+    one API replica, each enforces its own independent limit. Neither
+    backend ever stores a JWT, bearer token, or raw query text as a Redis
+    value or key fragment -- only the bucket key (`tenant:<id>` /
+    `ip:<addr>`) and an integer counter.
     """
 
     enabled: bool = False
     requests_per_minute: int = 60
     key: Literal["tenant", "ip"] = "tenant"
+    backend: Literal["memory", "redis"] = "memory"
+    redis_url_env_var: str = "RATE_LIMIT_REDIS_URL"
+    strategy: Literal["fixed-window", "moving-window", "sliding-window-counter"] = "fixed-window"
+    redis_fail_mode: Literal["fail_open", "fail_closed"] = "fail_open"
+    redis_key_prefix: str = "rag_rate_limit"
 
 
 class EgressPolicyConfig(BaseModel):
@@ -953,6 +1014,35 @@ class AppConfig(BaseModel):
             raise RuntimeError(
                 f"Environment variable '{self.vectorstore.connection_env_var}' is not set. "
                 "Set DATABASE_URL, e.g. postgresql://rag:rag@localhost:15987/ragdb"
+            )
+        return value
+
+    def rate_limit_redis_url(self) -> str:
+        """Resolve the rate limiter's Redis URL from `security.rate_limit.redis_url_env_var`.
+
+        Only called when `security.rate_limit.backend == "redis"`.
+
+        Returns
+        -------
+        str
+            The URL read from the configured environment variable.
+
+        Raises
+        ------
+        RuntimeError
+            If that environment variable is unset or empty. Deliberately
+            not defaulted to `localhost` -- unlike `ollama_base_url()`,
+            the Redis backend is opt-in and it's better to fail loudly at
+            startup than to silently point every replica back at its own
+            local, unshared Redis.
+        """
+        env_var = self.security.rate_limit.redis_url_env_var
+        value = os.environ.get(env_var)
+        if not value:
+            raise RuntimeError(
+                f"Environment variable '{env_var}' is not set. Set it to a Redis "
+                "connection URL, e.g. redis://localhost:6379/0, or leave "
+                "security.rate_limit.backend at its default ('memory')."
             )
         return value
 
