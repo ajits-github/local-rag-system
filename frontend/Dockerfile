@@ -16,8 +16,24 @@ COPY . .
 RUN npm run build
 
 FROM nginx:1.27-alpine AS runtime
+# The official image's own docker-entrypoint.d/15-local-resolvers.envsh
+# (which populates NGINX_LOCAL_RESOLVERS from this container's own
+# /etc/resolv.conf, read by nginx.conf.template below) is itself opt-in:
+# its first line is `[ "${NGINX_ENTRYPOINT_LOCAL_RESOLVERS:-}" ] || return 0`,
+# confirmed by reading that script directly. Without this, the script is a
+# silent no-op and envsubst leaves the ${NGINX_LOCAL_RESOLVERS} placeholder
+# in nginx.conf.template completely unexpanded, which nginx then refuses to
+# start on ("host not found in resolver ${NGINX_LOCAL_RESOLVERS}") -- caught
+# by a local `docker run` smoke test before this was ever pushed to a
+# cluster.
+ENV NGINX_ENTRYPOINT_LOCAL_RESOLVERS=1
 COPY --from=builder /app/dist /usr/share/nginx/html
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+# .template (not conf.d directly) so the official image's own
+# docker-entrypoint.d/20-envsubst-on-templates.sh renders it at container
+# start, substituting NGINX_LOCAL_RESOLVERS (see nginx.conf.template's own
+# comment) -- required for the resolver directive to be correct under both
+# Docker Compose and Kubernetes.
+COPY nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY docker-entrypoint.sh /docker-entrypoint.d/30-rag-api-base.sh
 RUN chmod +x /docker-entrypoint.d/30-rag-api-base.sh
 

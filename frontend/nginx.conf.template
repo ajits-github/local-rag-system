@@ -2,9 +2,23 @@
 # so the browser only ever talks to one origin (this container) and the
 # FastAPI app never needs CORS middleware. See frontend/README.md.
 #
-# RAG_API_UPSTREAM is set by docker-compose.frontend.yml; defaults to the
-# compose service name for local development.
-resolver 127.0.0.11 valid=30s;
+# This file is a *.template processed by the official nginx image's own
+# docker-entrypoint.d/20-envsubst-on-templates.sh (see the Dockerfile's
+# COPY destination), which runs after 15-local-resolvers.envsh has already
+# exported NGINX_LOCAL_RESOLVERS from this container's own /etc/resolv.conf.
+# proxy_pass below uses the variable form ($rag_api_upstream) to force
+# runtime DNS resolution of "rag-api" rather than resolving it once at
+# config-load time, so a hardcoded resolver address is required -- but the
+# correct address differs by environment: Docker Compose's embedded DNS is
+# 127.0.0.11, while a Kubernetes pod's is its cluster's CoreDNS/kube-dns
+# ClusterIP (e.g. 10.96.0.10), neither of which the other environment has.
+# NGINX_LOCAL_RESOLVERS resolves this portably: it's whatever this specific
+# container's own /etc/resolv.conf says at startup, correct in both places
+# with no per-environment override needed. A hardcoded 127.0.0.11 here used
+# to make every proxied path (including the root "/" probe path) hang for
+# the full DNS timeout under Kubernetes, since nothing listens on
+# 127.0.0.11:53 inside a pod's network namespace -- see ISSUES.md.
+resolver ${NGINX_LOCAL_RESOLVERS} valid=30s;
 
 # The bare "/" is both the SPA's own document root and the backend's
 # GET / (FeatureFlagsBar's info endpoint) -- the only path where the
