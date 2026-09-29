@@ -1,0 +1,118 @@
+# StatefulSet, not Deployment, and here is why it actually matters even at
+# replicas: 1:
+#
+# 1. Stable network identity. A StatefulSet's headless Service (clusterIP:
+#    None below) gives the pod a predictable DNS name
+#    (postgres-0.postgres.rag.svc.cluster.local) that survives pod
+#    recreation -- a Deployment's pods get a fresh random name/IP every
+#    time and have no individual DNS entry at all.
+# 2. Stable storage identity via volumeClaimTemplates. Each ordinal pod
+#    (postgres-0, postgres-1, ...) gets its OWN PVC that is created once
+#    and re-attached to that same ordinal on every recreation -- a
+#    Deployment has no concept of "this specific pod owns this specific
+#    volume," which is why a Deployment backed by a single ReadWriteOnce
+#    PVC works by accident for one replica but breaks the moment you try
+#    to scale it (two interchangeable pod replicas would race to mount
+#    the same PVC).
+# 3. Ordered, one-at-a-time rollout. StatefulSet updates pods in strict
+#    ordinal sequence (highest first) and waits for each to become Ready
+#    before touching the next -- important the moment this ever becomes a
+#    real primary/replica Postgres topology, even though at replicas: 1
+#    it's a distinction without a difference today.
+#
+# None of this means Postgres is "clustered" here -- it's still one
+# instance. StatefulSet is the right primitive for "one placeholder-safe,
+# recreatable instance with its own durable disk," which is exactly what
+# this learning deployment needs; a Deployment would work today by luck,
+# not by design.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: rag
+  labels:
+    app: postgres
+spec:
+  clusterIP: None # headless: enables postgres-0.postgres.rag.svc.cluster.local
+  selector:
+    app: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: rag
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: postgres
+          image: pgvector/pgvector:pg16
+          ports:
+            - containerPort: 5432
+          envFrom:
+            - configMapRef:
+                name: rag-config
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: rag-secret
+                  key: POSTGRES_PASSWORD
+          volumeMounts:
+            - name: pgdata
+              mountPath: /var/lib/postgresql/data
+              # pgvector's image writes directly into the mount root, which
+              # trips Postgres's "directory not empty" check when the PVC's
+              # filesystem has a lost+found dir (common on freshly
+              # provisioned volumes). subPath sidesteps it, same effect as
+              # docker-compose's own named-volume mount.
+              subPath: pgdata
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "rag", "-d", "ragdb"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 5
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "rag", "-d", "ragdb"]
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 5
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+  volumeClaimTemplates:
+    - metadata:
+        name: pgdata
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
+        # No storageClassName set: kind ships a default StorageClass
+        # ("standard", backed by rancher/local-path-provisioner) that
+        # dynamically provisions this PVC with no extra setup. On a real
+        # cluster you'd pin this to a specific class (e.g. a CSI driver
+        # backed by real network storage) instead of relying on whatever
+        # the cluster's default happens to be.
