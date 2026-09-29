@@ -1,0 +1,29 @@
+# Single backend (frontend) for every path -- mirrors this project's
+# existing same-origin design (frontend's own nginx already reverse-proxies
+# API paths to rag-api) rather than re-implementing that routing a second
+# time at the Ingress layer.
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: rag
+  labels:
+    {{- include "rag-system.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    - host: {{ .Values.ingress.host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: {{ .Values.frontend.service.port }}
+{{- end }}

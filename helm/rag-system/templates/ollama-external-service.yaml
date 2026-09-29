@@ -1,0 +1,21 @@
+# Ollama deliberately stays native on the host (see CLAUDE.md's
+# "Containerized runtime" section) -- there is no Ollama Deployment/Pod
+# here, on purpose. type: ExternalName is pure DNS indirection (a CNAME),
+# no selector, no pod backing it, no ClusterIP. Fixed name "ollama-host" --
+# config.ollamaBaseUrl's derived default (templates/configmap.yaml)
+# references it directly.
+#
+# host.docker.internal resolves from inside a kind node container (same
+# Docker daemon) the same way it already does for the plain docker-compose
+# stack. On minikube, swap ollama.externalName to host.minikube.internal
+# (see values-dev.yaml) -- minikube's own documented, driver-agnostic
+# mechanism for reaching the host.
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama-host
+  labels:
+    {{- include "rag-system.labels" . | nindent 4 }}
+spec:
+  type: ExternalName
+  externalName: {{ .Values.ollama.externalName }}
