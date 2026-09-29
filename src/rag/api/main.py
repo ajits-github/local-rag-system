@@ -8,6 +8,7 @@ from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
 
 import psycopg2.errors
+import redis.exceptions
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 from psycopg2.pool import PoolError
@@ -408,9 +409,50 @@ def _handle_integrity_error(request: Request, exc: Exception) -> JSONResponse:
     return JSONResponse(status_code=503, content={"detail": "Service temporarily unavailable"})
 
 
+def _handle_redis_rate_limiter_error(request: Request, exc: Exception) -> JSONResponse:
+    """Return an explicit 503 when the Redis-backed rate limiter is unreachable.
+
+    Only ever reached when `security.rate_limit.backend == "redis"` and
+    `security.rate_limit.redis_fail_mode == "fail_closed"`: in that mode
+    `get_rate_limiter()` builds the `Limiter` with `swallow_errors=False`
+    and no in-memory fallback, so a `redis.exceptions.RedisError` raised
+    while checking a request's limit propagates up rather than being
+    swallowed or silently downgraded to per-process limiting. This
+    handler is what makes that choice an explicit, documented 503 instead
+    of an unhandled 500 -- see `RateLimitConfig.redis_fail_mode`'s
+    docstring and `distributed_state_experiment/README.md`'s Part 5 Q3
+    for the fail-open/fail-closed reasoning.
+
+    Parameters
+    ----------
+    request : Request
+        The request whose rate-limit check could not reach Redis.
+    exc : Exception
+        The `redis.exceptions.RedisError` raised. Typed as the base
+        `Exception` to match `Starlette.add_exception_handler`'s expected
+        handler signature.
+
+    Returns
+    -------
+    JSONResponse
+        A 503 response with a generic, non-internal detail message.
+    """
+    log_audit_event("rate_limit_backend_unavailable", path=request.url.path)
+    observability_metrics.observe_error("rate_limiter")
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "Rate limiter temporarily unavailable; failing closed"},
+    )
+
+
 app.add_exception_handler(RateLimitExceeded, _handle_rate_limit_exceeded)
 app.add_exception_handler(PoolError, _handle_pool_error)
 app.add_exception_handler(psycopg2.errors.IntegrityError, _handle_integrity_error)
+if (
+    get_config().security.rate_limit.backend == "redis"
+    and get_config().security.rate_limit.redis_fail_mode == "fail_closed"
+):
+    app.add_exception_handler(redis.exceptions.RedisError, _handle_redis_rate_limiter_error)
 app.add_middleware(SlowAPIMiddleware)
 
 app.include_router(health.router)
