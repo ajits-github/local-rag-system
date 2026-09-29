@@ -20,6 +20,19 @@
 # 127.0.0.11:53 inside a pod's network namespace -- see ISSUES.md.
 resolver ${NGINX_LOCAL_RESOLVERS} valid=30s;
 
+# nginx's own resolver directive above talks to the DNS server directly and
+# does NOT apply /etc/resolv.conf's "search" domain expansion the way a
+# normal libc-based lookup (e.g. wget, or this project's own FastAPI/httpx
+# calls) does -- confirmed directly against this cluster's CoreDNS: querying
+# the bare "rag-api" or the short "rag-api.rag" form both fail (no answer /
+# NXDOMAIN), only the fully-qualified "rag-api.rag.svc.cluster.local" is
+# answered. Docker Compose's embedded DNS has no such requirement (a bare
+# service name resolves directly), so this genuinely needs a different value
+# per environment -- RAG_API_UPSTREAM_HOST defaults to the bare Compose
+# service name (Dockerfile ENV) and is overridden to the fully-qualified
+# in-cluster name by k8s/base/frontend-deployment.yaml's own env var. See
+# ISSUES.md.
+
 # The bare "/" is both the SPA's own document root and the backend's
 # GET / (FeatureFlagsBar's info endpoint) -- the only path where the
 # frontend and the API contract collide. A real browser navigation
@@ -40,7 +53,7 @@ server {
     root /usr/share/nginx/html;
     index index.html;
 
-    set $rag_api_upstream "http://rag-api:8000";
+    set $rag_api_upstream "http://${RAG_API_UPSTREAM_HOST}:8000";
 
     location = / {
         try_files $root_index @root_backend;

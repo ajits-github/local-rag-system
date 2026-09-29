@@ -27,6 +27,11 @@ FROM nginx:1.27-alpine AS runtime
 # by a local `docker run` smoke test before this was ever pushed to a
 # cluster.
 ENV NGINX_ENTRYPOINT_LOCAL_RESOLVERS=1
+# The bare Compose service name (docker-compose.frontend.yml's "rag-api")
+# resolves fine under Docker Compose's embedded DNS; a Kubernetes Deployment
+# overrides this to the fully-qualified in-cluster name, since nginx's own
+# resolver skips search-domain expansion (see nginx.conf.template's comment).
+ENV RAG_API_UPSTREAM_HOST=rag-api
 COPY --from=builder /app/dist /usr/share/nginx/html
 # .template (not conf.d directly) so the official image's own
 # docker-entrypoint.d/20-envsubst-on-templates.sh renders it at container
