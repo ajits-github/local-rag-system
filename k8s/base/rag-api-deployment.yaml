@@ -1,0 +1,139 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rag-api
+  namespace: rag
+spec:
+  # Change this (or `kubectl scale`) for the "scale from 1 to 3" exercise.
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rag-api
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      # 0 unavailable, not the Kubernetes default (25%): with only 1-2
+      # replicas in this learning setup, a 25% floor still rounds to
+      # "take one down," which for a 1-replica Deployment means a real
+      # gap in service during rollout. maxUnavailable: 0 forces the new
+      # pod to be Ready before any old one is removed -- true zero-downtime
+      # rolling update, at the cost of briefly running N+1 pods.
+      maxUnavailable: 0
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: rag-api
+    spec:
+      # Mirrors docker-compose.yml's `depends_on: condition: service_healthy`
+      # for Postgres -- a hard dependency init containers can express
+      # directly, since a Deployment has no native "wait for another
+      # workload" concept the way Compose's depends_on does.
+      initContainers:
+        - name: wait-for-postgres
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - until nc -z postgres 5432; do echo "waiting for postgres..."; sleep 2; done
+      containers:
+        - name: rag-api
+          # Built and loaded locally (never pulled from a registry) --
+          # see k8s/README.md. imagePullPolicy IfNotPresent is required for
+          # that: Never would refuse a pull even for a tag that's genuinely
+          # missing (the "bad tag" rollout-failure exercise relies on this
+          # falling through to an ImagePullBackOff instead).
+          image: local-rag-api:kind
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: rag-config
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: rag-secret
+                  key: DATABASE_URL
+            - name: JWT_HS256_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: rag-secret
+                  key: JWT_HS256_SECRET
+            - name: COHERE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: rag-secret
+                  key: COHERE_API_KEY
+          # Three distinct probes against three distinct endpoints
+          # (src/rag/api/routers/health.py), not one /health reused three
+          # ways -- see that file's own module docstring for the full
+          # reasoning. /health stays available for human/dashboard use,
+          # always 200 with degradation only in the body; it's
+          # deliberately not wired to any probe below.
+          #
+          # startupProbe -> /livez: gives the container a bounded window to
+          # finish its (possibly slow) cold start -- importing torch/
+          # transformers/sentence-transformers can take a while on a
+          # constrained host -- before liveness/readiness are evaluated at
+          # all. failureThreshold*periodSeconds below is a generic
+          # allowance (2 minutes); a host that needs longer should patch
+          # this in its own overlay (see k8s/minikube's
+          # rag-api-startup-probe-patch.yaml), never by inflating this
+          # base value for every environment.
+          startupProbe:
+            httpGet:
+              path: /livez
+              port: 8000
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 24
+          # readinessProbe -> /readyz: can this Pod serve a normal request
+          # right now (vectorstore + LLM both reachable)? A failure removes
+          # it from Service traffic without restarting the container.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8000
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          # livenessProbe -> /livez: is the process itself still
+          # responsive? Deliberately dependency-free (see /livez's own
+          # docstring) -- a downstream Postgres/Ollama outage must never
+          # trigger a restart here, only a readiness failure above.
+          # initialDelaySeconds is 0 on both probes above and this one
+          # because startupProbe already covers "give it time to start";
+          # by the time either runs, the container has already passed
+          # startupProbe once.
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: 8000
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "768Mi"
+            limits:
+              cpu: "1"
+              memory: "1536Mi"
+          # Graceful termination: SIGTERM -> uvicorn already finishes
+          # in-flight requests before exiting, same as the native/compose
+          # deployments. The preStop sleep exists for a Kubernetes-specific
+          # reason Compose doesn't have: kube-proxy/endpoint removal from
+          # the Service is asynchronous relative to the SIGTERM being sent,
+          # so a request routed to this pod microseconds before shutdown
+          # begins can still arrive after the container starts exiting.
+          # Sleeping briefly in preStop (which delays SIGTERM) gives that
+          # propagation time to finish first.
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sh", "-c", "sleep 5"]
+      # Must exceed preStop's sleep(5) plus real shutdown time, or
+      # Kubernetes SIGKILLs the process before it finishes exiting cleanly.
+      terminationGracePeriodSeconds: 40
