@@ -1,0 +1,20 @@
+apiVersion: v2
+name: rag-system
+description: >-
+  Local RAG system (rag-api, frontend, Postgres+pgvector) packaged as a Helm
+  chart. Converts the hand-written manifests under k8s/base into a
+  configurable, releasable chart -- same workloads, same behavior, no
+  application changes. Ollama stays native on the host, reached via an
+  ExternalName Service, exactly as it does under k8s/base and docker-compose.
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - rag
+  - retrieval-augmented-generation
+  - learning-exercise
+home: https://github.com/ajits-github/local-rag-system
+sources:
+  - https://github.com/ajits-github/local-rag-system
+maintainers:
+  - name: Ajit

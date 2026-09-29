@@ -1,0 +1,227 @@
+# Default values for rag-system.
+#
+# This is the base profile: small resource footprint, security hardening on,
+# HPA/ingress off, in-chart Secret with clearly-fake local-dev values. It is
+# meant to be installed directly for local learning (mirrors k8s/base +
+# k8s/minikube's defaults) or layered under values-dev.yaml / values-prod.yaml
+# with `-f values.yaml -f values-<env>.yaml` (later files win).
+#
+# Kept intentionally flat: every field here is either read directly from an
+# existing k8s/base manifest or is a genuine day-2 knob (image tag, replica
+# count, resource sizing, probe timing, HPA/PDB/ingress toggles). Nothing is
+# templated "just in case" -- see helm/rag-system/README.md's "What isn't
+# templated, on purpose" section.
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+rbac:
+  # rag-api never calls the Kubernetes API (no operator/controller logic
+  # anywhere in this codebase -- see CLAUDE.md's repeated "no infrastructure
+  # without a demonstrated requirement now" pattern). A Role/RoleBinding is
+  # left disabled by default on purpose: binding permissions nothing uses
+  # violates least-privilege by existing for no reason. Flip create: true
+  # and fill in `rules` only if you add something that genuinely needs
+  # API access (e.g. a future controller watching ConfigMaps).
+  create: false
+  rules: []
+
+ragApi:
+  image:
+    repository: local-rag-api
+    tag: minikube
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  service:
+    port: 8000
+  resources:
+    requests:
+      cpu: 250m
+      memory: 768Mi
+    limits:
+      cpu: "1"
+      memory: 1536Mi
+  # Three distinct probes against three distinct endpoints
+  # (src/rag/api/routers/health.py) -- see k8s/base/rag-api-deployment.yaml's
+  # own comment for the full reasoning this chart preserves unchanged.
+  probes:
+    startup:
+      path: /livez
+      periodSeconds: 5
+      timeoutSeconds: 3
+      failureThreshold: 24
+    readiness:
+      path: /readyz
+      periodSeconds: 5
+      timeoutSeconds: 3
+      failureThreshold: 3
+    liveness:
+      path: /livez
+      periodSeconds: 20
+      timeoutSeconds: 5
+      failureThreshold: 3
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 65
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  terminationGracePeriodSeconds: 40
+  preStopSleepSeconds: 5
+  # readOnlyRootFilesystem is genuinely practical here: the rag Dockerfile
+  # user (uid/gid 999) only ever writes to $HOME (/app, for model caches),
+  # /app/data/uploads, and /tmp -- all three get their own emptyDir mount
+  # in templates/rag-api/deployment.yaml so the container's own code/config
+  # under /app/src and /app/config stay truly read-only.
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 999
+    runAsGroup: 999
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop: ["ALL"]
+  podSecurityContext:
+    # Matches the writable-volume GID above -- without fsGroup, a fresh
+    # emptyDir is root-owned and the uid-999 process can't write to it.
+    fsGroup: 999
+  topologySpreadConstraints:
+    enabled: true
+    maxSkew: 1
+    topologyKey: kubernetes.io/hostname
+    whenUnsatisfiable: ScheduleAnyway
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+frontend:
+  image:
+    repository: local-rag-frontend
+    tag: minikube
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  service:
+    port: 80
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  # nginx:1.27-alpine's own "nginx" user is uid/gid 101 (confirmed against
+  # the built image, not assumed). NET_BIND_SERVICE is added back because
+  # nginx.conf.template listens on port 80, a privileged port a non-root
+  # process can't bind without it -- everything else is dropped.
+  # readOnlyRootFilesystem: true requires an init step (see
+  # templates/frontend/deployment.yaml) to seed writable copies of
+  # /usr/share/nginx/html and /etc/nginx, since the stock nginx image's own
+  # entrypoint scripts (envsubst-on-templates, worker_processes autotune)
+  # and this project's docker-entrypoint.sh (index.html rewrite) all write
+  # into those paths at container start.
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 101
+    runAsGroup: 101
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop: ["ALL"]
+      add: ["NET_BIND_SERVICE"]
+  podSecurityContext:
+    fsGroup: 101
+  topologySpreadConstraints:
+    enabled: true
+    maxSkew: 1
+    topologyKey: kubernetes.io/hostname
+    whenUnsatisfiable: ScheduleAnyway
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+postgres:
+  image: pgvector/pgvector:pg16
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+  persistence:
+    enabled: true
+    size: 1Gi
+    # Empty uses whatever StorageClass the cluster marks as default (kind
+    # and minikube both ship one). Pin this explicitly on a real cluster --
+    # see helm/rag-system/README.md's "Persistent volumes" section.
+    storageClassName: ""
+    accessModes:
+      - ReadWriteOnce
+  terminationGracePeriodSeconds: 30
+
+# Non-secret configuration, mirrors k8s/base/configmap-app.yaml exactly.
+config:
+  logLevel: INFO
+  ragConfigPath: ""
+  postgresDb: ragdb
+  postgresUser: rag
+  # Left blank to auto-derive "http://ollama-host.<release-namespace>.svc.cluster.local:11434"
+  # in templates/configmap.yaml -- set explicitly only if that derivation is wrong
+  # for your cluster/namespace.
+  ollamaBaseUrl: ""
+  otelExporterOtlpEndpoint: ""
+
+# Kubernetes Secrets are base64, not encrypted -- fine for this local
+# learning chart, not for a real deployment. See README's "Secret hardening"
+# section for the existingSecret escape hatch used by values-prod.yaml.
+secret:
+  create: true
+  existingSecret: ""
+  postgresPassword: "rag"
+  jwtHs256Secret: "dev-only-insecure-jwt-signing-secret-CHANGE-ME"
+  cohereApiKey: ""
+
+# Ollama deliberately stays native on the host (see CLAUDE.md's
+# "Containerized runtime" section) -- this is pure DNS indirection, no pod.
+# host.docker.internal is correct for kind/Docker Desktop; swap to
+# host.minikube.internal for minikube (see values-dev.yaml).
+ollama:
+  externalName: host.docker.internal
+
+ingress:
+  enabled: false
+  className: nginx
+  host: rag.local
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+
+# Default-deny ingress + explicit allow rules, mirrors k8s/base/networkpolicy.yaml.
+# Inert unless the cluster's CNI enforces NetworkPolicy (kindnet/minikube's
+# default docker-driver CNI do not) -- see README's NetworkPolicy section.
+networkPolicy:
+  enabled: true
+  ingressNginxNamespace: ingress-nginx
+
+# Off by default: a one-shot schema-init Job, the Helm equivalent of
+# `make up`'s `python scripts/init_db.py` step. When enabled, it runs as a
+# post-install/post-upgrade Helm hook -- every `helm install`/`helm upgrade`
+# re-runs it automatically (no manual "delete the Job, re-apply" dance,
+# unlike the plain-kubectl k8s/jobs/init-db-job.yaml workflow). Safe to
+# leave on for every release: init_db.py's own DDL is idempotent.
+initDbJob:
+  enabled: false
+
+# `helm test` connection check (templates/tests/test-connection.yaml).
+tests:
+  enabled: true

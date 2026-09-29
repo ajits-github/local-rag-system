@@ -1,0 +1,59 @@
+# Dev overlay: layer on top of values.yaml for the local minikube/kind
+# learning cluster.
+#   helm install rag-dev . -n rag --create-namespace -f values.yaml -f values-dev.yaml
+#
+# Everything not listed here is inherited from values.yaml unchanged --
+# an overlay file only needs to state its *deltas*, which is also why this
+# file stays short: dev IS the base profile for this chart.
+
+ollama:
+  # minikube's docker driver doesn't resolve host.docker.internal the way
+  # kind does -- see k8s/base/ollama-external-service.yaml's comment.
+  externalName: host.minikube.internal
+
+# A single-node learning cluster can't usefully spread replicas across
+# hosts -- ScheduleAnyway (values.yaml's default) already keeps pods
+# schedulable there, but there's no point asking for it at all when there's
+# only one node to spread across.
+ragApi:
+  topologySpreadConstraints:
+    enabled: false
+  # Matches k8s/minikube/rag-api-startup-probe-patch.yaml's own host-specific
+  # tolerance exactly, for the identical reason: a cold rag-api start on
+  # this particular host (importing torch/transformers/sentence-transformers
+  # with no pre-baked model cache -- see CLAUDE.md's "Known gap" note --
+  # plus this host's demonstrably slow container-filesystem I/O) took well
+  # over values.yaml's generic 120s startup budget in practice, observed
+  # directly on this exact deployment (the pod was still producing zero log
+  # output and failing startupProbe at the 120s mark). values.yaml's default
+  # stays a reasonable generic budget, not inflated for every environment
+  # because of one slow host -- this override is where that host-specific
+  # tolerance belongs instead, same reasoning the kustomize patch documents.
+  probes:
+    startup:
+      periodSeconds: 10
+      timeoutSeconds: 3
+      failureThreshold: 90
+
+frontend:
+  topologySpreadConstraints:
+    enabled: false
+
+# A real gap hit demoing this chart: a fresh PVC with initDbJob left at
+# values.yaml's own default (false) leaves the `vector` Postgres extension
+# and documents/chunks schema never created. rag-api still starts and
+# /livez still reports alive, but /readyz reports
+# {"vectorstore":"unreachable"} forever -- register_vector(conn) (called on
+# every pooled connection checkout, see PgVectorStore._connection) raises
+# because the `vector` type doesn't exist in the database, and
+# health_check() swallows that into a bare False. This looks exactly like a
+# connection/pooling failure (confirmed directly: a fresh, independent
+# psycopg2.connect() to the same DSN succeeds immediately, every time) and
+# cost real time to trace back to "the schema was never initialized," not a
+# networking or pool-sizing problem. values.yaml's own comment already says
+# this Job is "safe to leave on for every release" (init_db.py's DDL is
+# idempotent) -- this profile now does exactly that, so a first install
+# into this local learning cluster does not require a manual follow-up
+# `--set initDbJob.enabled=true` upgrade to become genuinely Ready.
+initDbJob:
+  enabled: true

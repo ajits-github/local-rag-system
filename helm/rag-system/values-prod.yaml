@@ -1,0 +1,99 @@
+# Prod-shaped overlay: layer on top of values.yaml for a real multi-node
+# cluster.
+#   helm install rag-prod . -n rag --create-namespace -f values.yaml -f values-prod.yaml
+#
+# Mirrors docker-compose.prod.yml's role in the Compose deployment: same
+# workloads, hardened/scaled posture, not a different application. Like that
+# file, this stays a values *overlay*, never folded into values.yaml --
+# values.yaml keeps its "zero-setup local learning" role.
+
+secret:
+  # Never ship real credentials through `helm install --set`/a values file
+  # in git -- that puts them in both shell history and Helm's own release
+  # history (`helm get values` returns whatever was passed at install time).
+  # Create the real Secret out-of-band first:
+  #   kubectl create secret generic rag-secret-prod -n rag \
+  #     --from-literal=POSTGRES_PASSWORD=... \
+  #     --from-literal=DATABASE_URL=postgresql://rag:...@postgres.rag.svc.cluster.local:5432/ragdb \
+  #     --from-literal=JWT_HS256_SECRET=... \
+  #     --from-literal=COHERE_API_KEY=...
+  # then point the release at it:
+  create: false
+  existingSecret: rag-secret-prod
+
+ragApi:
+  image:
+    tag: "1.0.0" # a real, immutable tag -- never :latest/:minikube in prod
+  replicaCount: 3
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 10
+  podDisruptionBudget:
+    enabled: true
+    # With 3 replicas, minAvailable: 2 tolerates one voluntary disruption
+    # (a node drain, a cluster upgrade) at a time without going below
+    # majority capacity -- unlike the values.yaml default (minAvailable: 1
+    # at replicas: 1), which blocks every voluntary disruption outright.
+    minAvailable: 2
+  topologySpreadConstraints:
+    enabled: true
+    # DoNotSchedule (stricter than values.yaml's ScheduleAnyway default):
+    # a real multi-node cluster can actually enforce "no two replicas on
+    # the same node" instead of falling back to best-effort placement.
+    whenUnsatisfiable: DoNotSchedule
+
+frontend:
+  image:
+    tag: "1.0.0"
+  replicaCount: 2
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  topologySpreadConstraints:
+    enabled: true
+    whenUnsatisfiable: DoNotSchedule
+
+postgres:
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+  persistence:
+    enabled: true
+    size: 20Gi
+    # Pin to a real cluster's CSI-backed class instead of relying on
+    # whatever the cluster's default StorageClass happens to be -- see
+    # README's "Persistent volumes" section for the reclaim-policy
+    # reasoning this pin exists for.
+    storageClassName: "ssd-retain"
+
+ingress:
+  enabled: true
+  host: rag.example.com
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+    # TLS termination, cert-manager, etc. are real production requirements
+    # left out here on purpose -- this chart's ingress template has no TLS
+    # block at all yet. Flagged, not implemented: see README's
+    # "What this chart does not do" section.
+
+networkPolicy:
+  enabled: true
+
+ollama:
+  # A real deployment would point this at a real, network-reachable Ollama
+  # host (or a hosted-equivalent generation provider) instead -- placeholder,
+  # matching the rest of this file's "not a real endpoint" values.
+  externalName: ollama.internal.example.com
