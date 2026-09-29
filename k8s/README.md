@@ -592,7 +592,73 @@ That distinction is extremely useful in interviews.
 
 ---
 
-## 16. Teardown
+## 16. k9s: a terminal UI for faster exploration
+
+`kubectl` (section 15 above) is the ground truth and the thing to know
+cold for an interview, but `k9s` is a live, keyboard-driven terminal UI
+over the same API that makes iterating through pods/services/logs much
+faster day to day -- it reads the same kubeconfig `kubectl` already
+uses, so no separate cluster setup is needed.
+
+**Install**
+
+```bash
+# Windows (winget)
+winget install derailed.k9s
+
+# Windows (scoop)
+scoop install k9s
+
+# macOS
+brew install k9s
+
+# Manual (any OS): download the release for your platform from
+# https://github.com/derailed/k9s/releases and put the binary on PATH.
+```
+
+**Launch**
+
+```bash
+k9s              # opens in the current kubeconfig context's default namespace
+k9s -n rag       # jump straight into this project's rag namespace
+```
+
+**Core navigation**
+
+| Key | Action |
+|---|---|
+| `:pods`, `:svc`, `:deploy`, `:ns`, `:hpa`, `:job`, ... | Jump to a resource type (command mode) |
+| `/` | Filter the current list (fuzzy match on name) |
+| `↑`/`↓` then `Enter` | Drill into the selected resource |
+| `d` | Describe (same information as `kubectl describe`) |
+| `l` | Stream logs; press again to toggle previous-container logs |
+| `s` | Shell into a container |
+| `y` | Show the resource's raw YAML |
+| `ctrl-d` | Delete the selected resource (asks to confirm) |
+| `Esc` | Back out one level |
+| `:q` or `ctrl-c` | Quit |
+| `?` | Full keybinding help |
+
+**Where this is useful in this project**
+
+- `:pods` then `/frontend` -- jump straight to the frontend pod to watch
+  restart counts live while working through the unresolved crash-loop
+  follow-up (see `ISSUES.md`).
+- `l` on a multi-container pod, then a number key to pick which
+  container's logs to stream.
+- `:deploy`, select `rag-api`, `ctrl-s` to scale replicas live -- a
+  hands-on way to watch the HPA fight (or not fight) a manual scale.
+- The CPU/MEM columns on the `:pods` view make it easy to spot a Pod
+  close to its resource limit without running `kubectl top` by hand
+  repeatedly.
+
+k9s never changes cluster state on its own beyond the action a key
+explicitly triggers (delete, scale, edit); it is a faster window onto
+the same objects `kubectl` already shows, not a different control plane.
+
+---
+
+## 17. Teardown
 
 See "Teardown" in `kind/README.md` or `minikube/README.md` for the
 exact command -- either destroys the local cluster and its local
