@@ -1,0 +1,45 @@
+# Requires metrics-server in the cluster (kind does not ship it by
+# default) -- see k8s/README.md's "Install metrics-server" step. Without
+# it this HPA object exists but TargetCPUUtilization reads <unknown> forever
+# and never scales anything.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: rag-api
+  namespace: rag
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: rag-api
+  minReplicas: 1
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          # CPU is a genuinely weak signal for this workload -- see
+          # k8s/LEARNING.md's "CPU-only autoscaling limitations" section.
+          # 65% is chosen to actually trigger during the load-test exercise
+          # on a small kind cluster without being so low it flaps on
+          # embedding-model warmup noise.
+          averageUtilization: 65
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Pods
+          value: 2
+          periodSeconds: 30
+    scaleDown:
+      # Shortened from a realistic production value (which would be
+      # several minutes, to avoid flapping on transient dips) purely so
+      # the scale-down side of the exercise is observable in a reasonable
+      # amount of time.
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 30

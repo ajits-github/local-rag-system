@@ -1,0 +1,21 @@
+# Named exactly "rag-api" so it's a drop-in replacement for the Compose
+# service name of the same name -- frontend/nginx.conf's hardcoded
+# proxy_pass upstream (http://rag-api:8000) resolves against this Service
+# with zero application changes, via Kubernetes' own in-namespace DNS
+# search path (a bare "rag-api" expands to
+# rag-api.rag.svc.cluster.local for any pod in the "rag" namespace).
+apiVersion: v1
+kind: Service
+metadata:
+  name: rag-api
+  namespace: rag
+  labels:
+    app: rag-api
+spec:
+  type: ClusterIP
+  selector:
+    app: rag-api
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
