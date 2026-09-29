@@ -1,0 +1,165 @@
+# Fixed name "rag-api" -- see README's "Why object names are fixed, not
+# release-prefixed" section. Kept as close to k8s/base/rag-api-deployment.yaml
+# as a templated chart allows; every comment there explaining *why* a given
+# field has the value it has still applies here unchanged.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rag-api
+  labels:
+    {{- include "rag-system.labels" . | nindent 4 }}
+    app: rag-api
+spec:
+  replicas: {{ .Values.ragApi.replicaCount }}
+  selector:
+    matchLabels:
+      app: rag-api
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        {{- include "rag-system.selectorLabels" . | nindent 8 }}
+        app: rag-api
+      annotations:
+        # Forces a rollout whenever the rendered ConfigMap/Secret content
+        # actually changes -- a config-only `helm upgrade` (no image/tag
+        # change) would otherwise leave already-Running pods on stale env
+        # vars, since Kubernetes never restarts a Pod just because a
+        # ConfigMap/Secret it references changed. Hashing the *rendered*
+        # template output (not just .Values) also catches a change to the
+        # template logic itself, not only a change to values.yaml.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "rag-system.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      securityContext:
+        {{- toYaml .Values.ragApi.podSecurityContext | nindent 8 }}
+      {{- if .Values.ragApi.topologySpreadConstraints.enabled }}
+      topologySpreadConstraints:
+        - maxSkew: {{ .Values.ragApi.topologySpreadConstraints.maxSkew }}
+          topologyKey: {{ .Values.ragApi.topologySpreadConstraints.topologyKey }}
+          whenUnsatisfiable: {{ .Values.ragApi.topologySpreadConstraints.whenUnsatisfiable }}
+          labelSelector:
+            matchLabels:
+              app: rag-api
+      {{- end }}
+      {{- with .Values.ragApi.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.ragApi.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.ragApi.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # Mirrors docker-compose.yml's `depends_on: condition: service_healthy`
+      # for Postgres -- a Deployment has no native "wait for another
+      # workload" concept the way Compose's depends_on does.
+      initContainers:
+        - name: wait-for-postgres
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - until nc -z postgres 5432; do echo "waiting for postgres..."; sleep 2; done
+      containers:
+        - name: rag-api
+          image: "{{ .Values.ragApi.image.repository }}:{{ .Values.ragApi.image.tag }}"
+          imagePullPolicy: {{ .Values.ragApi.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: rag-config
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "rag-system.secretName" . }}
+                  key: DATABASE_URL
+            - name: JWT_HS256_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "rag-system.secretName" . }}
+                  key: JWT_HS256_SECRET
+            - name: COHERE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "rag-system.secretName" . }}
+                  key: COHERE_API_KEY
+          # startupProbe -> /livez: bounded window for a possibly-slow cold
+          # start (importing torch/transformers/sentence-transformers) before
+          # liveness/readiness are evaluated at all.
+          startupProbe:
+            httpGet:
+              path: {{ .Values.ragApi.probes.startup.path }}
+              port: http
+            periodSeconds: {{ .Values.ragApi.probes.startup.periodSeconds }}
+            timeoutSeconds: {{ .Values.ragApi.probes.startup.timeoutSeconds }}
+            failureThreshold: {{ .Values.ragApi.probes.startup.failureThreshold }}
+          # readinessProbe -> /readyz: can this Pod serve a request right now
+          # (vectorstore + LLM both reachable)? Failure removes it from
+          # Service traffic without restarting the container.
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.ragApi.probes.readiness.path }}
+              port: http
+            periodSeconds: {{ .Values.ragApi.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.ragApi.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.ragApi.probes.readiness.failureThreshold }}
+          # livenessProbe -> /livez: is the process itself still responsive?
+          # Deliberately dependency-free -- a downstream Postgres/Ollama
+          # outage must never trigger a restart here, only a readiness
+          # failure above.
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.ragApi.probes.liveness.path }}
+              port: http
+            periodSeconds: {{ .Values.ragApi.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.ragApi.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.ragApi.probes.liveness.failureThreshold }}
+          resources:
+            {{- toYaml .Values.ragApi.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.ragApi.securityContext | nindent 12 }}
+          # Graceful termination: SIGTERM -> uvicorn finishes in-flight
+          # requests before exiting. preStop sleeps briefly first because
+          # kube-proxy/endpoint removal from the Service is asynchronous
+          # relative to the SIGTERM being sent -- a request routed here
+          # microseconds before shutdown begins can still arrive after the
+          # container starts exiting; the sleep gives that propagation time
+          # to finish first.
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sh", "-c", "sleep {{ .Values.ragApi.preStopSleepSeconds }}"]
+          {{- if .Values.ragApi.securityContext.readOnlyRootFilesystem }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: cache
+              mountPath: /app/.cache
+            - name: uploads
+              mountPath: /app/data/uploads
+          {{- end }}
+      {{- if .Values.ragApi.securityContext.readOnlyRootFilesystem }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: cache
+          emptyDir: {}
+        - name: uploads
+          emptyDir: {}
+      {{- end }}
+      # Must exceed preStop's sleep plus real shutdown time, or Kubernetes
+      # SIGKILLs the process before it finishes exiting cleanly.
+      terminationGracePeriodSeconds: {{ .Values.ragApi.terminationGracePeriodSeconds }}

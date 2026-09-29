@@ -1,0 +1,13 @@
+{{- if .Values.ragApi.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: rag-api
+  labels:
+    {{- include "rag-system.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.ragApi.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      app: rag-api
+{{- end }}

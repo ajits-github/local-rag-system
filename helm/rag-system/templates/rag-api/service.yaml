@@ -1,0 +1,20 @@
+# Named exactly "rag-api", not release-prefixed, so it's a drop-in
+# replacement for the Compose service name of the same name --
+# frontend/nginx.conf.template's proxy_pass upstream resolves against this
+# Service via in-namespace DNS with zero application changes. See README's
+# "Why object names are fixed, not release-prefixed" section.
+apiVersion: v1
+kind: Service
+metadata:
+  name: rag-api
+  labels:
+    {{- include "rag-system.labels" . | nindent 4 }}
+    app: rag-api
+spec:
+  type: ClusterIP
+  selector:
+    app: rag-api
+  ports:
+    - name: http
+      port: {{ .Values.ragApi.service.port }}
+      targetPort: http
