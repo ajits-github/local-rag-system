@@ -1,0 +1,37 @@
+{{/*
+Off by default -- see values.yaml's rbac.create comment. This template
+exists so the *shape* of a minimal, namespaced Role is demonstrated (a Role,
+never a ClusterRole, and scoped to this one namespace) without granting any
+permission the running application actually uses. If you enable this, fill
+in `rbac.rules` with the specific verbs/resources the new functionality
+needs -- never a wildcard.
+*/}}
+{{- if .Values.rbac.create }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "rag-system.fullname" . }}
+  labels:
+    {{- include "rag-system.labels" . | nindent 4 }}
+rules:
+  {{- if .Values.rbac.rules }}
+  {{- toYaml .Values.rbac.rules | nindent 2 }}
+  {{- else }}
+  [] # no rules configured -- set rbac.rules to grant anything.
+  {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "rag-system.fullname" . }}
+  labels:
+    {{- include "rag-system.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "rag-system.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: Role
+  name: {{ include "rag-system.fullname" . }}
+  apiGroup: rbac.authorization.k8s.io
+{{- end }}
