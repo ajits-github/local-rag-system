@@ -1,0 +1,22 @@
+# Non-secret configuration only, mirroring the *_env_var convention in
+# config/default.yaml and .env.example. Nothing here is sensitive; the
+# password/JWT-signing-material equivalents live in secret-app.example.yaml.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rag-config
+  namespace: rag
+data:
+  LOG_LEVEL: "INFO"
+  # Empty = load config/default.yaml baked into the image (same convention
+  # as .env.example's RAG_CONFIG_PATH). Point at an in-image experiment
+  # config path (e.g. /app/config/experiments/...) to try another one.
+  RAG_CONFIG_PATH: ""
+  POSTGRES_DB: "ragdb"
+  POSTGRES_USER: "rag"
+  # ExternalName service resolving to the native, host-run Ollama process.
+  # See ollama-external-service.yaml for why this can't just be "localhost".
+  OLLAMA_BASE_URL: "http://ollama-host.rag.svc.cluster.local:11434"
+  # Only consulted when observability.tracing.enabled: true in config/default.yaml
+  # (default false). Points at the in-cluster Jaeger Service (k8s/observability/).
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://jaeger.rag.svc.cluster.local:4318"
