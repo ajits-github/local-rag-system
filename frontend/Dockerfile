@@ -32,6 +32,25 @@ ENV NGINX_ENTRYPOINT_LOCAL_RESOLVERS=1
 # overrides this to the fully-qualified in-cluster name, since nginx's own
 # resolver skips search-domain expansion (see nginx.conf.template's comment).
 ENV RAG_API_UPSTREAM_HOST=rag-api
+# Also opt-in, like the resolver script above: the official image's
+# docker-entrypoint.d/30-tune-worker-processes.sh rewrites the outer
+# /etc/nginx/nginx.conf's "worker_processes auto;" to a value derived from
+# this container's own cgroup CPU quota, but only when
+# NGINX_ENTRYPOINT_WORKER_PROCESSES_AUTOTUNE is set -- confirmed by reading
+# that script directly. Left unset, "auto" resolves against the HOST's CPU
+# count (getconf _NPROCESSORS_ONLN), completely ignoring a container's own
+# resources.limits.cpu -- this project's k8s Deployment requests 50m/limits
+# 200m, but nginx still spawned 8-10 worker processes on this host, all
+# contending for a fifth of one core. Confirmed via a real cgroup v2
+# cpu.stat read from a running pod: nr_throttled 25 of 177 periods,
+# ~1.3s of accumulated throttled_usec -- real CPU starvation, not a
+# hypothetical, and the direct cause of intermittent liveness/readiness
+# probe timeouts under host load (distinct from, and found after, the DNS
+# resolver bug above). Harmless under Docker Compose, where no CPU limit is
+# normally set: the script's own cgroup-quota read fails closed in that
+# case and it falls back to the host CPU count, identical to today's
+# behavior. See ISSUES.md.
+ENV NGINX_ENTRYPOINT_WORKER_PROCESSES_AUTOTUNE=1
 COPY --from=builder /app/dist /usr/share/nginx/html
 # .template (not conf.d directly) so the official image's own
 # docker-entrypoint.d/20-envsubst-on-templates.sh renders it at container
