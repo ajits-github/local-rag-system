@@ -1,0 +1,98 @@
+# IMPORTANT: kind's default CNI (kindnet) is commonly cited as not enforcing
+# NetworkPolicy, and these objects apply cleanly and are inert on any CNI
+# that doesn't enforce it. That assumption was checked directly against
+# minikube's docker-driver CNI on this project's own cluster, though, not
+# just carried forward: it DOES enforce these policies here (found the hard
+# way -- see init-db-job.yaml's comment for the real, reproducible
+# "Connection timed out" this caused for a pod with no allow-rule label).
+# Don't assume either way for an unfamiliar cluster/CNI version; verify. See
+# README's NetworkPolicy section.
+#
+# Design: default-deny INGRESS only (not egress) -- see
+# k8s/base/networkpolicy.yaml's own comment for the full reasoning
+# (ollama-host's ExternalName indirection makes a meaningful egress-deny
+# impractical without a separate ipBlock rule).
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  labels:
+    {{- include "rag-system.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-to-frontend
+  labels:
+    {{- include "rag-system.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: frontend
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.ingressNginxNamespace }}
+      ports:
+        - protocol: TCP
+          port: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-frontend-to-rag-api
+  labels:
+    {{- include "rag-system.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: rag-api
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: frontend
+      ports:
+        - protocol: TCP
+          port: 8000
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-rag-api-to-postgres
+  labels:
+    {{- include "rag-system.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: postgres
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: rag-api
+        # The schema-init Job (jobs/init-db-job.yaml) also needs to reach
+        # postgres directly, and is not the rag-api Deployment -- a separate
+        # `from` entry (NetworkPolicy ORs across list entries; a single
+        # podSelector can't match two different label values) rather than
+        # relabeling the Job as `app: rag-api`, which would risk it being
+        # picked up by anything else that selects on that label.
+        - podSelector:
+            matchLabels:
+              app: init-db
+      ports:
+        - protocol: TCP
+          port: 5432
+{{- end }}
