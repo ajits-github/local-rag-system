@@ -1,0 +1,57 @@
+# No RAG_API_BASE_URL env set here: leaving it unset keeps the frontend's
+# built-in same-origin behavior (its own nginx proxies /query, /agent/*,
+# /health, /metrics, /info, /feedback, /docs to the rag-api Service, see
+# frontend/nginx.conf.template) -- identical to how docker-compose.frontend.yml
+# already runs it.
+#
+# RAG_API_UPSTREAM_HOST *is* set below, and genuinely needs to be: nginx's
+# own resolver directive (used for the proxy_pass calls to rag-api) skips
+# /etc/resolv.conf's search-domain expansion, so the bare "rag-api" name
+# that works under Docker Compose's embedded DNS fails to resolve at all
+# against Kubernetes' CoreDNS -- confirmed directly against this project's
+# cluster (nslookup rag-api / rag-api.rag both fail; only the fully
+# qualified form answers). See ISSUES.md and frontend/nginx.conf.template's
+# own comment for the full diagnosis.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: rag
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      containers:
+        - name: frontend
+          image: local-rag-frontend:kind
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: RAG_API_UPSTREAM_HOST
+              value: rag-api.rag.svc.cluster.local
+          ports:
+            - containerPort: 80
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "128Mi"
