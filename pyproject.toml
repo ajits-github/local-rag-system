@@ -37,6 +37,12 @@ dependencies = [
     # here explicitly (not just under dev) as of MCP Stage 2, since rag.agent.mcp_client imports
     # it directly at runtime (the agent's own MCP client for get_customer_case/get_case_status),
     # not just from the test suite.
+    "redis>=5.0",  # distributed-state-experiment milestone: `limits` (slowapi's storage backend
+    # library) supports Redis but does not pull the `redis` client in on its own -- it's an
+    # optional extra of `limits`, normally `limits[redis]`. Listed here as a core dependency
+    # instead, same shape as `mcp`/`slowapi`/`pyjwt`: mounted inside the always-running rag-api
+    # process behind a runtime flag (`security.rate_limit.backend == "redis"`, off by default),
+    # not an eval-only extra. See `distributed_state_experiment/README.md` for the full design.
 ]
 
 [project.optional-dependencies]
@@ -86,6 +92,13 @@ pythonpath = ["src"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+# distributed_state_experiment/ is a self-contained learning exercise (see
+# CLAUDE.md's "Distributed-state experiment" section), not part of the
+# src/ package -- excluded the same way mypy's own hook is already scoped
+# to `files: ^src/` in .pre-commit-config.yaml, rather than holding
+# exploratory demo/CLI scripts to the numpydoc/line-length bar `src/`
+# itself is held to.
+extend-exclude = ["distributed_state_experiment"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "D"]
