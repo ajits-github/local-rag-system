@@ -1,0 +1,33 @@
+# Minimal image for the ingestion-worker Deployment (k8s/distributed-state/).
+#
+# Deliberately separate from the main Dockerfile/rag-api image: this
+# worker's default process_fn (simulated_ingestion_process_fn) needs only
+# `redis` and the standard library, not the full sentence-transformers/
+# torch/pgvector stack `rag-api` needs. Building the real-pipeline variant
+# (--build-arg REAL=1, wiring rag.factory's real IngestionPipeline) reuses
+# the SAME base image as the main Dockerfile's `builder` stage for exactly
+# the reason documented there (CPU-only torch wheel, avoiding the ~4GB
+# CUDA pull) -- copy that stage's approach rather than diverging from it.
+#
+# Not built in this session (see distributed_state_experiment/README.md's
+# "What was executed vs. simulated" section) -- written and reviewed, not
+# verified with a real `docker build`.
+FROM python:3.12-slim AS worker
+
+WORKDIR /app
+
+# The simulated worker needs only `redis`; nothing from pyproject.toml's
+# heavier dependency list. If real_ingestion_process_fn is ever the
+# default here instead of an opt-in flag, this image should instead
+# start FROM the main Dockerfile's `runtime` stage and add nothing but
+# this directory -- do not hand-duplicate the CPU-torch-wheel dance from
+# the main Dockerfile in this file.
+RUN pip install --no-cache-dir "redis>=5.0"
+
+COPY distributed_state_experiment/ /app/distributed_state_experiment/
+
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+
+ENTRYPOINT ["python", "-m", "distributed_state_experiment.cli.run_worker"]
+CMD ["--redis-url", "redis://redis:6379/0", "--name", "k8s-worker"]

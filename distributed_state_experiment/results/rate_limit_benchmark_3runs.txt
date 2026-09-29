@@ -1,0 +1,30 @@
+Three consecutive runs of:
+    python -m distributed_state_experiment.cli.bench_rate_limiters --redis-url redis://127.0.0.1:6399/0
+against the fakeredis TCP stand-in server (see cli/fake_redis_server.py), each replica a real,
+separate OS process, 100 requests/replica, intended limit 100/tenant/minute.
+
+Run 1:
+configuration                           total_allowed  intended_limit  wall_clock_s         per_replica
+single replica + in-memory                        100             100         4.707               [100]
+3 replicas + in-memory                            300             100         0.541     [100, 100, 100]
+3 replicas + Redis-backed                         104             100         1.429        [36, 35, 33]
+
+Run 2:
+configuration                           total_allowed  intended_limit  wall_clock_s         per_replica
+single replica + in-memory                        100             100         8.829               [100]
+3 replicas + in-memory                            300             100         1.083     [100, 100, 100]
+3 replicas + Redis-backed                         100             100         1.053         [50, 0, 50]
+
+Run 3:
+configuration                           total_allowed  intended_limit  wall_clock_s         per_replica
+single replica + in-memory                        100             100         0.384               [100]
+3 replicas + in-memory                            300             100         0.469     [100, 100, 100]
+3 replicas + Redis-backed                         100             100         0.617        [37, 36, 27]
+
+Interpretation: see README.md Part 4. The 104-in-run-1 overshoot is consistent with a fixed-window
+strategy's own documented boundary-crossing property (a wall-clock minute boundary crossed mid-run
+opens a second, independently-capped window), not a lost atomicity race -- the Lua script's atomicity
+under real concurrent access is separately proven exact (50/50, zero over) by
+distributed_state_experiment/tests/test_redis_fixed_window_limiter.py::test_concurrent_hits_from_multiple_threads_never_exceed_the_limit,
+run in-process via fakeredis's FakeStrictRedis (not the TCP server), with 200 concurrent requests
+across 20 threads sharing one Redis instance and one bucket.

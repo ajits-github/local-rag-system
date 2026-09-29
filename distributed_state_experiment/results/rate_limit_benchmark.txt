@@ -1,0 +1,4 @@
+configuration                           total_allowed  intended_limit  wall_clock_s         per_replica
+single replica + in-memory                        100             100         4.707               [100]
+3 replicas + in-memory                            300             100         0.541     [100, 100, 100]
+3 replicas + Redis-backed                         104             100         1.429        [36, 35, 33]

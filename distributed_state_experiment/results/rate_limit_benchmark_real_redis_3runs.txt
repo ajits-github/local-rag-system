@@ -1,0 +1,39 @@
+Three consecutive runs of:
+    python -m distributed_state_experiment.cli.bench_rate_limiters --redis-url redis://localhost:6379/0
+against a GENUINE redis:7-alpine container (docker compose -f docker-compose.yml -f
+docker-compose.redis.yml up -d redis), each replica a real, separate OS process, 100
+requests/replica, intended limit 100/tenant/minute.
+
+Run 1:
+configuration                           total_allowed  intended_limit  wall_clock_s         per_replica
+single replica + in-memory                        100             100         5.674               [100]
+3 replicas + in-memory                            300             100         1.156     [100, 100, 100]
+3 replicas + Redis-backed                         100             100         0.917        [33, 34, 33]
+
+Run 2:
+configuration                           total_allowed  intended_limit  wall_clock_s         per_replica
+single replica + in-memory                        100             100         0.595               [100]
+3 replicas + in-memory                            300             100         0.680     [100, 100, 100]
+3 replicas + Redis-backed                         100             100         0.929        [38, 35, 27]
+
+Run 3:
+configuration                           total_allowed  intended_limit  wall_clock_s         per_replica
+single replica + in-memory                        100             100         0.653               [100]
+3 replicas + in-memory                            300             100         0.793     [100, 100, 100]
+3 replicas + Redis-backed                         100             100         1.458         [49, 0, 51]
+
+Difference from the fakeredis TCP-stand-in results (rate_limit_benchmark_3runs.txt):
+against GENUINE redis-server, all 3 runs landed at exactly 100/100 for the Redis-backed
+configuration -- no repeat of the earlier 104/100 overshoot seen once (1 of 3 runs) against
+fakeredis.TcpFakeServer. This is consistent with (though does not, on its own, fully prove)
+the fakeredis-run README note's leading hypothesis: the fixed-window strategy's own documented
+boundary-crossing property (or a fakeredis-TCP-server-specific concurrency fidelity gap) rather
+than a flaw in the Lua script's atomicity itself, which was separately confirmed exact against
+BOTH backends: fakeredis in-process (200/20-thread concurrent test, 50/50 exact) and now genuine
+redis-server via the same test, run directly and also as a real pytest test
+(test_redis_fixed_window_limiter.py::test_concurrent_hits_against_real_redis_server_never_exceed_the_limit),
+also 50/50 exact.
+
+single-replica/3-replica in-memory rows are unaffected by the Redis backend choice (as expected --
+those configurations never touch Redis at all) and are reproduced here as a control, matching the
+fakeredis run's numbers within the same host-noise band.

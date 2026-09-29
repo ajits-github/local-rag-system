@@ -1,0 +1,38 @@
+run_id=d1ff2087
+
+========== Experiments 1-2: submit 20 jobs, 1 worker ==========
+submitted 20 jobs, backlog_depth=20
+2026-09-29 15:11:03,014 worker solo-worker starting (real=False)
+2026-09-29 15:11:04,333 worker solo-worker: drained after processing 20 attempts
+RESULT: 1 worker drained 20 simulated jobs in 4.389s wall-clock
+
+========== Experiment 3: submit 20 more jobs, drain with 3 concurrent workers ==========
+submitted 20 jobs, backlog_depth=20
+2026-09-29 15:11:05,453 worker worker-x starting (real=False)
+2026-09-29 15:11:06,451 worker worker-x: drained after processing 4 attempts
+2026-09-29 15:11:05,422 worker worker-y starting (real=False)
+2026-09-29 15:11:06,451 worker worker-y: drained after processing 8 attempts
+2026-09-29 15:11:05,450 worker worker-z starting (real=False)
+2026-09-29 15:11:06,451 worker worker-z: drained after processing 8 attempts
+RESULT: 3 concurrent workers drained 20 simulated jobs in 2.084s wall-clock
+RESULT: throughput proxy for horizontal scaling: 4.389s (1 worker) -> 2.084s (3 workers), speedup=2.11x (a *local-process* proxy for k8s pod scaling -- see README's Experiments 11-12 section for why real kubectl-driven pod scaling was not executed in this session)
+
+========== Experiments 4-5: kill a worker mid-processing, verify reclaim_stale recovers it ==========
+pending entries while doomed-worker was alive (polled until claimed): 1
+job status right after kill: processing
+reclaim_stale found 1 orphaned entry
+RESULT: job status after recovery: completed (attempts=2)
+
+========== Experiments 6-7: deliver the same job twice, verify no duplicate persistent effect ==========
+RESULT: job processed twice (attempts=2), final status=completed, one job_id throughout: real IngestionPipeline idempotency (checksum-gated replace_document_chunks) is what makes the *second* run's DB effect a no-op in production; this queue's own submission-time dedup (see next line) prevents even a second job_id from existing.
+resubmitting the identical payload returns the same job_id: True
+
+========== Experiments 8-10: poison job -> retries with backoff -> dead-letter ==========
+
+status after first drain (before any retry is due): dead_letter, attempts=3
+round 2: promote_due_retries promoted 0 job(s)
+round 2: status=dead_letter, attempts=3, last_error='PoisonJobError: poison job: poison.md'
+RESULT: poison job final status=dead_letter after 3 attempts (max_attempts=3); dead_letter_depth=1
+
+========== Done ==========
+See README.md's Experiments section for the interpretation of each result above.
