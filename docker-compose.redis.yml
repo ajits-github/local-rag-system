@@ -1,0 +1,40 @@
+# Optional local Redis, for the distributed-state-experiment milestone.
+#
+# Never brought up by `make up`/`docker-compose.yml` alone; entirely
+# opt-in, layered on top, matching docker-compose.observability.yml's/
+# docker-compose.frontend.yml's own additive-overlay convention:
+#   docker compose -f docker-compose.yml -f docker-compose.redis.yml up -d
+#
+# Bringing this up does not, by itself, change rag-api's behavior:
+# security.rate_limit.backend stays "memory" in config/default.yaml
+# unless explicitly switched to "redis" (and RATE_LIMIT_REDIS_URL set --
+# see .env.example). See distributed_state_experiment/README.md for the
+# full design and for why this session's own experiment runs used
+# distributed_state_experiment/cli/fake_redis_server.py (a pure-Python,
+# real-TCP-protocol-compatible stand-in) instead of this file: a Docker
+# pull was coordinated with a sibling agent's own Docker work on the same
+# host during this session and not completed here. This compose file is
+# written, reviewed, and ready to use exactly as-is wherever that
+# coordination constraint doesn't apply.
+#
+# rag-api's own CONTAINER_RATE_LIMIT_REDIS_URL (distinct from the host's
+# RATE_LIMIT_REDIS_URL, mirroring the existing OLLAMA_BASE_URL /
+# CONTAINER_OLLAMA_BASE_URL split documented in the root CLAUDE.md) points
+# at this compose network's own "redis" service name, not localhost.
+services:
+  rag-api:
+    environment:
+      RATE_LIMIT_REDIS_URL: redis://redis:6379/0
+
+  redis:
+    image: redis:7-alpine
+    container_name: local-rag-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "no", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    ports:
+      - "6379:6379" # host access for distributed_state_experiment/cli/*.py scripts run natively
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
