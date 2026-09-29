@@ -1,0 +1,31 @@
+# Single backend (frontend) for every path, deliberately -- it mirrors
+# this project's existing same-origin design (frontend/nginx.conf already
+# reverse-proxies API paths to rag-api) rather than re-implementing that
+# routing a second time at the Ingress layer. See k8s/LEARNING.md's
+# networking section for the full browser -> Ingress -> Service -> pod
+# path, both for static assets and for a proxied API call.
+#
+# Requires ingress-nginx installed with kind's own deployment recipe (see
+# k8s/README.md) and "rag.local" resolving to 127.0.0.1 in your hosts file
+# (kind-cluster.yaml maps the ingress controller's 80/443 to host 8080/8443).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: rag
+  namespace: rag
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: rag.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 80
