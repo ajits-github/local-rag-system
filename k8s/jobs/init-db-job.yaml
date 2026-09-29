@@ -1,0 +1,64 @@
+# One-shot schema setup (pgvector extension, documents/chunks/feedback
+# tables), the Kubernetes equivalent of `make up`'s
+# `python scripts/init_db.py` step -- a Job, not a Deployment, because this
+# workload is meant to run to completion and stop, not stay up.
+#
+# scripts/init_db.py is never baked into the rag-api image (the Dockerfile
+# only COPYs src/ and config/), so the actual file is mounted in from a
+# ConfigMap built directly from the repo file -- not a plain kustomize
+# configMapGenerator here, because kustomize's built-in load restrictor
+# refuses any generator input file that lives outside the kustomization's
+# own root directory (scripts/init_db.py is a sibling of k8s/, not a
+# descendant of it) and the kubectl version this was developed against has
+# no --load-restrictor override exposed. The imperative form below has no
+# such restriction:
+#
+#   kubectl create namespace rag --dry-run=client -o yaml | kubectl apply -f -
+#   kubectl create configmap init-db-script -n rag \
+#     --from-file=scripts/init_db.py \
+#     --dry-run=client -o yaml | kubectl apply -f -
+#   kubectl apply -f k8s/jobs/init-db-job.yaml
+#   kubectl wait --for=condition=complete job/init-db -n rag --timeout=60s
+#   kubectl logs job/init-db -n rag
+#
+# Re-running: a completed Job's pod template is immutable, so re-applying
+# this file after editing init_db.py won't take effect on the same Job
+# object. Delete and re-apply both the ConfigMap and the Job:
+#   kubectl delete job init-db -n rag
+#   (then re-run the create-configmap and apply commands above)
+# (init_db.py's own DDL is idempotent either way -- see its module docstring.)
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: init-db
+  namespace: rag
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: Never
+      initContainers:
+        - name: wait-for-postgres
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - until nc -z postgres 5432; do echo "waiting for postgres..."; sleep 2; done
+      containers:
+        - name: init-db
+          image: local-rag-api:kind
+          imagePullPolicy: IfNotPresent
+          command: ["python", "/scripts/init_db.py"]
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: rag-secret
+                  key: DATABASE_URL
+          volumeMounts:
+            - name: init-db-script
+              mountPath: /scripts
+      volumes:
+        - name: init-db-script
+          configMap:
+            name: init-db-script
