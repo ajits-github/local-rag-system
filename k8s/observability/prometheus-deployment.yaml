@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: rag
+  labels:
+    app: prometheus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v2.55.1
+          ports:
+            - containerPort: 9090
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus/prometheus.yml
+              subPath: prometheus.yml
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+      volumes:
+        # Built from the repo's own observability/prometheus/prometheus.yml,
+        # unmodified -- see k8s/README.md for the
+        # `kubectl create configmap prometheus-config --from-file=...`
+        # command. A content edit needs a re-create of this ConfigMap plus
+        # `kubectl rollout restart deployment/prometheus -n rag` to pick it
+        # up (Prometheus doesn't hot-reload its mounted config file, and a
+        # plain-named ConfigMap gives no automatic per-change rollout the
+        # way a hashed kustomize-generated name would).
+        - name: config
+          configMap:
+            name: prometheus-config

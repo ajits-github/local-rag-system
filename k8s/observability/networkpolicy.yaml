@@ -1,0 +1,87 @@
+# Additive to k8s/base/networkpolicy.yaml's default-deny-ingress, which
+# applies to every pod in the "rag" namespace including these -- without
+# the rules below, Prometheus could never scrape rag-api and Grafana could
+# never reach Prometheus/Jaeger once that default-deny is in force.
+#
+# Reminder: like every NetworkPolicy in this repo, these are inert unless
+# the cluster's CNI actually enforces them (kind's default kindnet does
+# not -- see k8s/base/networkpolicy.yaml's header comment).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus-to-rag-api
+  namespace: rag
+spec:
+  podSelector:
+    matchLabels:
+      app: rag-api
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: prometheus
+      ports:
+        - protocol: TCP
+          port: 8000
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-rag-api-to-jaeger-otlp
+  namespace: rag
+spec:
+  podSelector:
+    matchLabels:
+      app: jaeger
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: rag-api
+      ports:
+        - protocol: TCP
+          port: 4318
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-grafana-to-prometheus
+  namespace: rag
+spec:
+  podSelector:
+    matchLabels:
+      app: prometheus
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: grafana
+      ports:
+        - protocol: TCP
+          port: 9090
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-grafana-to-jaeger-ui
+  namespace: rag
+spec:
+  podSelector:
+    matchLabels:
+      app: jaeger
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: grafana
+      ports:
+        - protocol: TCP
+          port: 16686
