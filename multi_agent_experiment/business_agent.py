@@ -9,14 +9,17 @@ in `tests/test_tool_isolation.py`.
 
 Every read/write node below is **imported and used unmodified** from
 `langgraph_experiment.nodes` -- the single-agent experiment's already-
-tested business branch (see that module's docstring: it reuses
+tested business branch, including its production-hardening additions
+(the idempotency ledger `execute_write_action` guards mutations through,
+server-side approval-expiry/workflow-timeout checks in
+`wait_for_approval`; see that module's docstring: it reuses
 `rag.mcp.business.store` unmodified in turn, which is what actually
 enforces tenant/role authorization, transition validity, and sensitive-
 transition approval; none of those rules are reimplemented at any layer
-here). The only new code in this file is `business_evaluate_read`, a
-thin wrapper adding the one field (`business_status`) the multi-agent
-orchestrator's critic/merge nodes need that a single-agent, single-branch
-graph never had to expose to a sibling node.
+here). The only new code in this file is `evaluate_read`, a thin wrapper
+adding the one field (`business_status`) the multi-agent orchestrator's
+critic/merge nodes need that a single-agent, single-branch graph never
+had to expose to a sibling node.
 """
 
 from __future__ import annotations
@@ -29,7 +32,7 @@ from multi_agent_experiment.state import MultiAgentState
 # is picked up here automatically, with no risk of the two drifting apart.
 select_tool = _single_agent_nodes.select_case_tool
 make_execute_read_node = _single_agent_nodes.make_execute_case_read_node
-validate_write_request = _single_agent_nodes.validate_write_request
+make_validate_write_request_node = _single_agent_nodes.make_validate_write_request_node
 make_wait_for_approval_node = _single_agent_nodes.make_wait_for_approval_node
 make_execute_write_action_node = _single_agent_nodes.make_execute_write_action_node
 synthesize_write_result = _single_agent_nodes.synthesize_write_result
