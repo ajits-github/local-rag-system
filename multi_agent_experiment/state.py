@@ -75,9 +75,17 @@ class MultiAgentState(TypedDict, total=False):
     ----------
     original_query : str
         The caller's question, unmodified. Required at graph start.
-    caller_subject, tenant_id, roles, dataset_id
-        Demo caller identity/scope, identical in shape and purpose to
-        `langgraph_experiment.state.GraphState`'s same-named fields.
+    thread_id, caller_subject, tenant_id, roles, dataset_id, workflow_started_at
+        Demo caller identity/scope plus the production-hardening fields
+        the reused business-write branch now requires, identical in shape
+        and purpose to `langgraph_experiment.state.GraphState`'s
+        same-named fields -- `thread_id` is a display/audit-only copy of
+        the LangGraph thread id (never used for routing/authorization),
+        and `workflow_started_at` is stamped once, idempotently, by
+        `orchestrator.coordinator`'s round-0 branch (see that node's
+        docstring) since `business_agent`'s reused `wait_for_approval`
+        node reads it unconditionally to enforce `GraphDeps.
+        max_workflow_duration_seconds`.
     coordinator_round : int
         How many times `coordinator` has run this thread (starts at 0
         before its first run; `coordinator` itself sets it to 1, then to
@@ -183,10 +191,12 @@ class MultiAgentState(TypedDict, total=False):
     """
 
     original_query: str
+    thread_id: str
     caller_subject: str
     tenant_id: str | None
     roles: list[str]
     dataset_id: str | None
+    workflow_started_at: str
 
     coordinator_round: int
     needs_knowledge: bool
