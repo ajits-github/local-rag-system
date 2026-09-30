@@ -19,6 +19,7 @@ case).
 from __future__ import annotations
 
 import re
+from datetime import UTC, datetime
 
 from langgraph_experiment.nodes import _extract_case_id, _extract_target_status
 from langgraph_experiment.state import Citation
@@ -97,6 +98,12 @@ def coordinator(state: MultiAgentState) -> dict:
     round_ = state.get("coordinator_round", 0)
     if round_ == 0:
         query = state["original_query"]
+        # Stamped once, idempotently, mirroring langgraph_experiment.nodes.classify's
+        # own workflow_started_at stamp -- business_agent's reused wait_for_approval
+        # node (production-hardening) reads this unconditionally to enforce
+        # GraphDeps.max_workflow_duration_seconds, so it must already be set by the
+        # time a mutation request ever reaches that node.
+        workflow_started_at = state.get("workflow_started_at") or datetime.now(UTC).isoformat()
         is_mutation = _looks_like_case_mutation_request(query)
         case_id = _extract_case_id(query)
         has_knowledge_cue = bool(_KNOWLEDGE_CUE_RE.search(query))
@@ -109,6 +116,7 @@ def coordinator(state: MultiAgentState) -> dict:
             selected.append("business")
         return {
             "coordinator_round": 1,
+            "workflow_started_at": workflow_started_at,
             "is_case_mutation": is_mutation,
             "case_id": case_id,
             "requested_new_status": _extract_target_status(query) if is_mutation else None,
