@@ -94,7 +94,7 @@ def build_graph(deps: GraphDeps, checkpointer: object) -> CompiledStateGraph:
         retry_policy=_BUSINESS_READ_RETRY_POLICY,
     )
     graph.add_node("business_evaluate_read", business_agent.evaluate_read)
-    graph.add_node("business_validate_write", business_agent.validate_write_request)
+    graph.add_node("business_validate_write", business_agent.make_validate_write_request_node(deps))
     graph.add_node("business_wait_approval", business_agent.make_wait_for_approval_node(deps))
     graph.add_node("business_execute_write", business_agent.make_execute_write_action_node(deps))
     graph.add_node("business_synthesize_write", business_agent.synthesize_write_result)
