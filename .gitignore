@@ -4,6 +4,7 @@
 !.env.example
 .venv/
 venv/
+.venv-langgraph/
 
 # Python
 __pycache__/
