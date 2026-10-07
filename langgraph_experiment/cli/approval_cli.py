@@ -12,16 +12,16 @@ Stands in for a real approval UI/API endpoint: a human operator invoking
 this script *is* the trusted boundary that supplies the resume payload
 `nodes.wait_for_approval` reads back from `interrupt()`. Nothing here (or
 in the graph) ever accepts an "approved" claim that didn't come through
-this path -- see that node's docstring for the role check that still runs
+this path. See that node's docstring for the role check that still runs
 even so, and for the server-side (never CLI-side-only) expiration/
 workflow-timeout checks a resume can still be refused by even with a
 well-formed `approve`.
 
-Pass the same `--backend`/`--db` a `run_demo.py start` used -- the two
+Pass the same `--backend`/`--db` a `run_demo.py start` used. The two
 checkpointer backends are entirely separate stores.
 
 Each invocation of this script is its own process, opening its own
-connection to whatever `run_demo.py` wrote to -- see `README.md`'s
+connection to whatever `run_demo.py` wrote to. See `README.md`'s
 "Restart/resume experiment" section for why running `start` and `approve`
 as two separate commands (rather than one script holding a connection
 open) is the point, not an inconvenience.
@@ -115,7 +115,7 @@ def _resume(args: argparse.Namespace, resume_payload: dict) -> None:
         pending = (snapshot.values or {}).get("pending_action") or {}
         expires_at = pending.get("expires_at")
         if expires_at and datetime.fromisoformat(expires_at) < datetime.now(UTC):
-            # A friendly, CLI-side heads-up only -- the graph re-checks
+            # A friendly, CLI-side heads-up only. The graph re-checks
             # this server-side regardless (see nodes.wait_for_approval),
             # so this early return is a UX nicety, never the actual
             # enforcement point.

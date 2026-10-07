@@ -1,14 +1,14 @@
 """Coordinator, merge, critic, and final-synthesis nodes: the "sees both specialists" tier.
 
 Unlike `knowledge_agent.py`/`business_agent.py`, this module is allowed to
-read both `knowledge_*` and `case_*`/`business_*` state -- it is the
+read both `knowledge_*` and `case_*`/`business_*` state. It is the
 orchestration layer, not a specialist, and never calls a tool directly
 (no `RetrievalPipeline`, no `rag.mcp.business.store` import anywhere in
 this file). The only "tool-shaped" import here is
 `_looks_like_case_mutation_request` (a pure regex classifier reused from
 `rag.agent.graph`, not a call into any backend) and
 `_extract_case_id`/`_extract_target_status` (reused regex helpers from
-`langgraph_experiment.nodes`) -- text classification, not a business
+`langgraph_experiment.nodes`): text classification, not a business
 mutation. See `tests/test_tool_isolation.py` for the static check that
 even this "sees everything" module never imports `rag.mcp.business.store`
 directly (it can read case data already placed in state by
@@ -33,7 +33,7 @@ from multi_agent_experiment.limits import (
 from multi_agent_experiment.state import MultiAgentState, ToolCallRecord
 from rag.agent.graph import _looks_like_case_mutation_request
 
-#: A deliberately small, literal cue list -- not an LLM classification, for
+#: A deliberately small, literal cue list, not an LLM classification, for
 #: the same reason `langgraph_experiment.nodes`' own routing/extraction is
 #: deterministic (see that module's docstring): keeping the coordinator's
 #: routing decision reproducible is what makes the bounded-retry/parallel-
@@ -41,12 +41,12 @@ from rag.agent.graph import _looks_like_case_mutation_request
 #: all, rather than confounded by LLM JSON-parsing flakiness. Production's
 #: own agent (`rag/agent/decisions.py`) already demonstrates LLM-driven
 #: structured routing; duplicating that here would teach nothing new about
-#: multi-agent *topology*, which is this experiment's actual subject --
+#: multi-agent *topology*, which is this experiment's actual subject.
 #: see README.md's "Scope decisions" for the full reasoning.
 #: Generic interrogative openers ("what is", "how does", "explain") were
 #: deliberately tried and dropped here: they fire on almost any question,
 #: including a purely business one ("What is the status of CASE-1001?"),
-#: making `needs_knowledge` true far too often -- confirmed directly by a
+#: making `needs_knowledge` true far too often. Confirmed directly by a
 #: failing test during this experiment's own development (see
 #: `tests/test_coordinator_routing.py`). Only cues that specifically
 #: signal "this references the knowledge base/a document," not "this is
@@ -62,7 +62,7 @@ def coordinator(state: MultiAgentState) -> dict:
     """Coordinator/router node: decide which specialist(s) this query needs.
 
     Round 0 (the normal case, `coordinator_round` unset/`0`): full,
-    deterministic classification --
+    deterministic classification:
 
     1. `is_case_mutation` via the exact same reused
        `_looks_like_case_mutation_request` production's own agent uses
@@ -71,9 +71,9 @@ def coordinator(state: MultiAgentState) -> dict:
     2. `case_id`/`requested_new_status` extraction, reused from
        `langgraph_experiment.nodes` (the same regexes the single-agent
        experiment's business branch already relies on).
-    3. `needs_business` -- `True` whenever a case id is present or the
+    3. `needs_business`: `True` whenever a case id is present or the
        query is a mutation request.
-    4. `needs_knowledge` -- `True` whenever a knowledge cue word/phrase
+    4. `needs_knowledge`: `True` whenever a knowledge cue word/phrase
        is present, *or* there is no case id at all (a bare question with
        no case reference defaults to a knowledge question rather than
        being routed nowhere).
@@ -87,7 +87,7 @@ def coordinator(state: MultiAgentState) -> dict:
     `evidence_critic`'s `"retry"` edge) does **not** re-classify the
     query. It only widens `knowledge_top_k` and forces `needs_business`
     back to `False`, so `routing.route_after_coordinator`'s next `Send`
-    fan-out dispatches to `knowledge_agent` alone -- a business read is
+    fan-out dispatches to `knowledge_agent` alone. A business read is
     deterministic, so re-running it on retry would waste a tool call and
     change nothing (see `evidence_critic`'s own docstring for the same
     point, stated from the critic's side). `selected_specialists` (used
@@ -99,7 +99,7 @@ def coordinator(state: MultiAgentState) -> dict:
     if round_ == 0:
         query = state["original_query"]
         # Stamped once, idempotently, mirroring langgraph_experiment.nodes.classify's
-        # own workflow_started_at stamp -- business_agent's reused wait_for_approval
+        # own workflow_started_at stamp. business_agent's reused wait_for_approval
         # node (production-hardening) reads this unconditionally to enforce
         # GraphDeps.max_workflow_duration_seconds, so it must already be set by the
         # time a mutation request ever reaches that node.
@@ -135,7 +135,7 @@ def coordinator(state: MultiAgentState) -> dict:
 def merge(state: MultiAgentState) -> dict:
     """Join node: combine whatever `knowledge_agent`/business-read branch produced.
 
-    Reached after every non-mutation branch (solo or parallel) -- see
+    Reached after every non-mutation branch (solo or parallel). See
     `graph.py`'s topology. Recomputes `citations`/`tool_call_log` from
     scratch every time it runs, including after a knowledge retry (see
     `state.py`'s module docstring for why these two fields are plain
@@ -173,7 +173,7 @@ def evidence_critic(state: MultiAgentState) -> dict:
     Deliberately narrow, per the "do not add a Critic merely to make the
     system look more multi-agent" instruction this experiment was built
     against. Two concrete responsibilities, both mechanical (no semantic
-    conflict detection -- see README.md's "Scope decisions" for why that
+    conflict detection. See README.md's "Scope decisions" for why that
     was explicitly considered and left out):
 
     1. **Bounded retry.** If the Knowledge Agent was selected and came
@@ -183,7 +183,7 @@ def evidence_critic(state: MultiAgentState) -> dict:
        one retry (routed back through `coordinator`, which widens
        `knowledge_top_k`). The Business Agent is never retried here: its
        read is a deterministic lookup against `rag.mcp.business.store`,
-       so an identical second call would return an identical result --
+       so an identical second call would return an identical result;
        retrying it would only waste a tool call, not change the outcome.
        `critic_notes` records this reasoning explicitly rather than
        silently skipping it, so a reader of a run's trace can see *why*
@@ -193,7 +193,7 @@ def evidence_critic(state: MultiAgentState) -> dict:
        that still has no usable result. `final_synthesis` independently
        refuses to answer from zero evidence, so this guard is
        redundant-by-design defense in depth, not the only thing standing
-       between an empty retrieval and a hallucinated answer -- matching
+       between an empty retrieval and a hallucinated answer, matching
        this codebase's repeated "a guarantee that depends on one layer is
        not a guarantee" pattern (see CLAUDE.md's field-redaction-marker-
        sanitization entry for the production precedent this mirrors).
@@ -243,7 +243,7 @@ def make_final_synthesis_node(deps: GraphDeps):
     summarizing the authorized, already-sanitized business case result,
     and renders them through the same `config.generation.prompt` template
     production's classic RAG path uses (`deps.rag_prompt_template.
-    render(context=..., query=...)`) -- a single real grounded answer over
+    render(context=..., query=...)`), a single real grounded answer over
     both evidence sources for the mixed-query case, matching README.md's
     CASE 3 requirement.
 
@@ -251,7 +251,7 @@ def make_final_synthesis_node(deps: GraphDeps):
     returns the fixed "I don't have enough..." answer with
     `termination_reason` set to `"max_rounds"` (retry budget was spent and
     still came up empty) or `"insufficient_evidence"` (no retry was ever
-    applicable, e.g. a business-only route that found nothing) --
+    applicable, e.g. a business-only route that found nothing),
     distinguishing the two so the evaluation harness/a trace reader can
     tell "we tried harder and still had nothing" from "there was nothing
     to try harder at." Mirrors `langgraph_experiment.nodes.
@@ -269,7 +269,7 @@ def make_final_synthesis_node(deps: GraphDeps):
             round_ = state.get("coordinator_round", 1)
             # A more specific reason already set upstream (e.g.
             # business_agent.evaluate_read's "case_not_found_or_denied")
-            # is preserved rather than overwritten by a generic one --
+            # is preserved rather than overwritten by a generic one,
             # mirrors langgraph_experiment.nodes.make_synthesize_rag_node's
             # `state.get("termination_reason") or "insufficient_evidence"`
             # fallback pattern.

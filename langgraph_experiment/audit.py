@@ -3,7 +3,7 @@
 Deliberately not `rag.audit.log_audit_event`: that module's
 `AuthEventType` is a fixed `Literal` shared by the production API/agent/
 MCP code, and adding new event names to it for a learning experiment
-would mean editing production source under `src/rag/` -- exactly what
+would mean editing production source under `src/rag/`, exactly what
 this package's isolation is meant to avoid (see `__init__.py`'s module
 docstring). This module mirrors `rag.audit`'s shape and discipline
 (structured JSON via the standard logger, IDs/enums/counts only, never
@@ -45,7 +45,7 @@ def log_workflow_event(event: WorkflowAuditEvent, **fields: Any) -> None:
     event : WorkflowAuditEvent
         One of the fixed event names above.
     **fields : Any
-        Structured fields -- IDs, enum values, counts, timestamps only.
+        Structured fields: IDs, enum values, counts, timestamps only.
         Never a JWT, an approval payload's free-text `reason`, or
         anything chain-of-thought-shaped.
     """

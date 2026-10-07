@@ -6,10 +6,10 @@ Usage
 
 Uses a small, self-contained fake `RetrievalPipeline`/`LLM` (a synthetic
 knowledge-base stand-in, clearly labeled below) so this script runs with
-**no external services at all** -- no Postgres, no Ollama -- and always
+**no external services at all** (no Postgres, no Ollama), and always
 produces the same, reproducible trace. This is deliberately a different
 tradeoff from `run_demo.py`/`compare_harness.py`, both of which talk to
-the real `RetrievalPipeline` (needing `make up` + native Ollama) --
+the real `RetrievalPipeline` (needing `make up` + native Ollama).
 this script exists specifically to be the "deliverables" walkthrough
 (README.md section 17's "example traces" requirement) that anyone can run
 immediately, with zero setup, and get the exact five traces documented in

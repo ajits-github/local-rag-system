@@ -7,7 +7,7 @@ Usage
 
 Mirrors `langgraph_experiment.cli.run_demo` exactly (same `--db`/
 `--thread`/`--subject`/`--tenant`/`--role`/`--dataset-id`/`--no-retrieval`
-flags), pointed at this package's own graph/checkpointer -- see
+flags), pointed at this package's own graph/checkpointer. See
 README.md's "Run commands" section for worked examples covering all five
 required scenarios.
 """

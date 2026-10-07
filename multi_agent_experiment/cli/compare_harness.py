@@ -8,7 +8,7 @@ Usage
 
 `rag` times a pure-knowledge question through all three: (A) `rag.agent.
 graph.run_agent` (`route="classic_rag"`), (B) `langgraph_experiment`'s
-`read_only` branch, (C) this package's `knowledge_only` route -- needs a
+`read_only` branch, (C) this package's `knowledge_only` route: needs a
 running Postgres (`make up`) and native Ollama, same as `langgraph_
 experiment.cli.compare_harness rag`.
 
@@ -16,7 +16,7 @@ experiment.cli.compare_harness rag`.
 multi-agent graph's actual parallel dispatch, then estimates what a
 *sequential* dispatch would have cost by summing two separate,
 independently-timed knowledge-only and business-only runs against the
-same query's components -- see `cmd_mixed`'s docstring for exactly why
+same query's components. See `cmd_mixed`'s docstring for exactly why
 this is an honest estimate, not a fabricated one. Architectures A and B
 have no equivalent "mixed, evidence from two independently-toolable
 sources, merged into one grounded answer" path to compare against at
@@ -26,7 +26,7 @@ dispatch; B is single-route by design (see that package's README). This
 command is therefore multi-agent-only, and says so.
 
 `write-action` extends `langgraph_experiment.cli.compare_harness
-write-action`'s qualitative table with a third column for this package --
+write-action`'s qualitative table with a third column for this package;
 still no real timing comparison is possible for A (no pause/resume
 primitive to time at all).
 """
@@ -48,7 +48,7 @@ from rag.agent.state import AgentState
 from rag.retrieval.authorization import AuthorizationContext
 
 # GraphDeps (langgraph_experiment.wiring) is reused wholesale by this
-# package -- see multi_agent_experiment/__init__.py's module docstring --
+# package. See multi_agent_experiment/__init__.py's module docstring,
 # so build_default_deps() is exactly as valid for wiring the multi-agent
 # graph as it is for the single-agent one. A separate call per graph
 # (rather than sharing one GraphDeps instance) mirrors this file's own
@@ -195,7 +195,7 @@ def cmd_rag(args: argparse.Namespace) -> None:
     custom_result = run_agent(
         state,
         pipeline=single_deps.pipeline,
-        vectorstore=single_deps.pipeline._vectorstore,  # noqa: SLF001 -- read-only, comparison-only
+        vectorstore=single_deps.pipeline._vectorstore,  # noqa: SLF001 (read-only, comparison-only)
         embedder=single_deps.pipeline._embedder,  # noqa: SLF001
         llm=single_deps.llm,
         config=single_deps.config,
@@ -254,14 +254,14 @@ def cmd_mixed(args: argparse.Namespace) -> None:
 
     The estimate is built from two *separately measured* real runs (a
     knowledge-only and a business-only call against the same identity/
-    dataset), not a guess -- summing them is the honest cost a purely
+    dataset), not a guess. Summing them is the honest cost a purely
     sequential coordinator (dispatch knowledge, wait, then dispatch
     business, wait) would have paid, since neither call depends on the
     other's result in this route (see README.md's "Parallel execution"
     section for why that independence is exactly what makes fan-out safe
     here). It is still an estimate, not a second real measurement of a
     sequential graph, because this package deliberately does not build a
-    second, throwaway graph variant just to produce one number -- the
+    second, throwaway graph variant just to produce one number. The
     qualitative reasoning is the same either way.
     """
     deps = build_multi_agent_deps(with_retrieval=True, with_ledger=False)

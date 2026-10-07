@@ -1,6 +1,6 @@
 """The Knowledge Agent: one specialist, one tool, structurally unable to mutate business state.
 
-Tool isolation here is not a runtime permission check -- it is a fact
+Tool isolation here is not a runtime permission check. It is a fact
 about this module's import graph, verified statically in `tests/
 test_tool_isolation.py`: this file imports `rag.retrieval.*` and
 `langgraph_experiment.wiring`/`state` only. It never imports
@@ -13,7 +13,7 @@ Allowed tool: `search_knowledge_base` (`RetrievalPipeline.retrieve()`),
 matching production's own `rag.agent.tools.search_knowledge_base` and
 `langgraph_experiment.nodes.retrieve`. This experiment's Knowledge Agent
 does not additionally exercise `get_document`/`get_latest_document`/
-`get_related_context` -- a deliberate scope decision (see README.md's
+`get_related_context`, a deliberate scope decision (see README.md's
 "Scope decisions"): those three are already demonstrated, against the
 same underlying `rag.agent.tools` module, by production's agent; this
 experiment's teaching value is specialist routing/parallelism/retry
@@ -44,7 +44,7 @@ def make_knowledge_agent_node(deps: GraphDeps):
     """Build the Knowledge Agent node.
 
     Contains its own failures: a raised exception from `pipeline.
-    retrieve()` (simulating a timeout or a downstream error -- see
+    retrieve()` (simulating a timeout or a downstream error, see
     `tests/test_specialist_failures.py`) is caught here and reported as
     `knowledge_status="failed"` with only the exception's class name
     recorded, never propagated to crash the run and never leaking an
@@ -53,7 +53,7 @@ def make_knowledge_agent_node(deps: GraphDeps):
     knowledge answer either way.
 
     Reads `state["knowledge_top_k"]` (set by `orchestrator.coordinator`,
-    widened on a critic-requested retry -- see that node's docstring)
+    widened on a critic-requested retry, see that node's docstring)
     rather than a fixed constant, so the same function serves both the
     first attempt and the retry without needing to know which one it is.
     """
@@ -76,7 +76,7 @@ def make_knowledge_agent_node(deps: GraphDeps):
             results = deps.pipeline.retrieve(
                 state["original_query"], filters=filters, candidate_k=top_k, auth=auth
             )
-        except Exception as exc:  # noqa: BLE001 -- contain a specialist failure, never crash the run
+        except Exception as exc:  # noqa: BLE001 (contain a specialist failure, never crash the run)
             return {
                 "knowledge_status": "failed",
                 "knowledge_evidence": [],

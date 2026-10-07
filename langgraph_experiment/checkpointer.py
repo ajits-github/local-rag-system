@@ -8,7 +8,7 @@ round-tripping an interrupt/resume/restart cycle against this project's
 own local Postgres before writing this module, not assumed), and this
 project already runs Postgres for everything else. `sqlite_checkpointer`
 stays available as a lighter-weight fallback needing no Postgres --
-`run_demo.py --backend sqlite` -- and remains what every restart/resume
+`run_demo.py --backend sqlite`, and remains what every restart/resume
 test in this package uses internally (via a `tmp_path` file, never
 touching the shared dev database).
 
@@ -16,7 +16,7 @@ Both are real, file/database-backed checkpointers, not the in-memory
 default: stopping a CLI process and starting a new one against the same
 target resumes exactly where it left off. Every CLI entrypoint opens and
 closes its own connection per invocation (see `cli/run_demo.py`/
-`cli/approval_cli.py`) rather than holding one open across calls -- each
+`cli/approval_cli.py`) rather than holding one open across calls. Each
 CLI invocation *is* a fresh "process," which is the point being
 demonstrated.
 
@@ -71,14 +71,14 @@ def postgres_checkpointer(conn_string: str) -> Iterator[PostgresSaver]:
     Parameters
     ----------
     conn_string : str
-        A `postgresql://` DSN -- typically `config.database_url()`, the
+        A `postgresql://` DSN: typically `config.database_url()`, the
         same connection string `PgVectorStore` already uses.
 
     Yields
     ------
     PostgresSaver
         Pass directly to `langgraph_experiment.graph.build_graph`.
-        `.setup()` is called every time (idempotent -- `CREATE TABLE IF
+        `.setup()` is called every time (idempotent: `CREATE TABLE IF
         NOT EXISTS`, confirmed directly against the installed
         `langgraph-checkpoint-postgres==3.1.2`), so a caller never needs
         to remember to run it separately first.

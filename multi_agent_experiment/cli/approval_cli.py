@@ -15,7 +15,7 @@ invoking this script *is* what supplies the resume payload
 `interrupt()`), pointed at this package's own graph/checkpointer.
 
 `with_ledger=False`: keeps this CLI's own "zero external services"
-guarantee -- `GraphDeps.action_ledger` (the production-hardening
+guarantee. `GraphDeps.action_ledger` (the production-hardening
 idempotency ledger `execute_write_action` can optionally guard mutations
 through) needs its own Postgres connection when enabled, independent of
 `with_retrieval`'s RAG-only Postgres/Ollama need. A caller with Postgres

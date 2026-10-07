@@ -2,7 +2,7 @@
 
 Reuses `rag.factory`/`rag.config`/`rag.mcp.business.store`/
 `rag.retrieval.pipeline` wholesale; this module adds no retrieval,
-generation, or business-rule logic of its own -- only wiring, mirroring
+generation, or business-rule logic of its own, only wiring, mirroring
 `rag.agent.graph.run_agent`'s own injected-singleton parameters
 (`pipeline`, `vectorstore`, `embedder`, `llm`).
 
@@ -32,7 +32,7 @@ from rag.retrieval.pipeline import RetrievalPipeline
 
 #: Default approval wait window and overall per-workflow ceiling. Neither
 #: is read from `config/default.yaml` (they're specific to this
-#: experiment, not a production RAG setting) -- plain module constants,
+#: experiment, not a production RAG setting), plain module constants,
 #: overridable per `GraphDeps` instance.
 DEFAULT_APPROVAL_TIMEOUT_SECONDS = 15 * 60
 DEFAULT_MAX_WORKFLOW_DURATION_SECONDS = 60 * 60
@@ -41,7 +41,7 @@ DEFAULT_MAX_WORKFLOW_DURATION_SECONDS = 60 * 60
 class TransientCaseStoreError(Exception):
     """A retryable failure reaching the (synthetic) case-store backend.
 
-    Never raised by `rag.mcp.business.store` itself -- that module is
+    Never raised by `rag.mcp.business.store` itself. That module is
     in-memory and has no transient-failure mode. Exists so
     `execute_case_read_tool`'s `RetryPolicy` (see `graph.build_graph`)
     and the "failure recovery" test scenario have a realistic exception
@@ -71,14 +71,14 @@ class GraphDeps:
     pipeline : RetrievalPipeline | None
         Built for the read-only RAG branch. `None` skips that branch's
         Postgres/embedding-model dependency entirely (see
-        `build_default_deps`'s `with_retrieval` flag) -- the case-store
+        `build_default_deps`'s `with_retrieval` flag). The case-store
         branch, including the whole interrupt/approval demo, needs
         neither Postgres nor Ollama, since `rag.mcp.business.store` is a
         self-contained in-memory backend.
     llm, rag_prompt_template
         Reused for the read-only RAG branch's synthesis step, built the
         same way `RetrievalPipeline.__init__` builds its own (private)
-        copies -- kept here instead of reaching into `pipeline`'s private
+        copies. Kept here instead of reaching into `pipeline`'s private
         attributes, since `synthesize_rag` needs `generate()`/`render()`
         directly rather than the whole `pipeline.answer()` convenience
         method (the point of the experiment's node split is one node per
@@ -91,7 +91,7 @@ class GraphDeps:
     action_ledger : ActionLedger | None
         The Postgres-backed idempotency ledger `execute_write_action`
         guards every mutation attempt through (see `idempotency.py`).
-        `None` disables it entirely -- `execute_write_action` then calls
+        `None` disables it entirely. `execute_write_action` then calls
         `update_case_status_fn` directly with no ledger involvement,
         which is what every test from the original (pre-production-
         hardening) phase still does, needing no Postgres at all.
@@ -102,7 +102,7 @@ class GraphDeps:
     max_workflow_duration_seconds : int
         A separate, coarser ceiling on total elapsed time since
         `workflow_started_at`, independent of the approval-specific
-        window above -- see `state.GraphState.workflow_started_at`'s
+        window above. See `state.GraphState.workflow_started_at`'s
         docstring for why these are two distinct settings even though
         this graph's topology only ever lets either one be observed at
         the same single interrupt point.
@@ -133,22 +133,22 @@ def build_default_deps(
         Loaded via `rag.config.load_config()` if omitted.
     with_retrieval : bool, optional
         When `False`, skips building `pipeline`/`llm`/`rag_prompt_template`
-        (and therefore any Postgres/Ollama connection attempt) -- for a
+        (and therefore any Postgres/Ollama connection attempt), for a
         demo run that only exercises the case-store branch, which has no
         external dependency at all. `True` by default so `retrieve()`/
         `synthesize_rag` work out of the box for a caller that does have
         `make up` and Ollama running.
     with_ledger : bool, optional
         When `True` (the default), builds a real `ActionLedger` against
-        `config.database_url()` and calls `ensure_schema()` once -- needs
+        `config.database_url()` and calls `ensure_schema()` once. Needs
         the same Postgres `with_retrieval` already assumes. `False` skips
         it (`GraphDeps.action_ledger=None`), for a demo run with no
-        Postgres available at all -- the write-action branch still works,
+        Postgres available at all. The write-action branch still works,
         just without the crash-recovery idempotency guarantee (falling
         back to `update_case_status`'s own natural idempotency alone).
     also configures OpenTelemetry tracing once, from `config.
     observability.tracing` (idempotent, a true no-op unless that config
-    section enables it -- see `rag.observability.tracing.
+    section enables it. See `rag.observability.tracing.
     configure_tracing`).
 
     Returns

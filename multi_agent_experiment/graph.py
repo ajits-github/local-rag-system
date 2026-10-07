@@ -31,7 +31,7 @@ coordinator (round 0: classify; round >=1: retry-adjust only)
 ```
 
 One thread (`config["configurable"]["thread_id"]`) is one query's
-lifecycle, matching `langgraph_experiment.graph`'s own convention -- see
+lifecycle, matching `langgraph_experiment.graph`'s own convention. See
 that module's docstring.
 
 **Module map** (see each module's own docstring for the full reasoning):
@@ -40,7 +40,7 @@ each importable and testable in isolation with no dependency on the
 other. `orchestrator.py` is the "sees both" coordination tier
 (coordinator, merge, critic, final synthesis). `business_agent.py`'s
 read/write nodes are, in turn, `langgraph_experiment.nodes`/`routing`
-functions reused **unmodified** -- this file is the only place that
+functions reused **unmodified**. This file is the only place that
 wires all of it into one compiled graph.
 """
 
@@ -55,8 +55,8 @@ from langgraph_experiment.wiring import GraphDeps, TransientCaseStoreError
 from multi_agent_experiment import business_agent, knowledge_agent, orchestrator, routing
 from multi_agent_experiment.state import MultiAgentState
 
-#: Identical to `langgraph_experiment.graph._CASE_READ_RETRY_POLICY` --
-#: retries only a simulated transient case-store failure, never a genuine
+#: Identical to `langgraph_experiment.graph._CASE_READ_RETRY_POLICY`.
+#: Retries only a simulated transient case-store failure, never a genuine
 #: deterministic outcome (not-found, not-authorized).
 _BUSINESS_READ_RETRY_POLICY = RetryPolicy(
     max_attempts=3, initial_interval=0.05, retry_on=(TransientCaseStoreError,)
@@ -70,10 +70,10 @@ def build_graph(deps: GraphDeps, checkpointer: object) -> CompiledStateGraph:
     ----------
     deps : GraphDeps
         The same `langgraph_experiment.wiring.GraphDeps` the single-agent
-        experiment uses -- no new dependency-injection type for this
+        experiment uses, no new dependency-injection type for this
         package. See that class's docstring.
     checkpointer : object
-        Any LangGraph `BaseCheckpointSaver` -- `checkpointer.
+        Any LangGraph `BaseCheckpointSaver`. `checkpointer.
         sqlite_checkpointer` (this package's own, pointed at a sibling
         `data/` directory) for the durable demo path, or an in-memory
         `InMemorySaver` for tests.
@@ -102,7 +102,7 @@ def build_graph(deps: GraphDeps, checkpointer: object) -> CompiledStateGraph:
     # hop (knowledge_agent -> merge) but the business-read branch is three
     # (select_tool -> execute_read -> evaluate_read -> merge). Without
     # `defer`, LangGraph's fan-in triggers "merge" as soon as EITHER
-    # predecessor's edge fires -- for the "mixed" route this ran merge
+    # predecessor's edge fires, for the "mixed" route this ran merge
     # (and, transitively, evidence_critic/final_synthesis) once right after
     # knowledge_agent alone finished, and again after the business branch
     # caught up, doubling the LLM call and briefly answering from partial
@@ -121,12 +121,12 @@ def build_graph(deps: GraphDeps, checkpointer: object) -> CompiledStateGraph:
         # Only the bare-string ("non-Send") destination needs a path_map
         # entry; Send-dispatched targets (knowledge_agent,
         # business_select_tool) name their own destination explicitly and
-        # need no map entry -- confirmed against the installed langgraph
+        # need no map entry. Confirmed against the installed langgraph
         # in tests/test_probe_langgraph_primitives.py.
         {"business_validate_write": "business_validate_write"},
     )
 
-    # Knowledge and business-read branches both join at "merge" --
+    # Knowledge and business-read branches both join at "merge".
     # LangGraph waits for every dispatched branch in a superstep to
     # finish before running a shared downstream node, which is what makes
     # this a real fan-out/join, not a race.

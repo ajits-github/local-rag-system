@@ -8,7 +8,7 @@ Usage
 `rag` runs the same read-only question through both
 `rag.agent.graph.run_agent` (route="classic_rag", the production custom
 harness) and this package's `read_only` branch, and prints latency/step
-counts for both -- needs a running Postgres (`make up`) and native Ollama,
+counts for both: needs a running Postgres (`make up`) and native Ollama,
 same as any other integration-shaped script in this repo.
 
 `write-action` does not run the custom harness at all for the
@@ -35,7 +35,7 @@ from rag.retrieval.authorization import AuthorizationContext
 
 #: One row per axis from the prompt spec's "Compare with current custom
 #: harness" section. `custom` and `langgraph` are short, factual
-#: observations, not a verdict -- see README.md's own comparison section
+#: observations, not a verdict. See README.md's own comparison section
 #: for the full reasoning behind each row (this table is the condensed,
 #: printable version of the same conclusions, kept in sync by hand since
 #: one is Python and the other is Markdown).
@@ -152,7 +152,7 @@ def cmd_rag(args: argparse.Namespace) -> None:
     custom_result = run_agent(
         state,
         pipeline=deps.pipeline,
-        vectorstore=deps.pipeline._vectorstore,  # noqa: SLF001 -- read-only introspection for this comparison script only
+        vectorstore=deps.pipeline._vectorstore,  # noqa: SLF001 (read-only introspection for this comparison script only)
         embedder=deps.pipeline._embedder,  # noqa: SLF001
         llm=deps.llm,
         config=deps.config,

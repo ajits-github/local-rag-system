@@ -16,13 +16,13 @@ classify
                                                 +-- rejected -> synthesize_write_result -> END
                                                 |   (approval_state: rejected / expired /
                                                 |    workflow_timeout / denied_insufficient_role /
-                                                |    cancelled -- see state.ApprovalState)
+                                                |    cancelled (see state.ApprovalState))
                                                 +-- execute  -> execute_write_action
                                                                   -> synthesize_write_result -> END
 ```
 
 One thread (`config["configurable"]["thread_id"]`) is one query's
-lifecycle in this experiment, not a multi-turn conversation -- see
+lifecycle in this experiment, not a multi-turn conversation. See
 README.md's "Scope decisions" section.
 """
 
@@ -38,7 +38,7 @@ from langgraph_experiment.wiring import GraphDeps, TransientCaseStoreError
 
 #: Retries only a simulated transient case-store failure (see
 #: `wiring.TransientCaseStoreError`'s docstring), never a genuine
-#: deterministic outcome (not-found, not-authorized) -- those are not
+#: deterministic outcome (not-found, not-authorized). Those are not
 #: that exception type and are never retried.
 _CASE_READ_RETRY_POLICY = RetryPolicy(
     max_attempts=3, initial_interval=0.05, retry_on=(TransientCaseStoreError,)
@@ -47,7 +47,7 @@ _CASE_READ_RETRY_POLICY = RetryPolicy(
 #: Retries a transient case-store failure on the *write* path too. Safe
 #: only because `nodes.make_execute_write_action_node` checks
 #: `GraphDeps.action_ledger` *first* on every attempt, including a
-#: RetryPolicy-triggered one -- a retry policy on a write node with no
+#: RetryPolicy-triggered one. A retry policy on a write node with no
 #: such guard would risk double-mutating on exactly the failure class
 #: it's meant to recover from.
 _WRITE_ACTION_RETRY_POLICY = RetryPolicy(

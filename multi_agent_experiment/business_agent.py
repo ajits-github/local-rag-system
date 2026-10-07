@@ -8,7 +8,7 @@ could call `search_knowledge_base` even by accident. Verified statically
 in `tests/test_tool_isolation.py`.
 
 Every read/write node below is **imported and used unmodified** from
-`langgraph_experiment.nodes` -- the single-agent experiment's already-
+`langgraph_experiment.nodes`. The single-agent experiment's already-
 tested business branch, including its production-hardening additions
 (the idempotency ledger `execute_write_action` guards mutations through,
 server-side approval-expiry/workflow-timeout checks in
@@ -44,7 +44,7 @@ def evaluate_read(state: MultiAgentState) -> dict:
     Delegates entirely to `langgraph_experiment.nodes.evaluate_case_read`
     for `termination_reason` (only set on a miss/denial), then adds
     `business_status` (`"ok"`/`"not_found_or_denied"`) and one
-    `ToolCallRecord` -- the two signals `orchestrator.evidence_critic`/
+    `ToolCallRecord`: the two signals `orchestrator.evidence_critic`/
     `orchestrator.merge` need that the single-agent experiment's terminal,
     non-multi-agent read branch never had to expose to a sibling node.
     """

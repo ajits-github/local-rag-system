@@ -11,11 +11,11 @@ authorization-denial (same-tenant and cross-tenant), an
 unnecessary-agent check, and a Knowledge Agent failure) against the
 compiled graph, using the same self-contained synthetic knowledge base
 and the real, unmodified `rag.mcp.business.store` that `cli/
-scenario_walkthrough.py` uses -- **no external services needed** (no
+scenario_walkthrough.py` uses. **No external services needed** (no
 Postgres, no Ollama), so this is runnable immediately and reproducibly.
 
 Mirrors `rag.eval.run_agent_eval`'s spirit (deterministic, local-only
-metrics, no LLM judge) at a fraction of its scope -- see that module for
+metrics, no LLM judge) at a fraction of its scope. See that module for
 production's own, much larger agentic-eval harness; this one exists
 purely to answer README.md section 14's required metrics for this
 specific experiment, not to replace it.
@@ -32,13 +32,13 @@ Metrics computed, matching README.md section 14's list:
 - `tool_call_count`/`llm_call_count`/`latency_ms`: per-row and mean.
 - `answer_correctness`: fraction of rows where every
   `expected_answer_keywords` string appears in the final answer
-  (case-insensitive substring match -- the same
+  (case-insensitive substring match, the same
   `KeywordOverlapScorer`-style heuristic `rag.eval.answer_quality` uses,
   not an LLM judge).
 - `citation_grounding`: fraction of rows with an `expected_citation_count`
   whose actual citation count matched.
 - `security_failures`: count of rows where a `forbidden_answer_substrings`
-  entry (case-insensitive) leaked into the final answer -- this must
+  entry (case-insensitive) leaked into the final answer. This must
   always be `0`; a non-zero value is a real authorization/redaction bug,
   not a quality nit.
 - `termination_reasons`: a breakdown, for diagnosing *why* a row failed,
