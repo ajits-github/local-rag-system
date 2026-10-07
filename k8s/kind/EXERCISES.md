@@ -269,7 +269,7 @@ readiness probes only ever look at the status code, never the body, so
 wiring `readinessProbe` straight at `/health` meant a real Postgres
 outage never removed the Pod from Service traffic at all. The fix (see
 `ISSUES.md`) added two dedicated endpoints instead of reusing `/health`
-for everything: `/livez` (no dependency checks, ever -- a downstream
+for everything: `/livez` (no dependency checks, ever; a downstream
 outage must never look like the process itself is broken) and `/readyz`
 (the same dependency checks `/health` already made, but a real
 `503` when something required is down). `startupProbe`/`livenessProbe`
@@ -311,7 +311,7 @@ You should see all three diverge exactly as their names promise:
 
 Pod Ready            = False
 Service backend       = removed from endpointslices
-Container restarts    = 0 (no liveness failure -- /livez never touched Postgres)
+Container restarts    = 0 (no liveness failure: /livez never touched Postgres)
 ```
 
 That last line is the point: a downstream outage now correctly triggers
@@ -341,7 +341,7 @@ occurred at any point.
 
 > Liveness answers whether restarting the container could help. Readiness
 > answers whether the Pod should receive traffic. A downstream database outage
-> should make the API unready, not trigger a restart storm -- which requires
+> should make the API unready, not trigger a restart storm. This requires
 > liveness and readiness to check genuinely different things, not the same
 > diagnostic endpoint reused twice.
 
@@ -352,7 +352,7 @@ occurred at any point.
 ## Goal
 
 Prove that the Kubernetes readiness mechanism itself works, independent
-of exercise 5's dependency-outage scenario -- this one breaks the probe
+of exercise 5's dependency-outage scenario. This one breaks the probe
 path directly, with no Postgres outage involved at all.
 
 ## Break the readiness path

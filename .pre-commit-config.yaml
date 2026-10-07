@@ -11,7 +11,7 @@ repos:
         # to resolve custom tags into Python objects.
         args: [--unsafe]
         # helm/rag-system/templates/**: Helm's Go-template syntax (`{{ ... }}`)
-        # is not valid raw YAML -- a generic parser chokes on the raw template
+        # is not valid raw YAML. A generic parser chokes on the raw template
         # source before Helm ever renders it. `helm lint`/`helm template`
         # (run separately, see helm/README.md) are the correct validators for
         # these files, not this hook.

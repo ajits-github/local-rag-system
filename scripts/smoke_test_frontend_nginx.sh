@@ -5,13 +5,13 @@
 #
 # Proves, against a real running container, that:
 #   1. nginx.conf.template's ${NGINX_LOCAL_RESOLVERS}/${RAG_API_UPSTREAM_HOST}
-#      placeholders were actually substituted (not left literal -- the
+#      placeholders were actually substituted (not left literal, the
 #      failure mode that made nginx refuse to start at all).
 #   2. worker_processes was NOT left at the literal directive "auto" (the
 #      autotune opt-in actually ran; the *value* it picks is
-#      environment-dependent -- e.g. a Kubernetes pod's 200m CPU limit
+#      environment-dependent: a Kubernetes pod's 200m CPU limit
 #      yields "1", an unconstrained Docker Compose container falls back to
-#      the host's CPU count -- so this only asserts the placeholder was
+#      the host's CPU count. This only asserts the placeholder was
 #      resolved to *some* concrete integer, not a specific number).
 #   3. A real proxied request (through nginx, not a raw pod-to-pod request)
 #      reaches rag-api and returns a real response, not a resolver-related
@@ -47,7 +47,7 @@ echo
 echo "[1/3] Checking the rendered nginx config for unexpanded template placeholders..."
 RENDERED_CONF="$(docker exec "$FRONTEND_CONTAINER" cat /etc/nginx/conf.d/default.conf 2>/dev/null || echo "")"
 if [ -z "$RENDERED_CONF" ]; then
-    fail "could not read /etc/nginx/conf.d/default.conf from $FRONTEND_CONTAINER -- is it running?"
+    fail "could not read /etc/nginx/conf.d/default.conf from $FRONTEND_CONTAINER. Is it running?"
 elif echo "$RENDERED_CONF" | grep -q '\${'; then
     fail "rendered config still contains an unexpanded \${...} placeholder:"
     echo "$RENDERED_CONF" | grep '\${'
@@ -89,7 +89,7 @@ echo "  Response: $BODY"
 if [ "$HTTP_CODE" = "200" ]; then
     pass "proxied /health reached rag-api and returned 200"
 else
-    fail "proxied /health did not return 200 (HTTP $HTTP_CODE) -- check 'docker logs $FRONTEND_CONTAINER' for a resolver/connect error"
+    fail "proxied /health did not return 200 (HTTP $HTTP_CODE). Check 'docker logs $FRONTEND_CONTAINER' for a resolver/connect error"
 fi
 
 # ---------------------------------------------------------------------------
