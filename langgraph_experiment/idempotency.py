@@ -4,13 +4,13 @@ Answers the prompt spec's production-hardening question directly: "prove
 resume cannot execute the mutation twice" after a crash between the
 mutation executing and the workflow marking it complete. This is
 deliberately a *second*, independent mechanism from LangGraph's own
-checkpointer -- see this module's "Three distinct guarantees" note below,
+checkpointer. See this module's "Three distinct guarantees" note below,
 and README.md's "Workflow durability vs. business-operation idempotency
 vs. transaction atomicity" section for the full writeup.
 
 Uses `psycopg2` (this project's own established Postgres driver, already
 a dependency of `rag.vectorstore.pgvector`), not the `psycopg` (v3) driver
-`langgraph-checkpoint-postgres` itself requires -- a deliberate split:
+`langgraph-checkpoint-postgres` itself requires: a deliberate split:
 the checkpointer's own storage engine needs `psycopg` because that's what
 the LangGraph library was built against, but this experiment's own
 application-level ledger has no reason to add a second driver dependency
@@ -30,13 +30,13 @@ Three distinct guarantees, and where each one actually lives
   for why *both* layers matter, not just one).
 - **Transaction atomicity**: there is no single atomic transaction
   spanning "call `update_case_status`" and "mark the ledger row
-  complete" -- that gap is real, and is exactly the crash window
+  complete", that gap is real, and is exactly the crash window
   `test_idempotency_ledger.py::
   test_crash_between_mutation_and_ledger_completion_does_not_double_mutate`
   reproduces. Postgres gives atomicity *within* one SQL statement, never
   across two separate calls into two different systems (the case store
   and the ledger table) with a process crash in between. This module
-  does not, and cannot, remove that gap -- it only makes what happens
+  does not, and cannot, remove that gap. It only makes what happens
   *if* a crash lands in it safe, by relying on the underlying mutation's
   own idempotency for the recovery step (see `record_attempt`).
 """
@@ -82,7 +82,7 @@ class LedgerRecord:
 class ActionLedger:
     """A durable `operation_id -> outcome` record, independent of the LangGraph checkpoint.
 
-    Not a general-purpose idempotency library -- scoped narrowly to this
+    Not a general-purpose idempotency library. Scoped narrowly to this
     graph's one write action, mirroring how
     `rag.mcp.business.store`'s own `_CASE_MUTATION_LOCK` is scoped
     narrowly to its one mutator rather than a generic locking framework.
@@ -123,8 +123,8 @@ class ActionLedger:
 
         `ON CONFLICT DO NOTHING`: a retry (automatic `RetryPolicy` retry,
         or a resumed crashed run) calling this again for the same
-        `operation_id` never overwrites an already-recorded `started_at`
-        -- the row's existence alone is what matters for
+        `operation_id` never overwrites an already-recorded `started_at`.
+        The row's existence alone is what matters for
         `test_crash_between_mutation_and_ledger_completion_does_not_
         double_mutate` to reconstruct "was an attempt already in flight."
         """
@@ -171,18 +171,18 @@ class ActionLedger:
            or crashed after `mutate()` returned but before
            `mark_completed` ran. This method cannot distinguish those
            three sub-cases from the ledger alone (that information was
-           lost when the process crashed) -- so it does the only safe
+           lost when the process crashed), so it does the only safe
            thing available: calls `mutate()` again, exactly as if this
            were a fresh attempt. That is only safe because `mutate()`
            itself (`rag.mcp.business.store.update_case_status`) is
-           naturally idempotent for this business operation -- a repeat
+           naturally idempotent for this business operation. A repeat
            call for a case already in its target status returns
            `already_in_status`, never a second real transition. **The
            ledger does not manufacture that safety; it exists on top of
            an operation that already had it.** A non-idempotent mutation
            (e.g. "charge $10") would need a genuinely different recovery
            strategy here (query the external system for the real
-           outcome, or refuse and require manual reconciliation) -- see
+           outcome, or refuse and require manual reconciliation). See
            this module's docstring.
         3. **No row at all**: a genuinely new attempt. Inserts the
            "started" row, calls `mutate()`, then marks it completed.
@@ -228,7 +228,7 @@ class _ReplayedOutcome:
     `nodes.execute_write_action` only ever reads `.outcome`/
     `.previous_status`/`.case_id`/`.new_status`/`.updated_at` off
     whatever `record_attempt` returns before calling `.model_dump(mode=
-    "json")` on a real `CaseActionOutcome` -- a replay never reconstructs
+    "json")` on a real `CaseActionOutcome`. A replay never reconstructs
     a fake `CaseActionOutcome`, since `updated_at` genuinely isn't known
     from the ledger alone. `nodes.py` checks `isinstance(result,
     _ReplayedOutcome)` and renders a slightly different (still accurate)

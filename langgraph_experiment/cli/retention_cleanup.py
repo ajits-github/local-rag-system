@@ -14,10 +14,10 @@ adding one would be exactly the "extra infrastructure for appearance" the
 prompt spec says to avoid).
 
 Only ever deletes a thread whose run has **already reached a terminal
-state** (`snapshot.next == ()` -- no pending interrupt, nothing left to
+state** (`snapshot.next == ()`: no pending interrupt, nothing left to
 resume) *and* whose most recent checkpoint is older than the cutoff.
 A thread still paused awaiting approval, no matter how old, is never
-touched -- deleting its checkpoint would silently destroy a real pending
+touched. Deleting its checkpoint would silently destroy a real pending
 human decision, not just tidy up disk space.
 """
 

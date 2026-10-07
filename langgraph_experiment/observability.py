@@ -3,7 +3,7 @@
 Mirrors `rag.observability.metrics`'s dedicated-`CollectorRegistry`
 pattern (never the process-wide default, so re-importing this module
 across `pytest` collection never raises "Duplicated timeseries") as its
-own independent registry -- not additional counters bolted onto
+own independent registry. Not additional counters bolted onto
 `rag/observability/metrics.py`, for the same isolation reason
 `audit.py` doesn't extend `rag.audit`'s event vocabulary. Tracing itself
 *is* fully reused (`rag.observability.tracing.start_span`/
@@ -57,7 +57,7 @@ def traced_node(name: str, fn: Callable[[dict], dict]) -> Callable[[dict], dict]
     """Wrap a node function with an OpenTelemetry span and a latency observation.
 
     Applied once per node at `graph.build_graph` time, rather than
-    editing every node function body -- the node functions in `nodes.py`
+    editing every node function body. The node functions in `nodes.py`
     stay pure `(state) -> dict` with no tracing/metrics code mixed in.
     Failures are never swallowed here: an exception still propagates
     (the same "understandable workflow state" contract
@@ -65,7 +65,7 @@ def traced_node(name: str, fn: Callable[[dict], dict]) -> Callable[[dict], dict]
     closed with the error recorded on it (see `tracing.start_span`).
 
     `wait_for_approval`'s `interrupt()` call raises `langgraph.errors.
-    GraphInterrupt` internally to unwind the stack on every pause -- a
+    GraphInterrupt` internally to unwind the stack on every pause. A
     real `Exception` subclass, not a genuine node failure. Caught and
     re-raised separately, *before* the generic `except Exception` branch,
     specifically so a normal pause is never counted in

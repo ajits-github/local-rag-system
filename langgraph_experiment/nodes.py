@@ -1,7 +1,7 @@
 """Node functions for the experimental LangGraph agent.
 
 Every node is a plain function `(state) -> dict`, returning only the
-keys it changes -- LangGraph merges the return value into the checkpointed
+keys it changes. LangGraph merges the return value into the checkpointed
 state (see `state.py`'s module docstring for why this is the core
 difference from `rag.agent.graph`'s in-place-mutated `AgentState`). A node
 that needs injected dependencies (`GraphDeps`) is a small factory
@@ -11,7 +11,7 @@ how `rag.agent.graph._execute_tool` receives `pipeline`/`vectorstore`/
 singleton.
 
 Business rules (case transition validity, sensitive-transition approval,
-tenant/role authorization) are never reimplemented here -- every case-store
+tenant/role authorization) are never reimplemented here. Every case-store
 call goes through `rag.mcp.business.store` unmodified via `GraphDeps`.
 Retrieval authorization goes through the real `AuthorizationContext`/
 `RetrievalPipeline.retrieve()`, also unmodified. This module only adds
@@ -40,7 +40,7 @@ from rag.retrieval.authorization import AuthorizationContext
 _CASE_ID_RE = re.compile(r"\bCASE-\d+\b", re.IGNORECASE)
 _VALID_STATUSES: frozenset[CaseStatus] = frozenset({"open", "in_progress", "resolved", "closed"})
 
-# Deliberately simple, deterministic keyword mapping -- not an LLM call.
+# Deliberately simple, deterministic keyword mapping, not an LLM call.
 # The experiment's routing/extraction nodes are kept fully deterministic so
 # the interrupt/checkpoint/resume mechanics this package exists to teach
 # are never confounded by LLM JSON-parsing flakiness (the existing custom
@@ -107,7 +107,7 @@ def classify(state: GraphState) -> dict:
     classification, since this graph has no LLM classify step at all.
 
     Also stamps `workflow_started_at` (once; `state.get(...) or ...`
-    guards a re-entry from ever resetting it) -- the origin point
+    guards a re-entry from ever resetting it). The origin point
     `GraphDeps.max_workflow_duration_seconds` is measured from, checked
     later in `wait_for_approval`.
     """
@@ -217,7 +217,7 @@ def make_execute_case_read_node(deps: GraphDeps):
     """Build the `execute_case_read_tool` node: dispatch the selected read tool.
 
     Registered with a `RetryPolicy` in `graph.build_graph` (retrying only
-    `TransientCaseStoreError`) -- a genuine, deterministic node failure
+    `TransientCaseStoreError`), a genuine, deterministic node failure
     (case not found, not authorized) is not that exception type and is
     never retried; only a simulated transient backend failure is.
     """
@@ -250,7 +250,7 @@ def evaluate_case_read(state: GraphState) -> dict:
 def synthesize_case_read(state: GraphState) -> dict:
     """`synthesize_case_read` node: render the fetched case data as a final answer.
 
-    Deterministic templating, not an LLM call -- see `README.md`'s
+    Deterministic templating, not an LLM call. See `README.md`'s
     "Scope decisions" section for why: it keeps the case-store branch
     (including the whole interrupt/approval demo) runnable with zero
     external services.
@@ -290,7 +290,7 @@ def make_validate_write_request_node(deps: GraphDeps):
     """Build the `validate_write_request` node: deterministic pre-checks before ever pausing.
 
     Sets `pending_action` (with `approval_state="pending"`) only when the
-    request has a real case id and a recognized target status -- this is
+    request has a real case id and a recognized target status. This is
     the field that gets checkpointed just before `wait_for_approval`
     pauses, so it must already be complete and correct here, including
     the two production-hardening fields `operation_id` (minted once, a
@@ -355,7 +355,7 @@ def make_wait_for_approval_node(deps: GraphDeps):
     value it returns on resume is whatever `Command(resume=...)` supplied
     (see `langgraph_experiment.cli.approval_cli`, the only code path that
     constructs that `Command`). That payload is trusted only if it also
-    carries a role in `deps.approval_roles` -- a resume payload claiming
+    carries a role in `deps.approval_roles`. A resume payload claiming
     `"decision": "approve"` is never honored on its own, matching the
     prompt spec's "do not accept approved=true simply because the LLM
     generated it" requirement, and mirroring the production MCP path's
@@ -370,7 +370,7 @@ def make_wait_for_approval_node(deps: GraphDeps):
     `state["workflow_started_at"]` against `deps.
     max_workflow_duration_seconds`) and `approval_expired` (`now` against
     `pending["expires_at"]`). A `"decision": "cancel"` resume payload is
-    its own terminal branch, distinct from `"reject"` -- see
+    its own terminal branch, distinct from `"reject"`. See
     `state.ApprovalState`'s values.
     """
 
@@ -439,7 +439,7 @@ def make_wait_for_approval_node(deps: GraphDeps):
                 )
             elif wants_approve:
                 # Claimed approval, but the resuming identity held no
-                # approval role -- fails closed rather than trusting the
+                # approval role, fails closed rather than trusting the
                 # claim.
                 updated_pending["approval_state"] = "denied_insufficient_role"
                 audit.log_workflow_event(
@@ -471,12 +471,12 @@ def make_execute_write_action_node(deps: GraphDeps):
     valid just because a human approved pausing on it.
 
     When `deps.action_ledger` is set, the mutation is dispatched through
-    `ActionLedger.record_attempt` rather than called directly -- guards
+    `ActionLedger.record_attempt` rather than called directly. Guards
     against a duplicate resume/automatic-retry re-running the mutation,
     including recovering safely from a crash between the mutation
     executing and the ledger recording it (see `idempotency.py`'s module
     docstring for the full guarantee). Registered with its own
-    `RetryPolicy` in `graph.build_graph` -- safe specifically *because*
+    `RetryPolicy` in `graph.build_graph`, safe specifically *because*
     the ledger check happens first on every attempt, including automatic
     retries; a `RetryPolicy` on a write node with no such guard would be
     a real double-mutation risk, not a convenience (see that policy's own

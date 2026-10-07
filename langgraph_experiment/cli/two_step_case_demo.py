@@ -17,7 +17,7 @@ one continuously-running `rag-api` server process), but it means a
 second CLI process launched after the first one exits starts from the
 *original* seed data again, not whatever the first process mutated. This
 was discovered empirically while building this demo (see README.md's
-"A real limitation, found by actually running this" section) -- it does
+"A real limitation, found by actually running this" section). It does
 not affect the LangGraph checkpoint itself (that genuinely is durable
 across process restarts; see `run_demo.py`/`approval_cli.py` and
 `test_restart_resume.py` for the CASE-2001 scenario, which needs only one

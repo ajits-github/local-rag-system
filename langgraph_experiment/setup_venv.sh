@@ -17,7 +17,7 @@ python -m pip install -q -e . --no-deps
 # The project's real runtime dependencies, minus the langchain group
 # (langchain/langchain-community/langchain-text-splitters) and minus
 # beautifulsoup4/lxml/pypdf/pdfplumber/python-docx (ingestion-only
-# loaders; this experiment never ingests) -- see langgraph_experiment/
+# loaders; this experiment never ingests). See langgraph_experiment/
 # __init__.py's module docstring for exactly which rag modules that
 # keeps importable.
 python -m pip install -q \

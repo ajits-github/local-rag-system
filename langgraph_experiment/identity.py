@@ -6,7 +6,7 @@ JWT authentication boundary `rag.api.auth`/`rag.api.deps` already covers
 is asserted directly by the CLI caller, mirroring how
 `eval/run_eval.py`'s gold-driven harness and `security.auth.enabled=False`
 mode already treat caller-supplied tenant/roles as trusted claims in this
-codebase -- not a new, weaker convention invented for this experiment.
+codebase. Not a new, weaker convention invented for this experiment.
 """
 
 from __future__ import annotations

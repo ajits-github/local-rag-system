@@ -14,7 +14,7 @@ useful properties for a *learning* graph, even though production's own
 graph's channels from it, and every node function receives (a subset of)
 these keys and returns a partial update of them. There is no shared
 mutable object nodes reach into, unlike `rag.agent.graph`'s `AgentState`
-being threaded through and mutated in place -- see README.md's
+being threaded through and mutated in place. See README.md's
 "StateGraph vs ordinary Python control flow" section for why that
 difference is the whole point of `StateGraph`.
 """
@@ -58,7 +58,7 @@ class PendingCaseAction(TypedDict):
 
     Set by `validate_write_request` *before* `wait_for_approval` calls
     `interrupt()`, so it is durably checkpointed as part of the paused
-    state -- exactly the fields the prompt spec asked to persist across a
+    state: exactly the fields the prompt spec asked to persist across a
     pause (action type, safe identifiers, requested transition, approval
     state), plus two production-hardening additions: `operation_id` and
     `expires_at`. Never a JWT, chain-of-thought, or raw secret.
@@ -67,7 +67,7 @@ class PendingCaseAction(TypedDict):
     ----------
     operation_id : str
         A UUID4 minted once, by `validate_write_request`, and never
-        re-minted on resume/retry -- the idempotency key
+        re-minted on resume/retry. The idempotency key
         `langgraph_experiment.idempotency.ActionLedger` correlates a
         mutation attempt against, so a crash-and-resume or an automatic
         `RetryPolicy` retry of `execute_write_action` can recognize "this
@@ -76,7 +76,7 @@ class PendingCaseAction(TypedDict):
         different requests for the same transition).
     expires_at : str
         ISO timestamp after which `wait_for_approval` refuses to honor a
-        resume, regardless of the decision it carries -- an approval
+        resume, regardless of the decision it carries. An approval
         request does not wait forever. Checked server-side, inside the
         node, the same trust posture already applied to `approver_roles`.
     """
@@ -100,14 +100,14 @@ class GraphState(TypedDict, total=False):
     thread_id : str
         A plain copy of the LangGraph `config["configurable"]["thread_id"]`
         this run was invoked with, passed in by the caller alongside
-        `original_query` -- kept in state (not read out of LangGraph's own
+        `original_query`, kept in state (not read out of LangGraph's own
         config inside a node) so `idempotency.ActionLedger` rows can
         record which thread an operation belongs to without any node
         needing a `(state, config)` signature. Purely a display/audit
         field; never used for routing or authorization.
     caller_subject : str
         A display-only identifier for the calling demo identity (never a
-        real JWT `sub` claim -- see `langgraph_experiment.identity`).
+        real JWT `sub` claim. See `langgraph_experiment.identity`).
     tenant_id : str | None
         Demo caller's tenant, reused as-is by `AuthorizationContext`/
         `VerifiedIdentity` for both the RAG and case-store branches.
@@ -143,8 +143,8 @@ class GraphState(TypedDict, total=False):
         docstring for why this exists.
     approval_decision : dict | None
         The raw resume payload `wait_for_approval`'s `interrupt()` call
-        received back, kept for observability. Never trusted on its own
-        -- `pending_action["approval_state"]` is the actual, role-checked
+        received back, kept for observability. Never trusted on its own:
+        `pending_action["approval_state"]` is the actual, role-checked
         verdict; see `langgraph_experiment.nodes.wait_for_approval`.
     case_action_outcome : dict | None
         `rag.mcp.business.store.update_case_status`'s result

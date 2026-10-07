@@ -5,10 +5,10 @@ Usage
     python -m langgraph_experiment.cli.run_demo start "<query>" [options]
     python -m langgraph_experiment.cli.run_demo state <thread_id>
 
-`--backend postgres` (the default -- "prefer PostgreSQL-backed checkpoint
+`--backend postgres` (the default: "prefer PostgreSQL-backed checkpoint
 persistence... if available", per the prompt spec) needs `make up`'s
 Postgres running; `--backend sqlite` needs nothing but a local file. Both
-are real, durable checkpointers -- see `checkpointer.py`'s module
+are real, durable checkpointers. See `checkpointer.py`'s module
 docstring. `state`/`approval_cli.py` must be given the same `--backend`
 (and, for sqlite, the same `--db` path) a `start` used, since the two
 backends are entirely separate stores.
@@ -16,7 +16,7 @@ backends are entirely separate stores.
 See `README.md`'s "Demo sequence" section for full worked examples,
 including the human-in-the-loop scenario this package exists to
 demonstrate (`start "Resolve CASE-1001" ...` then `start "Close CASE-1001"
-... --thread <same-thread>` is *not* how that works -- each `start` opens
+... --thread <same-thread>` is *not* how that works. Each `start` opens
 a new thread; see `README.md` for the two-step CASE-1001 sequence and why
 it needs two separate threads).
 """

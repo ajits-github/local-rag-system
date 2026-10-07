@@ -11,7 +11,7 @@ Runs in its own virtual environment (`.venv-langgraph/`, see README) rather
 than the project's main `.venv`: `langgraph>=1.2` pins
 `langchain-core>=1.4,<2`, which is incompatible with this repository's
 pinned `langchain>=0.3,<0.4` (a real, confirmed dependency conflict, not a
-style preference -- see README's "Dependency isolation" section). Code
+style preference. See README's "Dependency isolation" section). Code
 here imports `rag.*` modules directly (the package is installed
 editable, `--no-deps`, into that separate venv) but never the two modules
 in `rag` that import `langchain` (`rag.chunkers.recursive_chunker`,
