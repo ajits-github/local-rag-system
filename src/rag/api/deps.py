@@ -197,8 +197,8 @@ def _rate_limit_key(request: Request) -> str:
     (the default) buckets by the verified identity's `tenant_id` when
     present, falling back to client IP otherwise. The config value is
     read once, at process start (`get_config()` is itself `lru_cache`d),
-    matching every other config-derived singleton in this module -- a
-    key-mode change requires a process restart, same as `enabled`.
+    matching every other config-derived singleton in this module. A key-mode
+    change requires a process restart, as does `enabled`.
     """
     key_mode = get_config().security.rate_limit.key
     identity: VerifiedIdentity | None = getattr(request.state, "identity", None)
@@ -217,12 +217,10 @@ def get_rate_limiter() -> Limiter:
     singleton in this module).
 
     `backend="memory"` (the default) is `slowapi`'s process-local
-    `MemoryStorage` -- correct for one replica, silently wrong for more
-    than one behind a load balancer, since each replica counts against
-    its own copy of the limit (see `distributed_state_experiment/README.md`
-    for a reproduced demonstration). `backend="redis"` shares the counter
-    across every replica via the `limits` package's `RedisStorage`, which
-    the experiment's rate-limiter design doc confirms performs the
+    `MemoryStorage`: correct for one replica, silently wrong for more than
+    one behind a load balancer, since each replica counts against its own
+    copy of the limit. `backend="redis"` shares the counter across every
+    replica via the `limits` package's `RedisStorage`, which performs the
     check-and-increment atomically server-side via a Lua script, not a
     racy GET-then-SET pair.
 
@@ -245,14 +243,11 @@ def get_rate_limiter() -> Limiter:
         strategy=rl_config.strategy,
         key_prefix=rl_config.redis_key_prefix,
         # fail_open: on a Redis error, log it and fall back to a
-        # process-local in-memory limiter for the duration of the outage
-        # (the same weaker-but-available behavior "memory" mode always
-        # has) rather than either blocking all traffic or letting it
-        # through unbounded. fail_closed: swallow_errors stays False and
-        # no in-memory fallback is configured, so a Redis error propagates
-        # as an unhandled `redis.exceptions.RedisError`, caught by the
-        # explicit handler registered in `rag.api.main` and turned into a
-        # 503 -- never a bare, unexplained 500.
+        # process-local in-memory limiter for the outage's duration, the
+        # same weaker-but-available behavior "memory" mode always has.
+        # fail_closed: swallow_errors stays False and no fallback is
+        # configured, so a Redis error propagates and is turned into a
+        # 503 by the handler registered in rag.api.main, never a bare 500.
         swallow_errors=False,
         in_memory_fallback_enabled=fail_open,
         in_memory_fallback=([f"{rl_config.requests_per_minute}/minute"] if fail_open else []),

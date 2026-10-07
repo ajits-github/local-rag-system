@@ -11,7 +11,7 @@ proxy in front of both.
 **Not executed in this session.** Importing `rag.factory`
 (`sentence_transformers`/`torch`, pulled in transitively by
 `rag.api.deps`) was measured directly in this sandboxed environment at
-**1122 seconds** (~19 minutes) for a single cold import -- see
+**1122 seconds** (~19 minutes) for a single cold import. See
 `README.md`'s "What was executed vs. simulated" section for the exact
 timing and how it was measured. Booting two such processes to run this
 script would cost on the order of 40 minutes of pure import time before
@@ -58,7 +58,7 @@ def _start_pod(port: int) -> subprocess.Popen:
 
     Each process is fully independent: its own Python interpreter, its
     own `rag.api.deps.get_rate_limiter()` `lru_cache`d singleton, its own
-    in-memory `slowapi.MemoryStorage` -- exactly "Worker A" / "Worker B"
+    in-memory `slowapi.MemoryStorage`: exactly "Worker A" / "Worker B"
     in the task's own example.
     """
     env = dict(os.environ)
@@ -85,7 +85,7 @@ class _RoundRobinProxy(BaseHTTPRequestHandler):
         # POST /query is the actual rate-limited route (@_limiter.limit(...) in
         # api/routers/query.py). slowapi's SlowAPIMiddleware enforces the limit
         # at the ASGI-middleware layer, before FastAPI resolves the route's own
-        # Depends()/body validation -- so this demo never needs a real embedder/
+        # Depends()/body validation, so this demo never needs a real embedder/
         # Postgres/Ollama to be healthy for the 100-vs-140 counting to be valid;
         # requests 101+ from each pod's own perspective get a 429 regardless of
         # what a fully-processed answer would have looked like.

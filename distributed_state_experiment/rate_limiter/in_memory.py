@@ -2,7 +2,7 @@
 
 This is a stand-in for `slowapi`'s real `MemoryStorage` (which backs
 `rag.api.deps.get_rate_limiter()` whenever `security.rate_limit.backend`
-stays at its default, `"memory"`) -- simplified to a plain Python `dict`
+stays at its default, `"memory"`). Simplified to a plain Python `dict`
 so Part 1's demo and tests can construct two independent instances (one
 per simulated pod) and show their counters diverge under identical
 traffic, without needing to boot two full FastAPI processes just to
@@ -35,7 +35,7 @@ class InMemoryFixedWindowLimiter:
     pod_name : str
         A label for which simulated replica owns this instance (display
         only; never affects behavior). Real `slowapi` instances have no
-        such label at all -- one process, one limiter, no way to even ask
+        such label at all. One process, one limiter, no way to even ask
         "which pod is this."
     """
 

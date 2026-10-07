@@ -4,7 +4,7 @@ This is the `minikube`-specific half of the walkthrough. Read
 `../README.md` first for the shared mental model, prerequisites, and
 every step that works identically regardless of which local cluster you
 use. This file only covers what's genuinely different about minikube:
-cluster creation, image loading, ingress, and teardown -- plus the two
+cluster creation, image loading, ingress, and teardown, plus the two
 places its `docker` driver genuinely differs from kind at the manifest
 level, both already handled by the `k8s/minikube` kustomize overlay (see
 `kustomization.yaml` and `ollama-external-service-patch.yaml` in this
@@ -12,15 +12,15 @@ directory).
 
 **Why this exists:** on this host, `kind create cluster` (and Docker
 Desktop's own built-in Kubernetes) hangs indefinitely inside `kubeadm
-init` -- a `containerd`/`runc` bug tied to this host's WSL2 kernel build,
+init`. This is a `containerd`/`runc` bug tied to this host's WSL2 kernel build,
 documented in `ISSUES.md`. `minikube start --driver=docker` runs on the
 identical kernel and Docker Desktop install but bundles a different
-containerd build in its node image, and does not hit the hang -- verified
-end to end in this session: every `kube-system` pod reached `Running`,
+containerd build in its node image, and does not hit the hang. Verified
+end to end: every `kube-system` pod reached `Running`,
 and a throwaway `nginx` deployment went through the full
 `Pending -> Pulling -> Running` lifecycle and was reachable over its
 `ClusterIP` service by DNS name from another pod. If `kind` works fine
-on your machine, there's no reason to prefer this path -- use
+on your machine, there's no reason to prefer this path. Use
 `../kind/README.md` instead, since it keeps the reference 3-node
 topology some exercises need.
 
@@ -28,7 +28,7 @@ topology some exercises need.
 `--nodes` flag, i.e. one node acting as both control-plane and worker.
 Exercises that require a genuinely separate second node (killing a
 worker node and observing scheduling/failover behavior) cannot be
-demonstrated here -- see `../kind/EXERCISES.md` exercise 12 for that one,
+demonstrated here. See `../kind/EXERCISES.md` exercise 12 for that one,
 which needs `kind`'s 3-node cluster. Everything else in this walkthrough
 and in `EXERCISES.md` (in this directory) works the same way.
 
@@ -72,7 +72,7 @@ kubectl get nodes -o wide
 
 Expected shape: one node, `Ready`, running `containerd`. CNI
 initialization can take about a minute after `minikube start` reports
-done -- if the node shows `NotReady` right away with `cni plugin not
+done. If the node shows `NotReady` right away with `cni plugin not
 initialized` in `kubectl describe node`, that's normal startup, not a
 hang; give it a minute and check again.
 
@@ -94,8 +94,8 @@ docker build -t local-rag-frontend:minikube ./frontend \
   --build-arg VITE_UI_MODE=developer
 ```
 
-Load them into the minikube node (verified working this session with a
-smaller test image; same mechanism applies to these):
+Load them into the minikube node (verified with a smaller test image;
+the same mechanism applies to these):
 
 ```bash
 minikube image load local-rag-api:minikube -p rag-learning
@@ -113,7 +113,7 @@ on the node instead of trying to pull it.
 ## 3. Apply the application
 
 Unlike kind, this goes through the `k8s/minikube` overlay, not
-`k8s/base` directly -- it layers two small, minikube-specific patches on
+`k8s/base` directly. It layers two small, minikube-specific patches on
 top of the shared base manifests (see this directory's
 `kustomization.yaml`):
 
@@ -124,7 +124,7 @@ kubectl get pods -n rag -w
 
 For everything after this (initializing the database, ingesting sample
 content, reaching the app via port-forward, observability, HPA,
-NetworkPolicy, secrets, debugging commands), see `../README.md` -- those
+NetworkPolicy, secrets, debugging commands), see `../README.md`. Those
 steps are identical regardless of which cluster you're using.
 
 ---
@@ -143,7 +143,7 @@ kubectl wait --namespace ingress-nginx \
 
 Reaching it depends on the driver. With `--driver=docker` on Windows,
 `minikube tunnel -p rag-learning` (run in its own terminal, stays
-attached) is the most reliable path -- it creates a routable IP for
+attached) is the most reliable path. It creates a routable IP for
 `LoadBalancer`/`Ingress` resources. Add:
 
 ```text
@@ -156,7 +156,7 @@ to the host's hosts file, then:
 curl -H "Host: rag.local" http://localhost/health
 ```
 
-Note this is port 80, not kind's `8080` -- `minikube tunnel` binds the
+Note this is port 80, not kind's `8080`. `minikube tunnel` binds the
 standard ports directly rather than going through a node-port mapping.
 
 Alternatively, for quick access without setting up a hosts-file entry,
@@ -193,7 +193,7 @@ minikube delete -p rag-learning
 
 This destroys the `rag-learning` cluster and its storage. It does not
 touch the unrelated, stale `minikube` default profile mentioned in step
-1 -- delete that separately (`minikube delete -p minikube`) only if you
+1. Delete that separately (`minikube delete -p minikube`) only if you
 know it's not needed for anything else.
 
 ---

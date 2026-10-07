@@ -2,7 +2,7 @@
 
 Kept as plain dataclasses (not Pydantic) so this experiment package has
 no hard dependency on the rest of `rag.*` beyond what the worker itself
-needs at processing time -- the queue/job-store machinery is reusable
+needs at processing time. The queue/job-store machinery is reusable
 even for a caller that never touches `rag.ingestion`.
 """
 
@@ -21,7 +21,7 @@ class JobStatus(str, Enum):
 
     `SUBMITTED` -> `PROCESSING` -> (`COMPLETED` | back to `SUBMITTED` for a
     retry | `DEAD_LETTER` once retries are exhausted). A job never moves
-    backwards out of `COMPLETED`/`DEAD_LETTER` -- both are terminal.
+    backwards out of `COMPLETED`/`DEAD_LETTER`. Both are terminal.
     """
 
     SUBMITTED = "submitted"
@@ -44,9 +44,9 @@ class IngestionJobPayload:
     dataset_id : str
         Required namespace, same non-defaulted concept as everywhere else
         in this codebase (see the root `CLAUDE.md`'s "Document identity"
-        section) -- there is no "no dataset" job.
+        section). There is no "no dataset" job.
     idempotency_key : str
-        `f"{dataset_id}:{source_path}:{content_sha256}"` -- reuses this
+        `f"{dataset_id}:{source_path}:{content_sha256}"`. Reuses this
         repository's own existing `(source, dataset_id)` document-identity
         scoping plus the file's checksum, rather than inventing a second,
         parallel idempotency concept. Two submissions of the same file
@@ -62,7 +62,7 @@ class IngestionJobPayload:
         dead-letter) without needing a real corrupt file on disk.
     slow_seconds : float
         Test-only: `simulated_ingestion_process_fn` sleeps this long
-        (beyond its own small base latency) before completing -- used by
+        (beyond its own small base latency) before completing. Used by
         experiment 4-5's kill-a-worker-mid-processing demo to open a
         reliable window in which to kill the process while it still holds
         the job claimed but unacked, without guessing at a fixed sleep.
@@ -140,7 +140,7 @@ class JobRecord:
     max_attempts : int
     last_error : str | None
         The exception's class name and message from the most recent
-        failed attempt, if any -- never a full traceback (bounded,
+        failed attempt, if any, never a full traceback (bounded,
         non-sensitive, matches this codebase's own `tool_call_completed`
         `error_type` convention of logging shape, not raw content).
     result : dict | None

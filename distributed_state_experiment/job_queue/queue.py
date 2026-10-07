@@ -40,7 +40,7 @@ class ClaimedJob:
     ----------
     entry_id : str
         The Redis Stream entry id (changes every re-delivery; never a
-        stable job handle -- use `record.job_id` for that).
+        stable job handle. Use `record.job_id` for that).
     record : JobRecord
         The job's persisted state, already marked `PROCESSING` with
         `attempts` incremented for this claim.
@@ -75,7 +75,7 @@ class IngestionJobQueue:
         backlog-counter keys this queue creates alongside `stream_name`.
         Defaults to `stream_name` itself (with a trailing literal
         `":stream"` suffix stripped, if present) rather than one fixed
-        global default -- two `IngestionJobQueue` instances pointed at
+        global default. Two `IngestionJobQueue` instances pointed at
         *different* streams in the same Redis database must never share
         one job store/backlog counter/dead-letter stream just because
         neither caller passed `key_prefix` explicitly. This was a real
@@ -139,7 +139,7 @@ class IngestionJobQueue:
             Retry budget for this job (default 5).
         max_queue_depth : int | None, optional
             Backpressure cap: when the number of jobs still outstanding
-            (`backlog_depth()`, not the stream's raw `XLEN` -- see
+            (`backlog_depth()`, not the stream's raw `XLEN`. See
             `queue_depth()`'s docstring for why those differ) is at or
             above this, raise `QueueFullError` instead of enqueuing.
             `None` (the default) means unbounded.
@@ -149,7 +149,7 @@ class IngestionJobQueue:
         JobRecord
             Either a freshly created record, or the existing record for
             this exact `idempotency_key` if one was already submitted
-            (submission-time dedup -- experiment 6/7's "deliver the same
+            (submission-time dedup: experiment 6/7's "deliver the same
             job twice" is about *processing*-time duplicate delivery,
             which this dedup does not need to prevent on its own; the
             underlying `IngestionPipeline` checksum idempotency is the
@@ -222,7 +222,7 @@ class IngestionJobQueue:
         explicit two-call `XPENDING` (list idle entries) + `XCLAIM`
         (reassign them to this consumer) pattern on purpose, even though
         Redis >= 6.2's single-call `XAUTOCLAIM` does the same thing more
-        conveniently -- this experiment's README explains both and why
+        conveniently. This experiment's README explains both and why
         the explicit form is more teachable.
 
         Parameters
@@ -232,7 +232,7 @@ class IngestionJobQueue:
             this consumer.
         min_idle_ms : int
             Only reclaim entries that have been pending (unacked) for at
-            least this long -- the "visibility timeout."
+            least this long: the "visibility timeout."
         count : int, optional
             Maximum entries to inspect/reclaim per call.
 
@@ -275,7 +275,7 @@ class IngestionJobQueue:
                 record = self.store.get(job_id)
                 if record is None:
                     # The job store entry is gone (should not happen in normal
-                    # operation) -- ack it away rather than looping on it forever.
+                    # operation). Ack it away rather than looping on it forever.
                     self.ack(entry_id)
                     continue
                 record.attempts += 1
@@ -309,7 +309,7 @@ class IngestionJobQueue:
         """Handle a processing failure: schedule an exponential-backoff retry, or dead-letter.
 
         Always `ack`s the current stream entry first (successful or not,
-        this specific delivery attempt is over) -- a retry is a brand
+        this specific delivery attempt is over). A retry is a brand
         new stream entry added once its backoff elapses
         (`promote_due_retries`), not the same entry left pending.
 
@@ -321,7 +321,7 @@ class IngestionJobQueue:
             and message are stored (`JobRecord.last_error`), never a full
             traceback.
         base_backoff_seconds, max_backoff_seconds : float, optional
-            `min(base * 2**(attempts-1), max)` -- doubles each attempt,
+            `min(base * 2**(attempts-1), max)`: doubles each attempt,
             capped.
         """
         record = claimed.record
@@ -375,7 +375,7 @@ class IngestionJobQueue:
             removed = self._client.zrem(self.retry_zset, raw_job_id)
             if not removed:
                 # Another worker's promote_due_retries already claimed this
-                # job_id between our ZRANGEBYSCORE and ZREM -- ZREM's return
+                # job_id between our ZRANGEBYSCORE and ZREM. ZREM's return
                 # value is itself the atomic "did I win" check, so skip
                 # re-adding it a second time.
                 continue
@@ -389,13 +389,13 @@ class IngestionJobQueue:
         return promoted
 
     def queue_depth(self) -> int:
-        """Return the main stream's `XLEN` -- total entries ever added, not "unprocessed backlog."
+        """Return the main stream's `XLEN`: total entries ever added, not "unprocessed backlog."
 
         A real gotcha worth stating plainly, since it is easy to assume
         otherwise: `XACK` removes an entry from the consumer group's
         Pending Entries List, but it does **not** delete the entry from
         the stream itself, so `XLEN` never shrinks just because work was
-        completed -- it only shrinks via explicit trimming (`XTRIM`/
+        completed. It only shrinks via explicit trimming (`XTRIM`/
         `MAXLEN`) or `XDEL`. Use `backlog_depth()` for "how much
         unfinished work exists right now," which is what
         `job_queue.metrics.QUEUE_DEPTH` actually reports.
@@ -406,7 +406,7 @@ class IngestionJobQueue:
         """Return the number of jobs submitted but not yet in a terminal state.
 
         A plain Redis counter incremented on `submit()` and decremented on
-        `complete()`/dead-lettering -- deliberately not derived from
+        `complete()`/dead-lettering, deliberately not derived from
         `XLEN` (see that method's docstring for why `XLEN` alone cannot
         answer this). This is what a queue-depth dashboard/alert should
         actually watch.
@@ -431,7 +431,7 @@ class IngestionJobQueue:
         A worker calling this periodically (e.g. once per main-loop
         iteration) is what makes "how many workers are actually up right
         now" observable across processes/replicas without a separate
-        service registry -- the TTL means a crashed worker's presence
+        service registry. The TTL means a crashed worker's presence
         simply expires rather than needing an explicit deregistration
         step (the same reasoning this queue's Redis keys already use TTLs
         for elsewhere, e.g. `RedisDistributedLock`).

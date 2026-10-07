@@ -7,10 +7,10 @@ redis:7-alpine` was coordinated with a sibling agent doing unrelated
 Docker work on the same host and ultimately not run in this session (see
 `README.md`'s "What was executed vs. simulated" section), and no
 `redis-server` binary is installed locally. `fakeredis.TcpFakeServer`
-implements the real Redis wire protocol (RESP) over a real TCP socket --
+implements the real Redis wire protocol (RESP) over a real TCP socket.
 `redis-py`, `redis-cli`, and every script in this directory talk to it
 exactly as they would a genuine `redis-server`, including from separate
-OS processes -- so this is a faithful stand-in for the actual multi-
+OS processes, so this is a faithful stand-in for the actual multi-
 process experiments (separate worker processes, killing one, scaling
 worker count) even though the server implementation itself is a
 pure-Python simulator, not the genuine C `redis-server` binary.
@@ -18,7 +18,7 @@ pure-Python simulator, not the genuine C `redis-server` binary.
 Streams (`XADD`/`XREADGROUP`/`XACK`/`XCLAIM`/`XPENDING`), `SET ... NX
 PX`, `ZADD`/`ZRANGEBYSCORE`, and Lua scripting (`EVAL`, via the `lupa`
 extra) are all exercised for real against this server in this
-experiment's runs -- nothing about the *commands* used is faked, only
+experiment's runs. Nothing about the *commands* used is faked, only
 the server process itself.
 
 To run the same experiments against genuine Redis instead, bring up

@@ -15,8 +15,8 @@ Two concurrent ingestion workers processing the same `(source,
 dataset_id)` pair (e.g. two replicas of an ingestion worker fleet both
 picking up a resubmitted job for the same file, or a directory walk and
 an API upload landing on the same path at the same moment) can both run
-the `SELECT`, both see no existing row, and both `INSERT` -- either a
-duplicate-document-id bug or a unique-constraint crash, depending on
+the `SELECT`, both see no existing row, and both `INSERT`. That produces
+either a duplicate-document-id bug or a unique-constraint crash, depending on
 whether a constraint existed at all.
 
 `RacyDocumentIdTable` below reproduces exactly that shape (in-process,
@@ -46,7 +46,7 @@ class RacyDocumentIdTable:
     `get_or_create_atomic` reproduces the actual fix: one atomic
     check-and-set (Python's `dict.setdefault` under a single `threading.Lock`
     stands in for Postgres's `INSERT ... ON CONFLICT DO NOTHING RETURNING`)
-    -- correct with zero external coordination, because the "check" and
+    This is correct with zero external coordination, because the "check" and
     the "set" are literally the same indivisible operation.
     """
 
@@ -65,7 +65,7 @@ class RacyDocumentIdTable:
         )  # the race window: another thread's SELECT can land here
         new_id = str(uuid.uuid4())
         self._rows[key] = (
-            new_id  # last writer wins -- a lost update, or two callers get different ids
+            new_id  # last writer wins: a lost update, or two callers get different ids
         )
         return new_id
 
@@ -87,7 +87,7 @@ class RedisDistributedLock:
     simply fails), and releasing checks the lock's own random `token`
     before deleting so this holder can never release a lock it no longer
     owns (e.g. one whose TTL already expired and was re-acquired by
-    someone else) -- a `GET`-then-`DEL` pair would itself be racy, so
+    someone else). A `GET`-then-`DEL` pair would itself be racy, so
     release uses a small Lua script to make the compare-and-delete atomic
     too.
 
@@ -97,9 +97,8 @@ class RedisDistributedLock:
     name : str
         The lock's logical name (e.g. `"doc_ingest:security/policy.md:techfusion"`).
     ttl_ms : int
-        Auto-expiry so a crashed holder can never wedge the lock forever
-        -- the same reasoning `security.rate_limit`'s Redis keys use TTLs
-        for, applied to mutual exclusion instead of counting.
+        Auto-expiry so a crashed holder can never wedge the lock forever. This follows the same reasoning `security.rate_limit`'s Redis
+        keys use TTLs for, applied to mutual exclusion instead of counting.
     """
 
     _RELEASE_SCRIPT = (

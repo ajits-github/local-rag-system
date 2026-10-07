@@ -1,8 +1,8 @@
 """Drive experiments 1-10 (and a local throughput proxy for 11-12) as real subprocesses.
 
 Launches real, separate Python OS processes talking to a real TCP Redis
-endpoint (`--redis-url`, default the `fake_redis_server.py` stand-in this
-session used -- see that module's docstring for why) via
+endpoint (`--redis-url`, default the `fake_redis_server.py` stand-in
+used here; see that module's docstring for why) via
 `subprocess.Popen`, so "kill a worker mid-processing," "N workers vs 1
 worker throughput," and "duplicate delivery" are all exercised against
 genuinely concurrent, genuinely separate processes, not simulated with
@@ -85,7 +85,7 @@ def main() -> None:
     # so re-running this script never collides with a previous run's
     # already-completed jobs still sitting in the same Redis instance
     # (idempotent submission would otherwise silently no-op a resubmission
-    # of byte-identical content -- a real thing this script's first draft
+    # of byte-identical content, a real issue this script's first draft
     # actually hit; see README.md's "What was executed vs. simulated" note).
     run_id = uuid.uuid4().hex[:8]
     print(f"run_id={run_id}")
@@ -143,7 +143,7 @@ def main() -> None:
     group_kill = f"exp_kill_{run_id}:group"
     queue_kill = IngestionJobQueue(client, stream_name=stream_kill, group_name=group_kill)
     # slow_seconds gives us a wide, reliable window to observe the job
-    # claimed-but-unacked before killing the process -- a fixed guessed
+    # claimed-but-unacked before killing the process. A fixed guessed
     # sleep before a real process has even finished importing/starting up
     # is not reliable (an earlier version of this script used a flat 0.3s
     # sleep and it fired before the child process had claimed anything at

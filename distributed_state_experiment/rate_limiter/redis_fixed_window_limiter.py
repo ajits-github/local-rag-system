@@ -63,8 +63,8 @@ class RedisFixedWindowLimiter:
         shared by many rate-limit buckets; nothing here is per-bucket
         state on the client side, so multiple `RedisFixedWindowLimiter`
         instances in *different* processes pointed at the same Redis
-        server and the same `key_prefix` share their counters correctly
-        -- that sharing is the entire point of this class.
+        server and the same `key_prefix` share their counters correctly.
+        That sharing is the entire point of this class.
     window_seconds : int
         Fixed-window length in seconds.
     key_prefix : str
@@ -77,7 +77,7 @@ class RedisFixedWindowLimiter:
         What `allow()` does when the Redis call itself raises
         `redis.exceptions.RedisError` (connection refused, timeout,
         etc.). `"fail_open"` (the default) returns an allowed decision
-        with `backend="fallback_open"` -- availability wins over strict
+        with `backend="fallback_open"`: availability wins over strict
         enforcement during an outage, matching the production default in
         `RateLimitConfig.redis_fail_mode`. `"fail_closed"` re-raises as
         `RedisUnavailableError` instead of silently allowing or denying,
@@ -104,7 +104,7 @@ class RedisFixedWindowLimiter:
         Bucketing the window itself into the key (rather than relying
         purely on TTL) makes the fixed-window boundary explicit and
         avoids any ambiguity from clock drift between what set the TTL
-        and what's reading it later -- every request in the same
+        and what's reading it later. Every request in the same
         `window_seconds`-wide slice of wall-clock time computes the exact
         same key.
         """
@@ -117,8 +117,8 @@ class RedisFixedWindowLimiter:
         Parameters
         ----------
         bucket_key : str
-            The rate-limit bucket, e.g. `"tenant:acme"` or `"ip:1.2.3.4"`
-            -- never a raw token, query string, or full request path.
+            The rate-limit bucket, e.g. `"tenant:acme"` or `"ip:1.2.3.4"`.
+            Never a raw token, query string, or full request path.
         limit : int
             Requests allowed per window for this bucket.
 

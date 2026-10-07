@@ -10,7 +10,7 @@ metrics describe infrastructure (`distributed_state_experiment/job_queue`)
 that is not part of the production `rag.api` process.
 
 `job_status` is the one label used across several metrics, and it is
-always one of `JobStatus`'s fixed enum values -- never a raw job id,
+always one of `JobStatus`'s fixed enum values, never a raw job id,
 dataset id, or file path.
 """
 

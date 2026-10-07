@@ -1,7 +1,7 @@
 """Run one ingestion worker replica (Experiments 2-5, 11-12).
 
 By default uses `simulated_ingestion_process_fn` (fast, no `rag`/torch
-import, no Postgres needed -- see `job_queue/worker.py`'s module
+import, no Postgres needed. See `job_queue/worker.py`'s module
 docstring for why this is what this session's own experiment runs used).
 Pass `--real` to instead build the genuine `IngestionPipeline`-backed
 `process_fn` against `RAG_CONFIG_PATH`/`DATABASE_URL` (needs the real

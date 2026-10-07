@@ -3,7 +3,7 @@
 Each "replica" is a genuinely separate OS process (via `subprocess.Popen`,
 running `rate_limit_bench_worker.py`), each firing 100 requests at the
 same intended-100/minute tenant bucket. Reports, for each of the three
-configurations: total requests allowed globally (correctness -- the
+configurations: total requests allowed globally (correctness: the
 intended limit is 100 in every configuration) and total wall-clock time
 (latency/throughput cost of the fix).
 

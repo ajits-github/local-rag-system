@@ -504,18 +504,14 @@ class RateLimitConfig(BaseModel):
         cardinality either way: the number of distinct tenants or client
         IPs actually seen, never a raw query/path/token value.
     backend : {"memory", "redis"}
-        `"memory"` (the default) is `slowapi`'s process-local `MemoryStorage`
-        -- correct for a single replica, silently wrong under >1 replica
-        behind a load balancer (see `distributed_state_experiment/README.md`
-        for a reproduced demonstration of exactly this failure mode).
-        `"redis"` shares counters across every replica via the `limits`
-        library's `RedisStorage` (already a transitive dependency of
-        `slowapi`), which performs the check-and-increment as a single Lua
-        script server-side (`incr_expire.lua` for the fixed-window
-        strategy, confirmed directly against the installed
-        `limits==5.8.0` package source, not assumed) -- there is no
-        separate GET-then-SET round trip for a second replica to race
-        against.
+        `"memory"` (the default) is `slowapi`'s process-local `MemoryStorage`,
+        correct for a single replica and silently wrong under more than one
+        replica behind a load balancer. `"redis"` shares counters across
+        every replica via the `limits` library's `RedisStorage`, which
+        performs the check-and-increment as a single Lua script
+        server-side (confirmed against the installed `limits==5.8.0`
+        source). There is no separate GET-then-SET round trip for a
+        second replica to race against.
     redis_url_env_var : str
         Name of the environment variable holding the Redis connection URL
         (e.g. `redis://localhost:6379/0`), only read when `backend="redis"`.
@@ -560,7 +556,7 @@ class RateLimitConfig(BaseModel):
     `backend="memory"`'s in-memory state is process-local; with more than
     one API replica, each enforces its own independent limit. Neither
     backend ever stores a JWT, bearer token, or raw query text as a Redis
-    value or key fragment -- only the bucket key (`tenant:<id>` /
+    value or key fragment, only the bucket key (`tenant:<id>` /
     `ip:<addr>`) and an integer counter.
     """
 
@@ -1031,7 +1027,7 @@ class AppConfig(BaseModel):
         ------
         RuntimeError
             If that environment variable is unset or empty. Deliberately
-            not defaulted to `localhost` -- unlike `ollama_base_url()`,
+            not defaulted to `localhost`. Unlike `ollama_base_url()`,
             the Redis backend is opt-in and it's better to fail loudly at
             startup than to silently point every replica back at its own
             local, unshared Redis.

@@ -2,10 +2,10 @@
 
 `IngestionWorker` is deliberately decoupled from *what* processing means
 via the injected `process_fn` callable, for one honest, documented
-reason: this sandboxed session's `pip install`-ed environment takes
-several minutes just to import `sentence_transformers`/`torch` the first
-time (confirmed directly -- `import rag.factory` alone took over three
-minutes on this machine), which makes iterating on 12 short experiments
+reason: this environment's `pip install`-ed packages take several
+minutes just to import `sentence_transformers`/`torch` the first time
+(confirmed directly: `import rag.factory` alone took over three minutes
+on this machine), which makes iterating on 12 short experiments
 against the *real* embedding/DB path impractical inside one working
 session. `real_ingestion_process_fn` is the genuine integration point
 (reuses `rag.factory`/`rag.ingestion.pipeline.IngestionPipeline`/
@@ -16,7 +16,7 @@ against, with that substitution called out explicitly wherever it
 matters (README's "What was executed vs. simulated" section). The queue/
 worker mechanics themselves (claim, ack, retry, backoff, dead-letter,
 idempotency, bounded concurrency, graceful shutdown) are identical either
-way -- swapping `process_fn` never touches this file.
+way. Swapping `process_fn` never touches this file.
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ def simulated_ingestion_process_fn(payload: IngestionJobPayload) -> dict:
     Sleeps briefly (simulating real embedding-model latency) and returns
     a small result dict shaped like what the real pipeline would report.
     Always raises `PoisonJobError` for a `poison=True` payload, regardless
-    of whether `source_path` exists -- this is what experiments 8-10
+    of whether `source_path` exists. This is what experiments 8-10
     (deliberately failing job, retries/backoff, dead-letter) submit.
 
     Parameters
@@ -80,7 +80,7 @@ def real_ingestion_process_fn(config) -> ProcessFn:  # noqa: ANN001 - rag.config
     import cost unless a caller actually asks for the real backend.
 
     Reuses `IngestionPipeline.ingest_file` exactly as `rag.api.routers.ingest`
-    and the CLI do -- no reimplemented chunking, embedding, or persistence.
+    and the CLI do. No reimplemented chunking, embedding, or persistence.
     The already-existing checksum-gated idempotency in
     `PgVectorStore.replace_document_chunks` (one atomic transaction; see
     the root `CLAUDE.md`'s "joint-investigation backlog" section) is what
@@ -123,14 +123,14 @@ class WorkerConfig:
         This replica's unique consumer-group identity (e.g. `"worker-1"`).
     max_concurrency : int
         Maximum jobs this single worker process processes at once
-        (`ThreadPoolExecutor` bound) -- the "bounded concurrency" the
+        (`ThreadPoolExecutor` bound). The "bounded concurrency" the
         spec asks for. A worker never claims more than
         `max_concurrency` un-acked jobs at a time.
     claim_block_ms : int
         How long one `XREADGROUP` call blocks waiting for new entries.
     reclaim_idle_ms : int
         Visibility timeout: an entry pending (claimed, unacked) for at
-        least this long is eligible for `reclaim_stale()` -- models a
+        least this long is eligible for `reclaim_stale()`. Models a
         worker that claimed a job and then crashed or hung.
     reclaim_interval_s : float
         How often the main loop checks for stale entries to reclaim.
@@ -190,7 +190,7 @@ class IngestionWorker:
 
         On shutdown, stops claiming *new* work immediately but waits for
         any jobs already dispatched to the thread pool to finish (graceful
-        drain) before returning -- a job is never abandoned mid-processing
+        drain) before returning. A job is never abandoned mid-processing
         just because shutdown was requested; it is only ever abandoned by
         a hard process kill (`kill -9` / `taskkill /F`), which is exactly
         what experiment 4 uses to prove `reclaim_stale()` recovers it.

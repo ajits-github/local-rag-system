@@ -9,11 +9,10 @@
 # security.rate_limit.backend stays "memory" in config/default.yaml
 # unless explicitly switched to "redis" (and RATE_LIMIT_REDIS_URL set --
 # see .env.example). See distributed_state_experiment/README.md for the
-# full design and for why this session's own experiment runs used
+# full design and for why the experiment runs recorded here used
 # distributed_state_experiment/cli/fake_redis_server.py (a pure-Python,
-# real-TCP-protocol-compatible stand-in) instead of this file: a Docker
-# pull was coordinated with a sibling agent's own Docker work on the same
-# host during this session and not completed here. This compose file is
+# real-TCP-protocol-compatible stand-in) instead of this file: a real
+# `docker pull` was not completed in this environment. This compose file is
 # written, reviewed, and ready to use exactly as-is wherever that
 # coordination constraint doesn't apply.
 #

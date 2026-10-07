@@ -7,10 +7,10 @@
 # (--build-arg REAL=1, wiring rag.factory's real IngestionPipeline) reuses
 # the SAME base image as the main Dockerfile's `builder` stage for exactly
 # the reason documented there (CPU-only torch wheel, avoiding the ~4GB
-# CUDA pull) -- copy that stage's approach rather than diverging from it.
+# CUDA pull). Copy that stage's approach rather than diverging from it.
 #
-# Not built in this session (see distributed_state_experiment/README.md's
-# "What was executed vs. simulated" section) -- written and reviewed, not
+# Not built as part of this work (see distributed_state_experiment/README.md's
+# "What was executed vs. simulated" section): written and reviewed, not
 # verified with a real `docker build`.
 FROM python:3.12-slim AS worker
 
@@ -20,7 +20,7 @@ WORKDIR /app
 # heavier dependency list. If real_ingestion_process_fn is ever the
 # default here instead of an opt-in flag, this image should instead
 # start FROM the main Dockerfile's `runtime` stage and add nothing but
-# this directory -- do not hand-duplicate the CPU-torch-wheel dance from
+# this directory. Do not hand-duplicate the CPU-torch-wheel dance from
 # the main Dockerfile in this file.
 RUN pip install --no-cache-dir "redis>=5.0"
 

@@ -3,7 +3,7 @@
 A Redis hash per job (`<prefix>:job:<job_id>`) plus a small string index
 (`<prefix>:idempotency:<idempotency_key>` -> `job_id`) for O(1)
 submission-time dedup. This is deliberately the *simplest* thing that
-satisfies "job state persisted, client can query job status" -- a real
+satisfies "job state persisted, client can query job status": a real
 production system would likely persist this in Postgres (this codebase
 already has one, and `FeedbackStore`'s own small dedicated-pool pattern
 in `rag/feedback/store.py` would be the natural template), but Redis
@@ -54,7 +54,7 @@ class JobStore:
         The index write uses `SET ... NX` semantics implicitly via a
         plain `SET` here (last writer wins on the pointer, but the pointer
         always resolves to *a* real job for that key, which is all
-        submission-time dedup needs) -- true atomicity for "only the
+        submission-time dedup needs). True atomicity for "only the
         first submitter wins" is enforced by `IngestionJobQueue.submit`'s
         own `SETNX`-based check, not by this method.
         """

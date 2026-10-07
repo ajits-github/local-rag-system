@@ -61,9 +61,8 @@ def _warn_if_multi_worker_mcp_business_actions(config: AppConfig) -> None:
     consistency for `update_case_status` with no error at all. Nothing in
     this deployment currently sets `--workers` above 1, and the
     `WEB_CONCURRENCY` convention isn't universally set/reliable, so this
-    only ever logs a warning, never raises -- a false negative (an actual
-    multi-worker deployment this check can't see) is possible, but a
-    false positive should never block startup.
+    only logs a warning and never raises, since a false positive should not
+    block startup. A multi-worker deployment this check cannot see is not caught.
 
     Parameters
     ----------
@@ -419,9 +418,8 @@ def _handle_redis_rate_limiter_error(request: Request, exc: Exception) -> JSONRe
     while checking a request's limit propagates up rather than being
     swallowed or silently downgraded to per-process limiting. This
     handler is what makes that choice an explicit, documented 503 instead
-    of an unhandled 500 -- see `RateLimitConfig.redis_fail_mode`'s
-    docstring and `distributed_state_experiment/README.md`'s Part 5 Q3
-    for the fail-open/fail-closed reasoning.
+    of an unhandled 500. See `RateLimitConfig.redis_fail_mode`'s
+    docstring for the fail-open/fail-closed reasoning.
 
     Parameters
     ----------

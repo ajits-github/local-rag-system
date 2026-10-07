@@ -31,7 +31,7 @@ allow the request. Both then `INCR`, and the bucket ends up at 101 with
 two requests both believing they were the 100th allowed one. The fix used
 here is folding the read, the conditional TTL-set, and the write into one
 Lua script (`fixed_window.lua`), which Redis executes as a single,
-uninterruptible unit -- no other command, including a second replica's
+uninterruptible unit. No other command, including a second replica's
 own concurrent call to the identical script, can run in the middle of it.
 
 ---
@@ -48,7 +48,7 @@ everywhere else. `RedisFixedWindowLimiter` (and its 14-line
 of the same idea, written specifically so the atomicity story is visible
 and inspectable in one file for this experiment's own demos, benchmark,
 and tests, independent of a third-party library's internals. Neither is
-"the real one" and the other "the toy one" -- they solve the same
+"the real one" and the other "the toy one": they solve the same
 problem for two different audiences.
 
 ---
@@ -62,12 +62,12 @@ rate-limiting sidecar had a network blip is not proportionate to what
 the control is actually for. `fail_open` here specifically means
 degrading to a *process-local* fallback limiter for the outage's
 duration (via `slowapi`'s `in_memory_fallback_enabled`), not "let
-everything through unbounded" -- so the worst case during an outage is
+everything through unbounded", so the worst case during an outage is
 exactly this system's own pre-Redis default behavior, not zero
 enforcement. I'd choose `fail_closed` for a system where exceeding a
 rate is a hard compliance or billing boundary (e.g. a paid API tier where
 overage has real financial consequences, or a security-sensitive
-operation-per-minute cap) -- there, briefly refusing all traffic during
+operation-per-minute cap). There, briefly refusing all traffic during
 an outage is a better outcome than silently letting a limit slip, and
 that's exactly why `fail_closed` is implemented and configurable here
 too, not just theorized about.
@@ -80,14 +80,14 @@ I didn't wave it away, and I didn't claim more certainty than I had
 either. Two things are true simultaneously: the fixed-window strategy has
 a *documented*, expected property that a request stream straddling a
 wall-clock window boundary can land up to (limit x 2) requests across two
-adjacent, independently-capped windows -- so a 4% overshoot is consistent
+adjacent, independently-capped windows, so a 4% overshoot is consistent
 with "the run happened to cross a minute boundary." Separately, I
 *directly* verified the underlying atomic primitive itself never loses a
 race: 200 concurrent requests from 20 real threads at one shared bucket
 with limit 50, via the in-process `fakeredis` test, landed at exactly 50
 allowed, every time. What I did *not* do is capture the exact timestamps
 of that specific 104-run to confirm it actually crossed a window
-boundary -- so my honest conclusion is "the most likely explanation is
+boundary, so my honest conclusion is "the most likely explanation is
 the window-boundary property, the atomicity itself is separately proven
 sound, and the specific cause of this one run wasn't run to ground,"
 not "definitely explained" and not "definitely a bug." I later got a
@@ -108,7 +108,7 @@ out the possibility of hitting it again on a different run.
 At-most-once: a message might be delivered zero or one times, never more
 -- simple, but work can silently be lost (e.g. a plain `BRPOP` off a
 list, where a worker crash after popping loses the item permanently).
-At-least-once: a message is delivered one or more times -- no work is
+At-least-once: a message is delivered one or more times; no work is
 silently lost, but a consumer might see (and must handle) the same
 message twice. Exactly-once: delivered precisely once, guaranteed --
 extremely hard to achieve in the general case, because "the consumer
@@ -118,7 +118,7 @@ at-least-once: Redis Streams' consumer groups guarantee a given entry is
 never dropped (it survives in a Pending Entries List until explicitly
 acked or reclaimed), but if a worker crashes after finishing the real
 work and before its `XACK` reaches Redis, that job will be redelivered
-and processed again -- proven directly in this session (a job recovered
+and processed again. Proven directly here (a job recovered
 via `reclaim_stale()` after a real process kill came back with
 `attempts=2`).
 
@@ -132,13 +132,13 @@ deliberately: the queue's own submission-time dedup (a
 `dataset_id:source_path:sha256(content)`-keyed lookup means resubmitting
 byte-identical content returns the same `job_id` instead of creating a
 second job), and, more fundamentally, the real database write this queue
-was modeled on -- `PgVectorStore.replace_document_chunks` already commits
+was modeled on: `PgVectorStore.replace_document_chunks` already commits
 a document's checksum-gated replace as one atomic transaction, so running
 the exact same ingestion twice is a database no-op the second time. This
 matters because true exactly-once *delivery* would require the broker and
 the datastore to participate in a distributed transaction, which is far
 more complex than accepting at-least-once delivery and making the effect
-of processing idempotent -- the practical answer real systems (SQS,
+of processing idempotent. The practical answer real systems (SQS,
 Kafka consumer groups, this queue) converge on.
 
 ---
@@ -146,7 +146,7 @@ Kafka consumer groups, this queue) converge on.
 **8. Explain the difference between `XACK` and deleting a message from a Redis Stream. Why does this matter for a metric like "queue depth"?**
 
 `XACK` only removes an entry from the consumer group's Pending Entries
-List -- it marks "this consumer is done with this entry," but the entry
+List: it marks "this consumer is done with this entry," but the entry
 itself stays physically present in the stream (visible to `XRANGE`,
 counted by `XLEN`) until it's explicitly trimmed (`XTRIM`/`MAXLEN`) or
 deleted (`XDEL`). I hit this directly: an early version of this queue
@@ -166,8 +166,8 @@ that's never being trimmed) but not the same thing.
 `IngestionJobQueue.__init__` originally defaulted `key_prefix` to one
 fixed literal, `"ingest_jobs"`, for every instance regardless of which
 `stream_name` it was constructed with. That meant two logically separate
-queues -- say, one experiment's throughput-test queue and a completely
-different experiment's poison-job queue -- silently shared one job store,
+queues (say, one experiment's throughput-test queue and a completely
+different experiment's poison-job queue) silently shared one job store,
 one retry sorted set, and one dead-letter stream, just because neither
 caller happened to pass `key_prefix` explicitly. I found it by actually
 running the multi-section experiment script end to end against a real
@@ -198,7 +198,7 @@ too long, and a genuinely crashed worker's job sits unrecovered for a
 long time. This experiment's demo used `slow_seconds=5.0` on a
 deliberately slow job specifically to open a wide, reliable window to
 observe and kill a worker mid-processing without racing a fixed guessed
-sleep against real process-startup variance -- which an earlier version
+sleep against real process-startup variance, which an earlier version
 of the demo script tried and got wrong (a flat 0.3s pre-kill sleep fired
 before the child process had even finished importing and claimed
 anything).
@@ -216,7 +216,7 @@ piece for free: a claimed-but-unacked entry stays visible in a Pending
 Entries List until acked or explicitly reclaimed. Kafka would solve the
 same problem, but it brings partitioned multi-broker storage, its own
 operational surface, and retention-tiered log semantics that nothing
-about this workload actually needs -- a single logical ingestion queue
+about this workload actually needs: a single logical ingestion queue
 with consumer-group-based redelivery. This matches a pattern this whole
 codebase already follows repeatedly (Redis itself, LangGraph, and a
 second MCP-transport layer were all separately evaluated and explicitly
@@ -230,7 +230,7 @@ existed): don't add infrastructure the actual problem doesn't need yet.
 No, and this experiment builds the counterexample directly.
 `RacyDocumentIdTable`'s race (modeled on this codebase's own real,
 already-fixed `get_or_create_document_id` bug) is fixable with a Redis
-lock -- proven -- but it's also fixable with *no lock at all*, just one
+lock (proven), but it's also fixable with *no lock at all*, just one
 atomic check-and-set (`dict.setdefault` under a single lock standing in
 for Postgres's real `INSERT ... ON CONFLICT DO NOTHING RETURNING`). The
 atomic-write version is strictly better here: it protects every caller
@@ -242,8 +242,8 @@ avoid one caller releasing a lock a different caller had already
 re-acquired after the first one's TTL expired). A distributed lock earns
 its place instead when the protected operation genuinely spans multiple
 non-atomic steps that no single database write can express as one
-operation -- e.g. read from one system, call an external API, write the
-result to another system -- where there is no equivalent single atomic
+operation (e.g. read from one system, call an external API, write the
+result to another system), where there is no equivalent single atomic
 primitive available.
 
 ---
@@ -253,13 +253,13 @@ primitive available.
 Without the token check, `release()` would just be an unconditional
 `DEL`. Consider: worker A acquires the lock with a 50ms TTL, but takes
 longer than 50ms to finish its work; the lock expires and worker B
-acquires it (correctly -- the TTL's whole job is to prevent a crashed
+acquires it (correctly: the TTL's whole job is to prevent a crashed
 holder from wedging the lock forever); worker A finally finishes and
-calls `release()`, which would delete the key -- except now that key is
+calls `release()`, which would delete the key, except now that key is
 *B's* lock, not A's, so A just released a lock it no longer owned while B
 still believes it's holding it. A subsequent worker C could then acquire
 the "free" lock while B is still mid-operation, and now B and C are both
-inside the critical section at once -- exactly the race the lock existed
+inside the critical section at once, exactly the race the lock existed
 to prevent, reintroduced by an unsafe release. The fix: each acquire
 stores a random token as the lock's value; release runs a small Lua
 script that only deletes the key if its current value still matches the
@@ -307,5 +307,5 @@ was claimed by two consumer-group members simultaneously (every completed
 `job_id` appears exactly once as `COMPLETED`, never twice, in the job
 store). I would explicitly flag, the same way this experiment's own
 README does for Experiments 11-12, that none of this was run against a
-real cluster in this session -- the manifests are reviewed and internally
+real cluster. The manifests are reviewed and internally
 consistent, not smoke-tested.
