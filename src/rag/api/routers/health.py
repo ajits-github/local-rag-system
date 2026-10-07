@@ -5,14 +5,14 @@ Three distinct questions, not one endpoint wearing three hats:
 - `/health`: detailed diagnostics for a human or dashboard. Always 200;
   degradation is reported in the response body, never the status code.
 - `/livez`: is this process alive and able to handle a request at all?
-  Never checks downstream dependencies -- a Postgres/Ollama outage must
+  Never checks downstream dependencies. A Postgres/Ollama outage must
   never cause a liveness failure, since that would make Kubernetes
   restart a container that isn't actually broken, turning one
   dependency's outage into a restart storm of otherwise-healthy pods.
 - `/readyz`: can this Pod serve a normal request right now? A normal
   `/query` request needs both the vectorstore (retrieval) and the LLM
   (generation) to be reachable, so either one being down means this Pod
-  should stop receiving traffic (non-2xx) until it recovers -- without
+  should stop receiving traffic (non-2xx) until it recovers, without
   the container itself being restarted.
 """
 
@@ -63,7 +63,7 @@ def health(
 def livez() -> dict[str, str]:
     """Report whether this process is alive, independent of any dependency.
 
-    Deliberately takes no dependency injection at all -- there is nothing
+    Deliberately takes no dependency injection at all. There is nothing
     here that a downstream outage could make fail. Kubernetes should use
     this for `startupProbe`/`livenessProbe`: a failure here means the
     process itself is unresponsive and a restart may help, which is not
@@ -87,7 +87,7 @@ def readyz(
 
     Both the vectorstore and the LLM are required to serve a normal
     `/query` request end to end (retrieval, then generation), so either
-    being unreachable sets a non-2xx status code -- Kubernetes should use
+    being unreachable sets a non-2xx status code. Kubernetes should use
     this for `readinessProbe`, which removes the Pod from Service traffic
     without restarting the container.
 

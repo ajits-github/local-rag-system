@@ -6,7 +6,7 @@ first if you've been using another cluster context).
 
 `kubectl` mechanics don't know or care which local cluster they're
 talking to, so 17 of the original 18 exercises in `../kind/EXERCISES.md`
-work here completely unchanged -- same commands, same expected behavior,
+work here completely unchanged: same commands, same expected behavior,
 same interview answers. Use that file directly. This file only records
 where minikube's single-node `docker` driver genuinely changes the
 exercise, so nothing here duplicates content that's identical either
@@ -18,7 +18,7 @@ way.
 
 This is the one exercise that cannot be demonstrated on this
 environment. It needs a genuinely separate second node to stop while the
-control plane keeps running -- this cluster only has one node, acting as
+control plane keeps running. This cluster only has one node, acting as
 both control-plane and worker.
 
 Do not run `docker stop rag-learning` as a substitute. Unlike kind's
@@ -43,7 +43,7 @@ an interview even without a live reproduction.
 The "important correction" about the scheduler not necessarily spreading
 replicas evenly across nodes is trivially true here for a different
 reason than on kind: there's only one node, so every replica lands on
-it by construction -- there's no spreading decision to observe at all.
+it by construction. There is no spreading decision to observe at all.
 The Service/ClusterIP/EndpointSlice behavior the exercise is actually
 about is unaffected and works exactly as described.
 

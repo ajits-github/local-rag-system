@@ -18,7 +18,7 @@ plane on this host, but minikube's docker driver can" entry for the full
 diagnosis and evidence. This `kind` setup is kept as the reference
 3-node topology (some exercises, like killing a worker node, genuinely
 need a second node minikube's single-node setup can't provide) and is
-not modified by that finding -- if you're on a different host where
+not modified by that finding. If you're on a different host where
 `kind` works, or a future fix lands, everything below should work as
 documented. If you're on this exact host, use `../minikube/README.md`
 instead.
@@ -170,7 +170,7 @@ kubectl get pods -n rag -w
 
 For everything after this (initializing the database, ingesting sample
 content, reaching the app via port-forward, observability, HPA,
-NetworkPolicy, secrets, debugging commands), see `../README.md` -- those
+NetworkPolicy, secrets, debugging commands), see `../README.md`. Those
 steps are identical regardless of which cluster you're using.
 
 ---

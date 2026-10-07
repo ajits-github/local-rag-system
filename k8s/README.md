@@ -31,17 +31,17 @@ For the "why", read `LEARNING.md`.
 Two local cluster options are documented here, sharing the same
 application manifests (`k8s/base/`):
 
-- **`kind/`** -- the original, reference environment. 3 nodes
+- **`kind/`**: the original, reference environment. 3 nodes
   (control-plane + 2 workers), which some exercises genuinely need (node
   failure/failover). Start with `kind/README.md`.
-- **`minikube/`** -- a working alternative for hosts where `kind` (and
+- **`minikube/`**: a working alternative for hosts where `kind` (and
   Docker Desktop's own built-in Kubernetes) can't bring up a control
   plane at all. Single node. Start with `minikube/README.md`.
 
 If you don't already know which one you need: try `kind` first (it's the
 richer environment). If `kind create cluster` hangs indefinitely at
 "Starting control-plane" on your machine, that's a known, diagnosed
-issue on at least one host in this project's history -- see
+issue on at least one host in this project's history. See
 `ISSUES.md`'s "kind (and Docker Desktop's own built-in Kubernetes)
 cannot bring up a control plane on this host, but minikube's docker
 driver can" entry before assuming it's something you misconfigured, and
@@ -114,16 +114,16 @@ k8s/
       - kustomization.yaml
 
   kind/
-      kind-cluster.yaml   -- 3-node cluster definition
-      README.md           -- kind-specific setup steps
-      EXERCISES.md         -- the full 18-exercise set (reference)
+      kind-cluster.yaml   : 3-node cluster definition
+      README.md           : kind-specific setup steps
+      EXERCISES.md         : the full 18-exercise set (reference)
 
   minikube/
-      kustomization.yaml + patch  -- small overlay on top of k8s/base
+      kustomization.yaml + patch  : small overlay on top of k8s/base
                                      for the 1-2 things that genuinely
                                      differ under minikube's docker driver
-      README.md           -- minikube-specific setup steps
-      EXERCISES.md         -- delta from kind/EXERCISES.md (17 of 18
+      README.md           : minikube-specific setup steps
+      EXERCISES.md         : delta from kind/EXERCISES.md (17 of 18
                              exercises are identical either way)
 
   jobs/
@@ -151,7 +151,7 @@ Common to both clusters:
   config expects
 - optional: an HTTP load tool such as `hey`, `k6`, or a curl loop
 
-Plus `kind` or `minikube` depending on which you're using -- see that
+Plus `kind` or `minikube` depending on which you're using. See that
 tool's own README under `k8s/kind/` or `k8s/minikube/` for the exact
 prerequisite check and cluster-creation steps.
 
@@ -284,7 +284,7 @@ localhost:8000
 ### Option B: Ingress
 
 The mechanics differ by cluster (kind uses a manual ingress-nginx
-manifest; minikube uses an addon) -- see "Ingress on kind" in
+manifest; minikube uses an addon). See "Ingress on kind" in
 `kind/README.md` or "Ingress on minikube" in `minikube/README.md`.
 
 The browser path, once Ingress is up, is the same on both:
@@ -359,7 +359,7 @@ endpoint reused three ways:
     Kubernetes probe.
 
 /livez
-    Is this process alive? No dependency checks at all -- a Postgres or
+    Is this process alive? No dependency checks at all. A Postgres or
     Ollama outage can never make this fail. Wired to startupProbe and
     livenessProbe: a failure here means the process itself is
     unresponsive, and restarting the container may actually help.
@@ -379,14 +379,14 @@ Example during a database outage:
 /readyz  -> 503                          (Pod should stop receiving traffic)
 ```
 
-**What we discovered and fixed:** an earlier version of this deployment
-wired `readinessProbe` directly at `/health`, on the reasoning that
-"degraded" in the body was enough. It wasn't -- Kubernetes' `httpGet`
-probes only ever look at the status code, never the body, so a real
-Postgres outage never removed the Pod from Service traffic at all (see
-`ISSUES.md`'s "readiness probe can't see through /health" entry for the
-full diagnosis). The three-endpoint design above is the fix, not a
-hypothetical -- it's what's actually wired into
+**Note:** an earlier version of this deployment wired `readinessProbe`
+directly at `/health`, on the reasoning that "degraded" in the body was
+enough. It was not: Kubernetes' `httpGet` probes only ever look at the
+status code, never the body, so a real Postgres outage never removed
+the Pod from Service traffic at all (see `ISSUES.md`'s "readiness probe
+can't see through /health" entry for the full diagnosis). The
+three-endpoint design above is the fix, not a hypothetical. It is what's
+actually wired into
 `k8s/base/rag-api-deployment.yaml` today. `tests/unit/
 test_health_endpoints.py` proves the endpoint semantics directly at the
 application level; each cluster's `EXERCISES.md` (exercise 5) proves
@@ -447,7 +447,7 @@ than silently changing the shared default.
 
 ## 11. Install metrics-server for HPA
 
-HPA needs metrics. The install differs slightly by cluster -- see
+HPA needs metrics. The install differs slightly by cluster. See
 "metrics-server on kind" / "metrics-server on minikube" in the
 cluster-specific READMEs (minikube has a one-line addon; kind needs the
 upstream manifest plus a TLS patch).
@@ -597,7 +597,7 @@ That distinction is extremely useful in interviews.
 `kubectl` (section 15 above) is the ground truth and the thing to know
 cold for an interview, but `k9s` is a live, keyboard-driven terminal UI
 over the same API that makes iterating through pods/services/logs much
-faster day to day -- it reads the same kubeconfig `kubectl` already
+faster day to day. It reads the same kubeconfig `kubectl` already
 uses, so no separate cluster setup is needed.
 
 **Install**
@@ -641,12 +641,12 @@ k9s -n rag       # jump straight into this project's rag namespace
 
 **Where this is useful in this project**
 
-- `:pods` then `/frontend` -- jump straight to the frontend pod to watch
+- `:pods` then `/frontend`: jump straight to the frontend pod to watch
   restart counts live while working through the unresolved crash-loop
   follow-up (see `ISSUES.md`).
 - `l` on a multi-container pod, then a number key to pick which
   container's logs to stream.
-- `:deploy`, select `rag-api`, `ctrl-s` to scale replicas live -- a
+- `:deploy`, select `rag-api`, `ctrl-s` to scale replicas live. A
   hands-on way to watch the HPA fight (or not fight) a manual scale.
 - The CPU/MEM columns on the `:pods` view make it easy to spot a Pod
   close to its resource limit without running `kubectl top` by hand
@@ -661,7 +661,7 @@ the same objects `kubectl` already shows, not a different control plane.
 ## 17. Teardown
 
 See "Teardown" in `kind/README.md` or `minikube/README.md` for the
-exact command -- either destroys the local cluster and its local
+exact command. Either destroys the local cluster and its local
 storage.
 
 ---
@@ -675,7 +675,7 @@ storage.
 5. Break readiness and inspect Service backends.
 6. Perform a rolling restart.
 7. deploy a bad image and roll back.
-8. stop a worker node and observe recovery behavior (kind only -- see
+8. stop a worker node and observe recovery behavior (kind only. See
    `kind/EXERCISES.md` exercise 12).
 9. inspect HPA and metrics-server.
 10. only then move on to Helm, operators/controllers, distributed state,
