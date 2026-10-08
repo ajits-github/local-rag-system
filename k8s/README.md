@@ -22,7 +22,8 @@ systems:
 The application itself is unchanged. Kubernetes is simply another way to
 run the same container images that are already used by Docker Compose.
 
-For the "why", read `LEARNING.md`.
+For the "why", read `LEARNING.md` (short reference) or `STUDY_GUIDE.md`
+(the same material taught in full, from zero).
 
 ---
 
@@ -119,9 +120,12 @@ k8s/
       EXERCISES.md         : the full 18-exercise set (reference)
 
   minikube/
-      kustomization.yaml + patch  : small overlay on top of k8s/base
-                                     for the 1-2 things that genuinely
-                                     differ under minikube's docker driver
+      kustomization.yaml + two patches : overlay on top of k8s/base for
+                                           the handful of things that
+                                           genuinely differ under
+                                           minikube's docker driver (host
+                                           reachability, image tag,
+                                           rag-api's startup probe budget)
       README.md           : minikube-specific setup steps
       EXERCISES.md         : delta from kind/EXERCISES.md (17 of 18
                              exercises are identical either way)
@@ -137,6 +141,11 @@ k8s/
 
   LEARNING.md
       Concept reference and interview preparation.
+
+  STUDY_GUIDE.md (+ STUDY_GUIDE.html)
+      The same material taught in full, from zero: a longer-form
+      companion to README.md/EXERCISES.md/LEARNING.md above, for
+      reading away from the keyboard.
 ```
 
 ---
