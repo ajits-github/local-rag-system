@@ -667,7 +667,7 @@ python -m pytest langgraph_experiment/tests -v
     `langchain-core` version skew, not a conceptual clash between the two
     libraries.
 
-### Twenty likely interview questions
+### Twenty-five likely interview questions
 
 1. **Q: What does `interrupt()` actually pause?**
    A: The current node's execution, at the exact line `interrupt()` is
