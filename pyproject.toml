@@ -102,6 +102,13 @@ convention = "numpy"
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["D100", "D101", "D104"]  # test modules/classes don't need module/class docstrings
 "scripts/**" = ["D100"]
+# langgraph_experiment/ is an isolated learning experiment outside src/rag
+# (see its own README's "Dependency isolation" section), already excluded
+# from the mypy pre-commit hook's `files: ^src/` scope for the same reason.
+# Its own tests get the same test-function docstring leniency this repo's
+# CLAUDE.md already documents for tests/**, made explicit for D103 here
+# since pyproject.toml's own tests/** entry above doesn't cover it.
+"langgraph_experiment/tests/**" = ["D100", "D101", "D102", "D103", "D104", "D205", "D401"]
 
 [tool.ruff.format]
 quote-style = "double"
