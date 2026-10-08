@@ -45,9 +45,9 @@ multi_agent_experiment/
     scenario_walkthrough.py    all 5 required scenarios, zero external services, one command
     compare_harness.py         A vs B vs C timing + the full qualitative comparison table
   eval/
-    multi_agent_gold.jsonl     12-row gold set (see "Evaluation results" below)
+    multi_agent_gold.jsonl     11-row gold set (see "Evaluation results" below)
     run_multi_agent_eval.py    deterministic evaluation harness, zero external services
-  tests/                     see "Testing" below (28 tests, all passing, zero external services)
+  tests/                     see "Testing" below (30 tests, all passing, zero external services)
   data/                      gitignored; checkpoints.sqlite lives here
 ```
 
@@ -62,7 +62,7 @@ section, not assumed.
 **Added:** exactly the 30 files under `multi_agent_experiment/` listed in
 the directory map above: 9 core modules (incl. `__init__.py`), 5 CLI
 scripts (incl. `__init__.py`), 3 eval files (incl. `__init__.py` and the
-gold-set JSONL), 9 test files (incl. `__init__.py`), plus `README.md`,
+gold-set JSONL), 10 test files (incl. `__init__.py`), plus `README.md`,
 `.gitignore`, and `data/.gitkeep`. No
 change to `pyproject.toml`, `requirements*.txt`, or any file
 `langgraph_experiment/setup_venv.sh`/`.ps1` installs. This package reuses
@@ -319,8 +319,9 @@ node already provides:
 2. **A no-fabrication guard**, redundant-by-design with `final_synthesis`'s
    own independent zero-evidence check (matching this codebase's
    established "a guarantee that depends on one layer is not a
-   guarantee" pattern. See CLAUDE.md's field-redaction-marker
-   precedent).
+   guarantee" pattern; see `docs/architecture.md`'s "Field-Level
+   Sensitive-Data Redaction" section, which documents the same precedent
+   for its own answer-text marker-sanitization backstop).
 
 What it deliberately does **not** do: semantic conflict detection between
 knowledge and business evidence. That was considered and left out. A
@@ -434,7 +435,7 @@ live infra).
 
 ## Evaluation results
 
-`python -m multi_agent_experiment.eval.run_multi_agent_eval`: a 12-row
+`python -m multi_agent_experiment.eval.run_multi_agent_eval`: an 11-row
 gold set (`eval/multi_agent_gold.jsonl`), zero external services (a
 small synthetic knowledge base plus the real, self-contained `rag.mcp.
 business.store`), deterministic, no LLM judge. Real output, not
@@ -456,10 +457,9 @@ termination_reasons: {'synthesized': 5, 'case_not_found_or_denied': 2,
                        'max_rounds': 1}
 ```
 
-(`num_examples: 11` because one row's approval-flow scenario shares a
-thread lifecycle with another. See the gold file's `mut-1-executed`/
-`mut-3-rejected` rows for the two outcomes of the same mutation query
-under different resume decisions.) Covers, per the spec's required
+(`mut-1-executed`/`mut-3-rejected` are the same underlying mutation
+query, auto-approved vs. rejected, each its own gold row.) Covers, per
+the spec's required
 category list: knowledge-only (×3, including an explicit "identity
 present but business must not run" unnecessary-agent check),
 business-only (×1), mixed (×1), business mutation (×3: executed,
@@ -467,9 +467,9 @@ rejected, invalid-request), authorization denial (×2: same-tenant
 wrong-role, cross-tenant), specialist failure (×1). `security_failures`
 is a zero-tolerance ceiling, not a quality score, matching this
 repo's own `duplicate_sensitive_field_miss_rate`/`sensitive_data_false_
-redaction_rate` convention (CLAUDE.md's field-level-safety milestone) of
-treating a security metric as a regression guard, not a number to
-optimize incrementally.
+redaction_rate` convention (see `docs/architecture.md`'s "Field-Level
+Sensitive-Data Redaction" section) of treating a security metric as a
+regression guard, not a number to optimize incrementally.
 
 This eval set was **not** tuned to make multi-agent look better. It was
 written to hit the required category list, and every row's expected
@@ -491,7 +491,7 @@ verified" below).
 
 | Axis | A: custom harness | B: LangGraph single-agent | C: LangGraph multi-agent |
 |---|---|---|---|
-| Code complexity | ~150 lines for the write-action path incl. one Python while-loop; directly steppable in a debugger. | ~110 lines across nodes.py/graph.py for the same path; control flow lives in the Pregel runtime, not a visible loop. | ~40 lines of new orchestration code (coordinator/merge/critic) plus the business branch reused unmodified from B, more topology, but almost no new business logic. |
+| Code complexity | ~150 lines for the write-action path incl. one Python while-loop; directly steppable in a debugger. | ~110 lines across nodes.py/graph.py for the same path; control flow lives in the Pregel runtime, not a visible loop. | ~40 lines of new Coordinator routing code for this path (`merge`/`evidence_critic` aren't on it at all; mutation bypasses them entirely, see the architecture diagram) plus the business branch reused unmodified from B, more topology, but almost no new business logic. |
 | State visibility | `AgentState` is one pydantic object; no built-in history within a run. | `GraphState` checkpointed after every node. Full history via `get_state_history()`. | Same as B, plus per-specialist fields (`knowledge_status`, `business_status`) make it visible *which* agent contributed what. |
 | Branching | Plain if/elif; not queryable at runtime. | `add_conditional_edges()`. Introspectable via `get_graph()`. | Same, plus `Send`-based dynamic fan-out: the actual *set* of specialists dispatched is a runtime decision. |
 | Retry handling | None built in. | `RetryPolicy` on a node. Declarative retry with backoff. | `RetryPolicy` (reused) plus a second, higher-level retry: `evidence_critic` can bounce a run back through the coordinator to retry one specialist with widened parameters, a retry loop a single node's `RetryPolicy` cannot express. |
@@ -914,7 +914,8 @@ candidates):
   parallel specialists. Today's agentic RAG milestone's own tool-
   selection loop (`rag/agent/decisions.py`) already covers "which of N
   known tools to call," sequentially, which is sufficient for every
-  real scenario documented in CLAUDE.md's agentic-rag section.
+  real scenario documented in `docs/architecture.md`'s "Agentic RAG"
+  section.
 - **The synthetic knowledge base fakes** (`cli/scenario_walkthrough.py`,
   `eval/run_multi_agent_eval.py`), deliberately toy, deliberately
   disconnected from the real `techfusion` corpus; useful for this
@@ -964,7 +965,7 @@ python -m multi_agent_experiment.cli.compare_harness mixed "<mixed query>" \
 
 ## Testing
 
-28 tests (`multi_agent_experiment/tests`), all passing, **zero external
+30 tests (`multi_agent_experiment/tests`), all passing, **zero external
 services**, same "no Postgres/Ollama needed" discipline B's own test
 suite established, since the business branch is self-contained and the
 knowledge branch's tests use a narrow `FakePipeline`/`FakeLLM`.
@@ -1001,5 +1002,4 @@ python -m pytest multi_agent_experiment/tests -v
   layered on top of an already-deterministic router, judged not to add
   teaching value proportional to the complexity, matching this
   experiment's own "don't build infrastructure without a demonstrated
-  need" convention (the same one CLAUDE.md documents for Redis/a second
-  ingestion worker in the main system).
+  need" convention.
