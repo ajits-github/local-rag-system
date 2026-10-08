@@ -95,7 +95,7 @@ import (`import time; t0=time.time(); import rag.factory; print(time.time()-t0)`
 added another ~116 seconds. This is almost certainly Windows real-time
 antivirus scanning every DLL in a large ML dependency tree on first
 touch, not a property of the code itself, but it is real, **repeatable
-(a second, independent cold import measured 1333 seconds, ~22 minutes --
+(a second, independent cold import measured 1333 seconds, ~22 minutes,
 not a one-off fluke of disk caching)**, and it governed what could
 practically be run multiple times in one session:
 
@@ -240,9 +240,9 @@ Grepped and read directly, not assumed, across `src/rag/`:
 | `api/deps.py::get_rate_limiter()` | `slowapi.Limiter` with in-memory `MemoryStorage` | **Yes: this is the bug** | A live request counter, mutated on every request, with no cross-process visibility. This is Part 1's demonstration target. |
 | `mcp/business/store.py` | `_SYNTHETIC_CASES: dict[...]`, guarded by `_CASE_MUTATION_LOCK = threading.Lock()` | Yes | A synthetic, in-memory customer-case backend. `threading.Lock` only excludes concurrent *threads in the same process*. Two API replicas each import their own fresh copy of this module-level dict at process start, so two replicas would disagree about case state exactly like the rate limiter disagrees about request counts. Not fixed here (explicitly out of scope: the task calls out the rate limiter as the safe, easy one to demonstrate), but worth naming: it is the second clearest instance of the same bug class in this codebase, and a real deployment with `mcp.business_actions.enabled=true` behind >1 replica would see it (e.g. two replicas independently believing a just-created case doesn't exist yet). |
 | `observability/metrics.py` | `REGISTRY = CollectorRegistry()`, every `Counter`/`Histogram`/`Gauge` | Yes, and *correctly* so | Each replica's `/metrics` endpoint reports only its own process's counts; Prometheus's `sum()` aggregation across scrape targets is exactly how multi-replica metrics are supposed to work. Not a bug. The opposite failure mode (one shared external counter) would be wrong here. Included in the inventory specifically to contrast with the rate limiter: the same "process-local" shape is correct in one place and wrong in the other, depending on whether the *thing being counted* needs a single global answer (a rate limit does; per-replica request counts, summed at scrape time, do not). |
-| `vectorstore/pgvector.py`, `feedback/store.py` | `psycopg2.pool.ThreadedConnectionPool` instances | Process-local, and *correctly* so | Each replica needs its own connection pool to the *shared* Postgres instance. Postgres itself is the actual shared state here, already handled correctly (see the root `CLAUDE.md`'s "joint-investigation backlog": `get_or_create_document_id`'s `INSERT ... ON CONFLICT`, `replace_document_chunks`'s one-transaction commit). This is the model the rate limiter and job queue both follow: don't coordinate the pools, coordinate through the shared backing store. |
+| `vectorstore/pgvector.py`, `feedback/store.py` | `psycopg2.pool.ThreadedConnectionPool` instances | Process-local, and *correctly* so | Each replica needs its own connection pool to the *shared* Postgres instance. Postgres itself is the actual shared state here, already handled correctly (see `ISSUES.md`'s "Re-ingesting a changed file could leave a document permanently empty" entry: `get_or_create_document_id`'s `INSERT ... ON CONFLICT`, `replace_document_chunks`'s one-transaction commit). This is the model the rate limiter and job queue both follow: don't coordinate the pools, coordinate through the shared backing store. |
 | `agent/mcp_client.py` | One fresh `ClientSession` per remote tool call, never pooled | Not applicable | Explicitly documented as "trivial identity isolation... no risk of one caller's session/token leaking to another": a deliberate non-cache, not a bug. |
-| `security.rate_limit`'s own docstring (pre-existing) | -- | -- | Already stated the problem in prose: *"In-memory state is process-local; with more than one API replica, each enforces its own independent limit."* This experiment reproduces and fixes exactly that. |
+| `security.rate_limit`'s own docstring (pre-existing) | n/a | n/a | Already stated the problem in prose: *"In-memory state is process-local; with more than one API replica, each enforces its own independent limit."* This experiment reproduces and fixes exactly that. |
 
 ### The demonstration
 
@@ -351,13 +351,15 @@ noise, not worth the cost" pattern).
 ### Fail-open vs. fail-closed
 
 **Default: `fail_open`.** A rate limiter is an availability/fairness
-control, not a confidentiality control. The opposite risk profile from
-`security.field_redaction`, whose fail-closed default this codebase's own
-`CLAUDE.md` justifies with "a security-relevant guarantee that depends on
-[external] compliance is not a guarantee." Failing *closed* on a rate
+control, not a confidentiality control, the opposite risk profile from
+`security.field_redaction`, whose fail-closed default `docs/architecture.md`'s
+"Field-Level Sensitive-Data Redaction" section grounds in the same
+reasoning that milestone applies throughout: a safeguard that depends on
+compliance it has no way to verify is not a guarantee, only a
+deterministic, structural control is. Failing *closed* on a rate
 limiter means a transient Redis blip takes down 100% of API traffic for
-every tenant, for a control whose entire job is to protect availability
--- worse than the outcome it's meant to prevent. `fail_open` here means:
+every tenant, for a control whose entire job is to protect availability,
+worse than the outcome it's meant to prevent. `fail_open` here means:
 on a Redis error, `slowapi`'s `in_memory_fallback_enabled` kicks in and
 the request is checked against a *process-local* fallback limiter for
 the duration of the outage.
@@ -398,7 +400,7 @@ security:
 
 ### Why Redis Streams (not Kafka, not a plain list/pub-sub)
 
-- **Kafka would be infrastructure without a demonstrated requirement** --
+- **Kafka would be infrastructure without a demonstrated requirement**:
   this codebase's own repeated pattern (Redis itself, LangGraph, and MCP
   were all evaluated and deliberately deferred elsewhere in this
   repository until a concrete need existed). A single ingestion queue at
@@ -447,19 +449,18 @@ submit_jobs.py --count 20
     - queries JobRecord directly from the Redis-backed job_store, independent of queue mechanics
 ```
 
-**Idempotency key, reused not invented**: `f"{dataset_id}:{source_path}:{sha256(content)}"` --
-this is exactly the `(source, dataset_id)` + checksum identity scheme
+**Idempotency key, reused not invented**: `f"{dataset_id}:{source_path}:{sha256(content)}"`,
+exactly the `(source, dataset_id)` + checksum identity scheme
 `VectorStore.get_or_create_document_id`/`replace_document_chunks` already
-use (see the root `CLAUDE.md`'s "Document identity" section). Two
-submissions of byte-identical content into the same dataset always
+use. Two submissions of byte-identical content into the same dataset always
 compute the same key, so `submit()` dedups them at the queue's own front
 door; and even if a duplicate somehow reaches the *processing* step
 twice (a redelivery, a retrying producer), the real
 `IngestionPipeline.ingest_file` -> `PgVectorStore.replace_document_chunks`
 path is checksum-gated and already commits checksum+delete+insert as one
-atomic transaction (the joint-investigation backlog's DATA-1 fix) --
-processing the same job twice is a database no-op, not a duplicate
-document.
+atomic transaction (`ISSUES.md`'s "Re-ingesting a changed file could
+leave a document permanently empty" fix): processing the same job twice
+is a database no-op, not a duplicate document.
 
 **Why `job_state` lives in Redis, not Postgres, for this experiment**:
 this system already has a Postgres instance (and `FeedbackStore`'s own
@@ -481,7 +482,7 @@ deep the backlog is.
 
 **Backpressure**: `submit(..., max_queue_depth=N)` checks
 `backlog_depth()` (see the real gotcha below) before adding to the
-stream and raises `QueueFullError` instead of enqueuing past the cap --
+stream and raises `QueueFullError` instead of enqueuing past the cap,
 proven by `tests/test_job_queue.py::test_backpressure_rejects_submission_over_max_queue_depth`.
 
 **A real gotcha, found live, not assumed**: `XLEN` (a stream's length)
@@ -506,8 +507,8 @@ for. Running `cli/run_experiments.py` for real immediately exposed this:
 dead-lettered in that run, because the poison-job experiment's queue and
 an earlier experiment's queue were silently sharing one global job store,
 retry zset, and dead-letter stream. Fixed by deriving `key_prefix` from
-`stream_name` by default (stripping a trailing `":stream"` suffix) --
-now two queues pointed at different streams can never collide on shared
+`stream_name` by default (stripping a trailing `":stream"` suffix).
+Now two queues pointed at different streams can never collide on shared
 counters just because neither caller passed `key_prefix` explicitly. Both
 gotchas are the kind of bug this experiment exists to make visible: they
 only showed up once real code ran against a real (if simulated) backend,
@@ -562,7 +563,7 @@ output: `distributed_state_experiment/results/experiment_log.txt`.
 ```
 submitted 20 jobs, backlog_depth=20
 worker solo-worker: drained after processing 20 attempts
-RESULT: 1 worker drained 20 simulated jobs in 3.5-8.8s wall-clock (varied across reruns --
+RESULT: 1 worker drained 20 simulated jobs in 3.5-8.8s wall-clock (varied across reruns,
         see the note on this number below)
 ```
 
@@ -584,10 +585,12 @@ brand-new OS process (`subprocess.Popen`), so the dominant cost in every
 timing above is Python interpreter + `redis`-import startup, not the
 20 x 0.05s of simulated job latency (1.0s of real work at most, spread
 across replicas). The 1-worker number swung from 3.5s to 8.8s across
-reruns on this shared host with no code change between them. This
-project's own `CLAUDE.md` documents an almost identical finding for its
-own generation-latency benchmarks ("`ms/completion_token` swung ~4-5x
-across sequential runs... pointing to host-level noise"). Treat the
+reruns on this shared host with no code change between them. `ISSUES.md`'s
+"Generation dominated latency, and the latency A/B could not be trusted"
+entry documents an almost identical finding for this project's own
+generation-latency benchmarks (milliseconds per completion token swung
+4 to 5x across back-to-back runs on the same shared host, pointing to
+host-level noise, not a config effect). Treat the
 *speedup direction* (3 workers always faster) as the reliable finding,
 not the exact multiplier.
 
@@ -595,7 +598,7 @@ not the exact multiplier.
 recovered.** A job with `slow_seconds=5.0` is submitted, a real worker
 subprocess claims it, and is killed (`Popen.kill()`, a real `SIGTERM`
 equivalent: `taskkill /F` under the hood on Windows) the moment
-`pending_count() > 0` is observed (polled, not a fixed guessed sleep --
+`pending_count() > 0` is observed (polled, not a fixed guessed sleep;
 see the code comment on why a fixed sleep was tried first and failed):
 ```
 pending entries while doomed-worker was alive (polled until claimed): 1
@@ -666,8 +669,9 @@ pod scheduling, readiness gating, or cluster-network latency.
 
 Modeled directly on this repository's own, already-fixed
 `get_or_create_document_id` race (a pre-existing SELECT-then-INSERT
-race in `PgVectorStore`, fixed via `INSERT ... ON CONFLICT`. See the
-root `CLAUDE.md`'s "joint-investigation backlog" section). Reproduced
+race in `PgVectorStore`, fixed via `INSERT ... ON CONFLICT`. See
+`ISSUES.md`'s "Re-ingesting a changed file could leave a document
+permanently empty" entry). Reproduced
 in-process (`distributed_lock/demo_lock.py::RacyDocumentIdTable`) with a
 deliberate, injectable delay between the read and the write, then fixed
 two different ways:
@@ -720,7 +724,7 @@ above. But it has two real costs a DB-constraint-based fix doesn't:
    `test_lock_holder_cannot_release_a_lock_it_no_longer_owns` exists to
    guard against) that an atomic check-and-set simply doesn't have. The
    "DB constraint" fix here isn't really "add a constraint" so much as
-   "make the check and the write the same indivisible operation" --
+   "make the check and the write the same indivisible operation":
    `INSERT ... ON CONFLICT DO NOTHING RETURNING document_id` *is* that
    for Postgres, the same way `SET key val NX` *is* that for Redis. Where
    an atomic single-operation primitive already exists for the actual
@@ -730,8 +734,8 @@ above. But it has two real costs a DB-constraint-based fix doesn't:
 **When a lock genuinely earns its place instead**: when the protected
 operation spans multiple, non-atomic steps that no single database
 primitive can express as one operation: e.g. "read a value from
-Postgres, call an external HTTP API with it, then write the result back"
--- there is no `INSERT ... ON CONFLICT` that can make that whole sequence
+Postgres, call an external HTTP API with it, then write the result back":
+there is no `INSERT ... ON CONFLICT` that can make that whole sequence
 atomic, so a distributed lock (or a different pattern entirely, like an
 idempotency key stored *with* the external call's result) is the right
 tool. This codebase's own document-identity race happened to be a
@@ -935,8 +939,8 @@ replica can crash while the others keep running; Redis itself can become
 unreachable while every replica stays up). None of that is true of a
 single-process program, where "state" just means "a variable," updates
 are trivially visible to the only thread that matters, and a crash takes
-down the one thing that mattered anyway. Every concept in Part 3 --
-races, atomicity, locks, idempotency, retries, timeouts, the
+down the one thing that mattered anyway. Every concept in Part 3: races,
+atomicity, locks, idempotency, retries, timeouts, the
 consistency/availability tradeoff. It exists specifically because more
 than one independent actor now has to agree on shared truth without a
 single authority they can all trivially synchronize through.
@@ -1057,8 +1061,8 @@ Plus, outside this directory (the one deliberate exception, see above):
 #    is this directory's own test-only addition):
 pip install -r distributed_state_experiment/requirements.txt
 
-# 2. Start Redis. Either a real one (this is what the resumed pass in this
-#    session actually used, bringing up only the `redis` service so
+# 2. Start Redis. Either a real one (this is what the resumed pass
+#    actually used, bringing up only the `redis` service so
 #    pre-existing postgres/rag-api containers are never touched):
 docker compose -f docker-compose.yml -f docker-compose.redis.yml up -d redis
 #    ...then use --redis-url redis://localhost:6379/0 below. Or, with no
