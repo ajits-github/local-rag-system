@@ -37,7 +37,7 @@ Two version fields that are easy to conflate: `version` is what `helm
 install`/`upgrade`/`repo` care about. It's the identity of *this chart
 package*, and Helm refuses to publish two different chart contents under
 the same `version`. `appVersion` is a label, purely for humans reading
-`helm list` output ("what app version does this chart currently deploy") --
+`helm list` output ("what app version does this chart currently deploy");
 Helm never parses it, compares it, or uses it for any install/upgrade
 decision.
 
@@ -80,7 +80,7 @@ mechanisms this chart leans on:
   templates `{{ include "rag-system.labels" . | nindent 4 }}`: DRY for
   the handful of things every object needs (standard labels, the
   release-qualified name, which Secret name to reference). This chart
-  keeps helpers to five short ones; see `_helpers.tpl` for all of them.
+  keeps helpers to seven short ones; see `_helpers.tpl` for all of them.
 - **`.Files.Get`** (`templates/jobs/init-db-configmap.yaml`): embeds a
   chart-local file's raw contents into a rendered ConfigMap. Scoped to the
   chart's own directory only (a real limitation shared with kustomize's own
@@ -90,9 +90,9 @@ mechanisms this chart leans on:
   live reference).
 
 `helm template`/`helm install --dry-run` render every template locally with
-no cluster access needed at all (pure client-side string templating) --
-that's what makes `helm lint`/`helm template` valid CI-safe checks, covered
-below.
+no cluster access needed at all (pure client-side string templating),
+which is what makes `helm lint`/`helm template` valid CI-safe checks,
+covered below.
 
 ### Release
 
@@ -135,7 +135,18 @@ revision 6, not back on "revision 3"). Helm's history is append-only,
 which is exactly what makes it safe to roll back more than once without
 losing track of what happened.
 
-### `helm install` / `helm upgrade` / `helm rollback` / `helm template`, side by side
+### Test
+
+`helm test <release> -n <namespace>` runs any Pod annotated `helm.sh/hook:
+test` (`templates/tests/test-connection.yaml`, gated by `tests.enabled`)
+and reports pass/fail from its exit code. This is a different lifecycle
+hook phase from the install/upgrade hooks above, run only on demand, and
+it checks release health as a whole rather than gating traffic to an
+individual pod the way a readinessProbe does. This chart's test hits
+rag-api's own `/readyz` directly (a real vectorstore/LLM dependency
+check), not just `/livez`.
+
+### `helm install` / `helm upgrade` / `helm rollback` / `helm template` / `helm test`, side by side
 
 | Command | Talks to the cluster? | Creates a new revision? | Typical use |
 |---|---|---|---|
@@ -143,6 +154,7 @@ losing track of what happened.
 | `helm install` | Yes | Yes (revision 1) | First install of a release |
 | `helm upgrade` | Yes | Yes | Any subsequent change: values, chart version, or both |
 | `helm rollback` | Yes | Yes (a new revision with old content) | Undo a bad upgrade |
+| `helm test` | Yes | No | Post-install smoke check against an already-deployed release |
 | `helm diff upgrade` (plugin, not built-in) | Yes (read-only) | No | Preview what `helm upgrade` would change, without changing anything |
 
 ---
@@ -155,7 +167,7 @@ the "why" companion to the values-table entries in
 
 - **PodDisruptionBudget** (`rag-api/pdb.yaml`, `frontend/pdb.yaml`):
   bounds how many pods a *voluntary* disruption (node drain, cluster
-  upgrade, `kubectl drain`) is allowed to take down at once --
+  upgrade, `kubectl drain`) is allowed to take down at once:
   `minAvailable: 1` on each. It has no effect on *involuntary* disruption
   (a node dying, a pod OOM-killed). That distinction is the whole point
   of the demo below.
@@ -168,12 +180,12 @@ the "why" companion to the values-table entries in
   `whenUnsatisfiable: ScheduleAnyway` default and `values-prod.yaml`'s
   stricter `DoNotSchedule` override for why this genuinely needs more than
   one node to demonstrate (this project's single-node minikube learning
-  cluster can't show `DoNotSchedule` actually blocking a placement --
+  cluster can't show `DoNotSchedule` actually blocking a placement,
   flagged directly in the demos below, not glossed over).
 - **securityContext** (`runAsNonRoot`, `readOnlyRootFilesystem`, dropped
-  capabilities): see `helm/rag-system/README.md`'s dedicated section --
-  this is the part of the exercise that took the most real engineering
-  (the frontend's init-container writable-volume pattern).
+  capabilities): see `helm/rag-system/README.md`'s dedicated section for
+  the part of the exercise that took the most real engineering (the
+  frontend's init-container writable-volume pattern).
 - **ServiceAccount + minimal RBAC**: a dedicated ServiceAccount per
   workload with `automountServiceAccountToken: false` (neither workload
   calls the Kubernetes API, so there's no reason for a token to even be
@@ -205,7 +217,7 @@ the "why" companion to the values-table entries in
   config-only rollout" below for what this actually buys you, with real
   before/after evidence.
 - **Persistent-volume reclaim/persistence considerations**: `postgres.persistence.enabled`
-  toggle (falls back to `emptyDir`, data lost on pod restart, when off --
+  toggle (falls back to `emptyDir`, data lost on pod restart, when off:
   an honest trade-off for a true zero-storage demo, not a hidden footgun);
   `values-prod.yaml` pins a real `storageClassName` instead of trusting
   whatever the cluster's default happens to be. **Reclaim policy is cluster
@@ -279,7 +291,7 @@ REVISION: 1
 
 Steady state, a few minutes later (rag-api's cold start, importing
 torch/sentence-transformers with no pre-baked model cache on this host,
-a pre-existing, documented project limitation, not a chart issue --
+a pre-existing, documented project limitation, not a chart issue,
 took roughly 9 minutes):
 
 ```
@@ -307,8 +319,8 @@ cause in "Real issues found while demoing this chart" below.
 
 ### Demo 2: values override
 
-Show a value actually taking effect without touching a template --
-scale rag-api to 2 replicas via `--set`, without a full upgrade cycle:
+Show a value actually taking effect without touching a template: scale
+rag-api to 2 replicas via `--set`, without a full upgrade cycle:
 
 ```bash
 helm upgrade rag . -n rag-helm -f values.yaml -f values-dev.yaml --set ragApi.replicaCount=2
@@ -503,8 +515,8 @@ the image itself. The old pod (`rag-api-65dd44bd56-72g7r`, revision 5's
 image) stayed `1/1 Ready` and serving throughout, since
 `maxUnavailable: 0` correctly kept it in place until the new one proved
 itself. Not chasing this particular pod to full Ready indefinitely was a
-deliberate choice to keep the rest of this demo session moving --
-see finding #7.
+deliberate choice to keep the rest of this demo session moving; see
+finding #7.
 
 ### Demo 5: failed upgrade, then rollback
 
@@ -570,8 +582,8 @@ $ kubectl describe pod rag-api-5bd4b48fdc-h6dq7 -n rag-helm
 ```
 
 **The second, more important finding**: `helm rollback rag -n rag-helm`
-(no explicit revision argument) reported "Rollback was a success!" --
-but it rolled back to revision **7**, the immediately preceding revision
+(no explicit revision argument) reported "Rollback was a success!", but
+it rolled back to revision **7**, the immediately preceding revision
 *number*, which was itself a **failed** revision still carrying the bad
 `does-not-exist` tag. The pods stayed in `ImagePullBackOff` even after
 this "successful" rollback:
@@ -584,7 +596,7 @@ $ helm history rag -n rag-helm
 9   Tue Sep 29 22:34:30 2026 superseded Rollback to 7
 ```
 
-**The actual fix**: name the target revision explicitly --
+**The actual fix**: name the target revision explicitly:
 `helm rollback rag 6 -n rag-helm` (revision 6, the last genuinely
 `deployed`/good state), which correctly restored the working image:
 
@@ -693,7 +705,7 @@ serve traffic, precisely the scenario this manifest exists to protect.
 ### Demo 7: scheduling across multiple nodes
 
 **Documented limitation, not glossed over**: `rag-learning` is a
-single-node minikube cluster (`minikube start` with no `--nodes` flag --
+single-node minikube cluster (`minikube start` with no `--nodes` flag;
 see `k8s/minikube/README.md`'s own "Single-node only" section, and
 `ISSUES.md`'s entry on why `kind`'s 3-node topology hangs on this host).
 `topologySpreadConstraints` with `whenUnsatisfiable: DoNotSchedule` cannot
@@ -774,9 +786,9 @@ package   -> helm package . -d dist/
 publish   -> push dist/rag-system-<version>.tgz to a chart repo (OCI registry or classic index.yaml host)
 ```
 None of these steps touch a real cluster, exactly the same "no side
-effects" property this project's own CI gates elsewhere lean on (see the
-root `CLAUDE.md`'s "CI evaluation gates" section for the same philosophy
-applied to retrieval quality instead of manifests).
+effects" property this project's own CI gates elsewhere lean on (see
+`docs/ci_eval_gates.md` for the same philosophy applied to retrieval
+quality instead of manifests).
 
 **CD, imperative (what a hand-run pipeline does today):** a deploy job runs
 `helm upgrade --install rag oci://<registry>/rag-system --version <x.y.z> -f values-prod.yaml`
@@ -863,10 +875,10 @@ Kubernetes' own default of 1 second, too tight once the node came
 under real CPU/memory contention (from `rag-api`'s own cold torch import
 competing for the same limited resources).
 *Solution*: added `timeoutSeconds: 3` to both probes
-(`templates/frontend/deployment.yaml`). This reduced, but on this
-session's more heavily loaded cluster did not fully eliminate, frontend
-restarts. The deeper cause is genuine host contention (see #7), which
-a probe timeout alone can't fully absorb.
+(`templates/frontend/deployment.yaml`). This reduced, but under heavier
+cluster load did not fully eliminate, frontend restarts. The deeper
+cause is genuine host contention (see #7), which a probe timeout alone
+can't fully absorb.
 
 **3. `initDbJob` off by default produces a misleading "vectorstore
 unreachable" `/readyz` failure that looks exactly like a connection bug.**
@@ -906,7 +918,7 @@ DNS fails outright, not just slowly. Moving the Job alone to
 ConfigMap (`init-db-configmap.yaml`) was *still* `pre-install` with a
 `hook-succeeded` delete policy, so it was created and deleted again
 during the pre-install phase before the now-post-install Job's later
-phase ever ran, failing with `configmap "init-db-script" not found` --
+phase ever ran, failing with `configmap "init-db-script" not found`,
 an outright missing-resource error, not a race.
 *Solution*: both the Job and its ConfigMap moved to
 `post-install,post-upgrade` (`templates/jobs/init-db-job.yaml`,
@@ -956,18 +968,18 @@ needs more wall-clock room than Helm's default allows here.
 **7. The Deployment's `maxSurge: 1, maxUnavailable: 0` zero-downtime
 rolling-update strategy assumes headroom for a full extra replica always
 exists.** *(A documented trade-off, not a bug to fix in the chart.)*
-*Problem*: a config-only rollout (Demo 3) produced a genuine deadlock --
+*Problem*: a config-only rollout (Demo 3) produced a genuine deadlock:
 the new (surge) pod couldn't schedule (`FailedScheduling: 0/1 nodes are
 available: 1 Insufficient memory`), so it could never become Ready, so
 the old pod could never be removed (`maxUnavailable: 0` forbids it
 otherwise), so memory never freed on its own.
 *Diagnosis*: this is a real, reproducible property of the strategy
-choice on a resource-constrained cluster, not a misconfiguration --
+choice on a resource-constrained cluster, not a misconfiguration:
 `maxSurge: 1`/`maxUnavailable: 0` explicitly favors "never drop below
-desired capacity" over "always be able to schedule the surge pod." This
-session's cluster is a long-lived, shared minikube instance also used by
-several other experiment branches across many prior sessions, so its
-effective available headroom is smaller than `kubectl describe node`'s
+desired capacity" over "always be able to schedule the surge pod."
+`rag-learning` is a long-lived, shared minikube instance also used by
+several other experiment branches over many prior development sessions,
+so its effective available headroom is smaller than `kubectl describe node`'s
 raw allocatable figure (4.3GiB) would suggest in isolation.
 *Recovery, not a fix*: manually freeing a pod and temporarily scaling
 `replicaCount` down (breaking the deadlock) then back up unblocked
@@ -984,14 +996,14 @@ bug.)*
 expected, `helm rollback rag -n rag-helm` (no explicit revision number)
 reported `Rollback was a success!`, but the pods stayed in
 `ImagePullBackOff`.
-*Diagnosis*: `helm history` showed the rollback had landed on revision 7
--- itself a **failed** revision (from an unrelated, earlier API-server
+*Diagnosis*: `helm history` showed the rollback had landed on revision 7,
+itself a **failed** revision (from an unrelated, earlier API-server
 timeout in this same demo sequence) that still carried the bad image tag.
 A bare `helm rollback` targets the immediately preceding revision
 *number*, not "the last known-good state". Those are only the same
 thing when no failed attempt sits in between.
-*Solution*: naming the target revision explicitly --
-`helm rollback rag 6 -n rag-helm`, the actual last `deployed` revision --
+*Solution*: naming the target revision explicitly:
+`helm rollback rag 6 -n rag-helm`, the actual last `deployed` revision,
 correctly restored the working image. The lesson: check `helm history`'s
 `STATUS` column and name a revision explicitly; don't rely on the bare
 command's default when a failed upgrade might be the most recent entry.
