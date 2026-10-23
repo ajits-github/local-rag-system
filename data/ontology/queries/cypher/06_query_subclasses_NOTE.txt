@@ -1,0 +1,25 @@
+There is no Cypher counterpart for ../sparql/06_query_subclasses.rq,
+07_inferred_customer_types.rq, or 08_inferred_inverse_dependents.rq.
+
+This is itself the point (docs/ontology.md section 9): Neo4j node labels
+(Service, Database, API, Technology, ...) are flat and independent.
+There is no Cypher statement, constraint, or schema object anywhere in
+this codebase that declares "Database is a kind of Service", so there
+is nothing for a query to traverse. The closest a Cypher query could
+get to query 06 ("list every subclass of Service") is to hardcode the
+list of labels a human has decided count as Service-like
+(`WHERE any(l IN labels(n) WHERE l IN ['Service', 'Database', 'API'])`,
+exactly what rag.graph.queries._DEPENDENCY_REL_TYPES-style constants
+already do for relationship types), which must be updated by hand
+every time the modeled hierarchy changes, rather than derived from a
+single rdfs:subClassOf declaration.
+
+Likewise, queries 07 and 08 depend on owl:equivalentClass and
+owl:inverseOf entailment, which have no Cypher/Neo4j equivalent at all:
+achieving the same result in the property graph would require either
+a second, explicitly-maintained relationship/label for every inverse or
+equivalence (doubling write-time work and risking drift), or
+application code that expands the query itself before it reaches
+Neo4j. This is the concrete answer to docs/ontology.md section 5's requirement
+("demonstrate at least one inference that is difficult to express as
+simple property-graph traversal").

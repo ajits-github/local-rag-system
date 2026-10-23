@@ -1,0 +1,12 @@
+# Query 2: find the direct dependencies of one named service.
+# Demonstrates: OPTIONAL (a dependency missing tech:name still appears,
+# with depName unbound, rather than being silently dropped).
+PREFIX tech: <http://techfusion.example/ontology/v1#>
+
+SELECT ?dependency ?depName
+WHERE {
+    ?service tech:name "RAG Service" ;
+             tech:dependsOn ?dependency .
+    OPTIONAL { ?dependency tech:name ?depName . }
+}
+LIMIT 50

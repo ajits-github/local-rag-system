@@ -1,0 +1,14 @@
+# Query 1: SELECT services owned by a given team.
+# Demonstrates: SELECT, WHERE, a literal-value FILTER as an alternative
+# to a hardcoded triple pattern, ORDER BY, LIMIT.
+PREFIX tech: <http://techfusion.example/ontology/v1#>
+
+SELECT ?service ?serviceName
+WHERE {
+    ?service tech:ownedBy ?team ;
+             tech:name ?serviceName .
+    ?team tech:name ?teamName .
+    FILTER(?teamName = "Workflow")
+}
+ORDER BY ?serviceName
+LIMIT 50

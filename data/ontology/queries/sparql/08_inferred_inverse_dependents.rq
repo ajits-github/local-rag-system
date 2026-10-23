@@ -1,0 +1,18 @@
+# Query 8: find every entity that is a dependent of PostgreSQL, using
+# ONLY the inverse property tech:isDependencyOf.
+# Demonstrates: querying a relationship that is NEVER asserted directly
+# anywhere in the instance data (only tech:dependsOn is ever written);
+# this query returns zero rows against the raw graph and the real
+# dependents (Document Service, RAG Service) only once an RDFS/OWL-RL
+# reasoner has materialized tech:isDependencyOf from
+# owl:inverseOf(tech:dependsOn, tech:isDependencyOf). This is the
+# clearest single demonstration in this file of "explicitly stored vs.
+# inferred" (docs/ontology.md section 4).
+PREFIX tech: <http://techfusion.example/ontology/v1#>
+
+SELECT ?dependent
+WHERE {
+    ?db tech:name "PostgreSQL" .
+    ?db tech:isDependencyOf ?dependent .
+}
+LIMIT 50
