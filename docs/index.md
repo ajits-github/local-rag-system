@@ -12,20 +12,27 @@ that live in the repository (`README.md`, `docs/architecture.md`,
 `docs/metrics.md`, and `src/rag/**`), so it stays in sync with the code
 without duplicating it.
 
-![Local RAG System architecture: users and clients through security and
-request context, the classic/agent RAG runtime, context engineering,
-Ollama generation, evidence sources (retrieval stack, graph/semantic
-layer, tools, conversation history), evaluation and observability, and
-the separate experiment/learning branches](assets/architecture-diagram.png)
+![Local RAG System architecture: users and clients through authentication
+and access control, query processing, routing to classic RAG or the
+bounded agent harness, evidence sources (documents, retrieval stack,
+graph/semantic layer, MCP tools), context engineering, Ollama
+generation, response generation, evaluation/feedback, observability, and
+deployment/infrastructure](assets/architecture-diagram.png)
 
-Two pieces of this diagram are ahead of what's implemented today, not
-built capabilities: **Context Engineering** is planned next (today,
-context sizing is three explicit cutoffs; see
-[Retrieval](topics/retrieval.md)), and **Conversation / history** /
-**conversation continuity** don't exist yet either, every `/query` and
-`/agent/query` call is stateless. **NDCG** also isn't an implemented
-metric; Recall@k, hit-rate, MRR, and RAGAS are what `eval/run_eval.py`
-actually computes (see [Metrics](metrics.md)).
+A few pieces of this diagram are ahead of what's implemented today, not
+built capabilities: **Context Engineering** (the whole token-budget
+stage) is planned next, today context sizing is three explicit cutoffs;
+see [Retrieval](topics/retrieval.md), not a dedicated
+collect/filter/score/pack pipeline. **OCR for scanned documents** doesn't
+exist; PDF/DOCX parsing extracts existing text/tables/structure, it
+doesn't read text out of a scanned image with no text layer.
+**Alerting** isn't wired up either, Prometheus/Grafana exist, but
+nothing pages on a threshold today (see [Metrics](metrics.md)). The
+"Integrations (Confluence, Jira, etc.)" and "Custom tools (search,
+calculators, workflows)" boxes describe the *shape* the tool layer could
+extend to, not systems this project actually connects to; MCP's real
+tools today are the four RAG tools plus a synthetic, in-memory
+customer-support case store (see [MCP](topics/mcp.md)).
 
 ## Start here
 
