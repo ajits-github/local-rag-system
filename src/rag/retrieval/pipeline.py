@@ -72,6 +72,8 @@ def source_label(result: SearchResult) -> str:
         parts.append("related context")
     elif result.origin == "tool_fetched":
         parts.append("agent tool result")
+    elif result.origin == "graph":
+        parts.append("knowledge graph fact")
     if meta.trust_level and meta.trust_level.lower() != "authoritative":
         parts.append(f"trust: {meta.trust_level}")
     if result.injection_suspected:
@@ -173,6 +175,22 @@ class RetrievalPipeline:
         self._field_redaction_enabled = config.security.field_redaction.enabled
 
     @property
+    def llm(self) -> LLM:
+        """The generation `LLM` used by this pipeline.
+
+        Shared with `GraphRAGPipeline` so that both use one instance.
+        """
+        return self._llm
+
+    @property
+    def prompt_template(self) -> PromptTemplate:
+        """The generation `PromptTemplate` this pipeline renders `answer()` with.
+
+        Exposed for the same reuse reason as `llm`.
+        """
+        return self._prompt_template
+
+    @property
     def authorization_enabled(self) -> bool:
         """Whether `config.security.authorization.enabled` was set at construction.
 
@@ -258,16 +276,10 @@ class RetrievalPipeline:
     ) -> None:
         """Log an `authorization_denied` audit event when auth masked a genuine result.
 
-        Document-level authorization runs entirely as a SQL predicate
-        inside Postgres (see `vectorstore/pgvector.py`'s
-        `build_authorization_where_clause`), so nothing in this pipeline
-        otherwise learns whether a thin or empty result set reflects "no
-        relevant documents exist" versus "relevant documents exist but
-        were denied." Gated to avoid a second query on the common case:
-        only runs when a resolved authorization context is active *and*
-        the primary result set came back thinner than requested (empty,
-        or fewer than `fetch_k`) -- a full result set gives no signal
-        either way and is skipped entirely.
+        Authorization runs as a SQL filter, so this pipeline cannot otherwise
+        tell "no relevant documents" from "relevant documents denied". It runs
+        only when an authorization context is active and the results are short
+        of `fetch_k`.
 
         Parameters
         ----------
@@ -286,12 +298,8 @@ class RetrievalPipeline:
 
         Notes
         -----
-        A `VectorStore` implementation that doesn't provide
-        `count_excluded_by_authorization` (e.g. a minimal test double
-        that doesn't subclass the ABC), or one whose call raises for any
-        reason, is caught and logged rather than allowed to break
-        retrieval -- this is a diagnostic addition, not a correctness
-        requirement of `retrieve()` itself.
+        Errors from `count_excluded_by_authorization` are logged and never
+        break retrieval.
         """
         if effective_auth is None or len(candidates) >= fetch_k:
             return
@@ -490,12 +498,11 @@ class RetrievalPipeline:
             to `config.retrieval.generation_context_top_n`. Applied
             regardless of which reranker (if any) ran.
         auth : AuthorizationContext | None, optional
-            Caller identity/date context (see `retrieval/authorization.py`).
-            `None` (the default) is fully unrestricted. Passing a context
-            can only narrow results, never broaden them, and has no effect
-            at all unless `config.security.authorization.enabled` is also
-            `True` (see `resolve_auth`). Applied in SQL before dense/BM25
-            fetch, fusion, reranking, and relationship expansion.
+            Caller identity and date context. `None` (the default) is fully
+            unrestricted. A context only narrows results, and has no effect
+            unless `config.security.authorization.enabled` is `True`. It is
+            applied in SQL before dense/BM25 fetch, fusion, reranking, and
+            relationship expansion.
 
         Returns
         -------
@@ -817,9 +824,8 @@ class RetrievalPipeline:
             Number of results to fetch from the vector store; defaults to
             `config.retrieval.candidate_k`.
         auth : AuthorizationContext | None, optional
-            Caller identity/date context (see `retrieval/authorization.py`
-            and `AppConfig.security.authorization.enabled`); `None` (the
-            default) is fully unrestricted.
+            Caller identity and date context. `None` (the default) is fully
+            unrestricted.
 
         Returns
         -------
