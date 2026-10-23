@@ -50,7 +50,7 @@ def ollama_available(config) -> bool:
 def require_postgres(postgres_available):
     """Skip the test if Postgres/pgvector isn't reachable."""
     if not postgres_available:
-        pytest.skip("Postgres/pgvector is not reachable at DATABASE_URL — run `make up` first.")
+        pytest.skip("Postgres/pgvector is not reachable at DATABASE_URL. Run `make up` first.")
 
 
 @pytest.fixture
@@ -58,8 +58,8 @@ def require_ollama(ollama_available):
     """Skip the test if Ollama isn't reachable."""
     if not ollama_available:
         pytest.skip(
-            "Ollama is not reachable at OLLAMA_BASE_URL — "
-            "start it and `ollama pull qwen2.5:1.5b` first."
+            "Ollama is not reachable at OLLAMA_BASE_URL. "
+            "Start it and `ollama pull qwen2.5:1.5b` first."
         )
 
 
@@ -67,7 +67,7 @@ def require_ollama(ollama_available):
 def neo4j_available(config) -> bool:
     """Whether Neo4j is reachable at `config.neo4j_uri()`, checked once per session.
 
-    Reachability only -- never assumes `config.graph.enabled` (default
+    Reachability only. Never assumes `config.graph.enabled` (default
     `False`), since a test needing a real Neo4j deliberately builds its
     own config with `graph.enabled=True`, same convention
     `security_regression`-style tests already use for other kill-switches.
@@ -83,7 +83,7 @@ def require_neo4j(neo4j_available):
     """Skip the test if Neo4j isn't reachable."""
     if not neo4j_available:
         pytest.skip(
-            "Neo4j is not reachable at NEO4J_URI; run `docker compose -f docker-compose.yml "
+            "Neo4j is not reachable at NEO4J_URI. Run `docker compose -f docker-compose.yml "
             "-f docker-compose.graph.yml up -d neo4j` first."
         )
 
