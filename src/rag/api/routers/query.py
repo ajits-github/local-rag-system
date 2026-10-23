@@ -54,10 +54,11 @@ class SourceItem(BaseModel):
     are relative, dataset-root-scoped paths, never absolute filesystem paths.
     `origin` mirrors `SearchResult.origin`: `"retrieved"` (a normal ranked
     result), `"expanded"` (relationship expansion), `"tool_fetched"` (an
-    agent tool's direct fetch), or `"mcp_remote"` (synthetic evidence from
-    an MCP business tool). Lets the UI distinguish a RAG/local source
-    from an MCP remote/business one without guessing from `chunk_id`
-    shape.
+    agent tool's direct fetch), `"mcp_remote"` (synthetic evidence from
+    an MCP business tool), or `"graph"` (synthetic evidence from a Neo4j
+    graph fact, see `rag.graph.fusion`). Lets the UI distinguish a
+    RAG/local source from an MCP remote/business or graph-derived one
+    without guessing from `chunk_id` shape.
     """
 
     chunk_id: str
@@ -71,7 +72,7 @@ class SourceItem(BaseModel):
     attachment_name: str | None = None
     source_anchor: str | None = None
     vision_generated: bool = False
-    origin: Literal["retrieved", "expanded", "tool_fetched", "mcp_remote"] = "retrieved"
+    origin: Literal["retrieved", "expanded", "tool_fetched", "mcp_remote", "graph"] = "retrieved"
 
 
 class QueryResponse(BaseModel):
