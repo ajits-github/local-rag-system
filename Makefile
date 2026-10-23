@@ -1,6 +1,6 @@
 SHELL := bash
 
-.PHONY: up down ingest query test observability-up observability-down frontend-up frontend-down docs-serve docs-build
+.PHONY: up down ingest query test observability-up observability-down frontend-up frontend-down graph-up graph-down docs-serve docs-build
 
 # Bring up Postgres+pgvector and initialize the schema.
 up:
@@ -48,6 +48,19 @@ frontend-up:
 # Companion teardown to frontend-up.
 frontend-down:
 	docker compose -f docker-compose.yml -f docker-compose.frontend.yml down
+
+# Bring up Neo4j alongside the base stack (opt-in; never brought up by plain
+# `make up`). Enable graph retrieval by setting graph.enabled: true (and
+# graph.extraction.enabled: true to also extract facts during ingestion) in
+# config/default.yaml first; see scripts/init_graph_db.py to initialize the
+# schema once Neo4j is up.
+graph-up:
+	docker compose -f docker-compose.yml -f docker-compose.graph.yml up -d neo4j
+	@echo "Neo4j Browser: http://localhost:7474  Bolt: bolt://localhost:7687"
+
+# Companion teardown to graph-up.
+graph-down:
+	docker compose -f docker-compose.yml -f docker-compose.graph.yml down
 
 # Local docs server with live reload: http://127.0.0.1:8000. Requires
 # `pip install -e .[docs]`.

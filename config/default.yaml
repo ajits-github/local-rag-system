@@ -160,6 +160,7 @@ agent:
   classify_prompt_path: src/rag/prompts/templates/agent_classify_v2.yaml
   decompose_prompt_path: src/rag/prompts/templates/agent_decompose_v1.yaml
   tool_select_prompt_path: src/rag/prompts/templates/agent_tool_select_v3.yaml
+  tool_select_graph_prompt_path: src/rag/prompts/templates/agent_tool_select_v6_graph.yaml
   evidence_sufficiency_prompt_path: src/rag/prompts/templates/agent_evidence_sufficiency_v1.yaml
   synthesize_prompt_path: src/rag/prompts/templates/agent_synthesize_v2.yaml
 
@@ -169,6 +170,39 @@ mcp:
     mount_path: /mcp
   business_actions:
     enabled: false # no-op when false; update_case_status is not registered on the MCP server at all
+
+graph:
+  enabled: false # no-op when false; see docs/graphrag.md. No Neo4j driver is constructed, ingestion/retrieval/agent behavior is byte-identical to before this capability existed
+  neo4j:
+    uri_env_var: NEO4J_URI
+    user_env_var: NEO4J_USER
+    password_env_var: NEO4J_PASSWORD
+    database: neo4j
+    max_connection_pool_size: 20
+    connection_acquisition_timeout_seconds: 10.0
+    connection_timeout_seconds: 5.0
+    max_transaction_retry_time_seconds: 15.0
+  traversal:
+    max_traversal_depth: 3
+    max_nodes_returned: 50
+    max_paths_returned: 10
+    query_timeout_seconds: 5.0
+  extraction:
+    enabled: false # no-op when false, independent of graph.enabled; see docs/graphrag.md
+    llm_extraction_enabled: true # swap point: false = deterministic-only extraction (Document/PART_OF/SUPERSEDES)
+    min_confidence: 0.5
+    max_relationships_per_chunk: 8
+    extraction_prompt_path: src/rag/prompts/templates/graph_extract_v1.yaml
+  cypher_generation:
+    enabled: false # no-op when false; only deterministic Cypher templates run, see docs/graphrag.md
+    max_result_limit: 50
+    max_depth: 3
+    timeout_seconds: 5.0
+    prompt_path: src/rag/prompts/templates/graph_cypher_generate_v1.yaml
+  fusion:
+    strategy: vector_only # swap point: vector_only | graph_only | vector_plus_graph | graph_seeded_vector
+    max_graph_evidence_items: 5
+    graph_seed_top_k: 3
 
 feedback:
   enabled: true # 404s POST /feedback when false; no external dependency beyond the existing Postgres instance
