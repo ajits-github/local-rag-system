@@ -53,42 +53,60 @@ The full setup is below.
   Kubernetes/Helm/distributed-state deployment, and single- and multi-agent
   LangGraph exercises. See [Experiment Branches](#experiment-branches) below.
 
-Jump to a section below, or build the [docs site](#documentation) for
-deeper design write-ups and the generated API reference:
+Jump to a section (full table of contents, in document order), or build
+the [docs site](#documentation) for deeper design write-ups and the
+generated API reference:
 
 - [Architecture](#architecture)
-- [Security](#security)
 - [Ingestion](#multimodal--layout-aware-ingestion)
 - [Retrieval](#retrieval)
-- [Evaluation](#evaluation)
 - [Agentic RAG](#agentic-rag)
 - [MCP](#mcp)
 - [GraphRAG](#knowledge-graph--graphrag)
 - [Ontology & Semantic Layer](#ontology--semantic-layer)
+- [Security](#security)
 - [Observability](#observability)
 - [Web UI](#web-ui)
 - [Feedback](#feedback-loop)
+- [Prerequisites](#prerequisites)
+- [Setup](#setup)
+- [Containerized Development](#containerized-development)
 - [Deployment](#deployment)
+- [Configuration](#configuration)
+- [Metadata And Filtering](#metadata-and-filtering)
+- [Evaluation](#evaluation)
+- [Benchmarks](#benchmarks)
 - [Metrics reference](#metrics-reference)
+- [Testing](#testing)
+- [Continuous Integration](#continuous-integration)
+- [Documentation](#documentation)
+- [Experiment Branches](#experiment-branches)
+- [Project Notes](#project-notes)
+- [License](#license)
 
 ## Architecture
 
-![Local RAG System architecture: users and clients through security and
-request context, the classic/agent RAG runtime, context engineering,
-Ollama generation, evidence sources (retrieval stack, graph/semantic
-layer, tools, conversation history), evaluation and observability, and
-the separate experiment/learning branches](docs/assets/architecture-diagram.png)
+![Local RAG System architecture: users and clients through authentication
+and access control, query processing, routing to classic RAG or the
+bounded agent harness, evidence sources (documents, retrieval stack,
+graph/semantic layer, MCP tools), context engineering, Ollama
+generation, response generation, evaluation/feedback, observability, and
+deployment/infrastructure](docs/assets/architecture-diagram.png)
 
-Two pieces of this diagram are ahead of what's implemented today, not
-built capabilities: **Context Engineering** is planned next (today,
-context sizing is three explicit cutoffs, see
-[Retrieval](#retrieval), not a dedicated budgeting/packing stage), and
-**Conversation / history** / **conversation continuity** don't exist
-yet either, every `/query` and `/agent/query` call is stateless; the
-web UI only keeps a client-side message list for display. **NDCG** also
-isn't an implemented metric; Recall@k, hit-rate, MRR, and RAGAS are what
-`eval/run_eval.py` actually computes (see
-[Metrics reference](#metrics-reference)).
+A few pieces of this diagram are ahead of what's implemented today, not
+built capabilities: **Context Engineering** (the whole token-budget
+stage) is planned next, today context sizing is three explicit cutoffs,
+see [Retrieval](#retrieval), not a dedicated collect/filter/score/pack
+pipeline. **OCR for scanned documents** doesn't exist; PDF/DOCX parsing
+extracts existing text/tables/structure, it doesn't read text out of a
+scanned image with no text layer. **Alerting** isn't wired up either,
+Prometheus/Grafana exist, but nothing pages on a threshold today (see
+`docs/metrics.md`). The "Integrations (Confluence, Jira, etc.)" and
+"Custom tools (search, calculators, workflows)" boxes describe the
+*shape* `POST /agent/query`'s tool layer and `API/SDK` access could
+extend to, not systems this project actually connects to; MCP's real
+tools today are the four RAG tools plus a synthetic, in-memory
+customer-support case store (see [MCP](#mcp)).
 
 | Area | Default implementation | Notes |
 |---|---|---|
