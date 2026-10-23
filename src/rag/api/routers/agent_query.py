@@ -24,6 +24,8 @@ from rag.api.deps import (
     get_config,
     get_current_identity,
     get_embedder,
+    get_graph_client,
+    get_graph_retriever,
     get_llm,
     get_mcp_asgi_app,
     get_rate_limiter,
@@ -40,6 +42,8 @@ from rag.api.routers.query import SourceItem
 from rag.config import AppConfig
 from rag.embedders.base import Embedder
 from rag.generation.base import LLM
+from rag.graph.client import Neo4jClient
+from rag.graph.retrieval import GraphRetriever
 from rag.logging_config import get_request_id
 from rag.mcp.business.schemas import MAX_CASE_APPROVALS, CaseApproval
 from rag.retrieval.pipeline import RetrievalPipeline
@@ -143,6 +147,8 @@ def agent_query(
     llm: LLM = Depends(get_llm),
     config: AppConfig = Depends(get_config),
     mcp_app: Starlette | None = Depends(get_mcp_asgi_app),
+    graph_retriever: GraphRetriever | None = Depends(get_graph_retriever),
+    graph_client: Neo4jClient | None = Depends(get_graph_client),
 ) -> AgentQueryResponse:
     """Run `body.query` through the bounded agent graph and return the answer.
 
@@ -192,6 +198,8 @@ def agent_query(
         llm=llm,
         config=config,
         mcp_app=mcp_app,
+        graph_retriever=graph_retriever,
+        graph_client=graph_client,
     )
     final_state = result.state
     return AgentQueryResponse(

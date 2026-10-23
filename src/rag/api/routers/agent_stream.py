@@ -39,6 +39,8 @@ from rag.api.deps import (
     get_config,
     get_current_identity,
     get_embedder,
+    get_graph_client,
+    get_graph_retriever,
     get_llm,
     get_mcp_asgi_app,
     get_rate_limiter,
@@ -56,6 +58,8 @@ from rag.api.routers.query import SourceItem
 from rag.config import AppConfig
 from rag.embedders.base import Embedder
 from rag.generation.base import LLM
+from rag.graph.client import Neo4jClient
+from rag.graph.retrieval import GraphRetriever
 from rag.logging_config import get_request_id
 from rag.retrieval.pipeline import RetrievalPipeline
 from rag.vectorstore.base import VectorStore
@@ -93,6 +97,8 @@ def _run_agent_in_thread(
     queue: asyncio.Queue[Any],
     loop: asyncio.AbstractEventLoop,
     cancel_event: threading.Event,
+    graph_retriever: GraphRetriever | None,
+    graph_client: Neo4jClient | None,
 ) -> None:
     """Run `run_agent` synchronously, pushing events and the final result onto `queue`.
 
@@ -117,6 +123,8 @@ def _run_agent_in_thread(
             mcp_app=mcp_app,
             on_event=_on_event,
             cancel_event=cancel_event,
+            graph_retriever=graph_retriever,
+            graph_client=graph_client,
         )
         loop.call_soon_threadsafe(queue.put_nowait, result)
     except Exception as exc:  # never let a worker-thread exception hang the stream
@@ -184,6 +192,8 @@ async def _stream_agent_query(
     config: AppConfig,
     mcp_app: Starlette | None,
     request_id: str | None,
+    graph_retriever: GraphRetriever | None,
+    graph_client: Neo4jClient | None,
 ) -> AsyncIterator[str]:
     """Yield `text/event-stream` messages for one agent run, ending in `completed`/`terminated`.
 
@@ -211,6 +221,8 @@ async def _stream_agent_query(
             queue=queue,
             loop=loop,
             cancel_event=cancel_event,
+            graph_retriever=graph_retriever,
+            graph_client=graph_client,
         )
     )
 
@@ -312,6 +324,8 @@ def agent_query_stream(
     llm: LLM = Depends(get_llm),
     config: AppConfig = Depends(get_config),
     mcp_app: Starlette | None = Depends(get_mcp_asgi_app),
+    graph_retriever: GraphRetriever | None = Depends(get_graph_retriever),
+    graph_client: Neo4jClient | None = Depends(get_graph_client),
 ) -> StreamingResponse:
     """Stream live progress for the query in `state` through the bounded agent graph.
 
@@ -325,7 +339,7 @@ def agent_query_stream(
         `_build_validated_agent_state` (request-body parsing,
         DoS-limit enforcement, and authorization-context construction all
         happen there, ahead of the dependencies below).
-    pipeline, vectorstore, embedder, llm, config, mcp_app
+    pipeline, vectorstore, embedder, llm, config, mcp_app, graph_retriever, graph_client
         Same injected singletons `/agent/query` uses. Declared *after*
         `state` so a rejected request never resolves them; see
         `_build_validated_agent_state`'s docstring.
@@ -341,7 +355,17 @@ def agent_query_stream(
     request_id = get_request_id()
     return StreamingResponse(
         _stream_agent_query(
-            request, state, pipeline, vectorstore, embedder, llm, config, mcp_app, request_id
+            request,
+            state,
+            pipeline,
+            vectorstore,
+            embedder,
+            llm,
+            config,
+            mcp_app,
+            request_id,
+            graph_retriever,
+            graph_client,
         ),
         media_type="text/event-stream",
     )
