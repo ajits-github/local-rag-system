@@ -1,0 +1,105 @@
+@prefix tech: <http://techfusion.example/ontology/v1#> .
+@prefix sh:   <http://www.w3.org/ns/shacl#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+#################################################################
+# SHACL data-quality shapes for the TechFusion ontology (docs/ontology.md section 6).
+#
+# IMPORTANT, and verified empirically against pyshacl rather than
+# assumed (an earlier draft of this comment assumed the opposite):
+# sh:targetClass and sh:class ARE subclass-aware by the W3C SHACL
+# Recommendation's own built-in "SHACL instance" definition, which
+# bakes in rdf:type/rdfs:subClassOf* closure as CORE SHACL semantics,
+# with no separate inference option required. An individual typed only
+# tech:DatabaseService (never tech:Service directly) IS picked up by a
+# shape whose sh:targetClass is tech:Service, even with pyshacl's
+# `inference` parameter left at its default (None). Confirmed directly
+# in this experiment: PostgreSQL and OpenSearch (both tech:DatabaseService,
+# never asserted tech:Service) are flagged by ServiceShape's owner
+# requirement even in raw validation.
+#
+# What pyshacl's `inference="rdfs"` parameter actually adds on top of
+# that is full RDFS axiomatic closure (rdfs:domain/range type
+# propagation, rdfs:subPropertyOf, etc.), materialized into a working
+# copy of the data BEFORE shapes are checked. This is a strictly
+# broader, and strictly separate, concept from subclass-aware target
+# matching. rag.ontology.validation runs both modes and
+# reports the difference explicitly; see docs/ontology.md section 6 for the
+# worked example (a narrow rdfs:domain on tech:dependsOn, found and
+# fixed during this experiment, that caused exactly this kind of
+# RDFS-closure-only side effect) and for why OWL reasoning (which infers
+# NEW facts) and SHACL validation (which only CHECKS facts, inferred or
+# not, against shape constraints, and never itself adds a triple) are
+# different concepts even though both can read the same ontology file.
+#################################################################
+
+tech:ServiceShape
+    a sh:NodeShape ;
+    sh:targetClass tech:Service ;
+    rdfs:comment "Every Service must have a name and exactly one owning Team." ;
+    sh:property [
+        sh:path tech:name ;
+        sh:datatype xsd:string ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "A Service must have exactly one tech:name." ;
+    ] ;
+    sh:property [
+        sh:path tech:ownedBy ;
+        sh:class tech:Team ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "A Service must have exactly one owning Team (tech:ownedBy)." ;
+    ] .
+
+tech:CustomerCaseShape
+    a sh:NodeShape ;
+    sh:targetClass tech:CustomerCase ;
+    rdfs:comment "Every CustomerCase must have exactly one customer and a status from the fixed vocabulary rag.mcp.business.store already enforces server-side." ;
+    sh:property [
+        sh:path tech:raisedBy ;
+        sh:class tech:Customer ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "A CustomerCase must have exactly one customer (tech:raisedBy)." ;
+    ] ;
+    sh:property [
+        sh:path tech:status ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:in ( "open" "in_progress" "resolved" "closed" ) ;
+        sh:message "A CustomerCase's status must be exactly one of: open, in_progress, resolved, closed (the same transition vocabulary as rag.mcp.business.store._VALID_TRANSITIONS)." ;
+    ] .
+
+tech:DocumentShape
+    a sh:NodeShape ;
+    sh:targetClass tech:Document ;
+    rdfs:comment "Every Document must carry its own source/provenance: where it came from and how its graph facts were extracted." ;
+    sh:property [
+        sh:path tech:sourcePath ;
+        sh:datatype xsd:string ;
+        sh:minCount 1 ;
+        sh:message "A Document must have a tech:sourcePath (its ingested relative path)." ;
+    ] ;
+    sh:property [
+        sh:path tech:extractionMethod ;
+        sh:in ( "deterministic" "llm" ) ;
+        sh:minCount 1 ;
+        sh:message "A Document must record how its graph facts were extracted (tech:extractionMethod: 'deterministic' or 'llm')." ;
+    ] .
+
+tech:DependsOnEndpointsShape
+    a sh:NodeShape ;
+    sh:targetSubjectsOf tech:dependsOn ;
+    rdfs:comment "A supplementary constraint instead of a narrow rdfs:domain on tech:dependsOn (see that property's own comment for why a domain axiom here previously caused a real, caught RDFS-inference bug): anything that is the SUBJECT of a dependsOn triple must be typed as (at least) a Service or an Application, matching every subject_type rag.graph.schema.RelationshipType's DEPENDS_ON actually allows in the real corpus. This is exactly the kind of precise, multi-class constraint SHACL is suited for and RDFS domain/range is not: this check never manufactures a new type triple the way an RDFS domain axiom would; it only reports a violation if neither type is present." ;
+    sh:or ( [ sh:class tech:Service ] [ sh:class tech:Application ] ) .
+
+#################################################################
+# A validation report on valid data is expected to be fully conformant
+# (zero violations). See data/instances_graph_demo.ttl and
+# data/instances_customer_domain.ttl for the data validated against
+# these shapes, and data/instances_invalid.ttl for the deliberately
+# broken fixture that is expected to fail every shape above at least
+# once (see scripts/ontology_demo.py --demo shacl's printed report for both).
+#################################################################
