@@ -66,6 +66,12 @@ What sets this apart from a typical RAG tutorial project:
   validated away, and the write action's approval channel independently
   bound to a trusted, agent-minted token rather than any verifiable JWT.
   See [MCP](#mcp).
+- **Knowledge Graph & GraphRAG**: an optional Neo4j property graph with
+  deterministic plus schema-validated LLM extraction, graph authorization
+  enforced twice (a Cypher predicate and a Python post-execution
+  re-check), and four fusion strategies compared against plain vector
+  retrieval. Off by default, additive: `POST /query` is unmodified. See
+  [Knowledge Graph & GraphRAG](#knowledge-graph--graphrag).
 - **Full observability stack**: OpenTelemetry traces, Prometheus
   metrics, and Grafana dashboards wired to the real bounded agent
   workflow. See [Observability](#observability).
@@ -85,6 +91,7 @@ What sets this apart from a typical RAG tutorial project:
   - [Multimodal \& Layout-Aware Ingestion](#multimodal--layout-aware-ingestion)
   - [Agentic RAG](#agentic-rag)
   - [MCP](#mcp)
+  - [Knowledge Graph \& GraphRAG](#knowledge-graph--graphrag)
   - [Security](#security)
   - [Observability](#observability)
   - [Web UI](#web-ui)
@@ -142,6 +149,7 @@ For the detailed system view, see [`docs/architecture.md`](docs/architecture.md)
 | Security | JWT auth, tenant/role ACL, field redaction, rate limiting | independently toggleable, off by default |
 | Agent | bounded tool-calling workflow (`POST /agent/query`) | extensible |
 | MCP | Streamable HTTP server (4 agentic-RAG tools + 2 synthetic business read tools + 1 write action) and client (agent calls the 3 business tools) | independently toggleable, off by default |
+| GraphRAG | Optional Neo4j property graph + 4 fusion strategies | independently toggleable, off by default |
 
 ## Multimodal & Layout-Aware Ingestion
 
@@ -228,6 +236,39 @@ Off by default (`mcp.enabled: false`/`mcp.client.enabled: false`/
 `mcp.business_actions.enabled: false`, all true no-ops); full design and
 every hardening fix:
 [MCP](docs/topics/mcp.md).
+
+<!-- --8<-- [start:docs-graphrag] -->
+## Knowledge Graph & GraphRAG
+
+An optional Neo4j-backed property graph of entities and relationships
+(services, databases, teams, policies, runbooks, incidents) derived from
+the document corpus, plus a GraphRAG retrieval mode that combines graph
+traversal with the existing dense/hybrid vector pipeline. It is additive,
+not a replacement: `POST /query` and the agent's classic RAG path are
+unmodified. Graph capability is reachable only through four explicit
+agent tools (`search_knowledge_graph`/`get_entity`/`get_neighbors`/
+`find_dependency_path`) and a separate `POST /graph/query` endpoint.
+
+Authorization is enforced twice, independently: a Cypher `WHERE`
+predicate mirroring the vector store's own tenant/role rule, and a
+Python-side re-check applied to every returned node and relationship
+regardless of what the query's own predicate did. A path containing any
+unauthorized hop is discarded whole, never partially surfaced.
+
+Entity and relationship extraction is deterministic by default (Document,
+Category, and supersession facts derived directly from ingestion
+metadata), with an optional, schema-validated LLM extraction step for
+richer entity types. Retrieval uses six bounded, parameterized Cypher
+templates; an optional LLM-generated-Cypher fallback is read-only,
+depth-bounded, and text-validated before it runs, with the Python
+authorization re-check as the real security boundary, not the text
+validator.
+<!-- --8<-- [end:docs-graphrag] -->
+
+Off by default (`graph.enabled: false`, a true no-op: no Neo4j driver is
+constructed, and ingestion writes no graph facts); full design, schema,
+Cypher examples, and a 20-question interview reference:
+[Knowledge Graph & GraphRAG](docs/topics/graphrag.md).
 
 <!-- --8<-- [start:docs-security] -->
 ## Security
@@ -734,6 +775,10 @@ Unit tests (`tests/unit`) mock all external I/O and always run. Integration
 tests (`tests/integration`) assume Postgres (`make up`) and a local Ollama
 with `qwen2.5:1.5b` are already running, and skip with a clear message if
 either is unreachable.
+
+A small set of graph-specific integration tests additionally assume a
+local Neo4j instance (`make graph-up`) is running, and skip the same way
+when it is unreachable.
 
 `scripts/smoke_test_containers.sh` is a separate check for the
 containerized setup specifically: it assumes `docker compose up -d` (or

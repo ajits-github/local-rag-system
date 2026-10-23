@@ -6,7 +6,7 @@ to `main`, in addition to the pre-existing `unit-tests`/`integration-tests`/
 existing evaluation infrastructure (`rag.eval.run_eval`, the existing test
 suite) rather than a parallel evaluation framework. Full RAGAS scoring,
 hosted-judge calls, and broad Ollama-backed agent benchmarks stay manual and
-heavy -- see "What stays manual" below.
+heavy. See "What stays manual" below.
 
 ## What runs on every PR
 
@@ -17,10 +17,12 @@ Two new CI jobs, alongside the four pre-existing ones
   document/field-level authorization, DoS limits, rate limiting, MCP
   identity/business-tool authorization and approval logic, agent
   step/tool-call/retry bounds, insufficient-evidence and malformed-
-  tool-argument handling, the case-mutation routing fix, and citation
-  attribution. No Postgres, no Ollama -- pure unit tests, ~230 tests,
-  runs in well under a minute. See "Why a separate job" below for why this
-  duplicates part of what `unit-tests` already runs.
+  tool-argument handling, the case-mutation routing fix, citation
+  attribution, and graph-side tenant/role authorization plus the
+  LLM-generated-Cypher guardrails. No Postgres, no Ollama, no Neo4j:
+  pure unit tests, roughly 260 tests, and well under a minute. See "Why a
+  separate job" below for why this duplicates part of what `unit-tests`
+  already runs.
 - **retrieval-eval-gate**: ingests a small, tracked, deterministic sample
   corpus into a real (ephemeral, CI-only) Postgres+pgvector, runs
   `rag.eval.run_eval --skip-generation` against it, and checks the report
@@ -43,17 +45,17 @@ CI YAML. Currently:
 The retrieval floors deliberately leave roughly a one-discrete-step
 tolerance at this sample size (4 gold questions) rather than pinning the
 exact baseline value, so a single-bit change in chunking/embedding output
-doesn't flap the gate -- see the `rationale` field on each gate in
+doesn't flap the gate. See the `rationale` field on each gate in
 `config/eval_gates.yaml` for the exact reasoning per metric.
 
-The rest of the milestone's zero-tolerance security invariants (cross-tenant
+The remaining zero-tolerance security invariants (cross-tenant
 leakage, sensitive-field leakage, forged-role acceptance, unauthorized
 MCP/business actions, approval-required-without-approval mutations, direct
 tool-path authorization bypass) are **not** measurable as report metrics in
 CI: they need gold rows with tenant/`forbidden_documents` fields that only
 exist in the real, gitignored `techfusion` `security_evaluation` corpus (see
 CLAUDE.md's "Testing conventions"). They are instead enforced as
-deterministic pytest assertions in `security-regression-gate` -- each of
+deterministic pytest assertions in `security-regression-gate`. Each of
 those tests already asserts a denial/redaction/no-mutation outcome directly
 (pass/fail, not a threshold), so they need no separate entry in
 `eval_gates.yaml`.
@@ -64,12 +66,11 @@ those tests already asserts a denial/redaction/no-mutation outcome directly
 measured against the real, 126-question `techfusion` gold set and its
 gitignored corpus. Neither is available in CI. The retrieval-eval-gate job
 instead ingests the tracked `data/sample_docs/` (3 Markdown files) against
-`data/eval/sample_gold.jsonl` (4 questions) -- a different, much smaller,
+`data/eval/sample_gold.jsonl` (4 questions), a different, much smaller,
 but fully CI-safe and deterministic corpus. Its baseline numbers were
 measured directly (not estimated) by running the exact commands in "Run the
-gate locally" below. Table/code/layout-content-type diversity (which
-section 4 of the original design would prefer) isn't present in this
-sample corpus; broader content-type coverage stays part of the full,
+gate locally" below. Table, code, and layout content types are not present in
+this sample corpus; broader content-type coverage stays part of the full,
 manual `techfusion` evaluation.
 
 ## Why a separate `security-regression-gate` job
@@ -107,13 +108,13 @@ python scripts/check_eval_gates.py --report eval_report.json
 ```
 
 For the security-regression-gate subset, see the curated file list in
-`.github/workflows/ci.yml`'s `security-regression-gate` job, or just run:
+`.github/workflows/ci.yml`'s `security-regression-gate` job, or run:
 
 ```bash
 pytest tests/unit -k "authorization or field_policy or dos_limits or rate_limiting or mcp or agent_tool or agent_graph or citation or run_agent_eval"
 ```
 
-(a superset of the exact CI list -- fine for a local sanity check, but the
+(a superset of the exact CI list. It is fine for a local sanity check, but the
 CI job uses the explicit file list so it can't silently grow or shrink
 with an unrelated future test rename).
 
@@ -136,10 +137,10 @@ Ollama benchmark in the fast path):
 - Full RAGAS scoring (`rag.eval.run_ragas_eval`) against `openai`/
   `anthropic`/`ollama` judges.
 - The full 84/126-question `techfusion` deterministic evaluation
-  (`rag.eval.run_eval` against the real corpus) -- unavailable in CI
+  (`rag.eval.run_eval` against the real corpus), unavailable in CI
   anyway, since the corpus is gitignored.
 - The full agentic-RAG benchmark (`rag.eval.run_agent_eval`) against a real
-  Ollama model -- covered instead by the deterministic, LLM-free unit tests
+  Ollama model; covered instead by the deterministic, LLM-free unit tests
   in `security-regression-gate`.
 - MLflow experiment logging / `scripts/record_experiment.py` /
   `scripts/record_agent_experiment.py`.
@@ -150,7 +151,7 @@ These remain manual, run locally exactly as documented in README's
 
 ## Non-blocking / deliberately excluded metrics
 
-None of the current gates are marked `blocking: false` -- every metric in
+None of the current gates are marked `blocking: false`; every metric in
 `config/eval_gates.yaml` today is stable enough (a fixed, tiny, fully
 deterministic corpus with no reranker/agent/generation variance) to gate
 safely. `blocking: false` exists in the schema for a future metric that
