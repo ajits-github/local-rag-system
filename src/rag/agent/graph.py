@@ -28,6 +28,7 @@ from rag.agent.decisions import (
 from rag.agent.events import AgentEvent, EventType
 from rag.agent.state import AgentState, Citation, NodeInvocationTiming, ToolCallRecord
 from rag.agent.tool_schemas import (
+    GRAPH_TOOL_NAMES,
     REMOTE_MCP_TOOL_NAMES,
     TOOL_ARG_MODELS,
     WRITE_ACTION_TOOL_NAMES,
@@ -36,6 +37,8 @@ from rag.audit import log_audit_event
 from rag.config import AgentConfig, AppConfig
 from rag.embedders.base import Embedder
 from rag.generation.base import LLM
+from rag.graph.client import Neo4jClient
+from rag.graph.retrieval import GraphRetriever
 from rag.observability import metrics as observability_metrics
 from rag.observability import tracing
 from rag.prompts.loader import PromptTemplate, load_prompt_template
@@ -152,16 +155,19 @@ def _load_template(path: str) -> PromptTemplate:
 
 
 def _load_templates(config: AppConfig) -> dict[str, PromptTemplate]:
-    """Load the five agent decision-point templates from `config.agent.*_prompt_path`.
+    """Load the five agent prompt templates, choosing the `tool_select` variant from config.
 
-    `tool_select` resolves to one of three prompt variants depending on
-    `config.mcp.client.enabled`/`config.mcp.business_actions.enabled`.
+    The MCP variants take precedence over the graph variant. If MCP client
+    tools and graph tools are both enabled, the MCP variant is used and graph
+    tools are not offered.
     """
     agent_cfg = config.agent
     if config.mcp.client.enabled and config.mcp.business_actions.enabled:
         tool_select_path = agent_cfg.tool_select_mcp_actions_prompt_path
     elif config.mcp.client.enabled:
         tool_select_path = agent_cfg.tool_select_mcp_prompt_path
+    elif config.graph.enabled:
+        tool_select_path = agent_cfg.tool_select_graph_prompt_path
     else:
         tool_select_path = agent_cfg.tool_select_prompt_path
     return {
@@ -309,7 +315,7 @@ def _log_tool_call_completed(
     """Emit one structured tool-completion log line.
 
     Never includes raw tool arguments, raw tool output, or the exception
-    message text -- only the tool name, a bounded `error_type` (the
+    message text. Only the tool name, a bounded `error_type` (the
     exception class name, never `str(exc)`), and counts/timing.
     """
     logger.info(
@@ -393,36 +399,18 @@ _CASE_MUTATION_DIRECTIVE_RE = re.compile(
     r"\b(set|sets|setting|change|changes|changing|update|updates|updating|"
     r"mark|marks|marking|move|moves|moving|transition|transitions|transitioning)\b"
 )
-# An explicit status VALUE, not the bare word "status"/"state": a directive
-# verb paired only with the bare word ("give me an update on ... status")
-# reads at least as often as a read-only question as a mutation request, so
-# the directive branch below requires an actual target value to fire.
+# The directive branch requires an explicit target status value. A directive
+# verb with only the word "status" often comes from a read-only question.
 _CASE_STATUS_VALUE_RE = re.compile(r"\b(open|in.progress|resolved|closed)\b")
-# Case-identifying reference words a mutation request plausibly names its
-# subject with. Deliberately small and literal, mirroring the verb/directive
-# lists above -- "case" alone missed phrasings like "close ticket 1001".
+# Words that name the case being changed, such as "close ticket 1001".
 _CASE_REFERENCE_RE = re.compile(r"\b(case|ticket|request|issue)\b")
 
 
 def _looks_like_case_mutation_request(query: str) -> bool:
-    """Return whether the query clearly requests a case-status mutation.
+    """Return whether the query asks for a case-status change.
 
-    Matching requests are routed through the agent path so server-side
-    authorization, transition, and approval rules can run; this only
-    ever widens routing toward the agent path, never infers authorization
-    or approval itself.
-
-    Two conservative refinements on top of the base verb/directive check:
-    the directive branch (`update`/`change`/`mark`/...) requires an
-    explicit status *value* (`open`/`in_progress`/`resolved`/`closed`),
-    not just the bare word "status"/"state" -- otherwise a purely
-    informational question like "Can you give me an update on case
-    CASE-1001's status?" was misrouted onto the agent path. And the
-    case-identifying literal accepts a small synonym set
-    (case/ticket/request/issue), not just "case" -- otherwise a mutation
-    phrased without the word "case" (e.g. "close ticket 1001") fell
-    through entirely to the LLM's own classification, the exact failure
-    mode this deterministic override exists to close.
+    Used to route such queries to the agent path. It never grants authorization
+    or approval. Those checks happen server-side.
     """
     lowered = query.lower()
     if not _CASE_REFERENCE_RE.search(lowered):
@@ -477,12 +465,8 @@ def _select_tool(
     )
 
 
-#: The three tools that call `VectorStore` directly and therefore resolve
-#: `auth` themselves (see `rag.agent.tools`'s module docstring), as opposed
-#: to `search_knowledge_base`, which delegates auth resolution to
-#: `RetrievalPipeline.retrieve()`. `_execute_tool` uses this to decide
-#: whether pre-fetching `versions` for reuse across both `resolve_auth`
-#: calls is applicable.
+#: Tools that query `VectorStore` directly and resolve `auth` themselves.
+#: `search_knowledge_base` resolves auth inside `RetrievalPipeline.retrieve()`.
 DIRECT_FETCH_TOOL_NAMES = frozenset({"get_document", "get_latest_document", "get_related_context"})
 
 
@@ -497,6 +481,8 @@ def _dispatch_tool(
     dataset_id: str | None,
     agent_cfg: AgentConfig,
     versions: list[DocumentVersionInfo] | None = None,
+    graph_retriever: GraphRetriever | None = None,
+    graph_client: Neo4jClient | None = None,
 ) -> list[SearchResult]:
     """Call the matching `rag.agent.tools` function and wrap its output as `SearchResult`s.
 
@@ -510,7 +496,23 @@ def _dispatch_tool(
     it once and reuses it for its own post-dispatch `resolve_auth` call
     too. Ignored by `search_knowledge_base`, which resolves `auth`
     (and any versions it needs) inside `retrieve()` itself.
+
+    `graph_retriever`/`graph_client` back the four `GRAPH_TOOL_NAMES` tools.
+    `_execute_tool` rejects graph-tool calls before this point when either is `None`.
     """
+    if tool_name in GRAPH_TOOL_NAMES:
+        # GraphRetriever clamps max_hops itself, so no clamp is repeated here.
+        assert graph_retriever is not None and graph_client is not None
+        auth = state.authorization_context
+        if tool_name == "search_knowledge_graph":
+            return tools.search_knowledge_graph(
+                args, graph_retriever, graph_client, dataset_id, auth
+            )
+        if tool_name == "get_entity":
+            return tools.get_entity(args, graph_retriever, graph_client, dataset_id, auth)
+        if tool_name == "get_neighbors":
+            return tools.get_neighbors(args, graph_retriever, graph_client, dataset_id, auth)
+        return tools.find_dependency_path(args, graph_retriever, graph_client, dataset_id, auth)
     if tool_name == "search_knowledge_base":
         clamped_top_k = min(args.top_k, agent_cfg.max_tool_top_k)
         clamped_args = args.model_copy(update={"top_k": clamped_top_k})
@@ -586,6 +588,8 @@ def _execute_tool(
     config: AppConfig,
     mcp_app: Any | None = None,
     on_event: OnAgentEvent | None = None,
+    graph_retriever: GraphRetriever | None = None,
+    graph_client: Neo4jClient | None = None,
 ) -> AgentState:
     """Validate, dispatch, sanitize, and record one tool call.
 
@@ -599,14 +603,8 @@ def _execute_tool(
     try:
         args = arg_model.model_validate(decision.tool_args)
     except ValidationError as exc:
-        # Pydantic v2's default str(ValidationError) embeds each offending
-        # field's (truncated) input_value -- tool args originate from the
-        # LLM's own JSON decision, itself potentially influenced by
-        # prompt-injected retrieved content, so that could leak a bounded
-        # fragment of adversarial/retrieved text into the audit log.
-        # errors(include_input=False) reports only the error shape
-        # (field path + error type), matching the general tool-dispatch
-        # failure path below, which logs only error_type for the same reason.
+        # Log only the error shape. str(exc) would include the LLM's input
+        # values, which may contain injected retrieved text.
         error_shape = [
             {"loc": e["loc"], "type": e["type"]} for e in exc.errors(include_input=False)
         ]
@@ -641,16 +639,28 @@ def _execute_tool(
 
     is_remote_tool = decision.tool_name in REMOTE_MCP_TOOL_NAMES
     is_write_action = decision.tool_name in WRITE_ACTION_TOOL_NAMES
+    is_graph_tool = decision.tool_name in GRAPH_TOOL_NAMES
     mcp_client_disabled = is_remote_tool and not config.mcp.client.enabled
     business_action_disabled = is_write_action and not config.mcp.business_actions.enabled
-    if mcp_client_disabled or business_action_disabled:
-        # Defense in depth: the tool-select prompt already never offers a name
-        # unless its config is enabled (see _load_templates), so this only fires
-        # on a hallucinated/stale decision. Fails like an invalid-argument decision:
-        # a recorded failure, never a dispatch attempt, never a crash.
-        error = "mcp_client_disabled" if mcp_client_disabled else "business_actions_disabled"
+    graph_tool_disabled = is_graph_tool and (
+        not config.graph.enabled or graph_retriever is None or graph_client is None
+    )
+    if mcp_client_disabled or business_action_disabled or graph_tool_disabled:
+        # The tool-select prompt only offers enabled tools, so this fires only on
+        # a hallucinated decision. It is recorded as a failure, not dispatched.
+        error = (
+            "mcp_client_disabled"
+            if mcp_client_disabled
+            else "business_actions_disabled"
+            if business_action_disabled
+            else "graph_disabled"
+        )
         log_audit_event(
-            "agent_mcp_tool_disabled" if mcp_client_disabled else "agent_business_action_disabled",
+            "agent_mcp_tool_disabled"
+            if mcp_client_disabled
+            else "agent_business_action_disabled"
+            if business_action_disabled
+            else "agent_graph_tool_disabled",
             tool_name=decision.tool_name,
         )
         latency_ms = (time.perf_counter() - t0) * 1000
@@ -676,17 +686,8 @@ def _execute_tool(
         )
         return state
 
-    # Pre-fetch document versions once, when they'll actually be used: the
-    # three direct-fetch tools resolve `auth` themselves (needing this list
-    # for freshness), and the post-dispatch `resolve_auth` call below
-    # resolves `auth` again for `sanitize_evidence`. Both calls, given the
-    # same `state.authorization_context`/`dataset_id`, resolve to the same
-    # freshness exclusions, so sharing one fetch here (instead of each
-    # `resolve_auth` call fetching its own) avoids a redundant
-    # `VectorStore.list_document_versions` round trip per dispatch. Gated
-    # on `pipeline.authorization_enabled`: when the kill-switch is off,
-    # `resolve_auth` never touches the database regardless, so fetching
-    # here would only add a wasted query.
+    # Fetch versions once for both `resolve_auth` calls. Skipped when the
+    # authorization kill-switch is off, since `resolve_auth` then makes no query.
     versions: list[DocumentVersionInfo] | None = None
     if (
         not is_remote_tool
@@ -717,6 +718,8 @@ def _execute_tool(
                     dataset_id=dataset_id,
                     agent_cfg=agent_cfg,
                     versions=versions,
+                    graph_retriever=graph_retriever,
+                    graph_client=graph_client,
                 )
             tracing.set_attributes(span, {"tool_success": True, "result_count": len(results)})
     except Exception as exc:  # tool failure must never crash the request
@@ -866,19 +869,11 @@ def _insufficient_evidence_response(state: AgentState) -> AgentState:
 
 
 def _bound_reached_with_insufficient_evidence(state: AgentState) -> bool:
-    """Return True when a step/retrieval-attempt ceiling was hit right after a "not enough" verdict.
+    """Return True when a step or retrieval bound stopped the run with insufficient evidence.
 
-    Scoped deliberately to `max_steps`/`max_retrieval_attempts`: these are
-    the only two termination reasons that can immediately follow
-    `_evaluate_evidence` setting `evidence_sufficient=False` (see the
-    `run_agent` loop -- a genuine convergence is checked and broken out of
-    *before* either bound check runs, so this never fires for a real
-    "sufficient" answer). A `max_tool_calls` cutoff, a failed tool-selection
-    JSON parse, or a just-completed write-action tool call can also stop the
-    loop with a stale `evidence_sufficient=False` left over from an earlier
-    iteration, so this deliberately checks `termination_reason` too rather
-    than testing `evidence_sufficient` alone -- those cases still get a full
-    synthesis call, exactly as before this function existed.
+    Checks `termination_reason` as well as `evidence_sufficient`. Other stops
+    can leave a stale `evidence_sufficient=False`, and those still get a full
+    synthesis.
     """
     return state.evidence_sufficient is False and state.termination_reason in (
         "max_steps",
@@ -887,19 +882,11 @@ def _bound_reached_with_insufficient_evidence(state: AgentState) -> bool:
 
 
 def _low_confidence_evidence_response(state: AgentState) -> AgentState:
-    """Terminal node when a step/attempt ceiling is hit with insufficient, non-empty evidence.
+    """Terminal node for a bound hit with insufficient, non-empty evidence.
 
-    Distinct from `_insufficient_evidence_response` (which only fires when no
-    evidence was ever gathered): some evidence was gathered here, so it is
-    still cited, but the answer text is a fixed, deterministic hedge rather
-    than a full LLM synthesis call. The model's own last evidence-
-    sufficiency verdict already said this evidence is not enough; relying on
-    `agent_synthesize_v2.yaml`'s own prompt rule to hedge accordingly in
-    that exact situation is not a reliable guarantee -- the same reasoning
-    already applied to `sanitize_redaction_markers_in_answer` and
-    `_looks_like_case_mutation_request` elsewhere in this module. No
-    further LLM call is made; `state.termination_reason` is left as
-    whatever the caller already set (`max_steps`/`max_retrieval_attempts`).
+    Returns a fixed hedge answer, cites the gathered evidence, and makes no
+    LLM call. The hedge is not left to the prompt, because a prompt rule
+    cannot guarantee the behavior.
     """
     state.final_answer = _LOW_CONFIDENCE_EVIDENCE_ANSWER
     state.citations = _citations_from_evidence(state.retrieved_evidence)
@@ -1013,6 +1000,8 @@ def run_agent(
     mcp_app: Any | None = None,
     on_event: OnAgentEvent | None = None,
     cancel_event: threading.Event | None = None,
+    graph_retriever: GraphRetriever | None = None,
+    graph_client: Neo4jClient | None = None,
 ) -> AgentRunResult:
     """Run one bounded RAG request.
 
@@ -1030,6 +1019,11 @@ def run_agent(
         Reused from the existing DI wiring.
     config : AppConfig
         `config.agent` supplies every bound.
+    graph_retriever, graph_client : GraphRetriever | None, Neo4jClient | None, optional
+        Injected graph singletons, threaded through to the four graph
+        tools; `None` (the default) when `config.graph.enabled=False`, in
+        which case a graph-tool decision fails closed in `_execute_tool`
+        exactly like a disabled MCP tool would.
     mcp_app : Any | None, optional
         The in-process MCP ASGI app, threaded through for the remote
         business tools; unused when `mcp.client.enabled=False`.
@@ -1073,9 +1067,7 @@ def run_agent(
                 "tool_call_count": result.state.tool_call_count,
             },
         )
-        # Logged while root_span is still active (before __exit__ below detaches
-        # it) so JSONFormatter's ambient trace_id/span_id lookup finds it. Never
-        # includes query/answer/evidence text -- only run-shape counters.
+        # Log before the span closes so the log line carries its trace id. Only counters are logged.
         logger.info(
             "agent_request_completed",
             extra={
@@ -1158,10 +1150,7 @@ def run_agent(
 
     while True:
         if cancel_event is not None and cancel_event.is_set():
-            # Cooperative cancellation checkpoint: the caller (e.g. a disconnected
-            # SSE client) no longer needs this run's answer. Never interrupts a
-            # node call already in progress, only stops the next one from
-            # starting -- so this bounds, rather than eliminates, wasted work.
+            # Checked between nodes only. A node already running is not interrupted.
             state.termination_reason = "cancelled"
             break
 
@@ -1204,17 +1193,15 @@ def run_agent(
                 config=config,
                 mcp_app=mcp_app,
                 on_event=on_event,
+                graph_retriever=graph_retriever,
+                graph_client=graph_client,
             ),
         )
         if _step_or_stop(state, agent_cfg):
             break
         if decision.tool_name in WRITE_ACTION_TOOL_NAMES:
-            # A write-action attempt (any outcome: executed, approval_required,
-            # invalid_transition, already_in_status, or a dispatch failure) is
-            # always the last tool call of a run -- never retried in the same
-            # run's evidence-sufficiency/reformulate loop. Proceeds straight to
-            # synthesis, which reports the true outcome from the evidence
-            # _execute_tool already recorded.
+            # A write-action attempt is always the run's last tool call, whatever
+            # its outcome. Synthesis reports that outcome.
             break
 
         state = _call_node(
@@ -1233,9 +1220,8 @@ def run_agent(
         _increment_step(state)
 
         if state.evidence_sufficient:
-            # Evidence became sufficient on the final allowed step: a real
-            # convergence, not a step-bound cutoff, so check it before
-            # _check_step_bound would otherwise mislabel this run "max_steps".
+            # Check sufficiency before the step bound, so a run that converges on
+            # its last step is not labeled "max_steps".
             break
         if _check_step_bound(state, agent_cfg):
             break
@@ -1246,14 +1232,9 @@ def run_agent(
             )
             break
         _emit_event(on_event, "retry_started", state, t_start=t_start)
-        # Otherwise current_query has been reformulated (if the decision supplied
-        # one) and the loop continues back to select_tool.
 
     if state.termination_reason == "cancelled":
-        # Skip the final synthesis LLM call entirely: nobody is waiting on the
-        # answer, so making one more model call would defeat the point of
-        # cancelling. Every other termination reason still makes a best-effort
-        # synthesis call from whatever evidence was gathered.
+        # No synthesis call: the caller has disconnected.
         state.final_answer = None
         state.citations = []
     else:

@@ -59,6 +59,10 @@ class ToolSelectionDecision(BaseModel):
         "get_customer_case",
         "get_case_status",
         "update_case_status",
+        "search_knowledge_graph",
+        "get_entity",
+        "get_neighbors",
+        "find_dependency_path",
     ]
     tool_args: dict[str, Any] = Field(default_factory=dict)
 
