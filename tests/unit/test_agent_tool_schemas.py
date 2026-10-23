@@ -79,14 +79,19 @@ def test_get_document_args_expose_no_chunk_count_field():
 def test_tool_arg_models_cover_every_tool_name():
     """TOOL_ARG_MODELS has exactly one entry per tool the agent can dispatch.
 
-    Seven tools: the four local RAG tools plus the three remote MCP
-    business tools (get_customer_case/get_case_status/update_case_status).
+    Eleven tools: the four local RAG tools, the four graph tools, and the
+    three remote MCP business tools (get_customer_case/get_case_status/
+    update_case_status).
     """
     assert set(TOOL_ARG_MODELS) == {
         "search_knowledge_base",
         "get_document",
         "get_latest_document",
         "get_related_context",
+        "search_knowledge_graph",
+        "get_entity",
+        "get_neighbors",
+        "find_dependency_path",
         "get_customer_case",
         "get_case_status",
         "update_case_status",

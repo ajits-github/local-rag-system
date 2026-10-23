@@ -314,13 +314,17 @@ def test_max_tool_calls_bounds_remote_tool_dispatch_attempts_too():
 # --- local tool schemas/dispatch table are untouched --------------------------
 
 
-def test_tool_arg_models_cover_all_seven_tools_with_extra_forbid():
-    """The 4 local plus 3 remote MCP tools are the only entries, all extra='forbid'."""
+def test_tool_arg_models_cover_all_tools_with_extra_forbid():
+    """The 4 local, 4 graph, and 3 remote MCP tools are the only entries, all extra='forbid'."""
     assert set(TOOL_ARG_MODELS) == {
         "search_knowledge_base",
         "get_document",
         "get_latest_document",
         "get_related_context",
+        "search_knowledge_graph",
+        "get_entity",
+        "get_neighbors",
+        "find_dependency_path",
         "get_customer_case",
         "get_case_status",
         "update_case_status",

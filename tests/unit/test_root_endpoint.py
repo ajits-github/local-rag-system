@@ -39,6 +39,7 @@ def test_root_features_reflect_default_config():
         "agent_enabled": True,
         "vision_provider": "none",
         "tracing_enabled": False,
+        "graph_enabled": False,
     }
 
 
