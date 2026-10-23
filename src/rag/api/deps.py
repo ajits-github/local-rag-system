@@ -19,9 +19,18 @@ from rag.api.auth import AuthenticationError, VerifiedIdentity, verify_jwt
 from rag.audit import log_audit_event, pseudonymous_subject
 from rag.config import AppConfig, load_config
 from rag.embedders.base import Embedder
-from rag.factory import build_embedder, build_llm, build_reranker, build_vectorstore
+from rag.factory import (
+    build_embedder,
+    build_graph_client,
+    build_llm,
+    build_reranker,
+    build_vectorstore,
+)
 from rag.feedback.store import FeedbackStore
 from rag.generation.base import LLM
+from rag.graph.client import Neo4jClient
+from rag.graph.pipeline import GraphRAGPipeline
+from rag.graph.retrieval import GraphRetriever
 from rag.ingestion.pipeline import IngestionPipeline
 from rag.mcp.asgi import build_mcp_asgi_app
 from rag.rerankers.base import Reranker
@@ -72,7 +81,12 @@ def get_llm() -> LLM:
 @lru_cache
 def get_ingestion_pipeline() -> IngestionPipeline:
     """Return the process-wide `IngestionPipeline` singleton."""
-    return IngestionPipeline(get_config(), vectorstore=get_vectorstore(), embedder=get_embedder())
+    return IngestionPipeline(
+        get_config(),
+        vectorstore=get_vectorstore(),
+        embedder=get_embedder(),
+        graph_client=get_graph_client(),
+    )
 
 
 @lru_cache
@@ -84,6 +98,47 @@ def get_retrieval_pipeline() -> RetrievalPipeline:
         embedder=get_embedder(),
         reranker=get_reranker(),
         llm=get_llm(),
+    )
+
+
+@lru_cache
+def get_graph_client() -> Neo4jClient | None:
+    """Return the process-wide `Neo4jClient` singleton, or `None` when `graph.enabled=False`.
+
+    `None` means no driver or connection pool is created.
+    """
+    return build_graph_client(get_config())
+
+
+@lru_cache
+def get_graph_retriever() -> GraphRetriever | None:
+    """Return the process-wide `GraphRetriever` singleton, or `None` when graph is disabled.
+
+    Reuses the process-wide `LLM` singleton for the optional
+    LLM-generated-Cypher fallback (`config.graph.cypher_generation.enabled`)
+    rather than constructing a second model client.
+    """
+    client = get_graph_client()
+    if client is None:
+        return None
+    return GraphRetriever(get_config(), client, llm=get_llm())
+
+
+@lru_cache
+def get_graphrag_pipeline() -> GraphRAGPipeline:
+    """Return the process-wide `GraphRAGPipeline` singleton.
+
+    Always constructible (even when `graph.enabled=False`): with no graph
+    client/retriever, every fusion strategy other than the config default
+    `"vector_only"` would simply have nothing to fuse, and `answer()`'s
+    own `strategy == "vector_only"` check makes that explicit rather than
+    relying on this being unreachable.
+    """
+    return GraphRAGPipeline(
+        get_config(),
+        get_retrieval_pipeline(),
+        graph_client=get_graph_client(),
+        graph_retriever=get_graph_retriever(),
     )
 
 
@@ -197,8 +252,8 @@ def _rate_limit_key(request: Request) -> str:
     (the default) buckets by the verified identity's `tenant_id` when
     present, falling back to client IP otherwise. The config value is
     read once, at process start (`get_config()` is itself `lru_cache`d),
-    matching every other config-derived singleton in this module -- a
-    key-mode change requires a process restart, same as `enabled`.
+    matching every other config-derived singleton in this module. A key-mode
+    change requires a process restart, as does `enabled`.
     """
     key_mode = get_config().security.rate_limit.key
     identity: VerifiedIdentity | None = getattr(request.state, "identity", None)
