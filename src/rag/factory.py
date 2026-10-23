@@ -14,6 +14,7 @@ from rag.generation.anthropic_llm import AnthropicLLM
 from rag.generation.base import LLM
 from rag.generation.ollama_llm import OllamaLLM
 from rag.generation.openai_llm import OpenAILLM
+from rag.graph.client import Neo4jClient
 from rag.rerankers.base import Reranker
 from rag.rerankers.cohere import CohereReranker
 from rag.rerankers.cross_encoder import CrossEncoderReranker
@@ -188,6 +189,27 @@ def build_vision_provider(config: AppConfig) -> VisionProvider | None:
             prompt_version=config.vision.ollama.prompt_version,
         )
     raise ValueError(f"Unknown vision provider: {config.vision.provider}")
+
+
+def build_graph_client(config: AppConfig) -> Neo4jClient | None:
+    """Construct the `Neo4jClient` for the Knowledge Graph / GraphRAG capability, if enabled.
+
+    Returns `None` when `config.graph.enabled=False`. Callers must not attempt
+    a graph operation when they receive `None`.
+
+    Parameters
+    ----------
+    config : AppConfig
+        Application configuration.
+
+    Returns
+    -------
+    Neo4jClient | None
+        The constructed graph client, or `None` when graph is disabled.
+    """
+    if not config.graph.enabled:
+        return None
+    return Neo4jClient(config)
 
 
 def build_judge_llm(config: AppConfig) -> LLM:
