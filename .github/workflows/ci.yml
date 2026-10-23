@@ -49,6 +49,7 @@ jobs:
           predicate-quantifier: every
           filters: |
             docs_only:
+              - '*.md'
               - '**/*.md'
               - 'docs/**'
               - 'mkdocs.yml'
