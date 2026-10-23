@@ -13,106 +13,63 @@
 [![Ollama](https://img.shields.io/badge/Ollama-000000?logo=ollama&logoColor=white)](https://ollama.com)
 [![Docker](https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white)](https://www.docker.com)
 
-[![OpenTelemetry](https://img.shields.io/badge/OpenTelemetry-425CC7?logo=opentelemetry&logoColor=white)](https://opentelemetry.io)
-[![Prometheus](https://img.shields.io/badge/Prometheus-E6522C?logo=prometheus&logoColor=white)](https://prometheus.io)
-[![Grafana](https://img.shields.io/badge/Grafana-F46800?logo=grafana&logoColor=white)](https://grafana.com)
-[![MLflow](https://img.shields.io/badge/MLflow-0194E2?logo=mlflow&logoColor=white)](https://mlflow.org)
+A local, modular Retrieval-Augmented Generation system built for offline
+experimentation. It uses sentence-transformers for embeddings,
+PostgreSQL + pgvector for storage, Ollama for generation, and FastAPI for
+serving.
 
-A modular, config-driven Retrieval-Augmented Generation system that runs
-fully offline on a CPU-only machine: sentence-transformers embeddings,
-Postgres+pgvector storage, Ollama generation, FastAPI serving. Every
-infrastructure choice, embedding model, vector backend, chunker,
-reranker, LLM, is a swappable "provider" selected in
-`config/default.yaml`; nothing is hardcoded, so comparative experiments
-can change one axis without touching pipeline code.
+The main idea is simple: every important part of the RAG pipeline is
+config-driven. Embeddings, chunking, retrieval mode, reranking,
+generation, security controls, observability, MCP, and GraphRAG can be
+swapped or enabled from `config/default.yaml` without rewriting the
+pipeline code.
 
-- Fully offline, CPU-only, runs on 8GB RAM; no API keys required by default
-- Configurable retrieval (dense or hybrid dense+BM25), chunking, and reranking
-- Optional, independently toggleable: JWT auth + tenant/role authorization,
-  field-level redaction, rate limiting, a bounded agentic (tool-calling)
-  workflow, and OpenTelemetry/Prometheus/Grafana observability
-- Deterministic + RAGAS evaluation with an experiment-tracking table (see
-  [Benchmarks](#benchmarks))
-- A React web UI (`frontend/`) for interactive testing of both RAG paths
-- A closed feedback loop: thumbs up/down (+ optional reason/comment) on
-  any answer, persisted tenant-scoped in Postgres, exportable for human
-  review; never auto-promoted to gold eval data (see
-  [Feedback loop](#feedback-loop))
+The quickest path is:
 
-The fastest path is: install Python dependencies, start Postgres, ingest
-`data/sample_docs`, start the API, and call `/query` (see
-[Setup](#setup)).
+1. Install the Python package.
+2. Start Postgres.
+3. Ingest `data/sample_docs`.
+4. Start the API.
+5. Call `/query`.
 
-## Highlights
+The full setup is below.
 
-What sets this apart from a typical RAG tutorial project:
+## What This Project Includes
 
-- **Hand-rolled bounded agent workflow, not LangGraph**: a plain Python
-  state machine with three independent step/retry/tool-call bounds,
-  chosen deliberately over framework overhead. See
-  [`docs/architecture.md`](docs/architecture.md)'s "Agentic RAG" section
-  for the explicit reasoning against adopting one.
-- **Adversarial security test suite**: tenant isolation, field-level
-  redaction, prompt-injection detection, and document freshness are each
-  proven with dedicated adversarial integration tests, not just
-  happy-path unit tests. See [Security](#security).
-- **41 tracked experiments with real, documented regressions**: e.g. a
-  reranker that silently truncated results with no reranker configured,
-  and a directory-nesting bug that made a security metric read a false
-  `0.0`. Every run is in [Benchmarks](#benchmarks), not just the wins.
-- **MCP integration**: 7 tools (4 RAG + 2 synthetic business-backend
-  reads + 1 write action) over the official Python SDK, with caller
-  identity structurally excluded from the tool schema, not just
-  validated away, and the write action's approval channel independently
-  bound to a trusted, agent-minted token rather than any verifiable JWT.
-  See [MCP](#mcp).
-- **Knowledge Graph & GraphRAG**: an optional Neo4j property graph with
-  deterministic plus schema-validated LLM extraction, graph authorization
-  enforced twice (a Cypher predicate and a Python post-execution
-  re-check), and four fusion strategies compared against plain vector
-  retrieval. Off by default, additive: `POST /query` is unmodified. See
-  [Knowledge Graph & GraphRAG](#knowledge-graph--graphrag).
-- **Full observability stack**: OpenTelemetry traces, Prometheus
-  metrics, and Grafana dashboards wired to the real bounded agent
-  workflow. See [Observability](#observability).
-- **CI that actually gates**: ruff, mypy, pytest, a Docker build, and two
-  dedicated evaluation gates (retrieval-quality thresholds against a
-  tracked sample corpus, a curated security/agent-guardrail regression
-  suite) run on every PR, with centralized, documented baselines and an
-  explicit list of what's intentionally left out of CI and why. See
-  [Continuous Integration](#continuous-integration).
+- Offline, CPU-friendly RAG with no hosted API key required by default.
+- Dense retrieval, optional hybrid dense + BM25 retrieval, and optional reranking.
+- PDF, DOCX, HTML, Markdown, and text ingestion with layout-aware parsing.
+- Classic RAG through `POST /query`.
+- Optional bounded Agentic RAG through `POST /agent/query`.
+- Optional MCP server/client integration for external tool access and synthetic business tools.
+- Optional Neo4j-backed Knowledge Graph / GraphRAG path.
+- Optional RDF/RDFS/OWL/SHACL/SPARQL ontology layer on top of the graph, for
+  class-hierarchy-aware retrieval (CLI/eval only today, not wired into the API).
+- Optional JWT auth, tenant/role authorization, field redaction, rate limiting, and audit logging.
+- Optional OpenTelemetry, Prometheus, Grafana, and live agent progress streaming.
+- A small React web UI for testing classic and agentic RAG.
+- Deterministic evaluation scripts, optional RAGAS judging, and tracked experiment records.
+- Several additional learning-exercise branches, not merged into `main`:
+  Kubernetes/Helm/distributed-state deployment, and single- and multi-agent
+  LangGraph exercises. See [Experiment Branches](#experiment-branches) below.
 
-## Table of contents
+This README is intentionally focused on setup and orientation. Deeper
+design notes live in the docs:
 
-- [local-rag-system](#local-rag-system)
-  - [Highlights](#highlights)
-  - [Table of contents](#table-of-contents)
-  - [Architecture](#architecture)
-  - [Multimodal \& Layout-Aware Ingestion](#multimodal--layout-aware-ingestion)
-  - [Agentic RAG](#agentic-rag)
-  - [MCP](#mcp)
-  - [Knowledge Graph \& GraphRAG](#knowledge-graph--graphrag)
-  - [Security](#security)
-  - [Observability](#observability)
-  - [Web UI](#web-ui)
-  - [Feedback loop](#feedback-loop)
-  - [Prerequisites](#prerequisites)
-  - [Setup](#setup)
-  - [Containerized development](#containerized-development)
-    - [Windows-specific notes](#windows-specific-notes)
-  - [Configuration](#configuration)
-  - [Metadata \& filtering](#metadata--filtering)
-  - [Evaluation](#evaluation)
-    - [RAGAS generation-quality evaluation (optional)](#ragas-generation-quality-evaluation-optional)
-  - [Benchmarks](#benchmarks)
-    - [Agentic RAG benchmarks](#agentic-rag-benchmarks)
-    - [Recording a new experiment](#recording-a-new-experiment)
-    - [MLflow tracking](#mlflow-tracking)
-  - [Testing](#testing)
-  - [Continuous Integration](#continuous-integration)
-  - [Documentation](#documentation)
-  - [Roadmap](#roadmap)
-  - [License](#license)
+- [Architecture](docs/architecture.md)
+- [Security](docs/topics/security.md)
+- [Ingestion](docs/topics/ingestion.md)
+- [Retrieval](docs/topics/retrieval.md)
+- [Evaluation](docs/topics/evaluation.md)
+- [Agentic RAG](docs/topics/agentic-rag.md)
+- [MCP](docs/topics/mcp.md)
+- [GraphRAG](docs/topics/graphrag.md)
+- [Ontology & Semantic Layer](docs/topics/ontology.md)
+- [Observability](docs/topics/observability.md)
+- [Web UI](docs/topics/web-ui.md)
+- [Feedback](docs/topics/feedback.md)
+- [Deployment](docs/topics/deployment.md)
+- [Metrics reference](docs/metrics.md)
 
 ## Architecture
 
@@ -121,54 +78,53 @@ What sets this apart from a typical RAG tutorial project:
 flowchart TD
     Docs["Documents / Knowledge Sources"] --> Ingestion["Ingestion Pipeline"]
     Ingestion --> DB[("PostgreSQL + pgvector")]
+    Ingestion -. optional graph extraction .-> KG[("Neo4j Knowledge Graph")]
+    KG -. optional semantic layer .-> Ontology["RDF / OWL / SHACL Ontology"]
 
-    User(("User")) --> API["FastAPI"]
+    User(("User")) --> UI["React Web UI"]
+    User --> API["FastAPI"]
+    UI --> API
     API --> Retrieval["Retrieval"]
     DB --> Retrieval
     Retrieval --> Prompt["Prompt Builder"]
     Prompt --> LLM["LLM"]
     LLM -->|"Answer + Sources"| User
 
+    API -. optional .-> Agent["Bounded Agentic RAG"]
+    Agent -. RAG tools .-> Retrieval
+    Agent -. optional business tools .-> MCP["MCP Server / Client"]
+    Agent -. optional graph tools .-> KG
+    API -. optional .-> GraphQuery["GraphRAG Endpoint"]
+    GraphQuery --> KG
+
     Retrieval --> Evaluation
     LLM --> Evaluation["Evaluation<br/>Recall at k / MRR / RAGAS"]
 ```
 <!-- --8<-- [end:docs-architecture-diagram] -->
 
-For the detailed system view, see [`docs/architecture.md`](docs/architecture.md).
-
-| Component | Current implementation | Configurable / future |
+| Area | Default implementation | Notes |
 |---|---|---|
-| Embeddings | all-MiniLM-L6-v2 | swappable |
-| Vector DB | PostgreSQL + pgvector | swappable |
-| Chunker | structured Markdown | swappable |
-| Retrieval | dense or hybrid search | configurable |
-| Reranker | optional cross-encoder | Cohere / none |
-| LLM | Qwen2.5 via Ollama | swappable |
-| Prompt | versioned YAML templates | configurable |
-| Evaluation | Recall@k, MRR, RAGAS | extensible |
-| Security | JWT auth, tenant/role ACL, field redaction, rate limiting | independently toggleable, off by default |
-| Agent | bounded tool-calling workflow (`POST /agent/query`) | extensible |
-| MCP | Streamable HTTP server (4 agentic-RAG tools + 2 synthetic business read tools + 1 write action) and client (agent calls the 3 business tools) | independently toggleable, off by default |
-| GraphRAG | Optional Neo4j property graph + 4 fusion strategies | independently toggleable, off by default |
+| Embeddings | `sentence-transformers/all-MiniLM-L6-v2` | CPU by default |
+| Vector store | PostgreSQL + pgvector | Uses `DATABASE_URL` |
+| Chunking | Structured Markdown chunker | Preserves document structure |
+| Retrieval | Dense search | Hybrid search is configurable |
+| Reranking | Off | Cross-encoder/Cohere paths exist |
+| Generation | Ollama `qwen2.5:1.5b` | Uses `OLLAMA_BASE_URL` |
+| API | FastAPI | Main endpoints: `/query`, `/agent/query`, `/health` |
+| UI | React/Vite | Optional, in `frontend/` |
+| Security | Off by default | Enable under `config.security.*` |
+| GraphRAG | Off by default | Enable under `graph.*` |
+| Ontology | RDF/RDFS/OWL/SHACL/SPARQL | CLI/eval only today |
 
 ## Multimodal & Layout-Aware Ingestion
 
-PDF and DOCX documents keep their real structure (headings, tables,
-code/config blocks, images, page numbers) instead of being flattened to
-plain text; both loaders serialize into the same Markdown-equivalent
-syntax the default chunker already parses. Layout-aware ingestion is
-production-quality: `experiment_034` vs. `experiment_033` in the
-[Benchmarks](#benchmarks) table below shows a clear win from preserving
-structure (Recall@5 0.946 → 1.000, answer quality 0.264 → 0.310).
+PDF and DOCX documents are parsed with their structure intact where
+possible: headings, tables, code/config blocks, images, page numbers, and
+source metadata are preserved into Markdown-like content before chunking.
 
-An optional local vision provider (`vision.provider: ollama`, default
-`none`) can describe images with a small offline model (`moondream`), as
-a second chunk alongside the caption/alt-text, never replacing it.
-**Vision is experimental and off by default**: `experiment_035` (vision
-on) shows no answer-quality improvement over `experiment_034`
-(layout-aware text alone, vision off) on the same 28-question set. See
-[Multimodal & Layout](docs/topics/multimodal.md) for the full design and
-evaluation.
+An optional local vision provider can describe images through Ollama
+(`vision.provider: ollama`), but it is experimental and off by default.
+See [Multimodal & Layout](docs/topics/multimodal.md).
 
 <!-- --8<-- [start:docs-agentic-rag] -->
 ## Agentic RAG
@@ -181,94 +137,59 @@ uses the same retrieval authorization, freshness, redaction, and injection
 checks as the classic path.
 <!-- --8<-- [end:docs-agentic-rag] -->
 
-The details live in [`docs/architecture.md`](docs/architecture.md). A
-baseline is evaluated end-to-end; see
-[Agentic RAG benchmarks](#agentic-rag-benchmarks) below.
+The agent is deliberately not an open-ended autonomous loop. The model is
+asked for structured decisions, Python validates them, and server-side
+limits decide when the run stops. See [Agentic RAG](docs/topics/agentic-rag.md).
 
 <!-- --8<-- [start:docs-mcp] -->
 ## MCP
 
-A secure MCP (Model Context Protocol) server, mounted into the same
-`rag-api` process, exposes the four agentic-RAG tools
-(`search_knowledge_base`/`get_document`/`get_latest_document`/
-`get_related_context`) over Streamable HTTP for external MCP clients
-(Claude Desktop, another agent runtime). It wraps the exact same,
-already-hardened `rag.agent.tools.*` functions the in-process agent
-calls, unmodified: identity is resolved from the transport (a verified
-JWT, never a tool argument, structurally excluded from the tool schema,
-not just rejected by validation), every result passes through the same
-sanitization choke point as the agent path, and an unknown or injected
-tool argument now fails loudly rather than being silently dropped.
+The optional MCP server exposes the same hardened RAG tools used by the
+in-process agent over Streamable HTTP. Identity is resolved from the
+transport, not from model-supplied tool arguments, and tool outputs pass
+through the same sanitization path as normal agent evidence.
 
-The same server also exposes two synthetic business-backend read tools
-(`get_customer_case`/`get_case_status`) plus one write action
-(`update_case_status`), demonstrating MCP as an integration layer to a
-separate backend system, not just another transport for this
-deployment's own RAG tools. They read from (and, for the write action,
-mutate) a small, in-memory synthetic customer-support-case dataset with
-its own tenant/role authorization (same rule, same config allow-list
-document ACL already uses for cross-tenant access), structurally
-independent of the RAG tools' chunk-level sanitization, since a case has
-no chunk/field-redaction concept. `update_case_status` is gated by a
-fixed transition table and an approval requirement for one sensitive
-transition; the LLM can supply only `case_id`/`new_status`, never an
-approval -- that comes from a human caller's role-gated request field,
-carried on a signed, agent-minted service token the write tool
-independently verifies before honoring it (a real bypass here, where the
-tool briefly trusted any verifiable token instead of specifically an
-agent-minted one, was found by post-implementation review and fixed;
-see `ISSUES.md`).
-
-The in-process agent is also a real MCP *client* for those same business
-tools: `POST /agent/query` can dispatch `get_customer_case`/
-`get_case_status`/`update_case_status` over an actual `mcp.ClientSession`,
-never a shortcut direct function call, while the four RAG tools stay
-direct, in-process calls. Each call mints a short-lived internal service
-token from the caller's already-verified identity (never the caller's
-own JWT), and fails closed at startup if authentication isn't enabled,
-since these tools have no unauthenticated fallback state to preserve.
-The write action is always the last tool call of a run: whatever the
-outcome, the agent proceeds straight to synthesis rather than retrying
-the same mutation.
+The same MCP layer also includes a small synthetic customer-support
+backend with read tools and one guarded write action, so the project can
+demonstrate MCP as a real integration layer instead of only another way
+to call the RAG pipeline.
 <!-- --8<-- [end:docs-mcp] -->
 
-Off by default (`mcp.enabled: false`/`mcp.client.enabled: false`/
-`mcp.business_actions.enabled: false`, all true no-ops); full design and
-every hardening fix:
-[MCP](docs/topics/mcp.md).
+MCP is off by default with `mcp.enabled: false`,
+`mcp.client.enabled: false`, and `mcp.business_actions.enabled: false`.
+See [MCP](docs/topics/mcp.md).
 
 <!-- --8<-- [start:docs-graphrag] -->
 ## Knowledge Graph & GraphRAG
 
-An optional Neo4j-backed property graph of entities and relationships
-(services, databases, teams, policies, runbooks, incidents) derived from
-the document corpus, plus a GraphRAG retrieval mode that combines graph
-traversal with the existing dense/hybrid vector pipeline. It is additive,
-not a replacement: `POST /query` and the agent's classic RAG path are
-unmodified. Graph capability is reachable only through four explicit
-agent tools (`search_knowledge_graph`/`get_entity`/`get_neighbors`/
-`find_dependency_path`) and a separate `POST /graph/query` endpoint.
+GraphRAG is an optional Neo4j-backed capability. It builds a property
+graph of entities and relationships from the corpus and can combine graph
+traversal with the existing dense/hybrid vector pipeline.
 
-Authorization is enforced twice, independently: a Cypher `WHERE`
-predicate mirroring the vector store's own tenant/role rule, and a
-Python-side re-check applied to every returned node and relationship
-regardless of what the query's own predicate did. A path containing any
-unauthorized hop is discarded whole, never partially surfaced.
-
-Entity and relationship extraction is deterministic by default (Document,
-Category, and supersession facts derived directly from ingestion
-metadata), with an optional, schema-validated LLM extraction step for
-richer entity types. Retrieval uses six bounded, parameterized Cypher
-templates; an optional LLM-generated-Cypher fallback is read-only,
-depth-bounded, and text-validated before it runs, with the Python
-authorization re-check as the real security boundary, not the text
-validator.
+It is additive, not a replacement for classic RAG. `POST /query` remains
+unchanged; graph access is available through explicit agent tools and the
+separate `POST /graph/query` endpoint when `graph.enabled: true`.
 <!-- --8<-- [end:docs-graphrag] -->
 
-Off by default (`graph.enabled: false`, a true no-op: no Neo4j driver is
-constructed, and ingestion writes no graph facts); full design, schema,
-Cypher examples, and a 20-question interview reference:
-[Knowledge Graph & GraphRAG](docs/topics/graphrag.md).
+GraphRAG is off by default. See [Knowledge Graph & GraphRAG](docs/topics/graphrag.md).
+
+## Ontology & Semantic Layer
+
+An optional RDF/RDFS/OWL/SHACL/SPARQL semantic layer (`rag.ontology`) sits
+on top of the GraphRAG property graph, for the kind of class-hierarchy
+reasoning a flat Neo4j label set cannot express on its own: a query for
+"every Service" can also match something only ever typed `DatabaseService`,
+a real, measured recall improvement, not a hypothetical one.
+
+It is additive, like GraphRAG itself: nothing in `rag.graph` changes, and
+this layer reuses GraphRAG's own authorization function directly rather
+than re-implementing it, so inference never grants access on its own.
+Today it is reachable through `scripts/ontology_demo.py` and
+`python -m rag.eval.run_ontology_eval`, not wired into the API or the agent.
+
+See [Ontology & Semantic Layer](docs/topics/ontology.md) for the full
+RDF/RDFS/OWL/SHACL/SPARQL walkthrough against real data, the
+property-graph-vs-RDF comparison, and 25 interview questions.
 
 <!-- --8<-- [start:docs-security] -->
 ## Security
@@ -282,381 +203,322 @@ happens at the API boundary; authorization stays enforced entirely at
 retrieval, as two structurally separate modules.
 <!-- --8<-- [end:docs-security] -->
 
-Full control-by-control breakdown: [Security](docs/topics/security.md).
+This is a portfolio/local system, not a hosted production service. The
+implemented controls are still tested seriously; see [Security](SECURITY.md)
+and [Security design](docs/topics/security.md).
 
 <!-- --8<-- [start:docs-observability] -->
 ## Observability
 
-Operational telemetry on top of the agentic workflow: per-node timing
-(with a real-LLM-inference-vs-overhead split), OpenTelemetry traces,
-Prometheus metrics, a local Grafana dashboard, and a safe live-progress
-SSE stream (`POST /agent/query/stream`). Distinct from
-[MLflow tracking](#mlflow-tracking) below, which tracks experiment runs,
-not live requests.
-
-`/metrics` and the SSE stream are on by default (both true no-ops with
-nothing scraping/consuming them by default); OpenTelemetry tracing is off
-by default (`observability.tracing.enabled: false`) since it needs a real
-OTLP endpoint to be useful. To see traces and dashboards locally:
+The project can expose request metrics, live agent progress, distributed
+traces, and a local Grafana dashboard. `/metrics` and
+`POST /agent/query/stream` are enabled by default; tracing is off by
+default because it needs an OTLP endpoint.
 
 ```bash
 # set observability.tracing.enabled: true in config/default.yaml first
 make observability-up
 ```
 
-This brings up Jaeger (traces, `http://localhost:16686`), Prometheus
-(`http://localhost:9090`), and Grafana (`http://localhost:3000`,
-pre-provisioned with a dashboard) alongside the base stack, layered via
-`docker compose -f docker-compose.yml -f docker-compose.observability.yml
-up -d`, never brought up by plain `make up`. Teardown: `make
-observability-down`.
+This starts Prometheus at `http://localhost:9090`, Grafana at
+`http://localhost:3000`, and Jaeger at `http://localhost:16686`.
 <!-- --8<-- [end:docs-observability] -->
 
-Full design writeup: [Observability](docs/topics/observability.md).
+`GET /` returns which security/agent/vision/tracing features are
+currently enabled (booleans and provider names only, nothing
+identifying), and `GET /info` returns the concrete model/provider
+identity those flags intentionally omit. Both exist so the active
+configuration is always visible at a glance, after a real incident
+where a demo looked compromised because its running config had every
+security control silently off and nothing in the UI said so.
+
+See [Observability](docs/topics/observability.md).
 
 <!-- --8<-- [start:docs-web-ui] -->
 ## Web UI
 
-A small React/Vite/TypeScript chat interface (`frontend/`) sits over the
-existing API: choose Classic or Agentic RAG, watch live agent progress,
-inspect sources/citations, and see an always-visible summary of the
-connected backend's active security/agent feature flags (`GET /`'s
-`features` block, booleans and provider names only, never a secret). A
-separate collapsible "Runtime configuration" panel (`GET /info`) adds the
-concrete pipeline identity behind those flags: generation/embedding
-model, retrieval mode, fusion method, reranker, and MCP/vision status. It
-reuses the backend as-is; no RAG logic lives in the frontend.
+A React/Vite/TypeScript chat UI lives in `frontend/`. It can call classic
+RAG or Agentic RAG, show source citations, stream agent progress, and
+display the backend feature flags returned by the API.
 <!-- --8<-- [end:docs-web-ui] -->
 
-![Classic RAG answer with the feature-flags bar and expanded source citations](docs/assets/web-ui-screenshot.png)
+![Classic RAG answer with feature flags and source citations](docs/assets/web-ui-screenshot.png)
 
-*A real `POST /query` round trip against the sample corpus: the feature-flags
-bar confirms which security controls are active, and the sources panel shows
-the actual retrieved chunks with scores and section paths.*
+*The local Web UI showing a classic RAG answer, backend feature flags,
+and expandable source citations from the retrieved chunks.*
 
 <!-- --8<-- [start:docs-web-ui-setup] -->
 ```bash
-make up             # backend only (Postgres + rag-api)
+make up             # backend only: Postgres + rag-api
 make frontend-up    # backend + frontend, http://localhost:3001
 ```
 
-or for local frontend development against a native `uvicorn`/Docker
-backend: `cd frontend && npm install && npm run dev`
-(`http://localhost:5173`).
+For local frontend development against an already-running backend:
+
+```bash
+cd frontend
+npm install
+npm run dev         # http://localhost:5173
+```
 <!-- --8<-- [end:docs-web-ui-setup] -->
-See [`frontend/README.md`](frontend/README.md)
-for the full setup, authentication behavior, and known limitations.
+
+See [frontend/README.md](frontend/README.md).
 
 <!-- --8<-- [start:docs-feedback] -->
-## Feedback loop
+## Feedback Loop
 
-`POST /feedback` lets a caller rate an answer they already received
-(`positive`/`negative`, plus an optional small structured reason and a
-bounded free-text comment), tied to that answer's `request_id` (the same
-correlation id returned in `QueryResponse.request_id`/
-`AgentQueryResponse.request_id` and the `x-request-id` response header).
-Identity/tenant handling is byte-identical to `/query`'s: a verified JWT
-always wins over a body-supplied `tenant_id`, and a mismatch is logged,
-never trusted. One row per `(tenant_id, caller, request_id)`; a later
-submission for the same run updates that row rather than creating a
-duplicate.
+`POST /feedback` stores a user's positive or negative rating for a
+previous answer, tied to the answer's `request_id`. Feedback is scoped by
+tenant and caller in the same way as `/query`.
 
-Feedback is never treated as ground truth. There is no public
-`GET /feedback`; `scripts/export_feedback.py` is the reviewer-facing path
-(JSONL/CSV, filterable by tenant/rating/dataset/route/date), producing
-data for a human to review before anything is hand-curated into a gold
-eval file. See `docs/architecture.md`'s "Feedback loop" section for the
-full design (schema, dedup semantics, privacy controls) and the web UI's
-thumbs controls (`frontend/src/components/chat/FeedbackControls.tsx`).
+Feedback is never treated as ground truth or automatically promoted into
+evaluation data. It is stored for human review and can be exported with
+`scripts/export_feedback.py`.
 <!-- --8<-- [end:docs-feedback] -->
 
-<!-- --8<-- [start:docs-prereq-setup] -->
+See [Feedback](docs/topics/feedback.md).
+
 ## Prerequisites
 
-- Python 3.11+
-- [Docker](https://www.docker.com/) (for the Postgres+pgvector container)
-- [Ollama](https://ollama.com/) installed, **running**, and with
-  `qwen2.5:1.5b` pulled:
-  ```bash
-  ollama pull qwen2.5:1.5b
-  ```
-  Ollama usually starts automatically after install; verify it's actually
-  serving with `ollama list` (or `curl http://localhost:11434/api/version`).
-  If it's installed but not on your PATH, invoke it by its full path (e.g.
-  on Windows: `C:\Users\<you>\AppData\Local\Programs\Ollama\ollama.exe`).
-  Optional: pull `moondream` (`ollama pull moondream`) only if you plan to
-  set `vision.provider: ollama` in config. The default `vision.provider:
-  none` needs no extra model.
-- **`make`**: optional shortcut for `up`/`ingest`/`query`/`test`.
-  **Not installed by default on Windows** (neither Git Bash nor PowerShell
-  ship it). Install it via `choco install make`, `scoop install make`, or
-  WSL, *or* skip it entirely and run the underlying command shown next to
-  each `make` target below. The Makefile uses `bash`, so native
-  PowerShell users should prefer the explicit commands.
+<!-- --8<-- [start:docs-prereq-setup] -->
+You need:
+
+- Python 3.11 or newer.
+- Docker Desktop or Docker Engine with Docker Compose V2.
+- Ollama running on the host machine.
+- `make` is optional. If it is not installed, use the explicit commands
+  shown next to each Makefile shortcut below.
+- The default generation model:
+
+```bash
+ollama pull qwen2.5:1.5b
+```
+
+Optional models:
+
+```bash
+ollama pull qwen2.5:3b   # useful for heavier local experiments
+ollama pull moondream    # only needed for optional image descriptions
+```
+
+Create a virtual environment and install the project:
+
+```bash
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -e ".[dev]"
+```
+
+On macOS/Linux:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+```
+
+Create a local environment file:
+
+```bash
+copy .env.example .env
+```
+
+On macOS/Linux:
+
+```bash
+cp .env.example .env
+```
 
 ## Setup
 
-1. Create a virtualenv and install the project.
-   PowerShell:
-   ```powershell
-   python -m venv .venv
-   .\.venv\Scripts\Activate.ps1
-   pip install -e ".[dev]"
-   ```
-   macOS/Linux:
-   ```bash
-   python -m venv .venv
-   source .venv/bin/activate
-   pip install -e ".[dev]"
-   ```
-2. Copy `.env.example` to `.env` and adjust if needed. `DATABASE_URL` points
-   at Postgres on **host port 15987** (not the default 5432) so it won't
-   collide with any other local Postgres instance:
-   ```bash
-   cp .env.example .env
-   ```
-   Already have a Postgres+pgvector container running locally? Point
-   `DATABASE_URL` at it directly instead of step 3's `docker-compose.yml`
-   (matching its real `POSTGRES_DB` name), then still run
-   `python scripts/init_db.py` (idempotent) to create/migrate the schema.
-3. Bring up Postgres+pgvector and initialize the schema:
-   ```bash
-   make up
-   ```
-   Without `make`, run the two steps it wraps:
-   ```bash
-   docker compose up -d
-   python scripts/init_db.py
-   ```
-   If `init_db.py` cannot connect immediately, wait until the
-   `local-rag-postgres` container is healthy and run it again.
-4. Ingest the bundled smoke-test documents.
-   ```bash
-   make ingest FILE=data/sample_docs DATASET_ID=sample_docs
-   ```
-   Without `make`:
-   ```bash
-   python -m rag.ingestion.pipeline data/sample_docs --dataset-id sample_docs
-   ```
-   Any file or directory can be ingested. Use a different `--dataset-id`
-   when you ingest a separate corpus.
-
-   Re-running ingestion on unchanged files is a no-op (checksum-based, no
-   duplicate chunks); edited files are detected and re-chunked in place
-   under the same `document_id`.
-5. Start the API:
-   ```bash
-   uvicorn rag.api.main:app --reload
-   ```
-   Then hit `GET /health`, `POST /ingest`, `POST /query`, or browse
-   `/docs` / `/redoc`.
-6. Query via the Makefile once the API is running:
-   ```bash
-   make query Q="What are the deployment windows for production releases?"
-   ```
-   Without `make`:
-   ```bash
-   curl -s -X POST http://localhost:8000/query -H "Content-Type: application/json" -d '{"query": "What are the deployment windows for production releases?"}'
-   ```
-   Response shape (`answer` text, `score`, and timing values vary by run;
-   the `deployment-process.md` source is what to expect from this exact
-   query against the sample corpus):
-   ```json
-   {
-     "answer": "Standard deployments are only permitted on Tuesdays and Thursdays, between 10:00 and 14:00 UTC. Deployments outside this window require sign-off from the on-call engineering manager. Emergency hotfixes for active incidents are exempt from the window restriction.",
-     "sources": [
-       {
-         "chunk_id": "3f1a...2_1",
-         "document_id": "3f1a...2",
-         "source": "deployment-process.md",
-         "category": null,
-         "score": 0.83,
-         "content_type": "prose",
-         "section_path": "Deployment Windows"
-       }
-     ],
-     "retrieval_ms": 42.1,
-     "generation_ms": 3190.4,
-     "total_ms": 3232.5
-   }
-   ```
-   Filter retrieval by the `category` metadata preserved from folder
-   structure; only meaningful once you've ingested a dataset with
-   subfolders (`data/sample_docs/` is flat, so this is illustrative rather
-   than directly runnable against it):
-   ```bash
-   curl -s -X POST http://localhost:8000/query -H "Content-Type: application/json" \
-     -d '{"query": "What MFA methods are approved?", "filters": {"category": "security"}}'
-   ```
-<!-- --8<-- [end:docs-prereq-setup] -->
-
-<!-- --8<-- [start:docs-containerized-dev] -->
-## Containerized development
-
-Postgres+pgvector and the API can both run in containers. Ollama usually
-stays native on the host, and the API container reaches it through
-`host.docker.internal`. Requires **Docker Compose V2**.
+Start Postgres + pgvector and initialize the schema:
 
 ```bash
-docker compose up -d --build          # first build pulls ~1-2GB of ML deps (PyTorch); later ones are cached
-python scripts/init_db.py             # against the containerized Postgres, via DATABASE_URL in .env
-curl http://localhost:8000/health     # {"vectorstore":"ok","llm":"ok"} confirms it reached both deps
-scripts/smoke_test_containers.sh      # full ingest -> query round trip, one shot
-docker compose down                   # add -v to also drop the pgdata volume
+make up
 ```
-Ingest/query work exactly as in native dev, same port/endpoints. `src/`
-and `config/` are bind-mounted with `--reload`, so Python edits need no
-rebuild. Only `pyproject.toml` changes require rebuilding the image.
 
-**Production-shaped run**: `docker-compose.prod.yml` drops the bind
-mounts and `--reload`, stops publishing Postgres's port, and tightens
-health-check timing (same-host "productionized," not a Kubernetes
-substitute):
+If `make` is not available:
+
+```bash
+docker compose up -d
+python scripts/init_db.py
+```
+
+Ingest the sample documents:
+
+```bash
+make ingest FILE=data/sample_docs DATASET_ID=sample_docs
+```
+
+Without `make`:
+
+```bash
+python -m rag.ingestion.pipeline data/sample_docs --dataset-id sample_docs
+```
+
+Any file or directory can be ingested. Use a different `DATASET_ID` /
+`--dataset-id` when you ingest a separate corpus. Re-running ingestion on
+unchanged files is a no-op; edited files are detected and re-chunked.
+
+Start the API natively:
+
+```bash
+uvicorn rag.api.main:app --reload
+```
+
+The API will be available at:
+
+- `http://localhost:8000`
+- `http://localhost:8000/docs`
+- `http://localhost:8000/health`
+
+Ask a sample question:
+
+```bash
+make query Q="What are the deployment windows for production releases?"
+```
+
+Or call the API directly:
+
+```bash
+curl -s -X POST http://localhost:8000/query \
+  -H "Content-Type: application/json" \
+  -d "{\"query\":\"What are the deployment windows for production releases?\",\"dataset_id\":\"sample_docs\"}"
+```
+
+Useful local commands:
+
+```bash
+make test          # run tests
+make down          # stop the base Docker stack
+make frontend-up   # start the optional web UI
+make graph-up      # start optional Neo4j for GraphRAG
+```
+<!-- --8<-- [end:docs-prereq-setup] -->
+
+## Containerized Development
+
+<!-- --8<-- [start:docs-containerized-dev] -->
+For the simplest containerized run:
+
+```bash
+docker compose up -d --build
+```
+
+This starts:
+
+- Postgres + pgvector on host port `15987`.
+- The API on `http://localhost:8000`.
+
+Ollama still runs on the host. The API container reaches it through
+`host.docker.internal` by default.
+
+Stop the stack:
+
+```bash
+docker compose down
+```
+
+Add `-v` only when you also want to delete the Postgres volume.
+
+For a production-shaped local run:
+
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 ```
 
-**Running the API against an alternate config file**: `RAG_CONFIG_PATH`
-(unset by default) overrides which YAML the API loads instead of
-`config/default.yaml`. `config/` is already bind-mounted into the
-container at `/app/config`, so any file under `config/experiments/` is
-reachable by its in-container path. Set it in the host shell before
-bringing the stack up (`docker-compose.yml` forwards it through
-unchanged; it is never hardcoded there):
-```bash
-RAG_CONFIG_PATH=/app/config/experiments/agentic-rag-baseline-v1.yaml docker compose up -d
-```
-An unset or empty value preserves the default behavior exactly. A path
-that doesn't exist, or isn't valid YAML, fails loudly at config-load time
-rather than silently falling back to `config/default.yaml`.
+To run the API with another config file:
 
-**`config/default.yaml` is a local dev/demo posture, not a production
-one.** Every security control ships off (`authorization`, `field_redaction`,
-`auth`, `rate_limit`) so the quickstart above works with zero setup, and
-the agentic path still points at the original, pre-fix prompt versions.
-`config/production.yaml` is the recommended profile for any real
-deployment -- every security control this project has built and
-validated, turned on, built from the most complete validated experiment
-records (see that file's own header comment for the full rationale):
 ```bash
 RAG_CONFIG_PATH=/app/config/production.yaml docker compose up -d
 ```
 
-### Windows-specific notes
+`config/default.yaml` is a zero-setup demo profile: every security
+control (auth, authorization, field redaction, rate limiting, tracing)
+is off so the quickest-path setup above works with no extra
+configuration. `config/production.yaml` turns all of those on and
+switches to the stricter generation prompt; it is the config this
+project actually recommends for anything beyond local experimentation.
+See `docs/topics/deployment.md`.
 
-- `host.docker.internal` (used to reach native Ollama) is a Docker Desktop
-  feature; `docker-compose.yml` also adds `extra_hosts:
-  host.docker.internal:host-gateway` so it resolves on native Linux too.
-- Docker Desktop's Windows file sharing doesn't enforce host-side POSIX
-  permissions, so the non-root `rag` user can read/write the bind-mounted
-  volumes without any `chown`/`chmod` step (native Linux would need the
-  container UID to match the host user's).
-- The embedding model downloads from Hugging Face Hub on first use inside
-  a fresh container/volume if not already cached. It needs outbound internet
-  that one time, same as native.
+For Windows, keep Docker Desktop and Ollama running before starting the
+stack. If Ollama is not reachable, the API still starts, but generation
+requests will fail until Ollama is available.
 <!-- --8<-- [end:docs-containerized-dev] -->
 
 ## Configuration
 
-All provider choices and tunables live in `config/default.yaml`:
-embedding model, chunk size/overlap, reranker (`none` / `cross_encoder` /
-`cohere`), LLM, retrieval `candidate_k`, generation context size, security
-toggles, and agent bounds. `config/default.yaml` is a developer-friendly
-demo posture (every security toggle off); `config/production.yaml` is
-the profile to point a real deployment at instead -- see "Running the
-API against an alternate config file" above. Point at an alternate
-config with `--config path/to/other.yaml` on the ingestion/eval CLIs.
-The running API (not a CLI) instead reads the `RAG_CONFIG_PATH`
-environment variable, unset by default. Comparable configs for
-experiments live under `config/experiments/`, each a full standalone
-copy rather than a partial override, and each an immutable record of a
-specific past evaluation run -- `config/production.yaml` is the one
-config file in this project meant to be updated as new security fixes
-land.
+Most behavior is controlled in `config/default.yaml`. Common changes:
 
-Generation prompts are versioned YAML files under
-`src/rag/prompts/templates/` (`rag_answer_v1.yaml`, `rag_answer_v2.yaml`,
-...), loaded and validated by `src/rag/prompts/loader.py`. The active
-version is selected by `config/default.yaml`'s `generation.prompt` block
-(`id`, `version`, `path`); `RetrievalPipeline` loads it once at
-construction and rejects the file if its own declared `prompt_id`/`version`
-don't match what's configured. API reference:
-[Configuration & factory](docs/reference/config.md).
+- `generation.model_name`: switch the Ollama model.
+- `retrieval.provider`: choose `dense` or `hybrid`.
+- `reranker.provider`: choose `none`, `cross_encoder`, or `cohere`.
+- `security.*`: enable auth, authorization, redaction, and rate limiting.
+- `agent.*`: tune the bounded agent workflow.
+- `mcp.*`: enable MCP server/client behavior.
+- `graph.*`: enable GraphRAG.
+- `observability.*`: enable tracing or change metrics behavior.
 
-## Metadata & filtering
+The running API reads `RAG_CONFIG_PATH` when set. CLI commands can also
+accept explicit config paths where supported.
 
-Every chunk carries source metadata such as `document_id`, `chunk_id`,
-`source`, `source_type`, timestamps, language, `category`, governance
-fields, and structural fields. For directory ingestion, `category` is the
-file's path relative to the ingested root, such as `security` or
-`security/subteam`. See [Ingestion & Chunking](docs/topics/ingestion.md)
-for the full structural-metadata model.
+Environment values such as `DATABASE_URL`, `OLLAMA_BASE_URL`,
+`COHERE_API_KEY`, and `JWT_HS256_SECRET` are read from the environment
+instead of being hardcoded into config files.
 
-`POST /query` accepts exact-match filters for an explicit allow-list of
-metadata fields (never an arbitrary column). The most common filter is
-`category`.
+## Metadata And Filtering
+
+Every chunk carries metadata such as `document_id`, `chunk_id`, `source`,
+`source_type`, timestamps, language, `category`, governance fields, and
+structural fields.
+
+`POST /query` accepts exact-match filters for an allow-list of metadata
+fields. The most common filter is `category`. Directory ingestion sets
+`category` from the file path relative to the ingested root.
 
 ## Evaluation
 
-`data/eval/sample_gold.jsonl` is a small smoke-test gold file for
-`data/sample_docs`. Run it after the sample dataset is ingested:
+After ingesting `data/sample_docs`, run the deterministic smoke eval:
 
 ```bash
 python -m rag.eval.run_eval --gold data/eval/sample_gold.jsonl --dataset-id sample_docs
 ```
-`--dataset-id` is mandatory and is injected as a filter on every retrieval.
-Reports include Recall@5/10, Hit Rate@5/10, MRR, latency, and a simple
-keyword-overlap answer-quality score. Add `--verbose` for per-question
-details or `--skip-generation` for retrieval-only metrics. See
-[Evaluation & RAGAS](docs/topics/evaluation.md) and the
-[metrics reference](docs/metrics.md) for the full deterministic-metric
-breakdown, including the multimodal/security-specific ones not shown here.
 
-### RAGAS generation-quality evaluation (optional)
+The report includes Recall@5/10, Hit Rate@5/10, MRR, latency, and a
+simple answer-quality score. Use `--skip-generation` for retrieval-only
+metrics or `--verbose` for per-question details.
 
-RAGAS scoring is optional and uses a separately configured judge model.
-Install the extra only if you plan to run it:
-```bash
-pip install .[ragas]           # local (ollama) judge
-pip install .[ragas,anthropic] # + hosted anthropic judge
-```
-The judge is selected in `config/default.yaml` under `judge:`. Hosted
-judges read API keys from environment variables; no key is hardcoded.
+RAGAS judging is optional:
 
 ```bash
-python -m rag.eval.run_ragas_eval --gold data/eval/sample_gold.jsonl \
-    --dataset-id sample_docs --verbose > /tmp/ragas_report.json
+pip install .[ragas]
+python -m rag.eval.run_ragas_eval --gold data/eval/sample_gold.jsonl --dataset-id sample_docs
 ```
-`--sample-size` defaults to 15 so hosted judging can be tested cheaply
-before scaling up. Judge calls are cached under `.cache/ragas` by default.
 
-RAGAS scores should be checked against human labels before being treated
-as a quality gate:
-```bash
-python scripts/generate_manual_review.py --eval-output /tmp/ragas_report.json --num-rows 10
-# fill in the human_faithful/human_correct/human_relevant/human_correct_refusal
-# fields in the generated JSONL by hand, then:
-python scripts/compare_ragas_manual.py --ragas-output /tmp/ragas_report.json \
-    --manual-review data/eval/manual_review/sample_docs_manual_review.jsonl
-```
-The comparison report shows where the judge agrees or disagrees with the
-human labels.
+Hosted judges need their own API keys in environment variables. See
+[Evaluation & RAGAS](docs/topics/evaluation.md).
 
 <!-- --8<-- [start:docs-benchmarks] -->
 ## Benchmarks
 
-`experiments/` tracks comparable eval runs over time: `config_snapshots/`
-holds a snapshot of the config used per experiment, `results/` holds a
-flat JSON metrics record per experiment, and `reports/` holds the
-generated comparison table. Only aggregate metrics and config values are
-stored here, never corpus content or generated answers, so all three are
-safe to commit even though the underlying corpus (`data/knowledge_base/`)
-is gitignored (only `data/sample_docs/` ships in the repo).
+`experiments/` tracks comparable eval runs over time:
 
-The table below is generated, not hand-written; don't edit it directly,
-regenerate it instead (see "Recording a new experiment"). It shows only
-the most recent 7 experiments; the full, ever-growing history always
-lives in `experiments/reports/comparison.md`.
+- `experiments/config_snapshots/`: the config used for each run.
+- `experiments/results/`: machine-readable metric records.
+- `experiments/reports/`: generated comparison reports and writeups.
+
+Only aggregate metrics and config values are stored here, not private
+corpus content or generated answers. The table below shows the latest
+seven classic-RAG experiments; the full history lives in
+`experiments/reports/comparison.md`.
+
+The `techfusion` dataset these numbers were measured against lives under
+`data/knowledge_base/`, which is gitignored and not part of this
+repository. Cloning this repo gives you the pipeline and the recorded
+results, not the private corpus itself; `data/sample_docs/` is the
+tracked, reproducible dataset the Setup section above walks through.
+See `docs/metrics.md` for exact definitions of every
+column below.
 
 <!-- EXPERIMENTS_TABLE_START -->
 | Experiment | Label | Retrieval | Generation model | Embedder | Reranker | Prompt | Rel.Exp | Recall@5 | Recall@10 | Hit Rate@10 | MRR | Answer quality | Supp.Ctx Hit | Img Hit | RAGAS Faithful | RAGAS Correct | Total latency | Dataset | Date |
@@ -670,215 +532,166 @@ lives in `experiments/reports/comparison.md`.
 | experiment_039 | rag_answer_v5_ragas_25q_prompt_ab_sample | hybrid | qwen2.5:3b | all-MiniLM-L6-v2 | none | v5 | on | 0.440 | 0.480 | 0.480 | 0.407 | 0.361 | 0.833 | - | 0.707 | 0.379 | 12.6s | techfusion | 2026-08-22 |
 <!-- EXPERIMENTS_TABLE_END -->
 
-*Total latency is the mean retrieval plus generation time per question.
-Every row is measured with `dataset_id`-isolated retrieval, so results are
-not mixed across datasets in the same vector store.*
-<!-- --8<-- [end:docs-benchmarks] -->
+Total latency is mean retrieval plus generation time per question. Every
+row uses `dataset_id`-isolated retrieval, so results are not mixed across
+datasets in the same vector store.
 
-Detailed experiment writeups live in
-[`experiments/reports/`](experiments/reports/) and
-[`docs/architecture.md`](docs/architecture.md). The README keeps the
-comparison table so changes remain visible at a glance without turning
-this file into an experiment log.
+### Agentic RAG Benchmarks
 
-### Agentic RAG benchmarks
-
-The table above is classic-RAG only (Recall/MRR/answer_quality). The
-agentic evaluation (`rag.eval.run_agent_eval`, an 18-question gold set)
-reports a different metric family, so it gets its own small table here
-instead of being forced into incompatible columns. Recorded by hand from
-`experiments/results/agentic/*.json`; not wired into
-`scripts/compare_experiments.py`, which targets the classic-RAG schema
-only.
+The classic table uses Recall/MRR/answer-quality metrics. Agentic RAG is
+evaluated with a different metric family, so it has its own small table.
+These rows are recorded from `experiments/results/agentic/*.json`.
 
 | Experiment | Label | Classify prompt | Synthesize prompt | Routing accuracy | Unnecessary agent rate | Citation support | Answer correctness | RAGAS Faithful | RAGAS Correct | Mean latency | Dataset | Date |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | experiment_029 | agentic_rag_baseline_v1 | v1 | v1 | 0.833 | 1.000 | 0.111 | 0.449 | 0.443 | 0.584 | 138.5s | techfusion | 2026-08-21 |
 | experiment_032 | agentic_rag_baseline_v2_fixed | v2 | v2 | 0.889 | 0.000 | 1.000 | 0.463 | 0.511 | 0.531 | 47.4s | techfusion | 2026-08-21 |
+| experiment_040 | agentic_rag_baseline_v3_chunk_id_fix | v2 | v2 | 0.889 | 0.000 | 0.500 | 0.482 | - | - | 223.6s | techfusion | 2026-08-28 |
 
-`experiment_032` fixed the two issues `experiment_029` found: a revised
-classify prompt makes the simple/complex routing boundary explicit (cut
-the unnecessary-agent rate to 0.0 and mean latency 2.9x, purely via
-routing composition), and a revised synthesize prompt plus a code-level
-evidence-ordering fix makes an authoritative source always take priority
-over an untrusted, conflicting one at synthesis time (raised citation
-support 0.111 to 1.000). Full before/after numbers and per-question trace
-validation:
-[`experiments/reports/agentic_rag_baseline_v2_fixed.md`](experiments/reports/agentic_rag_baseline_v2_fixed.md).
+`experiment_032` fixed the two main issues found in `experiment_029`:
+the routing prompt now avoids unnecessary agent runs, and synthesis gives
+authoritative evidence priority over conflicting untrusted context. The
+full writeup is in
+`experiments/reports/agentic_rag_baseline_v2_fixed.md`.
+`experiment_040` re-ran the same benchmark after the agent-tool
+authorization-parity fixes (`get_document`/`get_latest_document`/
+`get_related_context` no longer bypassing the authorization kill-switch
+or freshness resolution); routing accuracy and unnecessary-agent rate are
+unchanged, confirming the fix did not regress routing behavior.
 
-### Recording a new experiment
+To record a new deterministic eval:
 
-1. Change one thing in `config/default.yaml` (reranker, model, chunk size,
-   prompt version, ...).
-2. Run the eval and save its full report (or `rag.eval.run_ragas_eval` for
-   the RAGAS-scored variant, see above):
-   ```bash
-   python -m rag.eval.run_eval --gold data/eval/sample_gold.jsonl \
-     --dataset-id sample_docs --verbose > /tmp/eval_report.json
-   ```
-3. Register it as an experiment (never re-runs eval, just records the
-   report above):
-   ```bash
-   python scripts/record_experiment.py --eval-output /tmp/eval_report.json \
-     --experiment-id experiment_002 --label "cross-encoder reranker" \
-     --config config/default.yaml
-   ```
-   Captures every config axis (embedding model, chunk size, reranker,
-   prompt version + checksum, and RAGAS scores if present) and also logs
-   an MLflow run (see "MLflow tracking" below), unless `mlflow.enabled:
-   false`.
-4. Regenerate the comparison table (writes the full table to
-   `experiments/reports/comparison.md` and splices the most recent 7
-   experiments into this README section):
-   ```bash
-   python scripts/compare_experiments.py
-   ```
-   Pass `--exclude experiment_id[,experiment_id...]` to leave a
-   non-comparable record (e.g. a small pilot run at a different sample
-   size) out of the table.
-
-### MLflow tracking
-
-Every `scripts/record_experiment.py` call also logs an MLflow run (config
-as params, metrics, and the eval-output/record/config files as artifacts),
-under a readable run name like `experiment_015_qwen2-5-3b_v2_hybrid_rel-exp`
-and tagged with `experiment_id`/`label`/`generation_model`/`prompt_version`/
-`retrieval_provider`/`reranker_provider`/`relationship_expansion`/
-`dataset_id` for fast filtering in the MLflow UI. Requires the `mlflow`
-extra (`pip install .[mlflow]`); fails loudly rather than silently
-skipping if enabled but not installed. Local by default, no server
-required (`mlflow.tracking_uri: sqlite:///mlflow.db`):
 ```bash
+python -m rag.eval.run_eval --gold data/eval/sample_gold.jsonl \
+  --dataset-id sample_docs --verbose > /tmp/eval_report.json
+
+python scripts/record_experiment.py --eval-output /tmp/eval_report.json \
+  --experiment-id experiment_XXX --label "short label" \
+  --config config/default.yaml
+
+python scripts/compare_experiments.py
+```
+<!-- --8<-- [end:docs-benchmarks] -->
+
+MLflow logging is enabled in config by default. Install the extra if you
+want the UI:
+
+```bash
+pip install .[mlflow]
 mlflow ui --backend-store-uri sqlite:///mlflow.db
 ```
-`scripts/backfill_mlflow.py` re-logs every `experiments/results/*.json`
-into MLflow in one pass, useful if `mlflow.db`/`mlruns/` is ever deleted.
-
-`scripts/record_agent_experiment.py` is the agentic-eval sibling of
-`record_experiment.py` (see "Agentic RAG benchmarks" above): it registers
-a `rag.eval.run_agent_eval` report into `experiments/results/agentic/` and
-also logs to MLflow, additionally flattening per-node latency
-(classify/decompose/tool_select/tool_execute/evidence_sufficiency/
-synthesize), a termination-reason breakdown (including a combined
-guardrail/limit-termination rate), and per-tool-name usage counts/rates
-into individually named metrics, e.g. `agent_node_synthesize_latency_ms_mean`,
-`agent_termination_max_steps_rate`, `agent_tool_usage_get_document_count`.
 
 ## Testing
 
 ```bash
 make test
 ```
-Without `make`: `pytest tests/ -v`.
 
-Unit tests (`tests/unit`) mock all external I/O and always run. Integration
-tests (`tests/integration`) assume Postgres (`make up`) and a local Ollama
-with `qwen2.5:1.5b` are already running, and skip with a clear message if
-either is unreachable.
+Without `make`:
 
-A small set of graph-specific integration tests additionally assume a
-local Neo4j instance (`make graph-up`) is running, and skip the same way
-when it is unreachable.
+```bash
+pytest tests/ -v
+```
 
-`scripts/smoke_test_containers.sh` is a separate check for the
-containerized setup specifically: it assumes `docker compose up -d` (or
-the prod-override form) is already running, and proves the *containerized*
-API can reach Postgres+pgvector and native Ollama, then does a real
-ingest -> query round trip against them (see
-[Containerized development](#containerized-development) above).
-
-The frontend has its own test suites (unit, integration, and Playwright
-e2e); see [`frontend/README.md`](frontend/README.md).
+Unit tests mock external I/O. Integration tests self-skip when required
+services such as Postgres, Ollama, or Neo4j are unavailable.
 
 ## Continuous Integration
 
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every
-PR/push to `main` (and via manual `workflow_dispatch`), in six parallel
-jobs:
+CI runs code quality checks, unit tests, integration tests, a curated
+security regression gate, a retrieval evaluation gate, and a Docker build.
 
-- **code-quality**: `pre-commit run --all-files` (ruff, ruff-format, mypy,
-  hygiene hooks; the same checks `pre-commit install` runs locally).
-- **unit-tests**: the full `tests/unit` suite; no external services.
-- **integration-tests**: `tests/integration` against a `pgvector/pgvector:pg16`
-  service container spun up by the workflow itself (not your local `make up`
-  stack). Tests gated on a local Ollama (`require_ollama` in
-  `tests/integration/conftest.py`) skip cleanly, since CI doesn't run Ollama.
-- **security-regression-gate**: a curated, fast (no external services)
-  subset of `tests/unit` covering authorization, field-level redaction, DoS/
-  rate limits, MCP identity/business-tool authorization, and agent guardrail
-  behavior (step/tool-call bounds, insufficient evidence, malformed tool
-  args, citation compliance) as its own distinctly-named status check.
-- **retrieval-eval-gate**: ingests a small tracked sample corpus, runs
-  `rag.eval.run_eval --skip-generation`, and checks Recall@5/@10/MRR plus
-  one corpus-level safety metric against explicit thresholds via
-  `scripts/check_eval_gates.py`.
-- **docker-build**: builds the production image from `Dockerfile`, runs it
-  against the same Postgres service container, and checks `GET /health`
-  reports `vectorstore: ok` (Ollama is expected `unreachable` here, for the
-  same reason as above). No image is pushed anywhere yet.
-
-See [`docs/ci_eval_gates.md`](docs/ci_eval_gates.md) for the full gate
-design: which metrics are blocking, where thresholds live, how to run the
-same gate locally, and how to update a baseline intentionally.
-
-What CI intentionally leaves out: RAGAS scoring, hosted-judge (OpenAI/
-Anthropic) calls, MLflow experiment logging, and full private-corpus
-evaluation. These need either a local Ollama, hosted API keys, or
-minutes-long LLM calls that don't belong in per-PR feedback. They stay
-manual, run locally via `scripts/record_experiment.py` /
-`eval/run_ragas_eval.py` as today.
+See [CI eval gates](docs/ci_eval_gates.md) for the exact thresholds,
+local commands, and what is intentionally excluded from per-PR CI.
 
 ## Documentation
 
-A generated docs site (MkDocs + Material + mkdocstrings) sits over this
-README, `docs/architecture.md`, `docs/metrics.md`, and every module's
-NumPy-style docstrings, without duplicating any of them:
+Build or serve the docs site locally:
 
 ```bash
 pip install -e ".[docs]"
-make docs-serve   # live-reloading local server, http://127.0.0.1:8000
-make docs-build   # strict build to site/; fails on broken links/anchors/nav references
+make docs-serve   # http://127.0.0.1:8000
+make docs-build   # strict build to site/
 ```
 
-Without `make`: `mkdocs serve` / `mkdocs build --strict`. Nav covers
-architecture, ingestion/chunking, retrieval, multimodal/layout, security,
-Agentic RAG, MCP, evaluation/RAGAS, observability, the web UI, deployment/
-runtime, and a full API reference generated from `src/rag/**`. Not
-published anywhere yet (`mkdocs build --strict` is the local/CI gate for
-now).
+Without `make`:
 
-## Roadmap
+```bash
+mkdocs serve
+mkdocs build --strict
+```
 
-Deferred for now, tracked here rather than left as empty scaffolding:
+The docs cover architecture, ingestion, retrieval, security, Agentic RAG,
+MCP, GraphRAG, the ontology/semantic layer, evaluation, observability,
+web UI, deployment/runtime, and API references generated from `src/rag/**`.
 
-- **Cross Encoder**: mature the scaffolded `cross_encoder` reranker
-  (`rerankers/cross_encoder.py`) with real benchmarking/tuning.
-- **Cohere Reranking**: mature the scaffolded optional `cohere` provider
-  (`rerankers/cohere.py`) once there's a use case needing a hosted reranker.
-- **RAGAS trust**: judge-vs-human agreement has been spot-checked
-  (`scripts/compare_ragas_manual.py`) on several samples, but scores still
-  aren't validated against human labels by default. See the caveat in
-  every RAGAS report.
-- **Vision**: mature the experimental `ollama`/`moondream` vision provider
-  (see [Multimodal & Layout-Aware Ingestion](#multimodal--layout-aware-ingestion)
-  above) once description quality on real images has been evaluated
-  further; current evidence doesn't show an answer-quality improvement.
-- **LangGraph**: revisit only if a future need appears for checkpoint/
-  resume across requests, human-in-the-loop approval, or substantially
-  more complex branching than today's bounded agentic workflow (see
-  [`docs/architecture.md`](docs/architecture.md)'s "Agentic RAG" section)
-  before adopting it.
-- **Kubernetes deployment**: containerize the API and vector store for a
-  non-local deployment target.
+## Experiment Branches
 
-Recently shipped features (observability, layout-aware ingestion +
-vision, security/auth, the web UI, this documentation site) are covered
-in their own sections above, not repeated here. See the
-[documentation site](#documentation) for the full design writeups behind
-everything already shipped.
+Two different kinds of work live on separate branches, not on `main`.
+
+**Learning/comparison exercises**: reuse this repository's real services
+rather than reimplementing the core pipeline, but are intentionally never
+merged into `main`, their value is the comparison against `main`'s own
+design, not a replacement for it.
+
+**In-progress feature work**: branches for a capability that is headed
+into `main`, just not there yet. These currently sit at the same commit
+as `main` plus their own uncommitted work in progress.
+
+```text
+main
+ |-- experiment/kubernetes-deployment     (K8s manifests: kind + minikube)
+ |    |-- experiment/helm                 (same stack as a Helm chart)
+ |    `-- experiment/distributed-state    (Redis rate limiter + job queue)
+ |-- experiment/langgraph-agent           (single-agent LangGraph exercise)
+ |    `-- experiment/multi-agent          (multi-agent LangGraph exercise)
+ `-- experiment/graphrag-knowledge-graph  (Neo4j knowledge graph + GraphRAG, in progress)
+      `-- experiment/ontology-semantic-layer  (RDF/OWL/SHACL layer, in progress)
+```
+
+Learning/comparison exercises:
+
+- `experiment/kubernetes-deployment`: local Kubernetes manifests for the
+  existing stack, with kind and minikube variants.
+- `experiment/helm`: the same stack packaged as a configurable Helm chart,
+  including production-style hardening such as RBAC and network policies.
+- `experiment/distributed-state`: a horizontal-scaling exercise around a
+  Redis-backed rate limiter and Redis Streams job queue.
+- `experiment/langgraph-agent`: a LangGraph version of the agent workflow,
+  kept separate so it can be compared against the hand-rolled bounded
+  agent in `main`.
+- `experiment/multi-agent`: an extension of the LangGraph exercise with a
+  coordinator plus separate knowledge and business specialist agents.
+
+Each of the five above has its own README or experiment notes with the
+captured setup, architecture, and conclusions.
+
+In-progress feature work:
+
+- `experiment/graphrag-knowledge-graph`: the Neo4j-backed property graph
+  and GraphRAG retrieval path described above, built as an additive
+  capability on top of the existing pipeline.
+- `experiment/ontology-semantic-layer`: the RDF/RDFS/OWL/SHACL/SPARQL
+  semantic layer described above, built on top of the GraphRAG branch.
+
+Both are intended to merge into `main` once reviewed; until then, their
+documented capabilities (GraphRAG, Ontology) exist on these branches, not
+yet on `main` itself.
+
+## Project Notes
+
+- [`PROJECT_JOURNAL.md`](PROJECT_JOURNAL.md) is the detailed, dated
+  chronological engineering log: implementation history, experiment
+  notes, and debugging narratives as they happened.
+- [`KNOWN_ISSUES.md`](KNOWN_ISSUES.md) is the curated, interview-focused version of
+  the same work: concrete problem/diagnosis/solution/result writeups
+  with before/after metrics, organized by topic rather than by date.
+- `SECURITY.md` is the vulnerability-reporting and control-summary file.
+- `docs/` contains the maintained design documentation.
+- `frontend/README.md` covers frontend-specific setup and testing.
 
 ## License
 
-This project is source-available for portfolio and evaluation purposes only.
-No reuse, modification, redistribution, deployment, or commercial use is
-permitted without prior written permission.
+This project is source-available for portfolio and evaluation purposes
+only. No reuse, modification, redistribution, deployment, or commercial
+use is permitted without prior written permission.
