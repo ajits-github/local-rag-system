@@ -686,17 +686,21 @@ main
       `-- experiment/multi-agent          (multi-agent LangGraph exercise)
 ```
 
-- `experiment/kubernetes-deployment`: local Kubernetes manifests for the
-  existing stack, with kind and minikube variants.
-- `experiment/helm`: the same stack packaged as a configurable Helm chart,
-  including production-style hardening such as RBAC and network policies.
-- `experiment/distributed-state`: a horizontal-scaling exercise around a
-  Redis-backed rate limiter and Redis Streams job queue.
-- `experiment/langgraph-agent`: a LangGraph version of the agent workflow,
-  kept separate so it can be compared against the hand-rolled bounded
-  agent in `main`.
-- `experiment/multi-agent`: an extension of the LangGraph exercise with a
-  coordinator plus separate knowledge and business specialist agents.
+- [`experiment/kubernetes-deployment`](https://github.com/ajits-github/local-rag-system/tree/experiment/kubernetes-deployment):
+  local Kubernetes manifests for the existing stack, with kind and
+  minikube variants.
+- [`experiment/helm`](https://github.com/ajits-github/local-rag-system/tree/experiment/helm):
+  the same stack packaged as a configurable Helm chart, including
+  production-style hardening such as RBAC and network policies.
+- [`experiment/distributed-state`](https://github.com/ajits-github/local-rag-system/tree/experiment/distributed-state):
+  a horizontal-scaling exercise around a Redis-backed rate limiter and
+  Redis Streams job queue.
+- [`experiment/langgraph-agent`](https://github.com/ajits-github/local-rag-system/tree/experiment/langgraph-agent):
+  a LangGraph version of the agent workflow, kept separate so it can be
+  compared against the hand-rolled bounded agent in `main`.
+- [`experiment/multi-agent`](https://github.com/ajits-github/local-rag-system/tree/experiment/multi-agent):
+  an extension of the LangGraph exercise with a coordinator plus
+  separate knowledge and business specialist agents.
 
 Each of the five above has its own README or experiment notes with the
 captured setup, architecture, and conclusions.
