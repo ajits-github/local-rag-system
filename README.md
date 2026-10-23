@@ -59,7 +59,7 @@ deeper design write-ups and the generated API reference:
 - [Architecture](#architecture)
 - [Security](#security)
 - [Ingestion](#multimodal--layout-aware-ingestion)
-- [Retrieval](docs/topics/retrieval.md) (docs only, no dedicated README section)
+- [Retrieval](#retrieval)
 - [Evaluation](#evaluation)
 - [Agentic RAG](#agentic-rag)
 - [MCP](#mcp)
@@ -68,39 +68,27 @@ deeper design write-ups and the generated API reference:
 - [Observability](#observability)
 - [Web UI](#web-ui)
 - [Feedback](#feedback-loop)
-- [Deployment](docs/topics/deployment.md) (docs only, no dedicated README section)
-- [Metrics reference](docs/metrics.md) (docs only, no dedicated README section)
+- [Deployment](#deployment)
+- [Metrics reference](#metrics-reference)
 
 ## Architecture
 
-<!-- --8<-- [start:docs-architecture-diagram] -->
-```mermaid
-flowchart TD
-    Docs["Documents / Knowledge Sources"] --> Ingestion["Ingestion Pipeline"]
-    Ingestion --> DB[("PostgreSQL + pgvector")]
-    Ingestion -. optional graph extraction .-> KG[("Neo4j Knowledge Graph")]
-    KG -. optional semantic layer .-> Ontology["RDF / OWL / SHACL Ontology"]
+![Local RAG System architecture: users and clients through security and
+request context, the classic/agent RAG runtime, context engineering,
+Ollama generation, evidence sources (retrieval stack, graph/semantic
+layer, tools, conversation history), evaluation and observability, and
+the separate experiment/learning branches](docs/assets/architecture-diagram.png)
 
-    User(("User")) --> UI["React Web UI"]
-    User --> API["FastAPI"]
-    UI --> API
-    API --> Retrieval["Retrieval"]
-    DB --> Retrieval
-    Retrieval --> Prompt["Prompt Builder"]
-    Prompt --> LLM["LLM"]
-    LLM -->|"Answer + Sources"| User
-
-    API -. optional .-> Agent["Bounded Agentic RAG"]
-    Agent -. RAG tools .-> Retrieval
-    Agent -. optional business tools .-> MCP["MCP Server / Client"]
-    Agent -. optional graph tools .-> KG
-    API -. optional .-> GraphQuery["GraphRAG Endpoint"]
-    GraphQuery --> KG
-
-    Retrieval --> Evaluation
-    LLM --> Evaluation["Evaluation<br/>Recall at k / MRR / RAGAS"]
-```
-<!-- --8<-- [end:docs-architecture-diagram] -->
+Two pieces of this diagram are ahead of what's implemented today, not
+built capabilities: **Context Engineering** is planned next (today,
+context sizing is three explicit cutoffs, see
+[Retrieval](#retrieval), not a dedicated budgeting/packing stage), and
+**Conversation / history** / **conversation continuity** don't exist
+yet either, every `/query` and `/agent/query` call is stateless; the
+web UI only keeps a client-side message list for display. **NDCG** also
+isn't an implemented metric; Recall@k, hit-rate, MRR, and RAGAS are what
+`eval/run_eval.py` actually computes (see
+[Metrics reference](#metrics-reference)).
 
 | Area | Default implementation | Notes |
 |---|---|---|
@@ -115,6 +103,7 @@ flowchart TD
 | Security | Off by default | Enable under `config.security.*` |
 | GraphRAG | Off by default | Enable under `graph.*` |
 | Ontology | RDF/RDFS/OWL/SHACL/SPARQL | CLI/eval only today |
+| Context Engineering | Not yet implemented | Planned next |
 
 ## Multimodal & Layout-Aware Ingestion
 
@@ -125,6 +114,22 @@ source metadata are preserved into Markdown-like content before chunking.
 An optional local vision provider can describe images through Ollama
 (`vision.provider: ollama`), but it is experimental and off by default.
 See [Multimodal & Layout](docs/topics/multimodal.md).
+
+## Retrieval
+
+`retrieval.provider` selects `dense` (pure vector similarity) or
+`hybrid` (dense + BM25 keyword search, fused via Reciprocal Rank Fusion
+before reranking, since a cosine-similarity score and an unbounded BM25
+score are never on a comparable scale). Context sizing is three
+independent, explicitly-named cutoffs rather than one overloaded
+"top k": `candidate_k` (how many candidates each branch fetches),
+`reranker_top_n` (how many a real reranker keeps after rescoring), and
+`generation_context_top_n` (how many ranked chunks reach the prompt).
+
+An optional post-rerank relationship-expansion step and field-level
+redaction pass both run inside the same retrieval pipeline; see
+[Security](#security). See [Retrieval](docs/topics/retrieval.md) for
+the cutoff-semantics writeup and API reference.
 
 <!-- --8<-- [start:docs-agentic-rag] -->
 ## Agentic RAG
@@ -446,6 +451,24 @@ stack. If Ollama is not reachable, the API still starts, but generation
 requests will fail until Ollama is available.
 <!-- --8<-- [end:docs-containerized-dev] -->
 
+## Deployment
+
+Postgres + pgvector and the API are containerized; Ollama stays native
+on the host, and the containerized API reaches it through
+`host.docker.internal`. See [Containerized Development](#containerized-development)
+above for the exact commands, and `config/production.yaml` for the
+profile this project recommends beyond local experimentation (auth,
+authorization, field redaction, rate limiting, and tracing all on).
+
+Optional overlays add the frontend (`docker-compose.frontend.yml`) or an
+observability stack (`docker-compose.observability.yml`) on top of the
+same base stack. Kubernetes and Helm variants exist as separate,
+unmerged learning-exercise branches; see
+[Experiment Branches](#experiment-branches).
+
+See [Deployment](docs/topics/deployment.md) for the full write-up,
+including how to build this documentation site.
+
 ## Configuration
 
 Most behavior is controlled in `config/default.yaml`. Common changes:
@@ -580,6 +603,21 @@ want the UI:
 pip install .[mlflow]
 mlflow ui --backend-store-uri sqlite:///mlflow.db
 ```
+
+## Metrics Reference
+
+Every metric this codebase computes is indexed by pipeline layer:
+retrieval (Recall@k, hit-rate, MRR), generation/answer quality, safety
+(authorization, redaction, injection, egress), agentic RAG (routing
+accuracy, tool selection, citation support), GraphRAG, and the ontology
+layer. None of it runs automatically; `eval/run_eval.py` and its
+siblings (`run_agent_eval.py`, `run_ragas_eval.py`, `run_graph_eval.py`,
+`run_ontology_eval.py`) are the entrypoints, see [Evaluation](#evaluation)
+and [Benchmarks](#benchmarks) above for how they're actually run and
+tracked.
+
+See [Metrics reference](docs/metrics.md) for the full inventory, one
+metric per row, sourced directly from `src/rag/eval/`.
 
 ## Testing
 
