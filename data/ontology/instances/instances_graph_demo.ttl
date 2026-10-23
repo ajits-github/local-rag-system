@@ -1,0 +1,190 @@
+@prefix tech: <http://techfusion.example/ontology/v1#> .
+@prefix inst: <http://techfusion.example/graph/techfusion_graph_demo/> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+#################################################################
+# Instance data (A, not B) mirroring the real Neo4j `techfusion_graph_demo`
+# dataset written by scripts/seed_graph_demo_data.py. Every entity name,
+# relationship, and (where resolvable without a live Postgres ingestion)
+# source document below corresponds exactly to that script's
+# SEEDED_RELATIONSHIPS list; nothing here is invented. See README
+# section 1 and section 9 for the Cypher-vs-SPARQL comparison this data
+# makes possible: the same facts, modeled twice.
+#
+# tech:sourceDocumentId values are the documents' relative paths, not
+# real Postgres document_id UUIDs: this experiment never ran a live
+# ingestion against Postgres, so there is no real document_id to quote.
+# This is recorded honestly (as the project's own conventions require)
+# rather than fabricating a plausible-looking UUID.
+#
+# IRI minting: individuals are scoped under
+# http://techfusion.example/graph/techfusion_graph_demo/<type>/<slug>,
+# mirroring rag.graph.schema.canonical_entity_id's own
+# (entity_type, dataset_id, tenant_id, normalized_name) scoping, so the
+# same name in a different dataset or tenant would mint a different IRI.
+#################################################################
+
+# --- Services ---------------------------------------------------
+
+inst:service-document-service
+    a tech:Service ;
+    tech:name "Document Service" ;
+    tech:ownedBy inst:team-workflow ;
+    tech:datasetId "techfusion_graph_demo" ;
+    tech:extractionMethod "deterministic" ;
+    tech:confidence 1.0 ;
+    tech:sourceDocumentId "architecture/system-overview.md" .
+
+inst:service-workflow-engine
+    a tech:Service ;
+    tech:name "Workflow Engine" ;
+    tech:ownedBy inst:team-workflow ;
+    tech:datasetId "techfusion_graph_demo" ;
+    tech:extractionMethod "deterministic" ;
+    tech:confidence 1.0 ;
+    tech:sourceDocumentId "architecture/system-overview.md" .
+
+inst:service-notification-service
+    a tech:Service ;
+    tech:name "Notification Service" ;
+    tech:ownedBy inst:team-workflow ;
+    tech:datasetId "techfusion_graph_demo" ;
+    tech:extractionMethod "deterministic" ;
+    tech:confidence 1.0 ;
+    tech:sourceDocumentId "architecture/system-overview.md" .
+
+inst:service-rag-service
+    a tech:Service ;
+    tech:name "RAG Service" ;
+    tech:datasetId "techfusion_graph_demo" ;
+    tech:extractionMethod "deterministic" ;
+    tech:confidence 1.0 ;
+    tech:sourceDocumentId "architecture/system-overview.md" .
+    # RAG Service has no OWNED_BY edge in scripts/seed_graph_demo_data.py;
+    # see docs/ontology.md section 6 for how this (truthfully) fails the
+    # ServiceShape owner requirement once validated, same as the three
+    # database/technology nodes below.
+
+inst:service-gateway
+    a tech:Service ;
+    tech:name "Gateway" ;
+    tech:ownedBy inst:team-platform-engineering ;
+    tech:datasetId "techfusion_graph_demo" ;
+    tech:extractionMethod "deterministic" ;
+    tech:confidence 1.0 ;
+    tech:sourceDocumentId "architecture/system-overview.md" .
+
+inst:service-compliance-ledger
+    a tech:Service ;
+    tech:name "Compliance Ledger" ;
+    tech:ownedBy inst:team-trust-and-compliance ;
+    tech:datasetId "techfusion_graph_demo" ;
+    tech:extractionMethod "deterministic" ;
+    tech:confidence 1.0 ;
+    tech:sourceDocumentId "architecture/system-overview.md" .
+
+# --- Databases (tech:DatabaseService, a Service subclass) --------
+
+inst:database-postgresql
+    a tech:DatabaseService ;
+    tech:name "PostgreSQL" ;
+    tech:datasetId "techfusion_graph_demo" ;
+    tech:extractionMethod "deterministic" ;
+    tech:confidence 1.0 ;
+    tech:sourceDocumentId "architecture/system-overview.md" .
+
+inst:database-opensearch
+    a tech:DatabaseService ;
+    tech:name "OpenSearch" ;
+    tech:datasetId "techfusion_graph_demo" ;
+    tech:extractionMethod "deterministic" ;
+    tech:confidence 1.0 ;
+    tech:sourceDocumentId "architecture/system-overview.md" .
+
+# --- Technology (Kafka: deliberately dual-typed, see ontology v1 comment) --
+
+inst:technology-kafka
+    a tech:Technology, tech:MessagingService ;
+    tech:name "Kafka" ;
+    tech:datasetId "techfusion_graph_demo" ;
+    tech:extractionMethod "deterministic" ;
+    tech:confidence 1.0 ;
+    tech:sourceDocumentId "architecture/system-overview.md" .
+
+# --- Teams --------------------------------------------------------
+
+inst:team-workflow
+    a tech:Team ;
+    tech:name "Workflow" ;
+    tech:datasetId "techfusion_graph_demo" .
+
+inst:team-platform-engineering
+    a tech:Team ;
+    tech:name "Platform Engineering" ;
+    tech:datasetId "techfusion_graph_demo" .
+
+inst:team-trust-and-compliance
+    a tech:Team ;
+    tech:name "Trust and Compliance" ;
+    tech:datasetId "techfusion_graph_demo" .
+
+# --- Runbook / Policy ----------------------------------------------
+
+inst:runbook-document-service-outage-runbook
+    a tech:Runbook ;
+    tech:name "Document Service Outage Runbook" ;
+    tech:datasetId "techfusion_graph_demo" ;
+    tech:extractionMethod "deterministic" ;
+    tech:confidence 1.0 ;
+    tech:sourceDocumentId "runbooks/document-service-outage.md" .
+
+inst:policy-data-retention-policy
+    a tech:Policy ;
+    tech:name "Data Retention Policy" ;
+    tech:datasetId "techfusion_graph_demo" ;
+    tech:extractionMethod "deterministic" ;
+    tech:confidence 1.0 ;
+    tech:sourceDocumentId "policies/data-retention-policy.md" .
+
+# --- Tenant-scoped Application + Database (Alpha) -------------------
+# Mirrors the one tenant-scoped relationship in SEEDED_RELATIONSHIPS,
+# used for docs/ontology.md section 17's authorization proof: a query run with no
+# auth context, tenant_alpha's own context, and tenant_beta's context
+# must return three different result sets for these two nodes.
+
+inst:application-alpha-internal-console
+    a tech:Application ;
+    tech:name "Alpha Internal Console" ;
+    tech:datasetId "techfusion_graph_demo" ;
+    tech:tenantId "tenant_alpha" ;
+    tech:allowedRole "tenant_alpha_operator" ;
+    tech:extractionMethod "deterministic" ;
+    tech:confidence 1.0 ;
+    tech:sourceDocumentId "alpha-internal-console.md" .
+
+inst:database-alpha-console-database
+    a tech:DatabaseService ;
+    tech:name "Alpha Console Database" ;
+    tech:datasetId "techfusion_graph_demo" ;
+    tech:tenantId "tenant_alpha" ;
+    tech:allowedRole "tenant_alpha_operator" ;
+    tech:extractionMethod "deterministic" ;
+    tech:confidence 1.0 ;
+    tech:sourceDocumentId "alpha-internal-console.md" .
+
+# --- Relationships --------------------------------------------------
+# One block per SEEDED_RELATIONSHIPS entry; comments quote that
+# dictionary's own document_source for traceability.
+
+inst:service-document-service tech:dependsOn inst:database-postgresql .
+inst:service-document-service tech:dependsOn inst:technology-kafka .
+inst:service-workflow-engine tech:dependsOn inst:technology-kafka .
+inst:service-notification-service tech:dependsOn inst:technology-kafka .
+inst:service-rag-service tech:dependsOn inst:database-postgresql .
+inst:service-rag-service tech:dependsOn inst:database-opensearch .
+inst:service-rag-service tech:dependsOn inst:service-document-service .
+
+inst:service-document-service tech:hasRunbook inst:runbook-document-service-outage-runbook .
+inst:service-document-service tech:governedBy inst:policy-data-retention-policy .
+
+inst:application-alpha-internal-console tech:dependsOn inst:database-alpha-console-database .

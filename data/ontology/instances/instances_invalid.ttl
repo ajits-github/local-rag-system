@@ -1,0 +1,38 @@
+@prefix tech: <http://techfusion.example/ontology/v1#> .
+@prefix inst: <http://techfusion.example/graph/techfusion_graph_demo/> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+#################################################################
+# Deliberately invalid fixture (docs/ontology.md section 6, "B. deliberately
+# invalid graph data"). Every violation below is intentional and
+# labeled with the shape it is meant to trip. This file is never mixed
+# into the "valid" demos; only scripts/ontology_demo.py --demo shacl loads it,
+# on its own, to show a non-conformant report.
+#################################################################
+
+# Violates ServiceShape: no tech:name, no tech:ownedBy.
+inst:service-orphan-service
+    a tech:Service ;
+    tech:datasetId "techfusion_graph_demo" .
+
+# Violates CustomerCaseShape twice: two customers (maxCount 1 on
+# tech:raisedBy) and an out-of-vocabulary status.
+inst:customer-acme-corp
+    a tech:Customer ;
+    tech:name "Acme Corp" .
+
+inst:case-case-9999-broken
+    a tech:CustomerCase ;
+    tech:name "CASE-9999" ;
+    tech:raisedBy inst:customer-northwind-logistics, inst:customer-acme-corp ;
+    tech:status "archived" ;
+    tech:datasetId "techfusion_graph_demo" .
+
+# Violates DocumentShape: no tech:sourcePath, no tech:extractionMethod.
+inst:document-undocumented-doc
+    a tech:Document ;
+    tech:name "Untracked document" .
+
+# Violates DependsOnEndpointsShape: the subject of a dependsOn triple
+# is a Team, not a Service.
+inst:team-workflow tech:dependsOn inst:database-postgresql .

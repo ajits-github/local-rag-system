@@ -1,0 +1,56 @@
+@prefix tech: <http://techfusion.example/ontology/v1#> .
+@prefix inst: <http://techfusion.example/graph/techfusion_graph_demo/> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+#################################################################
+# Synthetic, ontology-layer-only instance data: Customer, CustomerCase,
+# Incident, and Environment individuals, plus RUNS_ON/AFFECTS
+# relationships. None of this exists in the real Neo4j
+# techfusion_graph_demo dataset today; it is hand-authored for this
+# milestone, same honest-labeling convention
+# scripts/seed_graph_demo_data.py itself uses for its own hand-curated
+# relationships. tech:extractionMethod is "deterministic" throughout
+# (hand-authored, not model-extracted), matching that convention.
+#
+# Grounded in rag.mcp.business.store's own synthetic case shape (status
+# vocabulary, one customer per case) and used by:
+#   - the SHACL CustomerCaseShape demo (docs/ontology.md section 6)
+#   - the multi-hop "which runbooks apply to affected services" SPARQL
+#     query (docs/ontology.md section 7, query 05)
+#   - the ontology-aware GraphRAG evaluation set (eval/ontology_gold.jsonl)
+#################################################################
+
+inst:environment-production
+    a tech:Environment ;
+    tech:name "Production" ;
+    tech:datasetId "techfusion_graph_demo" .
+
+inst:service-document-service tech:runsOn inst:environment-production .
+inst:service-rag-service tech:runsOn inst:environment-production .
+
+inst:customer-northwind-logistics
+    a tech:Customer ;
+    tech:name "Northwind Logistics" ;
+    tech:datasetId "techfusion_graph_demo" ;
+    tech:extractionMethod "deterministic" ;
+    tech:confidence 1.0 ;
+    tech:sourceDocumentId "ontology-experiment:hand-authored" .
+
+inst:case-case-2001
+    a tech:CustomerCase ;
+    tech:name "CASE-2001" ;
+    tech:raisedBy inst:customer-northwind-logistics ;
+    tech:status "open" ;
+    tech:datasetId "techfusion_graph_demo" ;
+    tech:extractionMethod "deterministic" ;
+    tech:confidence 1.0 ;
+    tech:sourceDocumentId "ontology-experiment:hand-authored" .
+
+inst:incident-incident-9001
+    a tech:Incident ;
+    tech:name "Document ingestion backlog" ;
+    tech:affects inst:service-document-service ;
+    tech:datasetId "techfusion_graph_demo" ;
+    tech:extractionMethod "deterministic" ;
+    tech:confidence 1.0 ;
+    tech:sourceDocumentId "ontology-experiment:hand-authored" .
