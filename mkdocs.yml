@@ -100,6 +100,7 @@ nav:
   - Security: topics/security.md
   - Agentic RAG: topics/agentic-rag.md
   - MCP: topics/mcp.md
+  - Knowledge Graph & GraphRAG: topics/graphrag.md
   - Evaluation & RAGAS:
       - Overview: topics/evaluation.md
       - Metrics reference: metrics.md
@@ -123,6 +124,7 @@ nav:
       - Vision: reference/vision.md
       - Agent: reference/agent.md
       - MCP: reference/mcp.md
+      - Knowledge Graph / GraphRAG: reference/graph.md
       - Ingestion: reference/ingestion.md
       - Evaluation: reference/eval.md
       - Observability: reference/observability.md
