@@ -22,6 +22,38 @@ env:
   PYTHON_VERSION: "3.11"
 
 jobs:
+  changes:
+    name: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      docs_only: ${{ steps.filter.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Classifies this push/PR's changed files so the expensive jobs below
+      # (unit-tests, integration-tests, security-regression-gate,
+      # retrieval-eval-gate, docker-build) can skip when nothing but
+      # documentation changed, e.g. a PROJECT_JOURNAL.md/KNOWN_ISSUES.md-only
+      # push has no code path that could regress. `predicate-quantifier:
+      # every` makes `docs_only` true only when EVERY changed file matches
+      # one of these doc patterns, so a single real source/config change
+      # anywhere still runs the full suite. code-quality is NOT gated by
+      # this: it's fast (~45s) and its pre-commit hygiene hooks
+      # (trailing-whitespace, check-yaml, check-added-large-files, etc.)
+      # apply to docs/config files too, not just src/.
+      - name: Classify changed files
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          predicate-quantifier: every
+          filters: |
+            docs_only:
+              - '**/*.md'
+              - 'docs/**'
+              - 'mkdocs.yml'
+              - 'LICENSE'
+
   code-quality:
     name: code-quality
     runs-on: ubuntu-latest
@@ -49,6 +81,8 @@ jobs:
 
   unit-tests:
     name: unit-tests
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -89,6 +123,8 @@ jobs:
 
   integration-tests:
     name: integration-tests
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
@@ -146,6 +182,8 @@ jobs:
 
   security-regression-gate:
     name: security-regression-gate
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -224,6 +262,8 @@ jobs:
 
   retrieval-eval-gate:
     name: retrieval-eval-gate
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     services:
@@ -300,6 +340,8 @@ jobs:
 
   docker-build:
     name: docker-build
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     services:
