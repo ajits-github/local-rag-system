@@ -18,7 +18,16 @@ from slowapi.middleware import SlowAPIMiddleware
 from rag.agent.mcp_client import validate_startup_config as _validate_mcp_client_startup_config
 from rag.api.deps import get_config, get_mcp_asgi_app, get_rate_limiter
 from rag.api.middleware import RequestIDMiddleware
-from rag.api.routers import agent_query, agent_stream, feedback, health, ingest, metrics, query
+from rag.api.routers import (
+    agent_query,
+    agent_stream,
+    feedback,
+    graph_query,
+    health,
+    ingest,
+    metrics,
+    query,
+)
 from rag.audit import log_audit_event
 from rag.config import AppConfig
 from rag.logging_config import configure_logging
@@ -60,9 +69,8 @@ def _warn_if_multi_worker_mcp_business_actions(config: AppConfig) -> None:
     consistency for `update_case_status` with no error at all. Nothing in
     this deployment currently sets `--workers` above 1, and the
     `WEB_CONCURRENCY` convention isn't universally set/reliable, so this
-    only ever logs a warning, never raises -- a false negative (an actual
-    multi-worker deployment this check can't see) is possible, but a
-    false positive should never block startup.
+    only logs a warning and never raises, since a false positive should not
+    block startup. A multi-worker deployment this check cannot see is not caught.
 
     Parameters
     ----------
@@ -146,6 +154,10 @@ class FeatureFlags(BaseModel):
         `vision.provider` (`"none"` or `"ollama"`).
     tracing_enabled : bool
         `observability.tracing.enabled`.
+    graph_enabled : bool
+        `graph.enabled`; whether the Knowledge Graph / GraphRAG capability
+        (`POST /graph/query`, graph agent tools, graph-ingestion) is on at
+        all.
     """
 
     auth_enabled: bool
@@ -156,6 +168,7 @@ class FeatureFlags(BaseModel):
     agent_enabled: bool
     vision_provider: str
     tracing_enabled: bool
+    graph_enabled: bool
 
 
 class RootResponse(BaseModel):
@@ -202,6 +215,7 @@ def root(config: AppConfig = Depends(get_config)) -> RootResponse:
             agent_enabled=config.agent.enabled,
             vision_provider=config.vision.provider,
             tracing_enabled=config.observability.tracing.enabled,
+            graph_enabled=config.graph.enabled,
         ),
     )
 
@@ -262,6 +276,11 @@ class RuntimeInfo(BaseModel):
         `security.authorization.enabled`.
     auth_enabled : bool
         `security.auth.enabled`.
+    graph_enabled : bool
+        `graph.enabled`.
+    graph_fusion_strategy : str
+        `graph.fusion.strategy` (`"vector_only"` when `graph.enabled` is
+        `False`, since no other strategy is reachable then).
     """
 
     generation_provider: str
@@ -283,6 +302,8 @@ class RuntimeInfo(BaseModel):
     field_redaction_enabled: bool
     authorization_enabled: bool
     auth_enabled: bool
+    graph_enabled: bool
+    graph_fusion_strategy: str
 
 
 @app.get("/info", response_model=RuntimeInfo)
@@ -325,6 +346,10 @@ def info(config: AppConfig = Depends(get_config)) -> RuntimeInfo:
         field_redaction_enabled=config.security.field_redaction.enabled,
         authorization_enabled=config.security.authorization.enabled,
         auth_enabled=config.security.auth.enabled,
+        graph_enabled=config.graph.enabled,
+        graph_fusion_strategy=config.graph.fusion.strategy
+        if config.graph.enabled
+        else "vector_only",
     )
 
 
@@ -419,4 +444,5 @@ app.include_router(query.router)
 app.include_router(agent_query.router)
 app.include_router(agent_stream.router)
 app.include_router(feedback.router)
+app.include_router(graph_query.router)
 app.include_router(metrics.router)
