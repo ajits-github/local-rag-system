@@ -39,7 +39,7 @@ dependencies = [
     # not just from the test suite.
     "neo4j>=5.24,<6",  # official Bolt driver for the Knowledge Graph / GraphRAG capability
     # (rag.graph). A core, not optional, dependency: graph.enabled=false (the default) is a true
-    # no-op regardless -- no driver is constructed, so this adds no runtime cost when unused --
+    # no-op regardless (no driver is constructed, so this adds no runtime cost when unused),
     # but importing rag.graph.client must not require an extras install, matching the "core
     # dependency behind a runtime flag" precedent already set by mcp/slowapi/pyjwt, not the
     # eval-only extras (ragas/mlflow/cohere/anthropic) pattern.
@@ -58,6 +58,11 @@ anthropic = [
 mlflow = [
     "mlflow>=2.14",
 ]
+ontology = [
+    "rdflib>=7.6",
+    "owlrl>=7.6",
+    "pyshacl>=0.40",
+]
 docs = [
     "mkdocs>=1.6",
     "mkdocs-material>=9.5",
@@ -74,8 +79,8 @@ dev = [
     "types-PyYAML",
     "types-psycopg2",
     "reportlab>=4.0",  # test-only: builds real multi-page PDF fixtures for
-    # tests/integration/test_layout_aware_ingestion.py's PDF path -- pdfplumber/
-    # pypdf are PDF *readers*, this is the one PDF *writer* the test suite needs
+    # tests/integration/test_layout_aware_ingestion.py's PDF path. pdfplumber/
+    # pypdf are PDF *readers*; this is the one PDF *writer* the test suite needs
 ]
 
 [build-system]
@@ -142,6 +147,9 @@ module = [
     "mlflow.*",
     "rank_bm25.*",
     "slowapi.*",
+    "rdflib.*",
+    "owlrl.*",
+    "pyshacl.*",
 ]
 ignore_missing_imports = true
 
