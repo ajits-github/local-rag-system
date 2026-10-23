@@ -53,23 +53,23 @@ The full setup is below.
   Kubernetes/Helm/distributed-state deployment, and single- and multi-agent
   LangGraph exercises. See [Experiment Branches](#experiment-branches) below.
 
-This README is intentionally focused on setup and orientation. Deeper
-design notes live in the docs:
+Jump to a section below, or build the [docs site](#documentation) for
+deeper design write-ups and the generated API reference:
 
-- [Architecture](docs/architecture.md)
-- [Security](docs/topics/security.md)
-- [Ingestion](docs/topics/ingestion.md)
-- [Retrieval](docs/topics/retrieval.md)
-- [Evaluation](docs/topics/evaluation.md)
-- [Agentic RAG](docs/topics/agentic-rag.md)
-- [MCP](docs/topics/mcp.md)
-- [GraphRAG](docs/topics/graphrag.md)
-- [Ontology & Semantic Layer](docs/topics/ontology.md)
-- [Observability](docs/topics/observability.md)
-- [Web UI](docs/topics/web-ui.md)
-- [Feedback](docs/topics/feedback.md)
-- [Deployment](docs/topics/deployment.md)
-- [Metrics reference](docs/metrics.md)
+- [Architecture](#architecture)
+- [Security](#security)
+- [Ingestion](#multimodal--layout-aware-ingestion)
+- [Retrieval](docs/topics/retrieval.md) (docs only, no dedicated README section)
+- [Evaluation](#evaluation)
+- [Agentic RAG](#agentic-rag)
+- [MCP](#mcp)
+- [GraphRAG](#knowledge-graph--graphrag)
+- [Ontology & Semantic Layer](#ontology--semantic-layer)
+- [Observability](#observability)
+- [Web UI](#web-ui)
+- [Feedback](#feedback-loop)
+- [Deployment](docs/topics/deployment.md) (docs only, no dedicated README section)
+- [Metrics reference](docs/metrics.md) (docs only, no dedicated README section)
 
 ## Architecture
 
