@@ -616,6 +616,13 @@ class AgentConfig(BaseModel):
         `update_case_status`). A third, separate template file, not a
         further runtime-conditional insertion into
         `tool_select_mcp_prompt_path`.
+    tool_select_graph_prompt_path : str
+        Path to the `select_tool` decision point's `PromptTemplate` YAML
+        used instead when `graph.enabled=True` and neither MCP variant
+        applies (offers the 4 local RAG tools plus the 4 graph tools:
+        `search_knowledge_graph`/`get_entity`/`get_neighbors`/
+        `find_dependency_path`). See `rag.agent.graph._load_templates`
+        for the full precedence order.
     evidence_sufficiency_prompt_path : str
         Path to the `evidence_sufficiency` decision point's `PromptTemplate` YAML.
     synthesize_prompt_path : str
@@ -637,6 +644,7 @@ class AgentConfig(BaseModel):
     tool_select_mcp_actions_prompt_path: str = (
         "src/rag/prompts/templates/agent_tool_select_v5_mcp_actions.yaml"
     )
+    tool_select_graph_prompt_path: str = "src/rag/prompts/templates/agent_tool_select_v6_graph.yaml"
     evidence_sufficiency_prompt_path: str = (
         "src/rag/prompts/templates/agent_evidence_sufficiency_v1.yaml"
     )
@@ -889,6 +897,168 @@ class FeedbackConfig(BaseModel):
     maxconn: int = 3
 
 
+class Neo4jConnectionConfig(BaseModel):
+    """Neo4j driver connection and pooling settings.
+
+    Attributes
+    ----------
+    uri_env_var, user_env_var, password_env_var : str
+        Names of the environment variables that hold the connection
+        settings. The values themselves are never stored in config.
+    database : str
+        Database name within the DBMS.
+    max_connection_pool_size : int
+        Upper bound on the driver's connection pool.
+    connection_acquisition_timeout_seconds : float
+        How long a query waits for a pooled connection before failing.
+    connection_timeout_seconds : float
+        How long a new connection handshake may take.
+    max_transaction_retry_time_seconds : float
+        How long the driver retries transient errors. Client errors, such
+        as a syntax error, are not retried.
+    """
+
+    uri_env_var: str = "NEO4J_URI"
+    user_env_var: str = "NEO4J_USER"
+    password_env_var: str = "NEO4J_PASSWORD"
+    database: str = "neo4j"
+    max_connection_pool_size: int = 20
+    connection_acquisition_timeout_seconds: float = 10.0
+    connection_timeout_seconds: float = 5.0
+    max_transaction_retry_time_seconds: float = 15.0
+
+
+class GraphTraversalConfig(BaseModel):
+    """Bounds applied to graph queries.
+
+    Every query uses an explicit upper bound on traversal depth. Unbounded
+    variable-length patterns are never issued.
+
+    Attributes
+    ----------
+    max_traversal_depth : int
+        Upper bound on relationship hops.
+    max_nodes_returned : int
+        Maximum rows returned by one neighbor or entity query.
+    max_paths_returned : int
+        Declared but not enforced. The shortest-path query returns at most one path.
+    query_timeout_seconds : float
+        Server-side transaction timeout for each query.
+    """
+
+    max_traversal_depth: int = 3
+    max_nodes_returned: int = 50
+    max_paths_returned: int = 10
+    query_timeout_seconds: float = 5.0
+
+
+class GraphExtractionConfig(BaseModel):
+    """Settings for graph extraction during ingestion.
+
+    Attributes
+    ----------
+    enabled : bool
+        When `False` (the default), ingestion writes no graph facts. Graph
+        retrieval can still read an existing graph.
+    llm_extraction_enabled : bool
+        When `False`, only deterministic facts are written: `Document`
+        nodes, `PART_OF`, and `SUPERSEDES`. When `True`, one LLM call per
+        chunk also extracts entities and relationships.
+    min_confidence : float
+        LLM relationships below this confidence are dropped before writing.
+    max_relationships_per_chunk : int
+        Maximum relationships kept from one LLM call, applied after validation.
+    extraction_prompt_path : str
+        Path to the extraction prompt template.
+    """
+
+    enabled: bool = False
+    llm_extraction_enabled: bool = True
+    min_confidence: float = 0.5
+    max_relationships_per_chunk: int = 8
+    extraction_prompt_path: str = "src/rag/prompts/templates/graph_extract_v1.yaml"
+
+
+class CypherGenerationConfig(BaseModel):
+    """Settings for LLM-generated Cypher, used when no deterministic template matches.
+
+    Attributes
+    ----------
+    enabled : bool
+        When `False` (the default), only the built-in query templates run.
+        When `True`, the LLM may write read-only Cypher, which is validated
+        by `rag.graph.cypher_guard` before it runs.
+    max_result_limit : int
+        Every generated query gets a `LIMIT` with this value.
+    max_depth : int
+        Maximum upper bound allowed on a variable-length pattern.
+    timeout_seconds : float
+        Transaction timeout for generated queries. Separate from
+        `GraphTraversalConfig.query_timeout_seconds`.
+    prompt_path : str
+        Path to the Cypher-generation prompt template.
+    """
+
+    enabled: bool = False
+    max_result_limit: int = 50
+    max_depth: int = 3
+    timeout_seconds: float = 5.0
+    prompt_path: str = "src/rag/prompts/templates/graph_cypher_generate_v1.yaml"
+
+
+class GraphRAGFusionConfig(BaseModel):
+    """How graph evidence is combined with vector/hybrid evidence in `answer()`.
+
+    Attributes
+    ----------
+    strategy : {"vector_only", "graph_only", "vector_plus_graph", "graph_seeded_vector"}
+        `"vector_only"` (the default) returns the normal vector answer.
+        `"graph_only"` uses graph facts alone. `"vector_plus_graph"` runs both
+        and appends graph facts after the vector results. `"graph_seeded_vector"`
+        boosts vector results from documents linked to query entities. It
+        reorders results and never removes any.
+    max_graph_evidence_items : int
+        Maximum graph facts added to one answer's context.
+    graph_seed_top_k : int
+        Number of linked entities used to seed `"graph_seeded_vector"`.
+    """
+
+    strategy: Literal["vector_only", "graph_only", "vector_plus_graph", "graph_seeded_vector"] = (
+        "vector_only"
+    )
+    max_graph_evidence_items: int = 5
+    graph_seed_top_k: int = 3
+
+
+class GraphConfig(BaseModel):
+    """Root config block for the optional Knowledge Graph / GraphRAG capability.
+
+    Attributes
+    ----------
+    enabled : bool
+        Master switch. When `False` (the default), no Neo4j driver is
+        constructed, ingestion writes no graph facts, and the graph agent
+        tools are not offered to the model.
+    neo4j : Neo4jConnectionConfig
+        Connection and pooling settings.
+    traversal : GraphTraversalConfig
+        Bounds applied to graph queries.
+    extraction : GraphExtractionConfig
+        Settings for graph extraction during ingestion.
+    cypher_generation : CypherGenerationConfig
+        Settings for LLM-generated Cypher.
+    fusion : GraphRAGFusionConfig
+        How graph evidence is combined with vector evidence.
+    """
+
+    enabled: bool = False
+    neo4j: Neo4jConnectionConfig = Field(default_factory=Neo4jConnectionConfig)
+    traversal: GraphTraversalConfig = Field(default_factory=GraphTraversalConfig)
+    extraction: GraphExtractionConfig = Field(default_factory=GraphExtractionConfig)
+    cypher_generation: CypherGenerationConfig = Field(default_factory=CypherGenerationConfig)
+    fusion: GraphRAGFusionConfig = Field(default_factory=GraphRAGFusionConfig)
+
+
 class AppConfig(BaseModel):
     """Root settings object: the single entrypoint used by the API, ingestion CLI, and eval CLI.
 
@@ -912,6 +1082,7 @@ class AppConfig(BaseModel):
     observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
     mcp: McpConfig = Field(default_factory=McpConfig)
     feedback: FeedbackConfig = Field(default_factory=FeedbackConfig)
+    graph: GraphConfig = Field(default_factory=GraphConfig)
 
     def agent_prompt_template_path(self, path: str) -> Path:
         """Resolve one of `agent.*_prompt_path`, relative to the repo root if not absolute.
@@ -966,6 +1137,54 @@ class AppConfig(BaseModel):
             ``"http://localhost:11434"`` if that variable is unset.
         """
         return os.environ.get(self.generation.base_url_env_var, "http://localhost:11434")
+
+    def neo4j_uri(self) -> str:
+        """Resolve the Neo4j Bolt URI from `graph.neo4j.uri_env_var`.
+
+        Returns
+        -------
+        str
+            The URI read from the configured environment variable, or
+            ``"bolt://localhost:7687"`` (the native/host default,
+            matching `docker-compose.graph.yml`'s published port) if
+            unset.
+        """
+        return os.environ.get(self.graph.neo4j.uri_env_var, "bolt://localhost:7687")
+
+    def neo4j_user(self) -> str:
+        """Resolve the Neo4j username from `graph.neo4j.user_env_var`.
+
+        Returns
+        -------
+        str
+            The username read from the configured environment variable,
+            or ``"neo4j"`` (the image's own default account name) if
+            unset.
+        """
+        return os.environ.get(self.graph.neo4j.user_env_var, "neo4j")
+
+    def neo4j_password(self) -> str:
+        """Resolve the Neo4j password from `graph.neo4j.password_env_var`.
+
+        Returns
+        -------
+        str
+            The password read from the environment.
+
+        Raises
+        ------
+        RuntimeError
+            If that environment variable is unset or empty. Unlike
+            `neo4j_user`, there is no silent default: a graph client
+            must never be constructed with an empty credential.
+        """
+        value = os.environ.get(self.graph.neo4j.password_env_var)
+        if not value:
+            raise RuntimeError(
+                f"Environment variable '{self.graph.neo4j.password_env_var}' is not set. "
+                "Set NEO4J_PASSWORD to the Neo4j account password."
+            )
+        return value
 
     def mcp_client_server_url(self) -> str:
         """Resolve the remote MCP server base URL for `mcp.client.transport="http"`.

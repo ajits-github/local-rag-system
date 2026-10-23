@@ -189,6 +189,37 @@ class GoldExample(BaseModel):
         `"approval_required"`) for an `update_case_status` scenario,
         classified from the tool's own deterministic evidence wording
         (see `run_agent_eval.py`'s outcome-phrase matching).
+    requires_graph_traversal : bool
+        Whether answering genuinely requires relationship traversal in
+        the knowledge graph (as opposed to a plain document lookup that
+        happens to mention a related entity). Used by
+        `eval/run_graph_eval.py` to separate the graph-specific gold set
+        from every other gold file's rows.
+    graph_traversal_depth : int or None
+        The minimum number of relationship hops the reference answer
+        actually depends on (e.g. `1` for a direct `DEPENDS_ON` fact, `2`
+        or `3` for a multi-hop impact-analysis question). `None` for a
+        non-graph question.
+    graph_category : str or None
+        Authored scenario bucket for the graph-specific gold set (e.g.
+        `"direct_relationship"`, `"multi_hop"`, `"impact_analysis"`,
+        `"policy_relationship"`, `"supersession"`,
+        `"graph_unanswerable"`, `"cross_tenant_denial"`). Distinct from
+        `agentic_category`/`safety_category`, used for
+        `run_graph_eval.py`'s own per-category breakdown.
+    expected_graph_entities : list[str]
+        Canonical entity names the reference answer should mention or
+        depend on (e.g. `["Document Service", "PostgreSQL"]`), for a
+        graph-path/entity-correctness check independent of the final
+        prose answer's wording.
+    expected_graph_relationship_types : list[str]
+        The `rag.graph.schema.RelationshipType` value(s) the reference
+        path/fact is expected to traverse (e.g. `["DEPENDS_ON",
+        "RUNS_ON"]`).
+    graph_unanswerable : bool
+        Whether the graph has no valid answer, because the entities or
+        relationship do not exist. Separate from `unanswerable`, which covers
+        document retrieval.
 
     Notes
     -----
@@ -256,6 +287,12 @@ class GoldExample(BaseModel):
     expected_case_action_outcome: (
         Literal["executed", "already_in_status", "invalid_transition", "approval_required"] | None
     ) = None
+    requires_graph_traversal: bool = False
+    graph_traversal_depth: int | None = None
+    graph_category: str | None = None
+    expected_graph_entities: list[str] = Field(default_factory=list)
+    expected_graph_relationship_types: list[str] = Field(default_factory=list)
+    graph_unanswerable: bool = False
 
 
 def load_gold_jsonl(path: str | Path) -> list[GoldExample]:
