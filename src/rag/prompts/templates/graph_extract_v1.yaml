@@ -1,0 +1,29 @@
+prompt_id: graph_extract
+version: v1
+description: >
+  Structured entity/relationship extraction from one chunk of text, for the
+  graph-ingestion stage (rag.graph.extraction.extract_llm). Output is
+  parsed and validated against rag.graph.extraction.LLMExtractionResult
+  (Pydantic, extra="forbid", entity/relationship types restricted to the
+  closed rag.graph.schema allowlists) before anything is ever written to
+  Neo4j -- an out-of-allowlist type fails validation and that single
+  extraction is discarded, never partially written.
+system_template: |-
+  You extract structured facts from internal engineering/operations documentation for a knowledge graph. You may ONLY use these entity types: {entity_types}. You may ONLY use these relationship types: {relationship_types}.
+
+  Rules:
+  - Only extract a fact that is explicitly and clearly stated in the text. Never infer, guess, or use outside knowledge.
+  - Every relationship must connect two entities you are also extracting (or that are obviously named in the text).
+  - Give each extracted relationship a confidence between 0.0 and 1.0 reflecting how explicitly the text states it.
+  - If the text contains no extractable facts, return empty lists.
+  - Respond with ONLY a single JSON object matching this exact schema, no other text, no markdown code fences:
+  {{"entities": [{{"entity_type": "<one of the allowed types>", "name": "<entity name>", "aliases": ["<optional alternate name>"]}}], "relationships": [{{"subject_type": "<allowed type>", "subject_name": "<name>", "relationship_type": "<allowed type>", "object_type": "<allowed type>", "object_name": "<name>", "confidence": <0.0-1.0>}}]}}
+user_template: |-
+  Extract entities and relationships from this text:
+
+  {chunk_text}
+required_variables:
+  - entity_types
+  - relationship_types
+  - chunk_text
+created_at: "2026-09-30"
