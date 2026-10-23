@@ -1435,6 +1435,27 @@ A fresh install now runs the schema job only after the Postgres service genuinel
 
 ---
 
+### OPS-014: A docs-only CI gate silently never skipped, because of a reversed reading of one option
+
+**Status:** FIXED
+**Severity:** MINOR
+**Area:** CI / GitHub Actions
+**Affected code:** `.github/workflows/ci.yml`'s `changes` job (`dorny/paths-filter`)
+
+**Problem**
+A gate meant to skip the five expensive CI jobs (`unit-tests`, `integration-tests`, `security-regression-gate`, `retrieval-eval-gate`, `docker-build`) on documentation-only pushes never skipped them, on any push, including single-file README/KNOWN_ISSUES.md-only changes.
+
+**Failure scenario**
+The filter listed five positive doc patterns (`*.md`, `**/*.md`, `docs/**`, `mkdocs.yml`, `LICENSE`) under `predicate-quantifier: every`, read (incorrectly) as "every changed file must match one of these patterns." The option actually means the opposite kind of "every": a single file only counts as a match for the filter if it satisfies *every pattern in the list simultaneously*, intended for combining one positive scope pattern with negative exclusions in a single filter (the action's own documented example). Five unrelated positive patterns under `every` can never all match one file at once (a file can't be named `*.md` and `mkdocs.yml` and `LICENSE` at the same time), so the filter's match count was zero on every run regardless of content, confirmed directly against two real CI runs (a one-file README.md change, a three-file docs-only change) before being traced to the action's own README rather than guessed at again.
+
+**Fix applied**
+Replaced the five positive patterns with their negated form under a filter named `code`, still using `predicate-quantifier: every`: a file now matches only if it satisfies every negation, i.e. it is *not* one of the doc patterns. `code` is true iff at least one real non-documentation file changed. The five expensive jobs gate on `needs.changes.outputs.code == 'true'` instead of the original (always-false) `docs_only != 'true'`.
+
+**Regression test**
+Verified live: a push touching only `.github/workflows/ci.yml` itself (a real file) still ran the full suite; a genuinely docs-only follow-up push is the actual regression check for the skip path.
+
+---
+
 ## 8. Production-Hardening Gaps
 
 These are not bugs; they are scope boundaries and process-local designs that are acceptable for this project's current demo/learning-exercise posture but would need real work before a genuine multi-replica or enterprise production deployment.
@@ -1591,6 +1612,7 @@ The following issues are resolved, with a concrete fix and regression test cited
 | OPS-011 | Deployment | A local Kubernetes tool hung at container creation on one host |
 | OPS-012 | Deployment | An nginx image worked in Compose and crash-looped in Kubernetes |
 | OPS-013 | Deployment | A Helm first install failed on hook ordering and a network policy |
+| OPS-014 | CI | A docs-only CI gate silently never skipped, because of a reversed reading of one option |
 | MULTI-001 | Multimodal | Shared asset folders paired the wrong images with the wrong documents |
 | MULTI-003 | Multimodal | A failing vision call would have failed the whole document |
 
