@@ -1,33 +1,16 @@
-"""The four agent tools: thin wrappers over existing, tested application services.
+"""Local agent tools: thin wrappers over existing retrieval, vector store, and graph services.
 
-No tool reimplements retrieval or security logic. Each calls
-`RetrievalPipeline`/`VectorStore`/`rag.retrieval.freshness` directly. Every
-function takes `auth: AuthorizationContext | None` as an explicit parameter
-separate from its validated `args`, always supplied by the graph driver
-from `AgentState.authorization_context`. Never constructed from parsed
-LLM JSON.
+Tools contain no retrieval or authorization logic of their own. Each takes
+`auth` as a separate parameter, taken from the run's
+`AgentState.authorization_context`, never from parsed LLM output.
 
-`get_document`/`get_latest_document`/`get_related_context` call
-`VectorStore` directly rather than through `RetrievalPipeline.retrieve()`,
-so each resolves `auth` via `RetrievalPipeline.resolve_auth` before passing
-it to `VectorStore`, the same authorization-enabled kill-switch and
-freshness resolution `retrieve()` already applies internally.
-`search_knowledge_base` needs no such call: `pipeline.retrieve()` already
-resolves `auth` itself. All three accept an optional pre-fetched
-`versions` list, passed straight through to `resolve_auth`, so a caller
-that must resolve `auth` a second time for the same dispatch (e.g.
-`rag.agent.graph._execute_tool`/`rag.mcp.server._run_tool`, both of
-which re-resolve `auth` for `sanitize_evidence` after the tool already
-resolved it once for its own `VectorStore` call) can share one
-`VectorStore.list_document_versions` fetch instead of triggering it
-twice; omitted, each function fetches it itself, unchanged from before.
+`get_document`, `get_latest_document`, and `get_related_context` query
+`VectorStore` directly, so they resolve `auth` through
+`RetrievalPipeline.resolve_auth` first. `search_knowledge_base` does not,
+because `retrieve()` resolves it internally.
 
-`get_document`/`get_latest_document` bound how much of a document they load
-into agent state: a server-controlled hard SQL `LIMIT`
-(`max_chunks_hard_ceiling`) followed by a relevance-selection pass against
-the current query (`max_chunks`). Neither number is LLM-writable, and
-`rag.agent.tool_schemas.GetDocumentArgs`/`GetLatestDocumentArgs` expose no
-chunk-count field at all.
+The number of chunks loaded by the document tools is set by server config,
+not by the model.
 """
 
 from __future__ import annotations
@@ -35,12 +18,19 @@ from __future__ import annotations
 import math
 
 from rag.agent.tool_schemas import (
+    FindDependencyPathArgs,
     GetDocumentArgs,
+    GetEntityArgs,
     GetLatestDocumentArgs,
+    GetNeighborsArgs,
     GetRelatedContextArgs,
     SearchKnowledgeBaseArgs,
+    SearchKnowledgeGraphArgs,
 )
 from rag.embedders.base import Embedder
+from rag.graph.client import Neo4jClient
+from rag.graph.fusion import graph_facts_to_search_results
+from rag.graph.retrieval import GraphRetriever
 from rag.retrieval.authorization import AuthorizationContext
 from rag.retrieval.freshness import resolve_current_document_source
 from rag.retrieval.pipeline import RetrievalPipeline
@@ -174,30 +164,15 @@ def get_latest_document(
 ) -> list[Chunk]:
     """Resolve `args.source` to its currently-effective version, then fetch it.
 
-    Unlike a plain `get_document(args.source)` call, this first resolves
-    `args.source` through `resolve_current_document_source`. If
-    `args.source` names a superseded family member, the *current* member's
-    content is returned instead, which is the actual point of this tool
-    (see `docs/architecture.md`'s "Agentic RAG" section on why a source
-    path does not by itself identify the whole family).
-
-    `auth` is resolved via `pipeline.resolve_auth` (kill-switch and
-    freshness, scoped to `dataset_id`) before reaching `VectorStore`,
-    identically to `get_document`. Reuses the `versions` list already
-    fetched for source resolution rather than letting `resolve_auth`
-    fetch it a second time.
+    If `args.source` names a superseded version, the current version's content
+    is returned instead. `auth` is resolved through `pipeline.resolve_auth`,
+    as in `get_document`.
 
     Parameters
     ----------
     versions : list[DocumentVersionInfo] | None, optional
-        Pre-fetched `dataset_id` document versions. When given, both
-        this tool's own source resolution and `resolve_auth`'s freshness
-        resolution reuse it instead of calling
-        `VectorStore.list_document_versions` again -- lets a caller that
-        resolves `auth` a second time for the same dispatch (e.g.
-        `rag.agent.graph._execute_tool`'s post-dispatch
-        `sanitize_evidence` call) share this same fetch. Fetched here
-        when omitted, unchanged from prior behavior.
+        Pre-fetched document versions for `dataset_id`. Reused for source
+        resolution and for `resolve_auth`. Fetched here when omitted.
 
     Raises
     ------
@@ -280,3 +255,97 @@ def get_related_context(
     seed_result = SearchResult(chunk=seed_chunks[0], score=1.0, origin="tool_fetched")
     expanded = pipeline.expand_with_relationships([seed_result], auth=effective_auth)
     return [r.chunk for r in expanded if r.origin == "expanded"]
+
+
+def search_knowledge_graph(
+    args: SearchKnowledgeGraphArgs,
+    graph_retriever: GraphRetriever,
+    graph_client: Neo4jClient,
+    dataset_id: str | None,
+    auth: AuthorizationContext | None,
+) -> list[SearchResult]:
+    """Run bounded graph retrieval for a natural-language question.
+
+    Wraps `GraphRetriever.search`. The retriever applies the authorization
+    checks, so this tool returns only facts the caller may see.
+
+    Raises
+    ------
+    ToolExecutionError
+        If `dataset_id` is missing. Graph retrieval, like every other
+        tool here, is always dataset-scoped.
+    """
+    if not dataset_id:
+        raise ToolExecutionError("search_knowledge_graph requires a dataset_id filter")
+    result = graph_retriever.search(args.query, dataset_id=dataset_id, auth=auth)
+    return graph_facts_to_search_results(result.facts, graph_client, dataset_id)
+
+
+def get_entity(
+    args: GetEntityArgs,
+    graph_retriever: GraphRetriever,
+    graph_client: Neo4jClient,
+    dataset_id: str | None,
+    auth: AuthorizationContext | None,
+) -> list[SearchResult]:
+    """Resolve a named entity and summarize its direct neighbors.
+
+    Raises
+    ------
+    ToolExecutionError
+        If `dataset_id` is missing.
+    """
+    if not dataset_id:
+        raise ToolExecutionError("get_entity requires a dataset_id filter")
+    result = graph_retriever.get_entity(
+        args.name, dataset_id=dataset_id, auth=auth, entity_type=args.entity_type
+    )
+    return graph_facts_to_search_results(result.facts, graph_client, dataset_id)
+
+
+def get_neighbors(
+    args: GetNeighborsArgs,
+    graph_retriever: GraphRetriever,
+    graph_client: Neo4jClient,
+    dataset_id: str | None,
+    auth: AuthorizationContext | None,
+) -> list[SearchResult]:
+    """Bounded-hop traversal from a named entity, optionally filtered by relationship type.
+
+    Raises
+    ------
+    ToolExecutionError
+        If `dataset_id` is missing.
+    """
+    if not dataset_id:
+        raise ToolExecutionError("get_neighbors requires a dataset_id filter")
+    result = graph_retriever.get_neighbors(
+        args.entity_name,
+        dataset_id=dataset_id,
+        auth=auth,
+        relationship_type=args.relationship_type,
+        max_hops=args.max_hops,
+    )
+    return graph_facts_to_search_results(result.facts, graph_client, dataset_id)
+
+
+def find_dependency_path(
+    args: FindDependencyPathArgs,
+    graph_retriever: GraphRetriever,
+    graph_client: Neo4jClient,
+    dataset_id: str | None,
+    auth: AuthorizationContext | None,
+) -> list[SearchResult]:
+    """Bounded shortest path between two named entities.
+
+    Raises
+    ------
+    ToolExecutionError
+        If `dataset_id` is missing.
+    """
+    if not dataset_id:
+        raise ToolExecutionError("find_dependency_path requires a dataset_id filter")
+    result = graph_retriever.find_path(
+        args.source_entity_name, args.target_entity_name, dataset_id=dataset_id, auth=auth
+    )
+    return graph_facts_to_search_results(result.facts, graph_client, dataset_id)
