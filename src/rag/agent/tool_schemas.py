@@ -1,33 +1,20 @@
-"""Validated argument schemas for the agent's seven tools.
+"""Argument models for the agent's eleven tools.
 
-Every model is `extra="forbid"`, a deliberate deviation from this
-codebase's usual `extra="ignore"` default (`QueryRequest`, `GoldExample`,
-`AuthorizationContext`): an LLM attempting to smuggle a
-`tenant_id`/`roles`/`auth`-shaped key into a tool call produces a loud,
-auditable `ValidationError` rather than being silently dropped. Every
-LLM-writable numeric field also carries a hard `Field(ge=..., le=...)`
-range; no schema exposes a chunk-count/limit field at all, since those are
-entirely server-controlled (see `rag.config.AgentConfig` and
-`rag.agent.tools`). Every LLM-writable string field carries a
-`Field(max_length=...)` too, the same discipline applied to the numeric
-fields: a free-text field (`query`) gets a generous bound
-(`_MAX_QUERY_LENGTH`, matching `DoSLimitsConfig.max_query_length`'s
-existing precedent), and an identifier-shaped field (`source`,
-`chunk_id`, `case_id`) gets a much tighter one (`_MAX_IDENTIFIER_LENGTH`,
-matching the convention already used in `rag.api.routers.feedback`).
+Every model is `extra="forbid"`, so an LLM-supplied `tenant_id`, `roles`,
+or `auth` key fails validation instead of being dropped silently. String
+and numeric fields have explicit bounds. Limits such as chunk counts are
+set by server config, not by the model.
 
-Four schemas (`SearchKnowledgeBaseArgs`/`GetDocumentArgs`/
-`GetLatestDocumentArgs`/`GetRelatedContextArgs`) back the local,
-in-process tools in `rag.agent.tools`. Three (`GetCustomerCaseArgs`/
-`GetCaseStatusArgs`/`UpdateCaseStatusArgs`, see `REMOTE_MCP_TOOL_NAMES`
-below) back the remote MCP business tools dispatched via
-`rag.agent.mcp_client`, with the same `extra="forbid"` treatment: the
-"never let the LLM supply identity" rule applies regardless of which
-side of the process boundary a tool executes on. `UpdateCaseStatusArgs`
-additionally carries no approval field of any kind -- approval for a
-sensitive transition is resolved server-side from a trusted, signed
-channel, never from a tool argument (see `rag.agent.mcp_client.
-mint_internal_token` and `rag.mcp.business.approvals`).
+Local tools:
+
+- Four RAG tools in `rag.agent.tools`: `SearchKnowledgeBaseArgs`,
+  `GetDocumentArgs`, `GetLatestDocumentArgs`, `GetRelatedContextArgs`.
+- Four graph tools, offered only when `config.graph.enabled`.
+
+Remote MCP tools (`REMOTE_MCP_TOOL_NAMES`), dispatched through
+`rag.agent.mcp_client`: `GetCustomerCaseArgs`, `GetCaseStatusArgs`,
+`UpdateCaseStatusArgs`. `UpdateCaseStatusArgs` has no approval field.
+Approval comes from a signed internal token, never from a tool argument.
 """
 
 from __future__ import annotations
@@ -36,6 +23,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from rag.graph.schema import EntityType, RelationshipType
 from rag.mcp.business.schemas import CaseStatus
 
 ContentTypeFilter = Literal["prose", "table", "code", "configuration", "image", "chart"]
@@ -127,6 +115,58 @@ class UpdateCaseStatusArgs(BaseModel):
     new_status: CaseStatus
 
 
+class SearchKnowledgeGraphArgs(BaseModel):
+    """Arguments for the `search_knowledge_graph` tool.
+
+    A free-text question the graph retriever classifies into a bounded
+    intent (dependents/runbooks/owners/policy/impact/path) and answers via
+    entity linking + traversal (see `rag.graph.retrieval.GraphRetriever.search`).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    query: str = Field(max_length=_MAX_QUERY_LENGTH)
+
+
+class GetEntityArgs(BaseModel):
+    """Arguments for the `get_entity` tool: resolve a named entity and its direct neighbors."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(max_length=_MAX_IDENTIFIER_LENGTH)
+    entity_type: EntityType | None = None
+
+
+class GetNeighborsArgs(BaseModel):
+    """Arguments for the `get_neighbors` tool: one-hop traversal from a named entity.
+
+    `max_hops` is bounded to `1..3` here. `GraphRetriever.get_neighbors` also
+    clamps it to `config.graph.traversal.max_traversal_depth`.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    entity_name: str = Field(max_length=_MAX_IDENTIFIER_LENGTH)
+    relationship_type: RelationshipType | None = None
+    max_hops: int = Field(default=1, ge=1, le=3)
+
+
+class FindDependencyPathArgs(BaseModel):
+    """Arguments for the `find_dependency_path` tool: bounded shortest path between two entities."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source_entity_name: str = Field(max_length=_MAX_IDENTIFIER_LENGTH)
+    target_entity_name: str = Field(max_length=_MAX_IDENTIFIER_LENGTH)
+
+
+# Graph tools. They run in-process, not through MCP. They are offered to the
+# model only when config.graph.enabled. A call made while the graph is disabled
+# fails in _execute_tool.
+GRAPH_TOOL_NAMES: frozenset[str] = frozenset(
+    {"search_knowledge_graph", "get_entity", "get_neighbors", "find_dependency_path"}
+)
+
 TOOL_ARG_MODELS: dict[str, type[BaseModel]] = {
     "search_knowledge_base": SearchKnowledgeBaseArgs,
     "get_document": GetDocumentArgs,
@@ -135,6 +175,10 @@ TOOL_ARG_MODELS: dict[str, type[BaseModel]] = {
     "get_customer_case": GetCustomerCaseArgs,
     "get_case_status": GetCaseStatusArgs,
     "update_case_status": UpdateCaseStatusArgs,
+    "search_knowledge_graph": SearchKnowledgeGraphArgs,
+    "get_entity": GetEntityArgs,
+    "get_neighbors": GetNeighborsArgs,
+    "find_dependency_path": FindDependencyPathArgs,
 }
 
 # Tool names dispatched via a real MCP client call (rag.agent.mcp_client), rather

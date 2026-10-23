@@ -136,6 +136,47 @@ ERRORS_TOTAL = Counter(
     registry=REGISTRY,
 )
 
+GRAPH_QUERY_TOTAL = Counter(
+    "rag_graph_query_total",
+    "Total graph retrieval queries, by intent and outcome.",
+    ["intent", "success"],
+    registry=REGISTRY,
+)
+GRAPH_QUERY_LATENCY_SECONDS = Histogram(
+    "rag_graph_query_latency_seconds",
+    "Graph retrieval query latency in seconds, by intent.",
+    ["intent"],
+    buckets=_LATENCY_BUCKETS_SECONDS,
+    registry=REGISTRY,
+)
+GRAPH_FACTS_RETURNED = Histogram(
+    "rag_graph_facts_returned",
+    "Number of graph facts returned per graph retrieval query, by intent.",
+    ["intent"],
+    buckets=_COUNT_BUCKETS,
+    registry=REGISTRY,
+)
+GRAPH_RETRIEVAL_FAILURES_TOTAL = Counter(
+    "rag_graph_retrieval_failures_total",
+    "Graph retrieval failures (Neo4j unavailable, query error, generated-Cypher "
+    "rejection), by reason.",
+    ["reason"],
+    registry=REGISTRY,
+)
+GRAPHRAG_ROUTE_TOTAL = Counter(
+    "rag_graphrag_route_total",
+    "Answer requests, by which evidence source(s) the configured GraphRAG "
+    "fusion strategy actually used.",
+    ["strategy"],
+    registry=REGISTRY,
+)
+GRAPH_EVIDENCE_IN_CONTEXT = Histogram(
+    "rag_graph_evidence_in_context",
+    "Number of graph-origin SearchResults that reached the generation context for one answer.",
+    buckets=_COUNT_BUCKETS,
+    registry=REGISTRY,
+)
+
 FEEDBACK_SUBMISSIONS_TOTAL = Counter(
     "rag_feedback_submissions_total",
     "Total POST /feedback submissions, by rating and outcome.",
@@ -230,6 +271,46 @@ def observe_error(component: str) -> None:
 
 
 @_defensive
+def observe_graph_query(intent: str, latency_seconds: float, fact_count: int) -> None:
+    """Record one `GraphRetriever.search` call.
+
+    Parameters
+    ----------
+    intent : str
+        One of `rag.graph.retrieval.GraphQueryIntent`'s fixed values
+        (e.g. `"dependents_of"`, `"impact_of"`, `"unresolved"`), never a
+        raw query string or entity id.
+    latency_seconds : float
+        Call duration.
+    fact_count : int
+        Number of `GraphFact`s returned.
+    """
+    GRAPH_QUERY_TOTAL.labels(
+        intent=intent, success=str(fact_count > 0 or intent == "unresolved").lower()
+    ).inc()
+    GRAPH_QUERY_LATENCY_SECONDS.labels(intent=intent).observe(latency_seconds)
+    GRAPH_FACTS_RETURNED.labels(intent=intent).observe(fact_count)
+
+
+@_defensive
+def observe_graph_retrieval_failure(reason: str) -> None:
+    """Record one graph retrieval failure, by a fixed, bounded reason string."""
+    GRAPH_RETRIEVAL_FAILURES_TOTAL.labels(reason=reason).inc()
+
+
+@_defensive
+def observe_graphrag_route(strategy: str) -> None:
+    """Record one answer request's `config.graph.fusion.strategy`."""
+    GRAPHRAG_ROUTE_TOTAL.labels(strategy=strategy).inc()
+
+
+@_defensive
+def observe_graph_evidence_in_context(count: int) -> None:
+    """Record how many graph-origin `SearchResult`s reached one answer's generation context."""
+    GRAPH_EVIDENCE_IN_CONTEXT.observe(count)
+
+
+@_defensive
 def observe_feedback_submission(rating: str, outcome: str, latency_seconds: float) -> None:
     """Record one `POST /feedback` submission.
 
@@ -267,6 +348,10 @@ __all__ = [
     "observe_error",
     "observe_evidence_sufficiency",
     "observe_feedback_submission",
+    "observe_graph_evidence_in_context",
+    "observe_graph_query",
+    "observe_graph_retrieval_failure",
+    "observe_graphrag_route",
     "observe_http_request",
     "observe_node_latency",
     "observe_retrieval_latency",

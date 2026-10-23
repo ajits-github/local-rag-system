@@ -64,6 +64,31 @@ def require_ollama(ollama_available):
 
 
 @pytest.fixture(scope="session")
+def neo4j_available(config) -> bool:
+    """Whether Neo4j is reachable at `config.neo4j_uri()`, checked once per session.
+
+    Reachability only -- never assumes `config.graph.enabled` (default
+    `False`), since a test needing a real Neo4j deliberately builds its
+    own config with `graph.enabled=True`, same convention
+    `security_regression`-style tests already use for other kill-switches.
+    """
+    from urllib.parse import urlparse as _urlparse
+
+    parsed = _urlparse(config.neo4j_uri())
+    return _tcp_reachable(parsed.hostname or "localhost", parsed.port or 7687)
+
+
+@pytest.fixture
+def require_neo4j(neo4j_available):
+    """Skip the test if Neo4j isn't reachable."""
+    if not neo4j_available:
+        pytest.skip(
+            "Neo4j is not reachable at NEO4J_URI; run `docker compose -f docker-compose.yml "
+            "-f docker-compose.graph.yml up -d neo4j` first."
+        )
+
+
+@pytest.fixture(scope="session")
 def techfusion_corpus_available(postgres_available, config) -> bool:
     """Whether the real, gitignored `techfusion` corpus is already ingested.
 

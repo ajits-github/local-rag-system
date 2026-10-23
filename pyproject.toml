@@ -37,6 +37,12 @@ dependencies = [
     # here explicitly (not just under dev) as of MCP Stage 2, since rag.agent.mcp_client imports
     # it directly at runtime (the agent's own MCP client for get_customer_case/get_case_status),
     # not just from the test suite.
+    "neo4j>=5.24,<6",  # official Bolt driver for the Knowledge Graph / GraphRAG capability
+    # (rag.graph). A core, not optional, dependency: graph.enabled=false (the default) is a true
+    # no-op regardless -- no driver is constructed, so this adds no runtime cost when unused --
+    # but importing rag.graph.client must not require an extras install, matching the "core
+    # dependency behind a runtime flag" precedent already set by mcp/slowapi/pyjwt, not the
+    # eval-only extras (ragas/mlflow/cohere/anthropic) pattern.
 ]
 
 [project.optional-dependencies]

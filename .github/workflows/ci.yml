@@ -195,7 +195,10 @@ jobs:
             tests/unit/test_agent_tools_document_fetch_bounding.py \
             tests/unit/test_agent_tools_freshness.py \
             tests/unit/test_agent_tool_evidence_sanitization.py \
-            tests/unit/test_run_agent_eval.py
+            tests/unit/test_run_agent_eval.py \
+            tests/unit/test_graph_authorization.py \
+            tests/unit/test_graph_cypher_guard.py \
+            tests/unit/test_graph_upsert.py
 
       - name: Write test summary
         if: always()

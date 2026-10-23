@@ -36,7 +36,7 @@ class Citation(BaseModel):
     attachment_name: str | None = None
     source_anchor: str | None = None
     vision_generated: bool = False
-    origin: Literal["retrieved", "expanded", "tool_fetched", "mcp_remote"] = "retrieved"
+    origin: Literal["retrieved", "expanded", "tool_fetched", "mcp_remote", "graph"] = "retrieved"
 
 
 class NodeInvocationTiming(BaseModel):
@@ -80,6 +80,10 @@ class ToolCallRecord(BaseModel):
         "get_customer_case",
         "get_case_status",
         "update_case_status",
+        "search_knowledge_graph",
+        "get_entity",
+        "get_neighbors",
+        "find_dependency_path",
     ]
     args: dict[str, Any] = Field(default_factory=dict)
     result_count: int = 0
