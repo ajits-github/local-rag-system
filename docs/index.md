@@ -12,7 +12,20 @@ that live in the repository (`README.md`, `docs/architecture.md`,
 `docs/metrics.md`, and `src/rag/**`), so it stays in sync with the code
 without duplicating it.
 
---8<-- "README.md:docs-architecture-diagram"
+![Local RAG System architecture: users and clients through security and
+request context, the classic/agent RAG runtime, context engineering,
+Ollama generation, evidence sources (retrieval stack, graph/semantic
+layer, tools, conversation history), evaluation and observability, and
+the separate experiment/learning branches](assets/architecture-diagram.png)
+
+Two pieces of this diagram are ahead of what's implemented today, not
+built capabilities: **Context Engineering** is planned next (today,
+context sizing is three explicit cutoffs; see
+[Retrieval](topics/retrieval.md)), and **Conversation / history** /
+**conversation continuity** don't exist yet either, every `/query` and
+`/agent/query` call is stateless. **NDCG** also isn't an implemented
+metric; Recall@k, hit-rate, MRR, and RAGAS are what `eval/run_eval.py`
+actually computes (see [Metrics](metrics.md)).
 
 ## Start here
 
