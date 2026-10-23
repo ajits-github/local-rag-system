@@ -709,9 +709,11 @@ captured setup, architecture, and conclusions.
 - [`KNOWN_ISSUES.md`](KNOWN_ISSUES.md) is the curated, interview-focused version of
   the same work: concrete problem/diagnosis/solution/result writeups
   with before/after metrics, organized by topic rather than by date.
-- `SECURITY.md` is the vulnerability-reporting and control-summary file.
-- `docs/` contains the maintained design documentation.
-- `frontend/README.md` covers frontend-specific setup and testing.
+- [`SECURITY.md`](SECURITY.md) is the vulnerability-reporting and
+  control-summary file.
+- [`docs/`](docs/) contains the maintained design documentation.
+- [`frontend/README.md`](frontend/README.md) covers frontend-specific
+  setup and testing.
 
 ## License
 
