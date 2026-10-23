@@ -1,0 +1,23 @@
+# Query 6: list every (transitive) subclass of tech:Service.
+# Demonstrates: a property path over the ontology's own T-box
+# (rdfs:subClassOf*, zero-or-more hops, so tech:Service itself would
+# also match at zero hops, excluded by the FILTER).
+#
+# The owl:Nothing FILTER is not defensive boilerplate: running this
+# query after OWL-RL closure (reasoning.materialize_owl_rl) without it
+# returns owl:Nothing as a fourth "subclass" of tech:Service. This is
+# correct OWL semantics, not a bug: the empty class is entailed to be a
+# subclass of every class, since an empty set is trivially a subset of
+# any set. A query written against a raw, un-reasoned graph would never
+# see this; one written against an OWL-RL-closed graph always will,
+# for ANY class, not just tech:Service. See docs/ontology.md section 14.
+PREFIX tech: <http://techfusion.example/ontology/v1#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX owl: <http://www.w3.org/2002/07/owl#>
+
+SELECT ?subclass
+WHERE {
+    ?subclass rdfs:subClassOf* tech:Service .
+    FILTER(?subclass != tech:Service && ?subclass != owl:Nothing)
+}
+LIMIT 50

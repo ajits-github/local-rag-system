@@ -1,0 +1,20 @@
+# Query 4: multi-hop dependency traversal from one root service.
+# Demonstrates: a SPARQL 1.1 property path (`+`, one-or-more hops).
+# NOTE: tech:dependsOn is deliberately NOT declared owl:TransitiveProperty
+# (see the ontology file's comment on tech:dependsOn). This property
+# path still works: a property path is a query-time traversal
+# instruction, evaluated fresh for this one query, and is a completely
+# separate mechanism from an owl:TransitiveProperty axiom, which would
+# instead make the reasoner permanently materialize every transitive
+# triple into the graph itself. Bounded here by starting from one named
+# root and a LIMIT, not by a depth bound (rdflib's path algebra supports
+# `{n,m}` bounded-repeat syntax too; `+` is used here for readability
+# against this small graph).
+PREFIX tech: <http://techfusion.example/ontology/v1#>
+
+SELECT ?root ?transitiveDependency
+WHERE {
+    ?root tech:name "RAG Service" .
+    ?root tech:dependsOn+ ?transitiveDependency .
+}
+LIMIT 50

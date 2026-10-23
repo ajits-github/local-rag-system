@@ -1,0 +1,37 @@
+# Query 7: find every individual whose tech:Customer type came from
+# owl:equivalentClass entailment (e.g. sap:Client, crm:Customer,
+# svcnow:BusinessPartner individuals), not a directly-asserted
+# "rdf:type tech:Customer" triple.
+# Demonstrates: OPTIONAL plus FILTER to show every OTHER type an
+# individual also carries. Run this on the raw graph (1 result: only
+# the canonical inst:customer-northwind-logistics, directly asserted)
+# and on the OWL-RL-closed graph (4 individuals, 4 inferred types each:
+# Customer/BusinessPartner/Client/Thing, confirmed by actually
+# running this against this milestone's data). The query text never
+# changes; only the data it runs against does. See docs/ontology.md sections 10, 12, 13.
+#
+# A subtlety this exact query surfaced in practice, not just in theory:
+# svcnow:organization_xyz (the ServiceNow-shaped record this milestone
+# deliberately leaves UNLINKED in data/ontology/instances/canonical_entity_resolution.ttl,
+# with no owl:sameAs or even tech:candidateSameAs to the canonical
+# Northwind Logistics individual) STILL appears in this query's
+# reasoned-mode results, typed tech:Customer, purely because its own
+# asserted class (svcnow:BusinessPartner) is schema-mapped to
+# tech:Customer, independent of whether its IDENTITY was ever
+# resolved. "Is type-compatible with Customer" (true here) and "IS the
+# same real-world customer as our canonical record" (still unconfirmed
+# here) are two separate claims this model tracks separately. Treating
+# the first as proof of the second would be exactly the unjustified
+# automatic merge docs/ontology.md section 11 warns against. See
+# scripts/ontology_demo.py --demo interop's printed output.
+PREFIX tech: <http://techfusion.example/ontology/v1#>
+
+SELECT ?customer ?viaOtherType
+WHERE {
+    ?customer a tech:Customer .
+    OPTIONAL {
+        ?customer a ?viaOtherType .
+        FILTER(?viaOtherType != tech:Customer && ?viaOtherType != tech:EnterpriseEntity)
+    }
+}
+LIMIT 50

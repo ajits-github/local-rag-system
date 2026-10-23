@@ -33,6 +33,7 @@ for that design.
 
 Full design writeups:
 
+- [Authorization Call Sites](authorization-call-sites.md): the exact function and every call site for each of the four layers above, verified against the code.
 - [Authorization, Freshness, and Trust](../architecture.md#authorization-freshness-and-trust-safetyfreshness-milestone)
 - [Field-Level Sensitive-Data Redaction](../architecture.md#field-level-sensitive-data-redaction-field-level-safety-milestone)
 - [Authenticated API Boundary and Security Hardening](../architecture.md#authenticated-api-boundary-and-security-hardening-auth-boundary-milestone)

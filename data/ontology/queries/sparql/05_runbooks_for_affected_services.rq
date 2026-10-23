@@ -1,0 +1,14 @@
+# Query 5: for every open Incident, find the runbook(s) covering the
+# service(s) it affects.
+# Demonstrates: a three-hop join (Incident -affects-> Service -hasRunbook-> Runbook)
+# entirely through ordinary WHERE triple patterns.
+PREFIX tech: <http://techfusion.example/ontology/v1#>
+
+SELECT ?incident ?incidentName ?service ?runbook
+WHERE {
+    ?incident a tech:Incident ;
+              tech:name ?incidentName ;
+              tech:affects ?service .
+    ?service tech:hasRunbook ?runbook .
+}
+LIMIT 50

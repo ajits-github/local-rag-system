@@ -1,0 +1,49 @@
+@prefix tech: <http://techfusion.example/ontology/v1#> .
+@prefix inst: <http://techfusion.example/graph/techfusion_graph_demo/> .
+
+#################################################################
+# Fixtures for scripts/ontology_demo.py --demo owl ONLY. Never loaded alongside
+# the main instance data (they would pollute every other demo's result
+# counts). Each one exists to trigger exactly one specific OWL-RL
+# entailment or consistency check, discussed in docs/ontology.md section 5.
+#################################################################
+
+# --- Fixture 1: owl:FunctionalProperty forcing owl:sameAs -----------
+# tech:ownedBy is owl:FunctionalProperty. Asserting two different
+# OWNED_BY-shaped triples for the same service is something Cypher
+# would happily store as two ordinary edges with no contradiction and
+# no inference at all. Under OWL-RL semantics, a functional property's
+# object is logically unique, so a reasoner is entitled to infer that
+# the two named objects denote the SAME individual.
+
+inst:service-billing-api
+    a tech:Service ;
+    tech:name "Billing API" .
+
+inst:team-billing-ops
+    a tech:Team ;
+    tech:name "Billing Ops" .
+
+inst:team-finance-platform
+    a tech:Team ;
+    tech:name "Finance Platform" .
+
+inst:service-billing-api tech:ownedBy inst:team-billing-ops .
+inst:service-billing-api tech:ownedBy inst:team-finance-platform .
+
+# --- Fixture 2: disjoint-class inconsistency ------------------------
+# tech:Service owl:disjointWith tech:Team. No reasoner is required to
+# "notice" this is wrong by itself (OWL-RL's standard rule set does not
+# derive owl:Nothing membership from disjointWith the way a full OWL DL
+# reasoner's consistency check would); the demo instead runs a bounded
+# SPARQL ASK query over the ontology's own disjointWith axioms plus the
+# data's asserted types, which is the practical, lightweight way to
+# catch this without standing up a full DL reasoner. See docs/ontology.md section
+# 5's "OWL ontology vs database schema" discussion for why this still
+# counts as real OWL semantics (disjointWith is itself an OWL axiom;
+# only the *mechanism used to check it* here is a SPARQL query rather
+# than a DL reasoner's inconsistency proof).
+
+inst:service-dual-typed-anomaly
+    a tech:Service, tech:Team ;
+    tech:name "Deliberately mistyped node" .

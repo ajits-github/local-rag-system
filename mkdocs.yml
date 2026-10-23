@@ -79,7 +79,7 @@ plugins:
         # linked separately right next to each transclusion. (The web-ui
         # snippet's own root-relative image/frontend-README references
         # used to need entries here too, until the snippet boundaries were
-        # narrowed to exclude them -- see docs/topics/web-ui.md, which now
+        # narrowed to exclude them; see docs/topics/web-ui.md, which now
         # supplies its own correctly-pathed image instead.)
         - "docs/architecture.md"
         - "#mlflow-tracking"
@@ -97,10 +97,13 @@ nav:
   - Ingestion & Chunking: topics/ingestion.md
   - Retrieval: topics/retrieval.md
   - Multimodal & Layout: topics/multimodal.md
-  - Security: topics/security.md
+  - Security:
+      - Overview: topics/security.md
+      - Authorization call sites: topics/authorization-call-sites.md
   - Agentic RAG: topics/agentic-rag.md
   - MCP: topics/mcp.md
   - Knowledge Graph & GraphRAG: topics/graphrag.md
+  - Ontology & Semantic Layer: topics/ontology.md
   - Evaluation & RAGAS:
       - Overview: topics/evaluation.md
       - Metrics reference: metrics.md
@@ -125,6 +128,7 @@ nav:
       - Agent: reference/agent.md
       - MCP: reference/mcp.md
       - Knowledge Graph / GraphRAG: reference/graph.md
+      - Ontology & Semantic Layer: reference/ontology.md
       - Ingestion: reference/ingestion.md
       - Evaluation: reference/eval.md
       - Observability: reference/observability.md

@@ -62,17 +62,17 @@ entirely separate, opt-in overlay, following the same pattern as
 The same build serves two UI modes, selected by a single build-time Vite
 env var, `VITE_UI_MODE` (`src/config/uiMode.ts`):
 
-- **`developer`** -- shows the Developer settings panel (bearer token
+- **`developer`**: shows the Developer settings panel (bearer token
   entry, tenant/role/as-of/dataset controls), the always-visible feature
   flags bar and Runtime configuration panel, the per-answer Debug panel
   (route, timings, tool-call cards), raw retrieval scores in the sources
   list, and a small "Developer Mode" badge in the header.
-- **`production`** -- hides all of the above. Chat, Classic/Agentic mode
+- **`production`**: hides all of the above. Chat, Classic/Agentic mode
   switching, citations/sources (without the raw score), feedback
   controls, and error/loading states all still work normally.
 
 **The safe default is `production`.** Any value other than the exact
-string `"developer"` -- unset, empty, a typo, wrong case -- resolves to
+string `"developer"` (unset, empty, a typo, wrong case) resolves to
 `production`. This is deliberate fail-safe behavior: a build that forgets
 to set the flag must never accidentally ship developer/debug tooling.
 
@@ -81,10 +81,11 @@ Developer settings panel does not add or remove any backend capability:
 the backend's JWT verification, tenant/role authorization, and field
 redaction are unaffected by, and unaware of, this flag. A user who edits
 the frontend bundle directly (or just calls the API themselves) has
-exactly the same access either way -- what they're actually allowed to do
+exactly the same access either way: what they're actually allowed to do
 is still decided entirely by the backend, per this project's existing
-authentication/authorization design (see `CLAUDE.md`'s "Authenticated API
-boundary" section). This flag only decides whether the *browser UI*
+authentication/authorization design (see `docs/architecture.md`'s
+"Authenticated API Boundary and Security Hardening" section). This flag
+only decides whether the *browser UI*
 exposes a convenient developer control for something the backend may or
 may not permit.
 
@@ -135,10 +136,10 @@ collapsed, unlike every other panel) shows the connected backend's actual
 active security/agent posture: Auth, Authorization, Redaction, Rate limit,
 Agent, Vision provider, and Tracing. It is fetched from `GET /`'s
 `features` block (`rag.api.main.FeatureFlags`) once on load, plus a manual
-refresh button.
-Booleans and provider names only, never a model name/host/secret. If
-`security.auth.enabled` and `security.auth.insecure_dev_mode` are both on,
-an additional "Dev mode" pill calls that out explicitly.
+refresh button. It exposes booleans and provider names only, never a
+model name, host, or secret. If `security.auth.enabled` and
+`security.auth.insecure_dev_mode` are both on, an additional "Dev mode"
+pill calls that out explicitly.
 
 Each pill's on/off state is never color-only: an enabled pill gets a
 visible "✓" in addition to its accent border/dot, and every pill carries
@@ -153,8 +154,7 @@ extraction prompt succeeded against whatever config happened to be
 running, and nothing in the UI indicated that authorization/field
 redaction were simply both off. The retrieval/redaction code itself was
 correct, the active config just had every safety control disabled. The
-bar makes that visible at a glance instead of by accident. See
-`CLAUDE.md`'s "Web UI" section for the full writeup.
+bar makes that visible at a glance instead of by accident.
 
 ## Runtime configuration panel
 
@@ -177,7 +177,7 @@ never to leak) lives here instead.
 
 If `GET /info` fails (backend still starting, a transient network blip),
 the toggle and expanded body both say the neutral "Runtime info
-unavailable" -- deliberately not styled as an error (no red), since this
+unavailable," deliberately not styled as an error (no red), since this
 section describes the pipeline, not the chat itself: a failed fetch here
 never implies chat is broken, and the Refresh button stays available to
 retry.
@@ -187,10 +187,10 @@ retry.
 - **Classic RAG** calls `POST /query`.
 - **Agentic RAG** calls `POST /agent/query/stream` for live progress,
   rendering a collapsible "Agent activity" panel (step, tool name, elapsed
-  time, retrieved chunk count, evidence-sufficiency, termination reason:
-  the same safe fields `AgentEvent` exposes, nothing else. `AgentEvent` has
-  no free-text field at all, so there is no reasoning/prompt/evidence text
-  for the UI to accidentally render). If the backend has
+  time, retrieved chunk count, evidence-sufficiency, termination reason),
+  the same safe fields `AgentEvent` exposes, nothing else. `AgentEvent`
+  has no free-text field at all, so there is no reasoning/prompt/evidence
+  text for the UI to accidentally render. If the backend has
   `observability.live_events.enabled: false`, the stream endpoint 404s and
   the UI falls back to the non-streaming `POST /agent/query` automatically,
   with a small notice that live progress isn't available.
@@ -200,7 +200,7 @@ Sources are rendered in a collapsible panel with content-type badges
 distinguishing a local RAG/knowledge-base source from an MCP remote/
 business-tool one (`SourceItem.origin`), section path, and page number,
 never a filesystem path (the API never returns one). The raw numeric
-relevance score is developer-mode only (see "UI modes" above) -- it's
+relevance score is developer-mode only (see "UI modes" above): it's
 citation-adjacent, not itself a secret, but it reads as internal debug
 detail to an end user.
 
@@ -209,7 +209,7 @@ mode only), organized into Request (correlation id), Pipeline (route,
 termination reason), Timings (retrieval/generation/total), and Tools
 sections. For an agentic run, each tool dispatch renders as a small
 card: tool name, execution (Local vs. MCP remote, from
-`AgentQueryResponse.tool_call_details`), status, and duration -- never
+`AgentQueryResponse.tool_call_details`), status, and duration, never
 the tool's arguments, reasoning, or raw error text.
 
 ## Empty chat state
@@ -219,7 +219,7 @@ product-facing prompt ("Ask about the TechFusion knowledge base") plus
 2-3 example-query chips (`src/components/chat/MessageList.tsx`). Each
 chip's text is a real question grounded in the actual demo corpus (see
 `PROJECT_JOURNAL.md`'s "Empty chat state" entry for exactly which
-document/fact backs each one) -- never a placeholder case ID or a
+document/fact backs each one), never a placeholder case ID or a
 document that may not exist, since a wrong example would look like a
 broken app on the very first thing a visitor sees. Clicking a chip
 populates the composer via `MessageInput`'s imperative handle
@@ -232,7 +232,7 @@ else (typing or pasting text never sends it by itself either).
 The message textarea (`MessageInput`) starts at a compact single-line
 height and grows automatically as you type or paste multi-line content,
 up to a cap (160px, beyond which it scrolls internally rather than
-growing further) -- there's no manual drag-resize handle, since the
+growing further); there's no manual drag-resize handle, since the
 auto-grow behavior supersedes it. Enter sends, Shift+Enter inserts a
 newline, and the Send button/textarea both respect the same
 sending-in-progress `disabled` state as before.
@@ -274,7 +274,7 @@ into a compact "Developer session" summary: a header row ("Developer
 session" plus an **Edit settings** button aligned to the right) and one
 horizontal line below it joining whichever facts are actually set with
 " · " (e.g. `tenant_beta · tenant_beta_operator · Current · expires in
-3h 58m`) -- tenant, role, as-of date, dataset, trust level, and (for a
+3h 58m`): tenant, role, as-of date, dataset, trust level, and (for a
 token) an expiry phrase, each its own segment, present only when set.
 This intentionally does not repeat the bare word "Authenticated" the
 header's `TokenStatusBadge` already shows; the expiry phrase itself
@@ -283,7 +283,7 @@ takes that segment's place when relevant. **Edit settings** reopens the
 full form pre-filled with the currently-applied values.
 
 For a bearer token specifically, the JWT payload is decoded **client-side,
-for display only** (`src/utils/jwt.ts`) -- this never constitutes
+for display only** (`src/utils/jwt.ts`); this never constitutes
 authentication or authorization, and the backend's own signature
 verification remains the only thing that actually accepts or rejects a
 request. A header badge (`TokenStatusBadge`) shows a live countdown to
@@ -299,9 +299,8 @@ never `localStorage`.
 
 The same panel also has a **Dataset ID** field, independent of identity.
 `dataset_id` is a required, non-defaulted namespace on every ingested
-chunk (see `CLAUDE.md`'s "Document identity" section) -- a shared dev
-Postgres instance can easily hold several unrelated ingestions
-(the real corpus, layout/vision A/B/C experiment copies, leftover
+chunk; a shared dev Postgres instance can easily hold several unrelated
+ingestions (the real corpus, layout/vision A/B/C experiment copies, leftover
 integration-test artifacts) side by side. Leaving this field blank
 searches *every* dataset_id at once, which is almost never what you want
 for manual testing: it's how an unrelated document from a different

@@ -1,0 +1,78 @@
+@prefix tech:  <http://techfusion.example/ontology/v1#> .
+@prefix owl:   <http://www.w3.org/2002/07/owl#> .
+@prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
+@prefix dct:   <http://purl.org/dc/terms/> .
+
+#################################################################
+# TechFusion Enterprise Ontology, version 1.1.0
+#
+# A worked example of non-breaking ontology evolution (docs/ontology.md section 15).
+# Governance rule followed here: a release that only ADDS terms, or
+# marks an existing term deprecated WITHOUT changing what it means,
+# keeps the same term namespace (tech: still resolves to
+# .../ontology/v1#, not v1.1#) and only bumps owl:versionIRI/
+# owl:versionInfo on the ontology document itself. Existing triples
+# written against v1.0.0 (e.g. "SomeNode rdf:type tech:System") remain
+# valid and still parse correctly against v1.1.0 with zero rewriting,
+# because tech:System itself is not removed, only deprecated and given
+# an equivalentClass bridge.
+#
+# A change that redefines what an EXISTING term means (not done here)
+# would be a breaking change and would require a new major namespace
+# (tech2: <.../ontology/v2#>), so that old triples using the v1 term
+# are never silently reinterpreted under new semantics. This file does
+# not do that: it only adds.
+#
+# Load order: this file owl:imports v1.0.0's IRI (informational; this
+# this milestone's loader (rag.ontology.store) actually loads
+# both files by path, since there is no network-resolvable copy of the
+# v1 IRI to dereference).
+#################################################################
+
+<http://techfusion.example/ontology/v1.1>
+    a owl:Ontology ;
+    owl:versionIRI <http://techfusion.example/ontology/v1.1> ;
+    owl:versionInfo "1.1.0" ;
+    owl:priorVersion <http://techfusion.example/ontology/v1> ;
+    owl:imports <http://techfusion.example/ontology/v1> ;
+    dct:title "TechFusion Enterprise Ontology"@en ;
+    dct:created "2026-10-07"^^xsd:date ;
+    rdfs:comment "Non-breaking addition over v1.0.0: deprecates tech:System in favor of tech:InfrastructureComponent, and adds tech:Vendor. See CHANGELOG.md." .
+
+#################################################################
+# Deprecation: tech:System
+#
+# rag.graph.schema.EntityType still lists "System" as one of its 17
+# labels, left over from an earlier, less-refined stage of the Neo4j
+# schema's own evolution (see docs/graphrag.md). No relationship in the
+# current techfusion_graph_demo seed data actually uses it (grep of
+# scripts/seed_graph_demo_data.py's SEEDED_RELATIONSHIPS confirms this),
+# but the label is still a legal Neo4j node label today, so the ontology
+# must keep modeling it rather than silently dropping it.
+#################################################################
+
+tech:System a owl:Class ;
+    rdfs:subClassOf tech:InfrastructureComponent ;
+    rdfs:label "System (deprecated)"@en ;
+    rdfs:comment "Deprecated in v1.1.0. Use tech:InfrastructureComponent (or a more specific subclass such as tech:Technology) for new data. Kept, not removed, so any existing instance data typed tech:System remains valid and classifies correctly; see owl:equivalentClass below." ;
+    owl:deprecated true ;
+    owl:equivalentClass tech:InfrastructureComponent ;
+    tech:neo4jLabel "System" .
+
+#################################################################
+# Addition: tech:Vendor
+#
+# A genuinely new, additive class: a third-party supplier the
+# enterprise depends on (e.g. a cloud provider or SaaS vendor). Nothing
+# existing references it; it only widens what can be expressed. This is
+# the other half of "non-breaking change": pure addition, no
+# deprecation involved.
+#################################################################
+
+tech:Vendor a owl:Class ;
+    rdfs:subClassOf tech:EnterpriseEntity ;
+    rdfs:label "Vendor"@en ;
+    rdfs:comment "A third-party supplier of a Service or Technology this enterprise depends on. New in v1.1.0; no corresponding Neo4j label exists yet." ;
+    tech:neo4jLabel "none (new in v1.1.0, not yet written to Neo4j)" .

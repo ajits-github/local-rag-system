@@ -1,0 +1,88 @@
+@prefix tech:   <http://techfusion.example/ontology/v1#> .
+@prefix owl:    <http://www.w3.org/2002/07/owl#> .
+@prefix xsd:    <http://www.w3.org/2001/XMLSchema#> .
+@prefix inst:   <http://techfusion.example/graph/techfusion_graph_demo/> .
+@prefix sap:    <http://example.org/systems/sap#> .
+@prefix crm:    <http://example.org/systems/crm#> .
+@prefix svcnow: <http://example.org/systems/servicenow#> .
+
+#################################################################
+# Canonical entity model (docs/ontology.md section 11). One real-world customer,
+# "Northwind Logistics" (the same individual already defined as
+# inst:customer-northwind-logistics in instances_customer_domain.ttl,
+# the canonical enterprise identifier), as seen by three different
+# source systems that each mastered their own, differently-shaped
+# record of it, per the mapping declared in
+# interoperability_mappings.ttl.
+#
+# Three distinct outcomes are modeled deliberately, not one blanket
+# "merge everything" outcome, because real entity resolution produces
+# all three:
+#
+#   1. sap:customer_4711       -> CONFIRMED owl:sameAs (strong, reviewed
+#                                  evidence: SAP's record carries the
+#                                  same registered legal name and tax id
+#                                  TechFusion's own onboarding record
+#                                  has on file; a named reviewer
+#                                  confirmed it).
+#   2. crm:account_abc123      -> PROPOSED tech:candidateSameAs only
+#                                  (a fuzzy name-matching rule found a
+#                                  likely match, 0.72 confidence, but no
+#                                  human or system has confirmed it yet,
+#                                  so it is NOT asserted as owl:sameAs
+#                                  and must not be treated as fact by
+#                                  anything that reads this graph).
+#   3. svcnow:organization_xyz -> NO LINK AT ALL. An identity conflict:
+#                                  the ServiceNow-shaped record has no
+#                                  attribute in common with either the
+#                                  canonical record or the other two
+#                                  systems' records strong enough to
+#                                  even propose a candidate match. Left
+#                                  unresolved on purpose, documented as
+#                                  such, rather than guessed at.
+#
+# Source authority: a comment on each system's record states which
+# system TechFusion treats as authoritative for which attribute (a
+# real enterprise MDM concern: "golden record" fields often come from
+# different source systems depending on the field).
+#################################################################
+
+sap:customer_4711
+    a sap:Client ;
+    tech:externalIdentifier "4711" ;
+    tech:sourceSystem "sap" ;
+    tech:name "Northwind Logistics" ;
+    tech:resolvedBy "manual-review:j.ortiz@techfusion.example, 2026-09-30" ;
+    tech:resolutionStatus "confirmed" .
+    # Source authority: SAP is treated as authoritative for billing
+    # identity (legal name, tax id) in this synthetic scenario.
+
+inst:customer-northwind-logistics owl:sameAs sap:customer_4711 .
+
+crm:account_abc123
+    a crm:Customer ;
+    tech:externalIdentifier "abc123" ;
+    tech:sourceSystem "crm" ;
+    tech:name "Northwind Logistics LLC" ;
+    tech:resolvedBy "fuzzy-name-matcher-v1 (confidence 0.72)" ;
+    tech:resolutionStatus "proposed" .
+    # Source authority: CRM is treated as authoritative for the sales
+    # relationship owner and contact history, once/if this candidate
+    # link is confirmed.
+
+inst:customer-northwind-logistics tech:candidateSameAs crm:account_abc123 .
+
+svcnow:organization_xyz
+    a svcnow:BusinessPartner ;
+    tech:externalIdentifier "xyz" ;
+    tech:sourceSystem "servicenow" ;
+    tech:name "Northwind Logistics Group (APAC)" .
+    # Deliberately NOT linked to inst:customer-northwind-logistics at
+    # all: the name is close but not exact, there is no shared
+    # identifier field, and "(APAC)" suggests this may genuinely be a
+    # distinct regional subsidiary rather than the same legal entity.
+    # An identity conflict recorded as "unresolved", not resolved
+    # optimistically. See docs/ontology.md section 11's entity-resolution
+    # discussion and scripts/ontology_demo.py --demo interop's printed
+    # output for how a query over this data must therefore treat this
+    # record as a separate entity until better evidence arrives.

@@ -1,0 +1,80 @@
+@prefix tech:   <http://techfusion.example/ontology/v1#> .
+@prefix owl:    <http://www.w3.org/2002/07/owl#> .
+@prefix rdf:    <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:   <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix skos:   <http://www.w3.org/2004/02/skos/core#> .
+@prefix sap:    <http://example.org/systems/sap#> .
+@prefix crm:    <http://example.org/systems/crm#> .
+@prefix svcnow: <http://example.org/systems/servicenow#> .
+
+#################################################################
+# Semantic interoperability (docs/ontology.md section 10). Three small,
+# synthetic external-system vocabularies, each with its own class and
+# key field name for "the entity a case/account belongs to", mapped
+# explicitly into the TechFusion ontology rather than merely renamed.
+#
+#   System A (SAP-shaped):        sap:Client,   field sap:customer_id
+#   System B (CRM-shaped):        crm:Customer, field crm:account_holder
+#   System C (ServiceNow-shaped): svcnow:BusinessPartner (no separate
+#                                 "holder" field; the class itself
+#                                 names the party)
+#
+# None of these three systems is a real system; "SAP-shaped" etc. names
+# the terminology style only, for interview-recognizable grounding.
+#
+# This is a mapping, not a rename: each external term keeps its own
+# IRI, in its own namespace, and the equivalence is a separate,
+# inspectable triple (owl:equivalentClass / owl:equivalentProperty),
+# never a destructive edit of the source vocabulary. A query against
+# tech:Customer transparently matches individuals only ever asserted
+# under sap:Client, crm:Customer, or svcnow:BusinessPartner once an
+# RDFS/OWL-RL reasoner has run (see docs/ontology.md section 12's "ontology-aware
+# GraphRAG" and scripts/ontology_demo.py --demo sparql query 07).
+#################################################################
+
+sap:Client a owl:Class ;
+    rdfs:label "Client (SAP-shaped system)"@en ;
+    owl:equivalentClass tech:Customer .
+
+sap:customer_id a owl:DatatypeProperty ;
+    rdfs:label "customer_id (SAP-shaped system)"@en ;
+    owl:equivalentProperty tech:externalIdentifier .
+
+crm:Customer a owl:Class ;
+    rdfs:label "Customer (CRM-shaped system)"@en ;
+    owl:equivalentClass tech:Customer .
+
+crm:account_holder a owl:DatatypeProperty ;
+    rdfs:label "account_holder (CRM-shaped system)"@en ;
+    owl:equivalentProperty tech:externalIdentifier .
+
+svcnow:BusinessPartner a owl:Class ;
+    rdfs:label "Business Partner (ServiceNow-shaped system)"@en ;
+    owl:equivalentClass tech:Customer .
+
+#################################################################
+# Case/ticket/incident terminology mapping. Three external systems each
+# call a customer-raised support item something different; all three
+# map to tech:CustomerCase. Note this mapping is deliberately NOT made
+# for tech:Incident: an "incident" in the operational sense (an
+# Incident affecting a Service, docs/ontology.md section 1) and a customer's
+# support "ticket" are genuinely different concepts in TechFusion's own
+# domain model even though the English word "incident" is reused by
+# some external systems for the customer-facing meaning, a case where
+# naive field-renaming (just because both say "incident") would merge
+# two concepts that should stay distinct. See docs/ontology.md section 10.
+#################################################################
+
+sap:ticket a owl:Class ;
+    rdfs:label "ticket (SAP-shaped system)"@en ;
+    rdfs:comment "SAP-shaped system's term for a customer-raised support item." ;
+    owl:equivalentClass tech:CustomerCase .
+
+crm:support_case a owl:Class ;
+    rdfs:label "support_case (CRM-shaped system)"@en ;
+    owl:equivalentClass tech:CustomerCase .
+
+svcnow:incident a owl:Class ;
+    rdfs:label "incident (ServiceNow-shaped system)"@en ;
+    rdfs:comment "ServiceNow-shaped system's term for a customer-raised support item. Note this maps to tech:CustomerCase, NOT tech:Incident, despite the shared English word. See the module-level comment above." ;
+    owl:equivalentClass tech:CustomerCase .

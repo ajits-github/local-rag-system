@@ -1,0 +1,21 @@
+# Query 3: find policies that apply to a given service.
+# Demonstrates: UNION. tech:governedBy and tech:appliesTo are
+# owl:inverseOf each other, so once an OWL-RL reasoner has run, the
+# UNION's two branches become redundant (asserting one side always
+# entails the other). Run this query BOTH on the raw asserted graph and
+# on the RDFS/OWL-RL-closed graph (src/rag/ontology/reasoning.py)
+# to see the branch counts collapse together once inference has added
+# the missing inverse triples. See docs/ontology.md section 9.
+PREFIX tech: <http://techfusion.example/ontology/v1#>
+
+SELECT DISTINCT ?service ?policy
+WHERE {
+    {
+        ?service tech:governedBy ?policy .
+    }
+    UNION
+    {
+        ?policy tech:appliesTo ?service .
+    }
+}
+LIMIT 50

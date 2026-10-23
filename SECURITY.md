@@ -92,15 +92,21 @@ the full design and documented limitations of each.
   trust-level and unredacted-sensitive-field checks before any content
   leaves the process; production `answer()` never calls a hosted LLM at
   all (`src/rag/eval/egress_policy.py`).
-- **Knowledge-graph authorization**: graph traversal (`POST /graph/query`,
-  the agent's graph tools) enforces tenant/role/trust access twice,
-  independently: a Cypher `WHERE` predicate mirroring the vector store's
-  own rule on every deterministic query template, plus a Python-side
-  post-execution re-check applied to every returned row regardless of
-  what the query's own predicate did. A path containing any unauthorized
-  hop is discarded whole, never partially surfaced
-  (`src/rag/graph/authorization.py`). Off by default
-  (`config.graph.enabled`).
+- **Knowledge-graph and ontology authorization**: graph traversal
+  (`POST /graph/query`, the agent's graph tools) enforces tenant/role/
+  trust access twice, independently: a Cypher `WHERE` predicate
+  mirroring the vector store's own rule on every deterministic query
+  template, plus a Python-side post-execution re-check applied to every
+  returned row regardless of what the query's own predicate did. A path
+  containing any unauthorized hop is discarded whole, never partially
+  surfaced (`src/rag/graph/authorization.py`). The optional RDF/ontology
+  semantic layer reuses this exact same authorization function rather
+  than re-implementing it, so inference (RDFS/OWL entailment) never
+  grants access on its own, an inferred fact is checked by the identical
+  tenant/role rule as a directly-asserted one
+  (`src/rag/ontology/authorization.py`). Off by default
+  (`config.graph.enabled`); the ontology layer is not wired into
+  `rag.api`/`rag.agent` at all today.
 
 ## Known limitations
 

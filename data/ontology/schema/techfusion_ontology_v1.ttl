@@ -1,0 +1,409 @@
+@prefix tech:  <http://techfusion.example/ontology/v1#> .
+@prefix owl:   <http://www.w3.org/2002/07/owl#> .
+@prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
+@prefix dct:   <http://purl.org/dc/terms/> .
+
+#################################################################
+# TechFusion Enterprise Ontology, version 1.0.0
+#
+# This file models B, not A (see docs/ontology.md section 1):
+#
+#   A. instance data: "Document Service DEPENDS_ON PostgreSQL"
+#                             (lives in rag.graph / Neo4j, and in
+#                             data/ontology/instances/*.ttl)
+#   B. semantic/schema knowledge: "DatabaseService is a subclass of
+#                             Service" / "dependsOn connects a Service to
+#                             a Service". This file.
+#
+# Every class below carries a tech:neo4jLabel annotation naming the
+# rag.graph.schema.EntityType label it corresponds to (see
+# src/rag/graph/schema.py), so the mapping between the property-graph's
+# flat node labels and this ontology's class hierarchy is explicit,
+# never implied. Neo4j's labels are flat and mutually independent: there
+# is no Cypher-level statement anywhere in this codebase that says
+# "Database is a kind of Service". This ontology adds that subsumption
+# on top, as a semantic layer, without changing anything in rag.graph.
+#################################################################
+
+<http://techfusion.example/ontology/v1>
+    a owl:Ontology ;
+    owl:versionIRI <http://techfusion.example/ontology/v1> ;
+    owl:versionInfo "1.0.0" ;
+    dct:title "TechFusion Enterprise Ontology"@en ;
+    dct:created "2026-10-07"^^xsd:date ;
+    dct:creator "TechFusion Platform Engineering (synthetic data, ontology-semantic-layer learning experiment)" ;
+    rdfs:comment "Semantic/schema layer over the rag.graph property graph. See docs/graphrag.md for the underlying Neo4j schema this ontology describes." .
+
+#################################################################
+# Annotation properties (metadata only, never reasoned over)
+#################################################################
+
+tech:neo4jLabel a owl:AnnotationProperty ;
+    rdfs:label "Neo4j label"@en ;
+    rdfs:comment "Names the rag.graph.schema.EntityType label (or 'none' for a class that exists only in this ontology, with no corresponding Neo4j label today) that this class corresponds to in the property graph." .
+
+tech:neo4jRelationshipType a owl:AnnotationProperty ;
+    rdfs:label "Neo4j relationship type"@en ;
+    rdfs:comment "Names the rag.graph.schema.RelationshipType this property corresponds to in the property graph, or 'none' for a property that only exists in this ontology." .
+
+#################################################################
+# Class hierarchy
+#################################################################
+
+tech:EnterpriseEntity a owl:Class ;
+    rdfs:label "Enterprise Entity"@en ;
+    rdfs:comment "Root class of every individual in the TechFusion ontology. Every other class below is a subclass of this one." ;
+    tech:neo4jLabel "none (implicit root; every Neo4j node is one of the 17 labels below)" .
+
+tech:Service a owl:Class ;
+    rdfs:subClassOf tech:EnterpriseEntity ;
+    rdfs:label "Service"@en ;
+    rdfs:comment "A running, independently deployable software component. Used directly (unsubclassed) for a service the corpus does not further categorize, e.g. the demo graph's Gateway, Workflow Engine, Notification Service, RAG Service." ;
+    tech:neo4jLabel "Service" .
+
+tech:APIService a owl:Class ;
+    rdfs:subClassOf tech:Service ;
+    rdfs:label "API Service"@en ;
+    rdfs:comment "A Service whose primary role is exposing an API. Maps to Neo4j's separate, sibling 'API' label: Neo4j treats API and Service as two unrelated flat labels with no declared subsumption between them. This ontology makes that subsumption explicit." ;
+    tech:neo4jLabel "API" .
+
+tech:DatabaseService a owl:Class ;
+    rdfs:subClassOf tech:Service ;
+    rdfs:label "Database Service"@en ;
+    rdfs:comment "A managed data store other services depend on, e.g. the demo graph's PostgreSQL and OpenSearch (Neo4j label 'Database'). Modeled as a Service subclass because it is deployed, owned, and depended upon exactly like any other service in this domain." ;
+    tech:neo4jLabel "Database" .
+
+tech:MessagingService a owl:Class ;
+    rdfs:subClassOf tech:Service ;
+    rdfs:label "Messaging Service"@en ;
+    rdfs:comment "An asynchronous message broker, e.g. the demo graph's Kafka. Neo4j has no 'MessagingService' label; Kafka is typed with the generic, flat 'Technology' label there. This class is a deliberate semantic refinement that goes beyond what the property graph currently expresses: the same real-world entity is modeled with a flat, generic label in Neo4j and a precise subclass here. See data/instances_graph_demo.ttl for how Kafka is typed under both tech:MessagingService and tech:Technology." ;
+    tech:neo4jLabel "Technology (refined here; Neo4j itself has no messaging-specific label)" .
+
+tech:InfrastructureComponent a owl:Class ;
+    rdfs:subClassOf tech:EnterpriseEntity ;
+    rdfs:label "Infrastructure Component"@en ;
+    rdfs:comment "Umbrella class for non-Service technical infrastructure: named technologies, and the deprecated System label (see techfusion_ontology_v1_1.ttl)." ;
+    tech:neo4jLabel "none (umbrella; see tech:Technology)" .
+
+tech:Technology a owl:Class ;
+    rdfs:subClassOf tech:InfrastructureComponent ;
+    rdfs:label "Technology"@en ;
+    rdfs:comment "A named technology or platform component, e.g. Kafka. Maps to Neo4j's flat 'Technology' label." ;
+    tech:neo4jLabel "Technology" .
+
+tech:Application a owl:Class ;
+    rdfs:subClassOf tech:EnterpriseEntity ;
+    rdfs:label "Application"@en ;
+    rdfs:comment "A tenant- or user-facing application, distinct from a backend Service, e.g. the demo graph's tenant-scoped Alpha Internal Console." ;
+    tech:neo4jLabel "Application" .
+
+tech:Team a owl:Class ;
+    rdfs:subClassOf tech:EnterpriseEntity ;
+    rdfs:label "Team"@en ;
+    rdfs:comment "An owning organizational team, e.g. Workflow, Platform Engineering, Trust and Compliance." ;
+    tech:neo4jLabel "Team" .
+
+tech:OperationalDocumentation a owl:Class ;
+    rdfs:subClassOf tech:EnterpriseEntity ;
+    rdfs:label "Operational Documentation"@en ;
+    rdfs:comment "Umbrella class for documentation that governs or guides how a Service/Application is operated, spanning both Policy and Runbook. Added specifically so a query for 'what operational documentation applies to an affected service' can reason over this one broader concept instead of having to separately enumerate Policy and Runbook (and any future sibling, e.g. a Procedure class) by hand every time. See docs/ontology.md section 12." ;
+    tech:neo4jLabel "none (umbrella; Policy and Runbook are the two realized Neo4j labels under it today)" .
+
+tech:Policy a owl:Class ;
+    rdfs:subClassOf tech:OperationalDocumentation ;
+    rdfs:label "Policy"@en ;
+    rdfs:comment "A governance document that constrains how a Service, Application, or Environment may operate, e.g. the Data Retention Policy." ;
+    tech:neo4jLabel "Policy" .
+
+tech:Runbook a owl:Class ;
+    rdfs:subClassOf tech:OperationalDocumentation ;
+    rdfs:label "Runbook"@en ;
+    rdfs:comment "Operational response documentation for a Service, e.g. the Document Service Outage Runbook." ;
+    tech:neo4jLabel "Runbook" .
+
+tech:Incident a owl:Class ;
+    rdfs:subClassOf tech:EnterpriseEntity ;
+    rdfs:label "Incident"@en ;
+    rdfs:comment "A reported operational event that affects one or more Services or Applications." ;
+    tech:neo4jLabel "Incident" .
+
+tech:Customer a owl:Class ;
+    rdfs:subClassOf tech:EnterpriseEntity ;
+    rdfs:label "Customer"@en ;
+    rdfs:comment "An enterprise's customer or business partner. See data/interoperability_mappings.ttl for how this class unifies several source systems' own customer-shaped concepts." ;
+    tech:neo4jLabel "Customer" .
+
+tech:CustomerCase a owl:Class ;
+    rdfs:subClassOf tech:EnterpriseEntity ;
+    rdfs:label "Customer Case"@en ;
+    rdfs:comment "A support case raised by or on behalf of a Customer. Mirrors rag.mcp.business.store's synthetic case records. See data/interoperability_mappings.ttl for ticket/incident/support_case terminology mapping." ;
+    tech:neo4jLabel "CustomerCase" .
+
+tech:Environment a owl:Class ;
+    rdfs:subClassOf tech:EnterpriseEntity ;
+    rdfs:label "Environment"@en ;
+    rdfs:comment "A deployment environment (e.g. production, staging) a Service or Application runs in." ;
+    tech:neo4jLabel "Environment" .
+
+tech:Document a owl:Class ;
+    rdfs:subClassOf tech:EnterpriseEntity ;
+    rdfs:label "Document"@en ;
+    rdfs:comment "A source document from the RAG corpus. Instance-level Document provenance (source path, checksum, ingestion time) is kept entirely separate from this class's own schema-level provenance; see docs/ontology.md section 16." ;
+    tech:neo4jLabel "Document" .
+
+tech:Category a owl:Class ;
+    rdfs:subClassOf tech:EnterpriseEntity ;
+    rdfs:label "Category"@en ;
+    rdfs:comment "A document category/folder grouping, deterministically derived at ingestion time. Administrative metadata, not a semantically rich concept." ;
+    tech:neo4jLabel "Category" .
+
+tech:Tenant a owl:Class ;
+    rdfs:subClassOf tech:EnterpriseEntity ;
+    rdfs:label "Tenant"@en ;
+    rdfs:comment "A tenant namespace. Administrative metadata; tenant scoping itself is enforced by tech:tenantId data properties and the authorization layer (docs/ontology.md section 17), not by this class's own semantics." ;
+    tech:neo4jLabel "Tenant" .
+
+tech:Role a owl:Class ;
+    rdfs:subClassOf tech:EnterpriseEntity ;
+    rdfs:label "Role"@en ;
+    rdfs:comment "A named authorization role. Administrative metadata, same caveat as tech:Tenant." ;
+    tech:neo4jLabel "Role" .
+
+#################################################################
+# Disjointness
+#
+# Declared only where a real-world entity genuinely cannot be both
+# kinds at once. This is a cheap, useful consistency check: if the
+# instance data or a buggy extraction step ever typed one individual
+# under two disjoint classes, that is a modeling error worth catching
+# (see scripts/ontology_demo.py --demo owl's disjointness-violation check, which
+# runs a SPARQL ASK over the asserted+inferred graph rather than
+# assuming a full OWL DL reasoner is available).
+#################################################################
+
+tech:Service owl:disjointWith tech:Document, tech:Team, tech:Customer, tech:Policy .
+tech:Team owl:disjointWith tech:Customer, tech:Document .
+tech:Document owl:disjointWith tech:Customer .
+
+#################################################################
+# Object properties (relationships between individuals)
+#
+# Each one is annotated with the rag.graph.schema.RelationshipType it
+# corresponds to. domain/range are deliberately kept broad
+# (tech:EnterpriseEntity) for most properties: RDFS domain/range axioms
+# are inference triggers, not validation constraints (asserting a
+# triple whose subject/object does not yet have a declared type causes
+# the reasoner to infer one). A narrow, incorrect domain/range would
+# silently manufacture wrong type facts. Precise multi-class
+# constraints (e.g. "dependsOn's subject must be a Service or
+# Application") are expressed in SHACL instead, which validates without
+# inferring. See scripts/ontology_demo.py --demo domain-range-pitfall for a worked example
+# of the inference-trigger behavior, and docs/ontology.md section 6 for the
+# OWL-reasoning-vs-SHACL-validation distinction this motivates.
+#################################################################
+
+tech:dependsOn a owl:ObjectProperty ;
+    rdfs:label "depends on"@en ;
+    rdfs:comment "Subject requires object to function. Deliberately NOT owl:TransitiveProperty: rag.graph.queries already does bounded-depth (*1..N) Cypher traversal for multi-hop dependency/impact questions rather than relying on unbounded transitive inference, because an unbounded transitive closure over dependsOn would be both semantically misleading (indirect dependency is not the same claim as direct dependency) and operationally unbounded (cycles, runaway result sets). See docs/ontology.md section 14. rdfs:domain is deliberately left undeclared (not narrowed to tech:Service): the real Neo4j seed data also asserts DEPENDS_ON with an Application subject (Alpha Internal Console depends on its database), and an earlier draft of this ontology that DID declare rdfs:domain tech:Service here caused RDFS closure to wrongly re-type that Application individual as a tech:Service purely from the domain axiom, a real, caught instance of docs/ontology.md section 6's domain/range-is-an-inference-trigger pitfall. The precise 'subject must be a Service or Application' constraint now lives only in data/ontology/shapes/techfusion_shapes.ttl's DependsOnEndpointsShape, which validates without inferring. See scripts/ontology_demo.py --demo domain-range-pitfall for a clean, isolated reproduction of the same pitfall." ;
+    owl:inverseOf tech:isDependencyOf ;
+    tech:neo4jRelationshipType "DEPENDS_ON" .
+
+tech:isDependencyOf a owl:ObjectProperty ;
+    rdfs:label "is dependency of"@en ;
+    rdfs:comment "Inverse of tech:dependsOn. Never asserted directly in instance data; always entailed by an RDFS/OWL-RL reasoner from an asserted tech:dependsOn triple." ;
+    owl:inverseOf tech:dependsOn ;
+    tech:neo4jRelationshipType "DEPENDS_ON (reverse direction)" .
+
+tech:ownedBy a owl:ObjectProperty, owl:FunctionalProperty ;
+    rdfs:label "owned by"@en ;
+    rdfs:comment "Subject is owned by exactly one Team. Marked owl:FunctionalProperty because every Service/Application in the demo graph has exactly one owning team. This is a deliberately chosen teaching example: if two different ownedBy triples for the same subject were ever asserted, an OWL-RL reasoner does not reject the data (OWL has no closed-world rejection); instead it infers the two named teams are owl:sameAs each other, because a functional property's object is logically forced to be unique. See scripts/ontology_demo.py --demo owl and docs/ontology.md section 5 for this exact inference run against a deliberate duplicate-owner fixture, and docs/ontology.md section 6 for why SHACL (not OWL) is the right place to actually reject that data as invalid." ;
+    rdfs:range tech:Team ;
+    owl:inverseOf tech:owns ;
+    tech:neo4jRelationshipType "OWNED_BY" .
+
+tech:owns a owl:ObjectProperty ;
+    rdfs:label "owns"@en ;
+    owl:inverseOf tech:ownedBy ;
+    tech:neo4jRelationshipType "OWNED_BY (reverse direction)" .
+
+tech:governedBy a owl:ObjectProperty ;
+    rdfs:label "governed by"@en ;
+    rdfs:comment "Subject's operation is constrained by a Policy. owl:inverseOf tech:appliesTo: this is a case where the property graph defines two separate relationship types (GOVERNED_BY and APPLIES_TO) that each have to be written and kept in sync independently, whereas here one inverseOf axiom makes them logically interchangeable, so provenance only needs to be recorded once per fact. See docs/ontology.md section 9." ;
+    rdfs:range tech:Policy ;
+    owl:inverseOf tech:appliesTo ;
+    tech:neo4jRelationshipType "GOVERNED_BY" .
+
+tech:appliesTo a owl:ObjectProperty ;
+    rdfs:label "applies to"@en ;
+    owl:inverseOf tech:governedBy ;
+    tech:neo4jRelationshipType "APPLIES_TO" .
+
+tech:hasRunbook a owl:ObjectProperty ;
+    rdfs:label "has runbook"@en ;
+    rdfs:range tech:Runbook ;
+    owl:inverseOf tech:runbookFor ;
+    tech:neo4jRelationshipType "HAS_RUNBOOK" .
+
+tech:runbookFor a owl:ObjectProperty ;
+    rdfs:label "runbook for"@en ;
+    owl:inverseOf tech:hasRunbook ;
+    tech:neo4jRelationshipType "HAS_RUNBOOK (reverse direction)" .
+
+tech:affects a owl:ObjectProperty ;
+    rdfs:label "affects"@en ;
+    rdfs:comment "An Incident affects a Service, Application, or Customer-facing capability." ;
+    rdfs:domain tech:Incident ;
+    owl:inverseOf tech:isAffectedBy ;
+    tech:neo4jRelationshipType "AFFECTS" .
+
+tech:isAffectedBy a owl:ObjectProperty ;
+    rdfs:label "is affected by"@en ;
+    owl:inverseOf tech:affects ;
+    tech:neo4jRelationshipType "AFFECTS (reverse direction)" .
+
+tech:runsOn a owl:ObjectProperty ;
+    rdfs:label "runs on"@en ;
+    rdfs:range tech:Environment ;
+    owl:inverseOf tech:hosts ;
+    tech:neo4jRelationshipType "RUNS_ON" .
+
+tech:hosts a owl:ObjectProperty ;
+    rdfs:label "hosts"@en ;
+    owl:inverseOf tech:runsOn ;
+    tech:neo4jRelationshipType "RUNS_ON (reverse direction)" .
+
+tech:connectsTo a owl:ObjectProperty, owl:SymmetricProperty ;
+    rdfs:label "connects to"@en ;
+    rdfs:comment "A bidirectional network/integration connection between two infrastructure components. Marked owl:SymmetricProperty because a network connection genuinely has no preferred direction in this domain, unlike tech:dependsOn (a runtime requirement, which is directional: A depending on B does not mean B depends on A)." ;
+    tech:neo4jRelationshipType "CONNECTS_TO" .
+
+tech:references a owl:ObjectProperty ;
+    rdfs:label "references"@en ;
+    rdfs:domain tech:Document ;
+    tech:neo4jRelationshipType "REFERENCES" .
+
+tech:supersedes a owl:ObjectProperty, owl:FunctionalProperty ;
+    rdfs:label "supersedes"@en ;
+    rdfs:comment "Subject document/policy directly replaces exactly one prior version. Deliberately NOT owl:TransitiveProperty, even though a naive reading suggests it should be (if C supersedes B and B supersedes A, C is also the 'current' version over A). rag.retrieval.freshness already resolves this with an explicit union-find over the supersedes chain in Python rather than relying on blind transitive inference, precisely because a query asking 'what does C directly replace' must return B, not {A, B}. A transitive closure would conflate 'direct predecessor' with 'any ancestor'. See docs/ontology.md section 14." ;
+    tech:neo4jRelationshipType "SUPERSEDES" .
+
+tech:partOf a owl:ObjectProperty, owl:TransitiveProperty ;
+    rdfs:label "part of"@en ;
+    rdfs:comment "Whole/part (mereological) composition. This is the one object property in this ontology marked owl:TransitiveProperty, and deliberately so, in direct contrast to tech:dependsOn and tech:supersedes above: 'part of' is the textbook example of a relationship whose transitivity is semantically valid by definition (a component of a component is a component of the whole), not merely convenient." ;
+    tech:neo4jRelationshipType "PART_OF" .
+
+tech:candidateSameAs a owl:ObjectProperty ;
+    rdfs:label "candidate same as"@en ;
+    rdfs:comment "A proposed, NOT YET CONFIRMED identity link between two individuals (typically from different source systems) that may denote the same real-world enterprise entity. Deliberately a plain object property, not owl:sameAs: owl:sameAs is a strong, immediately-reasoned-over OWL primitive (anything true of one side becomes true of the other everywhere), so asserting it automatically, without evidence, risks silently merging two genuinely distinct entities. tech:candidateSameAs carries its own tech:resolutionStatus ('proposed' or 'confirmed') and provenance so a human (or an explicit promotion step) decides when, if ever, a pair is promoted to a real owl:sameAs triple. See docs/ontology.md section 11 and data/canonical_entity_resolution.ttl." ;
+    tech:neo4jRelationshipType "none (entity-resolution concept, ontology/SHACL layer only)" .
+
+tech:relatedTo a owl:ObjectProperty, owl:SymmetricProperty ;
+    rdfs:label "related to"@en ;
+    rdfs:comment "A generic, symmetric, low-specificity association used when no more precise relationship applies." ;
+    tech:neo4jRelationshipType "RELATED_TO" .
+
+tech:deployedIn a owl:ObjectProperty ;
+    rdfs:label "deployed in"@en ;
+    rdfs:range tech:Environment ;
+    tech:neo4jRelationshipType "none (modeled as a synonym view over RUNS_ON for Application subjects; see data/instances_graph_demo.ttl)" .
+
+tech:raisedBy a owl:ObjectProperty, owl:FunctionalProperty ;
+    rdfs:label "raised by"@en ;
+    rdfs:comment "A CustomerCase was raised by exactly one Customer. Functional: mirrors rag.mcp.business.store's CustomerCase model, where every synthetic case has exactly one owning customer_id. Used by the SHACL CustomerCaseShape (docs/ontology.md section 6) to express the same 'exactly one customer' rule as a validation constraint rather than an inference axiom." ;
+    rdfs:domain tech:CustomerCase ;
+    rdfs:range tech:Customer ;
+    owl:inverseOf tech:hasCase ;
+    tech:neo4jRelationshipType "none (CustomerCase <-> Customer linkage is not yet written to Neo4j; modeled here for the ontology/SHACL layer and rag.mcp.business.store parity)" .
+
+tech:hasCase a owl:ObjectProperty ;
+    rdfs:label "has case"@en ;
+    owl:inverseOf tech:raisedBy ;
+    tech:neo4jRelationshipType "none (reverse direction)" .
+
+#################################################################
+# Datatype properties
+#
+# Mirror rag.graph.schema.GraphProvenance's fields (instance-level
+# provenance) plus a handful of literal attributes referenced by the
+# SHACL shapes and SPARQL queries. Kept intentionally small: this is
+# not a general-purpose property-graph-to-RDF property dump, only the
+# fields the demos/evaluation in this experiment actually use.
+#################################################################
+
+tech:name a owl:DatatypeProperty ;
+    rdfs:label "name"@en ;
+    rdfs:range xsd:string ;
+    rdfs:comment "Human-readable display name, mirroring GraphEntity.name. rdfs:label is used for ontology terms themselves (classes/properties); tech:name is used for individuals, to keep the two concerns visually distinct in query results." .
+
+tech:status a owl:DatatypeProperty ;
+    rdfs:label "status"@en ;
+    rdfs:range xsd:string ;
+    rdfs:comment "A CustomerCase's or Incident's current status. The allowed value set is enforced by SHACL (sh:in), not by this ontology: OWL/RDFS have no native enumeration-of-literals construct that SHACL's sh:in can be defined without." .
+
+tech:datasetId a owl:DatatypeProperty ;
+    rdfs:label "dataset id"@en ;
+    rdfs:range xsd:string ;
+    rdfs:comment "Mirrors GraphProvenance.dataset_id: the namespace this fact was observed in." .
+
+tech:tenantId a owl:DatatypeProperty ;
+    rdfs:label "tenant id"@en ;
+    rdfs:range xsd:string ;
+    rdfs:comment "Mirrors GraphProvenance.tenant_id. Absent (no triple) means unrestricted within the dataset, matching rag.graph.authorization's 'tenant_id IS NULL' rule exactly: see docs/ontology.md section 17." .
+
+tech:allowedRole a owl:DatatypeProperty ;
+    rdfs:label "allowed role"@en ;
+    rdfs:range xsd:string ;
+    rdfs:comment "Mirrors one entry of GraphProvenance.allowed_roles. Multi-valued: zero or more tech:allowedRole triples on a fact." .
+
+tech:sourceDocumentId a owl:DatatypeProperty ;
+    rdfs:label "source document id"@en ;
+    rdfs:range xsd:string ;
+    rdfs:comment "Mirrors GraphProvenance.source_document_id: instance-level provenance, never to be confused with this ontology's own owl:versionInfo/dct:creator schema-level provenance (docs/ontology.md section 16)." .
+
+tech:trustLevel a owl:DatatypeProperty ;
+    rdfs:label "trust level"@en ;
+    rdfs:range xsd:string ;
+    rdfs:comment "Mirrors GraphProvenance.trust_level. Absent (no triple) means unrestricted, the same convention rag.graph.authorization's AuthorizationContext.require_trust_level clause already uses: a trust filter only ever narrows results for a caller that actually requires an authoritative source, it is never a default hard gate. No individual in this experiment's instance data currently asserts a value for this property; it exists so rag.ontology.authorization.fetch_entity_auth_properties can be reused unmodified if/when a trust-scoped individual is ever added." .
+
+tech:extractionMethod a owl:DatatypeProperty ;
+    rdfs:label "extraction method"@en ;
+    rdfs:range xsd:string ;
+    rdfs:comment "Mirrors GraphProvenance.extraction_method ('deterministic' or 'llm'). Never inferred; always asserted at write time." .
+
+tech:confidence a owl:DatatypeProperty ;
+    rdfs:label "confidence"@en ;
+    rdfs:range xsd:decimal ;
+    rdfs:comment "Mirrors GraphProvenance.confidence." .
+
+tech:extractedAt a owl:DatatypeProperty ;
+    rdfs:label "extracted at"@en ;
+    rdfs:range xsd:dateTime ;
+    rdfs:comment "Mirrors GraphProvenance.extracted_at." .
+
+tech:sourcePath a owl:DatatypeProperty ;
+    rdfs:label "source path"@en ;
+    rdfs:domain tech:Document ;
+    rdfs:range xsd:string ;
+    rdfs:comment "The ingested document's relative path, mirroring the Postgres 'documents.source' column. Required by the SHACL DocumentShape's 'must have source/provenance' constraint (docs/ontology.md section 6)." .
+
+tech:resolutionStatus a owl:DatatypeProperty ;
+    rdfs:label "resolution status"@en ;
+    rdfs:range xsd:string ;
+    rdfs:comment "Used only on candidate cross-system entity-resolution links (tech:candidateSameAs); one of 'proposed' or 'confirmed'. See data/canonical_entity_resolution.ttl and docs/ontology.md section 11." .
+
+tech:externalIdentifier a owl:DatatypeProperty ;
+    rdfs:label "external identifier"@en ;
+    rdfs:range xsd:string ;
+    rdfs:comment "The raw, source-system-local identifier for an individual that was mastered in a system other than this ontology (e.g. a SAP customer number). Kept separate from this ontology's own IRI, which is the canonical identifier once resolution has happened." .
+
+tech:sourceSystem a owl:DatatypeProperty ;
+    rdfs:label "source system"@en ;
+    rdfs:range xsd:string ;
+    rdfs:comment "Names the external system an externally-identified individual was mastered in (e.g. 'sap', 'crm', 'servicenow'). Source-authority provenance for entity resolution, distinct from tech:sourceDocumentId (which is corpus/RAG provenance)." .
+
+tech:resolvedBy a owl:DatatypeProperty ;
+    rdfs:label "resolved by"@en ;
+    rdfs:range xsd:string ;
+    rdfs:comment "Who or what proposed or confirmed a tech:candidateSameAs link (e.g. a person's name, or a named matching rule). Required provenance before any identity claim is trusted; see docs/ontology.md section 11." .
