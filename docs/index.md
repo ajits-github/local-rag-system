@@ -14,9 +14,9 @@ without duplicating it.
 
 --8<-- "README.md:docs-architecture-diagram"
 
-## Where to go next
+## Start here
 
-| If you want to... | Start here |
+| Goal | Page |
 |---|---|
 | Get the system running locally | [Deployment & Runtime](topics/deployment.md) |
 | Understand how documents become chunks | [Ingestion & Chunking](topics/ingestion.md) |
