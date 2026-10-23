@@ -16,7 +16,7 @@ Two local commands are available (see the repository root `Makefile`):
 
 ```
 make docs-serve   # live-reloading local docs server at http://127.0.0.1:8000
-make docs-build   # strict build to site/ -- fails on broken links/anchors/nav references
+make docs-build   # strict build to site/, failing on broken links/anchors/nav references
 ```
 
 Without `make`:

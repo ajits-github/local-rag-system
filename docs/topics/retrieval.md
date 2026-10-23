@@ -10,7 +10,7 @@ Retrieval has three independent, explicitly-named cutoffs rather than one
 overloaded "top k": `candidate_k` (how many candidates each branch fetches
 from the vector store), `reranker_top_n` (how many a real reranker keeps
 after rescoring), and `generation_context_top_n` (how many ranked chunks
-actually reach the generation prompt). See
+reach the generation prompt). See
 [Retrieval Cutoff Semantics](../architecture.md#retrieval-cutoff-semantics)
 for why that split exists and what broke before it did.
 
