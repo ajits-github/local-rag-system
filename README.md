@@ -627,29 +627,26 @@ web UI, deployment/runtime, and API references generated from `src/rag/**`.
 
 ## Experiment Branches
 
-Two different kinds of work live on separate branches, not on `main`.
+One kind of work lives on separate branches, not on `main`: learning/
+comparison exercises that reuse this repository's real services rather
+than reimplementing the core pipeline, but are intentionally never merged
+into `main`, their value is the comparison against `main`'s own design,
+not a replacement for it.
 
-**Learning/comparison exercises**: reuse this repository's real services
-rather than reimplementing the core pipeline, but are intentionally never
-merged into `main`, their value is the comparison against `main`'s own
-design, not a replacement for it.
-
-**In-progress feature work**: branches for a capability that is headed
-into `main`, just not there yet. These currently sit at the same commit
-as `main` plus their own uncommitted work in progress.
+GraphRAG and the ontology/semantic layer were developed the same way
+(`experiment/graphrag-knowledge-graph`, then
+`experiment/ontology-semantic-layer` built on top of it) but, unlike the
+branches below, both have already merged into `main` and are documented
+above as live, additive capabilities; neither branch exists anymore.
 
 ```text
 main
  |-- experiment/kubernetes-deployment     (K8s manifests: kind + minikube)
  |    |-- experiment/helm                 (same stack as a Helm chart)
  |    `-- experiment/distributed-state    (Redis rate limiter + job queue)
- |-- experiment/langgraph-agent           (single-agent LangGraph exercise)
- |    `-- experiment/multi-agent          (multi-agent LangGraph exercise)
- `-- experiment/graphrag-knowledge-graph  (Neo4j knowledge graph + GraphRAG, in progress)
-      `-- experiment/ontology-semantic-layer  (RDF/OWL/SHACL layer, in progress)
+ `-- experiment/langgraph-agent           (single-agent LangGraph exercise)
+      `-- experiment/multi-agent          (multi-agent LangGraph exercise)
 ```
-
-Learning/comparison exercises:
 
 - `experiment/kubernetes-deployment`: local Kubernetes manifests for the
   existing stack, with kind and minikube variants.
@@ -665,18 +662,6 @@ Learning/comparison exercises:
 
 Each of the five above has its own README or experiment notes with the
 captured setup, architecture, and conclusions.
-
-In-progress feature work:
-
-- `experiment/graphrag-knowledge-graph`: the Neo4j-backed property graph
-  and GraphRAG retrieval path described above, built as an additive
-  capability on top of the existing pipeline.
-- `experiment/ontology-semantic-layer`: the RDF/RDFS/OWL/SHACL/SPARQL
-  semantic layer described above, built on top of the GraphRAG branch.
-
-Both are intended to merge into `main` once reviewed; until then, their
-documented capabilities (GraphRAG, Ontology) exist on these branches, not
-yet on `main` itself.
 
 ## Project Notes
 
