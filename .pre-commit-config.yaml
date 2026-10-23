@@ -41,5 +41,8 @@ repos:
           - opentelemetry-exporter-otlp-proto-http>=1.27
           - mcp>=2.1,<3
           - neo4j>=5.24,<6
+          - rdflib>=7.6
+          - owlrl>=7.6
+          - pyshacl>=0.40
         args: [--config-file=pyproject.toml]
         files: ^src/
