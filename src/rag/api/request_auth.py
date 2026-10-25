@@ -16,6 +16,7 @@ from fastapi import HTTPException
 from rag.api.auth import VerifiedIdentity
 from rag.audit import log_audit_event, pseudonymous_subject
 from rag.config import AppConfig
+from rag.context.types import ConversationTurn
 from rag.mcp.business.schemas import CaseApproval
 from rag.retrieval.authorization import AuthorizationContext
 from rag.vectorstore.base import ALLOWED_FILTER_FIELDS
@@ -186,6 +187,60 @@ def enforce_dos_limits(
             raise HTTPException(
                 status_code=422,
                 detail=f"Unknown filter field(s): {', '.join(unknown_keys)}",
+            )
+
+
+def enforce_history_limits(
+    conversation_history: list[ConversationTurn] | None, config: AppConfig
+) -> None:
+    """Reject a request whose `conversation_history` exceeds its configured bounds.
+
+    This system has no server-side session store (see
+    `rag.context.history`'s module docstring): a multi-turn caller
+    re-sends prior turns on every request, so this is the request-size
+    boundary check for that field, the same role `enforce_dos_limits`
+    plays for `query`/`top_k`/`filters`.
+
+    Parameters
+    ----------
+    conversation_history : list[ConversationTurn] | None
+        The request's `conversation_history` field, if supplied.
+    config : AppConfig
+        Application configuration; reads
+        `security.dos_limits.max_history_turns`/`max_history_turn_chars`.
+
+    Raises
+    ------
+    HTTPException
+        422, when the list is too long or any one turn's `content` is
+        too long.
+    """
+    if not conversation_history:
+        return
+    limits = config.security.dos_limits
+    if len(conversation_history) > limits.max_history_turns:
+        log_audit_event(
+            "oversized_request_rejected",
+            field="conversation_history",
+            limit=limits.max_history_turns,
+        )
+        raise HTTPException(
+            status_code=422,
+            detail=f"conversation_history exceeds maximum of {limits.max_history_turns} turns",
+        )
+    for turn in conversation_history:
+        if len(turn.content) > limits.max_history_turn_chars:
+            log_audit_event(
+                "oversized_request_rejected",
+                field="conversation_history_turn",
+                limit=limits.max_history_turn_chars,
+            )
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "a conversation_history turn exceeds maximum length of "
+                    f"{limits.max_history_turn_chars} characters"
+                ),
             )
 
 
