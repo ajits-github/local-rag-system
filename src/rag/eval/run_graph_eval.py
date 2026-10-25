@@ -104,6 +104,7 @@ def evaluate_strategy(
     total_latency_ms = 0.0
     total_prompt_tokens = 0
     total_completion_tokens = 0
+    degraded_count = 0
 
     for example in gold:
         auth = _build_auth(example)
@@ -118,6 +119,16 @@ def evaluate_strategy(
         total_latency_ms += latency_ms
         total_prompt_tokens += result.get("prompt_tokens") or 0
         total_completion_tokens += result.get("completion_tokens") or 0
+        # EVAL-013: `result["graph_strategy_executed"]` is what the
+        # pipeline actually ran, independent of the `strategy` label this
+        # loop requested; GraphRAGPipeline.answer() can silently degrade
+        # to plain vector retrieval per-query (no entities resolved, no
+        # dataset_id, graph outage). A mismatch here means this row's
+        # metrics reflect a different mechanism than its own `strategy`
+        # column claims.
+        executed = result.get("graph_strategy_executed", strategy)
+        if executed != strategy:
+            degraded_count += 1
 
         answer_quality = scorer.score(example.question, result["answer"], example.expected_answer)
         entity_hit = _entity_mention_hit(result["answer"], example.expected_graph_entities)
@@ -150,6 +161,8 @@ def evaluate_strategy(
                 "latency_ms": latency_ms,
                 "answer": result["answer"],
                 "sources": [s["source"] for s in result["sources"]],
+                "graph_strategy_executed": executed,
+                "degraded": executed != strategy,
             }
         )
 
@@ -162,6 +175,8 @@ def evaluate_strategy(
     return {
         "strategy": strategy,
         "example_count": len(gold),
+        "degraded_run_count": degraded_count,
+        "degraded_run_rate": degraded_count / len(gold) if gold else 0.0,
         "mean_answer_quality": (
             sum(row["answer_quality"] for row in per_example) / len(per_example)
             if per_example
@@ -209,8 +224,29 @@ def compare_strategies(
     -------
     dict[str, Any]
         `{"dataset_id", "gold_count", "results": {strategy: evaluate_strategy(...)}}`.
+
+    Raises
+    ------
+    ValueError
+        If `strategies` names any non-`"vector_only"` mode while
+        `config.graph.enabled` is `False`. Regression for EVAL-013:
+        `GraphRAGPipeline.answer()` silently substitutes plain vector
+        retrieval whenever graph is disabled, previously still labeled
+        with whatever strategy was requested, so a comparison run under
+        the shipped (graph-disabled) default could report four
+        differently-named rows that all executed identically. Checked
+        here, once, before any row runs, rather than only discoverable
+        per-row via `evaluate_strategy`'s `degraded_run_rate`.
     """
     config = config or get_config()
+    if not config.graph.enabled and any(s != "vector_only" for s in strategies):
+        requested = [s for s in strategies if s != "vector_only"]
+        raise ValueError(
+            f"compare_strategies was asked to run {requested} but config.graph.enabled is "
+            "False: every one of those strategies would silently execute plain vector "
+            "retrieval instead, which would be reported under the wrong strategy label. "
+            'Enable config.graph.enabled, or request only ["vector_only"].'
+        )
     gold = load_gold_jsonl(gold_path)
     retrieval_pipeline = RetrievalPipeline(config)
     graph_client = build_graph_client(config)
