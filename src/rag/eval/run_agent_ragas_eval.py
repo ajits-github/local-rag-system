@@ -48,7 +48,7 @@ from rag.retrieval.pipeline import RetrievalPipeline
 
 def _build_rows(
     per_example: list[dict[str, Any]], config: AppConfig
-) -> tuple[list[dict[str, Any]], int]:
+) -> tuple[list[dict[str, Any]], int, int]:
     """Turn `evaluate_agent(..., include_evidence=True)`'s records into RAGAS scoring rows.
 
     Mirrors `run_ragas_eval._build_rows` exactly, except `contexts` comes
@@ -56,6 +56,12 @@ def _build_rows(
     evidence) rather than a fresh `RetrievalPipeline.answer()` call, and
     each row additionally carries `agentic_category` for the by-category
     breakdown `run_ragas` in this module reports.
+
+    The judge row, not the individual source, is the egress unit: if
+    egress policy blocks even one of a question's evidence sources, the
+    whole row (including `final_answer`, which may still quote the
+    blocked content) is dropped rather than sent to the hosted judge
+    alongside a partially-redacted context list.
 
     Parameters
     ----------
@@ -67,23 +73,29 @@ def _build_rows(
 
     Returns
     -------
-    tuple[list[dict[str, Any]], int]
-        ``(rows, num_skipped)``.
+    tuple[list[dict[str, Any]], int, int]
+        ``(rows, num_skipped_missing_expected_answer, num_skipped_egress_blocked)``.
     """
     rows: list[dict[str, Any]] = []
     skipped = 0
-    blocked_count = 0
+    blocked_rows = 0
+    blocked_source_count = 0
     for i, entry in enumerate(per_example):
         if not entry["expected_answer"]:
             skipped += 1
             continue
         contexts = []
+        row_blocked = False
         for source in entry.get("evidence_sources", []):
             decision = apply_egress_policy(source, config)
             if decision.allowed:
                 contexts.append(decision.redacted_context)
             else:
-                blocked_count += 1
+                blocked_source_count += 1
+                row_blocked = True
+        if row_blocked:
+            blocked_rows += 1
+            continue
         rows.append(
             {
                 "question_index": i,
@@ -97,9 +109,13 @@ def _build_rows(
                 "termination_reason": entry["termination_reason"],
             }
         )
-    if blocked_count:
-        log_audit_event("egress_policy_blocked", blocked_source_count=blocked_count)
-    return rows, skipped
+    if blocked_source_count:
+        log_audit_event(
+            "egress_policy_blocked",
+            blocked_source_count=blocked_source_count,
+            blocked_row_count=blocked_rows,
+        )
+    return rows, skipped, blocked_rows
 
 
 def _by_agentic_category(
@@ -169,7 +185,7 @@ def run_agent_ragas(
     judge_llm = build_judge_llm(config)
     judge_embedder = build_embedder(config)
     cache = ragas_cache.build_judge_cache(config) if config.judge.cache_enabled else None
-    rows, num_skipped = _build_rows(per_example, config)
+    rows, num_skipped, num_skipped_egress = _build_rows(per_example, config)
     ragas_result = ragas_scorer.score(rows, judge_llm, judge_embedder, cache=cache)
     ragas_result.pop("cache_stats", None)
     ragas_result.update(
@@ -185,6 +201,7 @@ def run_agent_ragas(
             "sample_size": len(examples),
             "num_scored": len(rows),
             "num_skipped_missing_expected_answer": num_skipped,
+            "num_skipped_egress_blocked": num_skipped_egress,
             "by_agentic_category": _by_agentic_category(rows, ragas_result["per_question"]),
         }
     )

@@ -36,14 +36,20 @@ DEFAULT_SAMPLE_SIZE = 15
 
 def _build_rows(
     examples: list[GoldExample], per_example: list[dict[str, Any]], config: AppConfig
-) -> tuple[list[dict[str, Any]], int]:
+) -> tuple[list[dict[str, Any]], int, int]:
     """Zip sliced `GoldExample`s with `evaluate()`'s per_example entries into scoring rows.
 
     Skips examples with no `expected_answer`, since RAGAS's
-    `reference`-requiring metrics can't function without one. Each
-    source's `content` passes through `egress_policy.apply_egress_policy`
-    before entering `contexts`; when enabled, a blocked source is dropped
-    entirely rather than sent to the hosted judge.
+    `reference`-requiring metrics can't function without one.
+
+    Each source's `content` passes through `egress_policy.apply_egress_policy`
+    before entering `contexts`. The judge row, not the individual source,
+    is the egress unit: `entry["answer"]` was generated from the retrieved
+    evidence as a whole, so if egress policy blocks even one of a
+    question's sources, the whole row (answer included) is dropped from
+    the judge payload rather than sending a partially-redacted context
+    list alongside an answer that may still quote the blocked content
+    verbatim.
 
     Parameters
     ----------
@@ -56,23 +62,29 @@ def _build_rows(
 
     Returns
     -------
-    tuple[list[dict[str, Any]], int]
-        ``(rows, num_skipped)``.
+    tuple[list[dict[str, Any]], int, int]
+        ``(rows, num_skipped_missing_expected_answer, num_skipped_egress_blocked)``.
     """
     rows: list[dict[str, Any]] = []
     skipped = 0
-    blocked_count = 0
+    blocked_rows = 0
+    blocked_source_count = 0
     for i, (example, entry) in enumerate(zip(examples, per_example, strict=True)):
         if not example.expected_answer:
             skipped += 1
             continue
         contexts = []
+        row_blocked = False
         for source in entry["generation_sources"]:
             decision = apply_egress_policy(source, config)
             if decision.allowed:
                 contexts.append(decision.redacted_context)
             else:
-                blocked_count += 1
+                blocked_source_count += 1
+                row_blocked = True
+        if row_blocked:
+            blocked_rows += 1
+            continue
         rows.append(
             {
                 "question_index": i,
@@ -83,9 +95,13 @@ def _build_rows(
                 "expected_answer": example.expected_answer,
             }
         )
-    if blocked_count:
-        log_audit_event("egress_policy_blocked", blocked_source_count=blocked_count)
-    return rows, skipped
+    if blocked_source_count:
+        log_audit_event(
+            "egress_policy_blocked",
+            blocked_source_count=blocked_source_count,
+            blocked_row_count=blocked_rows,
+        )
+    return rows, skipped, blocked_rows
 
 
 def _judge_summary(config: AppConfig, judge_llm: LLM) -> dict[str, Any]:
@@ -180,7 +196,9 @@ def run_ragas(
     judge_llm = build_judge_llm(config)
     embedder = build_embedder(config)
     cache = ragas_cache.build_judge_cache(config) if config.judge.cache_enabled else None
-    rows, num_skipped = _build_rows(examples, base_result["per_example"], config)
+    rows, num_skipped, num_skipped_egress = _build_rows(
+        examples, base_result["per_example"], config
+    )
     ragas_result = ragas_scorer.score(rows, judge_llm, embedder, cache=cache)
     ragas_result.pop("cache_stats", None)  # superseded by the richer "cache" key below
     ragas_result.update(
@@ -192,6 +210,7 @@ def run_ragas(
             "sample_size": len(examples),
             "num_scored": len(rows),
             "num_skipped_missing_expected_answer": num_skipped,
+            "num_skipped_egress_blocked": num_skipped_egress,
         }
     )
 
