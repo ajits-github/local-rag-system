@@ -11,6 +11,11 @@ This is **not** a migration. `rag.agent.graph.run_agent` is still what
 under `langgraph_experiment/` is imported by `src/rag/` or `rag.api`
 anywhere.
 
+![LangGraph single-agent experiment: classify, route to a read-only
+retrieve/synthesize path or a tool-selection path, with a human-in-the-loop
+approval interrupt before any business-write action, plus Postgres-backed
+checkpointing for pause/resume/restart](docs/assets/architecture-diagram.png)
+
 ## What this demonstrates
 
 - `StateGraph`, nodes, edges, conditional edges, typed graph state
