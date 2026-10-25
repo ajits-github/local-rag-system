@@ -72,6 +72,13 @@ _limiter = get_rate_limiter()
 
 _QUEUE_DONE = object()
 
+#: How often the SSE consumer loop polls `request.is_disconnected()` while
+#: waiting for the next queue item (see DIST-005 in KNOWN_ISSUES.md). A
+#: lower value notices a disconnect sooner at the cost of more frequent
+#: `is_disconnected()` checks; this value is only ever reached while no
+#: new AgentEvent/result is available, never on the hot path.
+_DISCONNECT_POLL_SECONDS = 1.0
+
 
 def _agent_rate_limit_string() -> str:
     """Return the current `requests_per_minute` config value as a slowapi limit string.
@@ -230,7 +237,22 @@ async def _stream_agent_query(
 
     try:
         while True:
-            item = await queue.get()
+            # A long-running node (in practice, an LLM call that emits no
+            # intermediate AgentEvent) can leave the queue empty for tens
+            # of seconds. A bare `await queue.get()` would block for that
+            # whole time with no chance to notice a client disconnect, so
+            # cancellation was only ever checked *between* queue items,
+            # never while waiting for one. Poll with a bounded timeout
+            # instead, checking `is_disconnected()` on every timeout, so a
+            # disconnect is noticed within one poll interval regardless of
+            # how long the current node takes.
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout=_DISCONNECT_POLL_SECONDS)
+            except TimeoutError:
+                if await request.is_disconnected():
+                    cancel_event.set()
+                    break
+                continue
             if item is _QUEUE_DONE:
                 break
             if await request.is_disconnected():
@@ -259,6 +281,13 @@ async def _stream_agent_query(
                 )
                 yield _sse_message(event_type, response.model_dump_json())
     finally:
+        # Covers every exit path this `try` didn't already set it on,
+        # including the generator itself being torn down (GeneratorExit)
+        # by the ASGI server rather than exiting its own loop normally.
+        # Idempotent: `threading.Event.set()` on an already-set event is a
+        # safe no-op, so this never conflicts with the explicit `set()`
+        # calls above.
+        cancel_event.set()
         await task
 
 
