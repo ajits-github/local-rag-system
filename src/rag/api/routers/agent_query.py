@@ -36,10 +36,12 @@ from rag.api.request_auth import (
     build_authorization_context,
     enforce_case_approval_limits,
     enforce_dos_limits,
+    enforce_history_limits,
     resolve_case_approvals,
 )
 from rag.api.routers.query import SourceItem
 from rag.config import AppConfig
+from rag.context.types import ConversationTurn
 from rag.embedders.base import Embedder
 from rag.generation.base import LLM
 from rag.graph.client import Neo4jClient
@@ -62,7 +64,12 @@ class AgentQueryRequest(BaseModel):
     `case_approvals` is honored only when the verified caller holds an
     `mcp.business_actions.approval_roles` role (see
     `rag.api.request_auth.resolve_case_approvals`); it is silently
-    dropped, not trusted, otherwise.
+    dropped, not trusted, otherwise. `conversation_history` follows
+    `QueryRequest`'s same caller-asserted, no-server-side-session-store
+    convention (see that model's docstring and
+    `rag.context.history`'s module docstring); consumed only by the
+    `synthesize` node / `classic_rag` fast path, never by the earlier
+    decision prompts (see `AgentState.conversation_history`).
     """
 
     query: str
@@ -72,6 +79,7 @@ class AgentQueryRequest(BaseModel):
     as_of: date | None = None
     require_trust_level: str | None = None
     case_approvals: list[CaseApproval] | None = Field(default=None, max_length=MAX_CASE_APPROVALS)
+    conversation_history: list[ConversationTurn] | None = None
 
 
 class ToolCallDetail(BaseModel):
@@ -110,7 +118,8 @@ class AgentQueryResponse(BaseModel):
 
     `request_id` mirrors `QueryResponse.request_id`. `tool_calls` stays a
     bare name list for backward compatibility; `tool_call_details` is the
-    richer form (see `ToolCallDetail`).
+    richer form (see `ToolCallDetail`). `context_engineering` mirrors
+    `QueryResponse.context_engineering`.
     """
 
     answer: str
@@ -124,6 +133,7 @@ class AgentQueryResponse(BaseModel):
     generation_ms: float
     total_ms: float
     request_id: str | None = None
+    context_engineering: dict[str, Any] | None = None
 
 
 def _agent_rate_limit_string() -> str:
@@ -180,6 +190,7 @@ def agent_query(
     """
     enforce_dos_limits(body.query, None, body.filters, config)
     enforce_case_approval_limits(body.case_approvals, config)
+    enforce_history_limits(body.conversation_history, config)
     auth = build_authorization_context(
         identity, body.tenant_id, body.roles, body.as_of, body.require_trust_level
     )
@@ -189,6 +200,7 @@ def agent_query(
         authorization_context=auth,
         filters=body.filters,
         case_approvals=case_approvals,
+        conversation_history=body.conversation_history or [],
     )
     result = run_agent(
         state,
@@ -230,4 +242,5 @@ def agent_query(
         generation_ms=result.generation_ms,
         total_ms=result.total_ms,
         request_id=get_request_id(),
+        context_engineering=final_state.context_engineering,
     )
