@@ -23,6 +23,7 @@ from rag.observability import tracing
 from rag.prompts.loader import PromptTemplate, load_prompt_template_from_config
 from rag.rerankers.base import Reranker
 from rag.retrieval.authorization import AuthorizationContext
+from rag.retrieval.egress_policy import apply_egress_policy
 from rag.retrieval.field_policy import (
     redact_sensitive_fields,
     redact_source_metadata,
@@ -35,6 +36,11 @@ from rag.schemas import Chunk, DocumentVersionInfo, RetrievalAttribution, Search
 from rag.vectorstore.base import VectorStore
 
 logger = logging.getLogger(__name__)
+
+#: Reranker providers that send candidate content to an external service.
+#: `"cross_encoder"` runs locally (sentence-transformers); `"none"` is a
+#: no-op. Only these need the egress-policy gate before `rerank()` runs.
+_HOSTED_RERANKER_PROVIDERS = frozenset({"cohere"})
 
 
 def source_label(result: SearchResult) -> str:
@@ -430,6 +436,50 @@ class RetrievalPipeline:
             )
         return results
 
+    def _apply_egress_policy_to_candidates(
+        self, candidates: list[SearchResult]
+    ) -> list[SearchResult]:
+        """Drop any candidate the egress policy blocks, before a hosted reranker sees it.
+
+        A hosted reranker (`config.reranker.provider == "cohere"`) is a
+        provider-egress point exactly like the RAGAS judge call; this
+        applies `rag.retrieval.egress_policy.apply_egress_policy` (the
+        same check `run_ragas_eval.py` already uses) to each candidate
+        and excludes anything it blocks from the reranker call entirely,
+        never sending a placeholder derived from the blocked content. A
+        true no-op when `config.security.egress_policy.enabled` is
+        `False` (`apply_egress_policy`'s own default).
+
+        Parameters
+        ----------
+        candidates : list[SearchResult]
+            Already field-redacted candidates (redaction must run first
+            so `redacted_field_ids` reflects this request's actual
+            redaction state before the policy's
+            `block_unredacted_sensitive_fields` check runs).
+
+        Returns
+        -------
+        list[SearchResult]
+            `candidates`, minus any the policy blocked.
+        """
+        allowed: list[SearchResult] = []
+        blocked_count = 0
+        for candidate in candidates:
+            decision = apply_egress_policy(source_dict(candidate), self._config)
+            if decision.allowed:
+                allowed.append(candidate)
+            else:
+                blocked_count += 1
+        if blocked_count:
+            log_audit_event(
+                "egress_policy_blocked",
+                boundary="hosted_reranker",
+                reranker_provider=self._config.reranker.provider,
+                blocked_count=blocked_count,
+            )
+        return allowed
+
     def sanitize_evidence(
         self, results: list[SearchResult], auth: AuthorizationContext | None
     ) -> list[SearchResult]:
@@ -635,6 +685,17 @@ class RetrievalPipeline:
 
         n_rerank = reranker_top_n if reranker_top_n is not None else self._config.reranker.top_n
         t = time.perf_counter()
+        roles = effective_auth.roles if effective_auth is not None else []
+        if self._field_redaction_enabled:
+            # Redact before any reranker (local or hosted) ever sees candidate
+            # content, not just after expansion; a hosted reranker is itself an
+            # egress point and must never receive an unredacted field. The
+            # existing post-expansion redaction pass still runs afterward for
+            # chunks relationship expansion adds (those were never part of
+            # `candidates`); redacting twice is a no-op the second time.
+            candidates = self._redact_sensitive_fields(candidates, roles)
+        if self._config.reranker.provider in _HOSTED_RERANKER_PROVIDERS:
+            candidates = self._apply_egress_policy_to_candidates(candidates)
         reranked = self._reranker.rerank(query, candidates, top_n=n_rerank)
         stage_ms["rerank_ms"] = (time.perf_counter() - t) * 1000
 
