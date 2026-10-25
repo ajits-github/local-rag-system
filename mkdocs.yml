@@ -94,8 +94,10 @@ plugins:
 nav:
   - Overview: index.md
   - Architecture: architecture.md
+  - Milestones & History: milestones.md
   - Ingestion & Chunking: topics/ingestion.md
   - Retrieval: topics/retrieval.md
+  - Context Engineering: topics/context-engineering.md
   - Multimodal & Layout: topics/multimodal.md
   - Security:
       - Overview: topics/security.md
@@ -121,6 +123,7 @@ nav:
       - Embedders: reference/embedders.md
       - Vector store: reference/vectorstore.md
       - Retrieval: reference/retrieval.md
+      - Context Engineering: reference/context.md
       - Rerankers: reference/rerankers.md
       - Generation: reference/generation.md
       - Prompts: reference/prompts.md

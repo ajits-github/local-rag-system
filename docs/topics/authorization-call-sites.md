@@ -34,7 +34,7 @@ Every route that needs an identity (`/query`, `/ingest`, `/agent/query`,
   `get_chunks_by_section`, etc.), so the tenant/role/trust rule is
   identical regardless of which path reaches the database.
 
-This consistency was not always true. `ISSUES.md`'s "Agent tools that
+This consistency was not always true. `KNOWN_ISSUES.md`'s "Agent tools that
 queried the vector store directly skipped the authorization
 kill-switch" entry documents a real bug: the three direct-fetch tools
 originally bypassed `resolve_auth` entirely, since they called

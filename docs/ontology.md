@@ -249,7 +249,7 @@ latter.
 ## 6. SHACL validation: a real, caught bug, not a scripted demo
 
 Run `python scripts/ontology_demo.py --demo shacl`. Two real findings, both
-verified by running `pyshacl`, not assumed (see `ISSUES.md`):
+verified by running `pyshacl`, not assumed (see `KNOWN_ISSUES.md`):
 
 1. **`sh:targetClass` is subclass-aware even with `inference=None`.**
    PostgreSQL and OpenSearch (typed only `tech:DatabaseService`, never
