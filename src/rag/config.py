@@ -15,7 +15,7 @@ from typing import Literal
 
 import yaml
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG_PATH = REPO_ROOT / "config" / "default.yaml"
@@ -474,6 +474,14 @@ class DoSLimitsConfig(BaseModel):
         Maximum allowed serialized size of the `filters` dict.
     max_upload_bytes : int
         Maximum allowed upload size for `POST /ingest`.
+    max_history_turns : int
+        Maximum allowed length of a request's `conversation_history`
+        list (see `rag.context.history`). Bounds the request payload
+        itself, independent of `context.history.max_turns`, which
+        bounds how many of those turns actually reach the prompt.
+    max_history_turn_chars : int
+        Maximum allowed character length of one `conversation_history`
+        turn's `content`.
 
     Notes
     -----
@@ -485,6 +493,8 @@ class DoSLimitsConfig(BaseModel):
     max_top_k: int = 20
     max_filters_bytes: int = 4096
     max_upload_bytes: int = 26_214_400  # 25 MiB
+    max_history_turns: int = 20
+    max_history_turn_chars: int = 4000
 
 
 class RateLimitConfig(BaseModel):
@@ -1059,6 +1069,340 @@ class GraphConfig(BaseModel):
     fusion: GraphRAGFusionConfig = Field(default_factory=GraphRAGFusionConfig)
 
 
+class TokenCountingConfig(BaseModel):
+    """Token-estimation strategy, used before any text reaches the LLM.
+
+    See `rag.context.tokens`'s module docstring for why this is an
+    estimate, never an exact provider count, and why that is
+    unavoidable for a local Ollama deployment.
+
+    Attributes
+    ----------
+    strategy : {"heuristic", "tiktoken"}
+        `"heuristic"` (the default) needs no extra dependency.
+        `"tiktoken"` falls back to `"heuristic"` with a logged warning
+        if the optional `tiktoken` package is not installed.
+    chars_per_token : float
+        Used by the heuristic strategy.
+    tiktoken_encoding : str
+        Used by the tiktoken strategy.
+    """
+
+    strategy: Literal["heuristic", "tiktoken"] = "heuristic"
+    chars_per_token: float = 4.0
+    tiktoken_encoding: str = "cl100k_base"
+
+
+class ModelContextLimitsConfig(BaseModel):
+    """Per-model context-window table, keyed by `generation.model_name`.
+
+    Attributes
+    ----------
+    default_context_window_tokens : int
+        Used for any `generation.model_name` with no entry in
+        `overrides`. 32768 matches the qwen2.5 family's trained context
+        length; a deployment running a different model should add an
+        explicit override rather than rely on this default being correct.
+    overrides : dict[str, int]
+        `{model_name: context_window_tokens}`.
+    """
+
+    default_context_window_tokens: int = 32768
+    overrides: dict[str, int] = Field(
+        default_factory=lambda: {
+            "qwen2.5:0.5b": 32768,
+            "qwen2.5:1.5b": 32768,
+            "qwen2.5:3b": 32768,
+            "qwen2.5:7b": 32768,
+            "llama3.1:8b": 131072,
+            "moondream": 2048,
+        }
+    )
+
+
+class SourceBudgetConfig(BaseModel):
+    """Fractional share of `available_context_tokens` given to each evidence bucket.
+
+    Shares must sum to 1.0 (validated). `tool_fetched` evidence (an
+    agent's `get_document`/`get_latest_document`/`get_related_context`
+    direct fetches) shares the `document` bucket, since it is drawn from
+    the same corpus as retrieved chunks, not a fourth bucket.
+
+    Attributes
+    ----------
+    document_share : float
+        Vector/hybrid retrieval evidence, plus tool-fetched document
+        chunks.
+    graph_path_share : float
+        GraphRAG evidence (see `rag.context.graph_packing`).
+    mcp_tool_share : float
+        MCP/business-tool evidence.
+    conversation_history_share : float
+        Prior conversation turns (see `rag.context.history`).
+    max_document_tokens, max_graph_tokens, max_tool_tokens, max_history_tokens : int | None
+        Optional hard per-bucket ceilings, applied after the
+        share-based allocation. `None` (the default) means "no
+        additional ceiling beyond the share itself". A defense-in-depth
+        knob, since the shares already sum to 1.0 and so cannot let one
+        source consume the whole budget on their own; a ceiling is
+        useful mainly when `available_context_tokens` is unusually
+        large and a hard cap is still wanted for one bucket.
+    """
+
+    document_share: float = 0.55
+    graph_path_share: float = 0.15
+    mcp_tool_share: float = 0.15
+    conversation_history_share: float = 0.15
+    max_document_tokens: int | None = None
+    max_graph_tokens: int | None = None
+    max_tool_tokens: int | None = None
+    max_history_tokens: int | None = None
+
+    def shares_sum_to_one(self) -> bool:
+        """Return whether the four shares sum to 1.0 within floating-point tolerance."""
+        total = (
+            self.document_share
+            + self.graph_path_share
+            + self.mcp_tool_share
+            + self.conversation_history_share
+        )
+        return abs(total - 1.0) < 1e-6
+
+
+class AdaptiveBudgetConfig(BaseModel):
+    """Query-type-dependent `SourceBudgetConfig` overrides.
+
+    Attributes
+    ----------
+    enabled : bool
+        When `False`, `source_budgets` (the fixed allocation) is always
+        used regardless of query composition. When `True` (the
+        default), `rag.context.planner` classifies each request into
+        one of `overrides`' keys (`"knowledge_only"`, `"relationship"`,
+        `"business"`, `"conversational"`, or falls back to the fixed
+        `source_budgets` for `"general"`) from the evidence actually
+        gathered, never from a second LLM call.
+    overrides : dict[str, SourceBudgetConfig]
+        Each value's shares must independently sum to 1.0.
+    """
+
+    enabled: bool = True
+    overrides: dict[str, SourceBudgetConfig] = Field(
+        default_factory=lambda: {
+            "knowledge_only": SourceBudgetConfig(
+                document_share=0.75,
+                graph_path_share=0.05,
+                mcp_tool_share=0.05,
+                conversation_history_share=0.15,
+            ),
+            "relationship": SourceBudgetConfig(
+                document_share=0.35,
+                graph_path_share=0.45,
+                mcp_tool_share=0.05,
+                conversation_history_share=0.15,
+            ),
+            "business": SourceBudgetConfig(
+                document_share=0.25,
+                graph_path_share=0.05,
+                mcp_tool_share=0.55,
+                conversation_history_share=0.15,
+            ),
+            "conversational": SourceBudgetConfig(
+                document_share=0.35,
+                graph_path_share=0.05,
+                mcp_tool_share=0.05,
+                conversation_history_share=0.55,
+            ),
+        }
+    )
+
+
+class DeduplicationConfig(BaseModel):
+    """Context deduplication tunables. See `rag.context.dedup`.
+
+    Attributes
+    ----------
+    enabled : bool
+    overlap_threshold : float
+        Normalized-text Jaccard-overlap ratio (over whitespace-
+        tokenized word shingles) above which two items are treated as
+        near-duplicates, in `[0.0, 1.0]`. Exact `chunk_id` matches and
+        identical content hashes are always deduplicated regardless of
+        this threshold; it only governs the fuzzier "high overlap, not
+        identical" case (e.g. the same document fact surfaced via
+        direct retrieval and again via relationship expansion or a
+        graph fact).
+    """
+
+    enabled: bool = True
+    overlap_threshold: float = 0.85
+
+
+class CompressionConfig(BaseModel):
+    """Oversized-evidence compression tunables. See `rag.context.compression`.
+
+    Attributes
+    ----------
+    enabled : bool
+    threshold_tokens : int
+        A floor on how small a *remaining headroom* must be for
+        compression to even be attempted, not on how large the
+        candidate item itself is. An item that doesn't fit its
+        headroom is always a compression candidate, regardless of the
+        item's own size, as long as that headroom is at least this
+        many tokens; compressing something down to a 2-token sliver
+        would not produce usable evidence.
+    strategy : {"sentence_trim", "extractive"}
+        `"sentence_trim"` keeps leading/trailing sentences up to the
+        target budget. `"extractive"` (the default) additionally scores
+        sentences by query-term overlap and keeps the highest-scoring
+        ones in their original order, a deterministic, dependency-free
+        stand-in for "select relevant sections" (see that module's
+        docstring for why a second LLM call was not used here).
+    max_sentences : int
+        Ceiling on sentences kept by either strategy, independent of
+        the token budget (keeps a compressed item from being an
+        unreadable wall of comma-free sentence fragments even when the
+        budget would technically allow more).
+    """
+
+    enabled: bool = True
+    threshold_tokens: int = 30
+    strategy: Literal["sentence_trim", "extractive"] = "extractive"
+    max_sentences: int = 8
+
+
+class HistoryConfig(BaseModel):
+    """Conversation-history management tunables. See `rag.context.history`.
+
+    Attributes
+    ----------
+    strategy : {"full", "sliding_window", "summarized", "retrieval"}
+        `"full"`: include every supplied turn (bounded only by the
+        `conversation_history` budget bucket itself). `"sliding_window"`
+        (the default): keep only the most recent `max_turns`.
+        `"summarized"`: summarize everything older than `max_turns` into
+        one compact item, keep recent turns raw. `"retrieval"`:
+        keyword-overlap-select the most query-relevant older turns
+        instead of a simple recency window, keep recent turns raw
+        either way.
+    max_turns : int
+        Recent turns kept raw under every strategy except `"full"`.
+    summarize_min_turns_to_trigger : int
+        `"summarized"` only summarizes once there are more than this
+        many older turns; below it, behaves like `"sliding_window"`.
+    """
+
+    strategy: Literal["full", "sliding_window", "summarized", "retrieval"] = "sliding_window"
+    max_turns: int = 6
+    summarize_min_turns_to_trigger: int = 4
+
+
+class ContextCacheConfig(BaseModel):
+    """In-process, request-scoped safe caching. See `rag.context.caching`.
+
+    Attributes
+    ----------
+    enabled : bool
+        Default `False`: no measurable benefit was demonstrated for this
+        single-instance, CPU-bound deployment (see
+        `docs/context_engineering.md`'s caching section), so this stays
+        off rather than adding a dependency speculatively, matching this
+        project's established "no infrastructure without a demonstrated
+        requirement now" convention. When enabled, caches only
+        per-text token counts (never raw evidence, never a full
+        assembled context) in a small in-process LRU, keyed by a hash of
+        `(tenant_id, text)` so no cache entry can ever cross a tenant
+        boundary.
+    max_entries : int
+        LRU size cap.
+    """
+
+    enabled: bool = False
+    max_entries: int = 2048
+
+
+class ContextEngineeringConfig(BaseModel):
+    """Root config block for the Context Engineering subsystem (`rag.context`).
+
+    Attributes
+    ----------
+    enabled : bool
+        When `False` (the default), every call site
+        (`RetrievalPipeline.answer`, `GraphRAGPipeline`, the agent's
+        `_synthesize` node) behaves exactly as it did before this
+        subsystem existed: `rag.retrieval.pipeline.build_context` is
+        called directly, with no budgeting, deduplication, or
+        compression at all. A true no-op, matching every other
+        milestone's kill-switch convention in this codebase.
+    reserved_output_tokens : int | None
+        Overrides `rag.context.model_limits.ModelContextLimits.
+        default_reserved_output_tokens` (which otherwise mirrors
+        `generation.max_tokens`) when set.
+    framework_overhead_tokens : int
+        A fixed allowance for chat-template/role-formatting overhead
+        Ollama's `chat()` endpoint adds per message, which a raw-text
+        token count does not capture.
+    safety_margin_tokens : int
+        Extra buffer absorbing token-estimation error (see
+        `rag.context.tokens`).
+    token_counting : TokenCountingConfig
+    model_limits : ModelContextLimitsConfig
+    source_budgets : SourceBudgetConfig
+        The fixed allocation, used when `adaptive.enabled=False` or as
+        the `"general"` fallback when adaptive allocation is on but no
+        bucket type dominates the gathered evidence.
+    adaptive : AdaptiveBudgetConfig
+    deduplication : DeduplicationConfig
+    compression : CompressionConfig
+    history : HistoryConfig
+    packing_strategy : {"top_n", "naive_token_first", "priority_aware"}
+        `"top_n"` reproduces the pre-existing fixed-chunk-count
+        behavior (for the benchmark comparison in
+        `docs/context_engineering.md`, not meant for production use
+        once this is enabled). `"naive_token_first"` packs by rank order
+        until the budget is exhausted, ignoring authority/freshness.
+        `"priority_aware"` (the default when enabled) is the full
+        algorithm: see `rag.context.packing`.
+    ordering_strategy : {"priority_first", "authority_first", "begin_end_sandwich",
+            "grouped_by_source"}
+        How packed items are ordered in the final rendered text; see
+        `rag.context.ordering`. Independent of `packing_strategy` (which
+        decides *what* survives the budget): `"begin_end_sandwich"` (the
+        default) places the highest-priority evidence at both the start
+        and end of the context block, per the "lost in the middle"
+        experiment in `docs/context_engineering.md`.
+    cache : ContextCacheConfig
+    """
+
+    enabled: bool = False
+    reserved_output_tokens: int | None = None
+    framework_overhead_tokens: int = 128
+    safety_margin_tokens: int = 256
+    token_counting: TokenCountingConfig = Field(default_factory=TokenCountingConfig)
+    model_limits: ModelContextLimitsConfig = Field(default_factory=ModelContextLimitsConfig)
+    source_budgets: SourceBudgetConfig = Field(default_factory=SourceBudgetConfig)
+    adaptive: AdaptiveBudgetConfig = Field(default_factory=AdaptiveBudgetConfig)
+    deduplication: DeduplicationConfig = Field(default_factory=DeduplicationConfig)
+    compression: CompressionConfig = Field(default_factory=CompressionConfig)
+    history: HistoryConfig = Field(default_factory=HistoryConfig)
+    packing_strategy: Literal["top_n", "naive_token_first", "priority_aware"] = "priority_aware"
+    ordering_strategy: Literal[
+        "priority_first", "authority_first", "begin_end_sandwich", "grouped_by_source"
+    ] = "begin_end_sandwich"
+    cache: ContextCacheConfig = Field(default_factory=ContextCacheConfig)
+
+    @model_validator(mode="after")
+    def _budget_shares_sum_to_one(self) -> ContextEngineeringConfig:
+        """Fail fast if `source_budgets` or any `adaptive.overrides` entry doesn't sum to 1.0."""
+        if not self.source_budgets.shares_sum_to_one():
+            raise ValueError("context.source_budgets' four shares must sum to 1.0")
+        for name, budget in self.adaptive.overrides.items():
+            if not budget.shares_sum_to_one():
+                raise ValueError(f"context.adaptive.overrides[{name!r}]'s shares must sum to 1.0")
+        return self
+
+
 class AppConfig(BaseModel):
     """Root settings object: the single entrypoint used by the API, ingestion CLI, and eval CLI.
 
@@ -1083,6 +1427,7 @@ class AppConfig(BaseModel):
     mcp: McpConfig = Field(default_factory=McpConfig)
     feedback: FeedbackConfig = Field(default_factory=FeedbackConfig)
     graph: GraphConfig = Field(default_factory=GraphConfig)
+    context: ContextEngineeringConfig = Field(default_factory=ContextEngineeringConfig)
 
     def agent_prompt_template_path(self, path: str) -> Path:
         """Resolve one of `agent.*_prompt_path`, relative to the repo root if not absolute.
