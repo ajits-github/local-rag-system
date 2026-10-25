@@ -19,6 +19,12 @@ real fix; everything else (the job queue, the worker fleet, the
 distributed-lock demo, the benchmark harness) lives entirely under this
 directory and is never imported by `src/rag/` or `rag.api`.
 
+![Distributed rate limiting and shared state with Redis: an in-memory
+limiter enforces its limit correctly with one API replica but fails
+globally once there are several, each keeping its own counter; a
+Redis-backed limiter with atomic counter updates enforces the same
+limit correctly across all replicas](docs/assets/architecture-diagram.png)
+
 ## Table of contents
 
 - [The one exception to "fully isolated"](#the-one-exception-to-fully-isolated)
