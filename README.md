@@ -45,6 +45,8 @@ The full setup is below.
 - Optional Neo4j-backed Knowledge Graph / GraphRAG path.
 - Optional RDF/RDFS/OWL/SHACL/SPARQL ontology layer on top of the graph, for
   class-hierarchy-aware retrieval (CLI/eval only today, not wired into the API).
+- Optional token-budget-aware Context Engineering layer (dedup, prioritization,
+  compression, and packing above a computed budget), off by default.
 - Optional JWT auth, tenant/role authorization, field redaction, rate limiting, and audit logging.
 - Optional OpenTelemetry, Prometheus, Grafana, and live agent progress streaming.
 - A small React web UI for testing classic and agentic RAG.
@@ -60,6 +62,7 @@ generated API reference:
 - [Architecture](#architecture)
 - [Ingestion](#multimodal--layout-aware-ingestion)
 - [Retrieval](#retrieval)
+- [Context Engineering](#context-engineering)
 - [Agentic RAG](#agentic-rag)
 - [MCP](#mcp)
 - [GraphRAG](#knowledge-graph--graphrag)
@@ -94,10 +97,7 @@ generation, response generation, evaluation/feedback, observability, and
 deployment/infrastructure](docs/assets/architecture-diagram.png)
 
 A few pieces of this diagram are ahead of what's implemented today, not
-built capabilities: **Context Engineering** (the whole token-budget
-stage) is planned next, today context sizing is three explicit cutoffs,
-see [Retrieval](#retrieval), not a dedicated collect/filter/score/pack
-pipeline. **OCR for scanned documents** doesn't exist; PDF/DOCX parsing
+built capabilities: **OCR for scanned documents** doesn't exist; PDF/DOCX parsing
 extracts existing text/tables/structure, it doesn't read text out of a
 scanned image with no text layer. **Alerting** isn't wired up either,
 Prometheus/Grafana exist, but nothing pages on a threshold today (see
@@ -121,7 +121,7 @@ customer-support case store (see [MCP](#mcp)).
 | Security | Off by default | Enable under `config.security.*` |
 | GraphRAG | Off by default | Enable under `graph.*` |
 | Ontology | RDF/RDFS/OWL/SHACL/SPARQL | CLI/eval only today |
-| Context Engineering | Not yet implemented | Planned next |
+| Context Engineering | Off by default (`config.context.enabled`) | Token-budget-aware packing when enabled |
 
 ## Multimodal & Layout-Aware Ingestion
 
@@ -148,6 +148,24 @@ An optional post-rerank relationship-expansion step and field-level
 redaction pass both run inside the same retrieval pipeline; see
 [Security](#security). See [Retrieval](docs/topics/retrieval.md) for
 the cutoff-semantics writeup and API reference.
+
+## Context Engineering
+
+`rag.context` is an optional, explicit, token-budget-aware context-assembly
+layer (`config.context.enabled`, off by default) layered above the
+retrieval/GraphRAG/agentic pipelines. When enabled, it normalizes every
+evidence source (retrieved chunks, graph facts, MCP results, conversation
+history) into one `ContextItem` type, deduplicates, prioritizes by
+relevance/authority/freshness, compresses or drops items to fit a computed
+token budget, and renders survivors in a "lost in the middle"-aware order,
+replacing the fixed `generation_context_top_n` cutoff described above with
+a measured budget instead of one count.
+
+Disabled by default, `RetrievalPipeline`'s existing `build_context` runs
+unchanged, so every pre-existing config/experiment/test stays
+byte-identical unless it's turned on. See
+[Context Engineering](docs/topics/context-engineering.md) for the full
+design, benchmark numbers, and known limitations.
 
 <!-- --8<-- [start:docs-agentic-rag] -->
 ## Agentic RAG
