@@ -40,7 +40,9 @@ class _RecordingPipeline:
         """Start with no recorded answer() calls."""
         self.calls: list[dict[str, Any]] = []
 
-    def answer(self, query: str, filters=None, candidate_k=None, auth=None) -> dict[str, Any]:
+    def answer(
+        self, query: str, filters=None, candidate_k=None, auth=None, history_turns=None
+    ) -> dict[str, Any]:
         """Record the call's `auth` argument and return a fixed classic-RAG answer."""
         self.calls.append({"query": query, "filters": filters, "auth": auth})
         return {
@@ -224,7 +226,10 @@ def test_query_endpoint_response_schema_is_unaffected_by_the_new_route(client_wi
     milestone's correlation id, sourced from the same value as the
     `x-request-id` header) -- not something `/agent/query`'s existence
     added, so it's included in the expected set here rather than tracked
-    as a second historical baseline.
+    as a second historical baseline. `context_engineering` is the same
+    kind of later, additive field (the context-engineering milestone's
+    debug/observability summary, `None` unless `config.context.enabled`),
+    tracked here for the same reason.
     """
     config = load_config()
     client, pipeline = client_with(config)
@@ -237,6 +242,7 @@ def test_query_endpoint_response_schema_is_unaffected_by_the_new_route(client_wi
         "sources",
         "retrieval_ms",
         "generation_ms",
+        "context_engineering",
         "total_ms",
         "request_id",
     }

@@ -22,7 +22,9 @@ class _RecordingPipeline:
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
 
-    def answer(self, query: str, filters=None, candidate_k=None, auth=None) -> dict[str, Any]:
+    def answer(
+        self, query: str, filters=None, candidate_k=None, auth=None, history_turns=None
+    ) -> dict[str, Any]:
         self.calls.append({"query": query})
         return {
             "answer": "stub answer",

@@ -109,7 +109,7 @@ def test_get_feedback_store_threads_pool_size_and_shared_timeouts(monkeypatch):
 class _PoolErrorPipeline:
     """RetrievalPipeline double whose `answer()` raises `PoolError`, simulating exhaustion."""
 
-    def answer(self, query: str, filters=None, candidate_k=None, auth=None):
+    def answer(self, query: str, filters=None, candidate_k=None, auth=None, history_turns=None):
         """Raise PoolError, always, as the real pool does once every connection is checked out."""
         raise PoolError("connection pool exhausted")
 
@@ -117,7 +117,7 @@ class _PoolErrorPipeline:
 class _IntegrityErrorPipeline:
     """RetrievalPipeline double whose `answer()` raises `IntegrityError`."""
 
-    def answer(self, query: str, filters=None, candidate_k=None, auth=None):
+    def answer(self, query: str, filters=None, candidate_k=None, auth=None, history_turns=None):
         """Raise IntegrityError, always, simulating an uncaught DB constraint violation."""
         raise psycopg2.errors.IntegrityError("duplicate key value violates unique constraint")
 
