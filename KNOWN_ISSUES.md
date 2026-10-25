@@ -535,6 +535,69 @@ Unit tests cover each tool under enabled and disabled authorization; a regressio
 
 ---
 
+### SEC-015: A hosted reranker received raw candidate content before redaction, with no egress gate
+
+**Status:** FIXED
+**Severity:** CRITICAL
+**Area:** Security / provider egress
+**Affected code:** `RetrievalPipeline._retrieve_timed_inner`, `rerankers/cohere.py`
+
+**Problem**
+`config.reranker.provider: cohere` sends every candidate's full chunk content to Cohere's hosted API before the field-redaction pass ran, and no provider-egress check applied to the reranker boundary at all (only `run_ragas_eval.py`'s judge call was gated).
+
+**Failure scenario**
+A caller the field policy or egress policy would otherwise restrict from seeing a value (or from having it leave the local environment) still had that raw content sent externally, because reranking happened strictly before redaction and the egress policy never knew the reranker boundary existed.
+
+**Fix applied**
+Field redaction now runs on the candidate pool before any reranker call, hosted or local. Moved `apply_egress_policy`/`EgressDecision` to `rag.retrieval.egress_policy` (re-exported from `rag.eval.egress_policy` for existing callers) so `RetrievalPipeline` can apply the same egress check to the Cohere boundary, dropping any blocked candidate before it reaches the reranker.
+
+**Regression test**
+`test_hosted_reranker_never_receives_unredacted_sensitive_content` and `test_hosted_reranker_never_receives_egress_blocked_candidates` in `tests/unit/test_retrieval_pipeline.py`.
+
+---
+
+### SEC-016: Egress policy dropped a blocked source's context but still sent the derived answer to the hosted judge
+
+**Status:** FIXED
+**Severity:** CRITICAL
+**Area:** Security / provider egress
+**Affected code:** `run_ragas_eval._build_rows`, `run_agent_ragas_eval._build_rows`
+
+**Problem**
+When egress policy blocked one of a question's retrieved sources, only that source's `content` was dropped from `contexts`; the generated `answer` (which may itself quote the blocked content) was still sent to the hosted judge, along with the question/expected-answer.
+
+**Failure scenario**
+An authorized local answer quoting a restricted value: the context was correctly redacted before it left the machine, but the answer carrying the same value was not, defeating the egress gate's purpose.
+
+**Fix applied**
+The judge row, not the individual source, is now the egress unit: if any source for a row is blocked, the whole row is dropped from the judge payload. A new `num_skipped_egress_blocked` count is reported alongside the existing `num_skipped_missing_expected_answer`.
+
+**Regression test**
+`test_run_ragas_drops_whole_row_when_egress_policy_blocks_a_source` in `tests/unit/test_run_ragas_eval.py`.
+
+---
+
+### SEC-017: A same-named upload could silently replace another tenant's document
+
+**Status:** FIXED
+**Severity:** CRITICAL
+**Area:** Security / ingestion authorization
+**Affected code:** `IngestionPipeline.ingest_file`, `governance.resolve_ingest_tenant_id`, `VectorStore.get_document_owner_tenant_id`
+
+**Problem**
+Document identity is `(source, dataset_id)`; `_safe_upload_path` strips the filename to its basename with no tenant/dataset namespacing. `resolve_ingest_tenant_id` only ever validated the *new* content's claimed tenant, never whether an *existing* document at that identity already belonged to someone else.
+
+**Failure scenario**
+Tenant A uploads `report.md` into a shared dataset. A different, independently ingest-authorized tenant B later uploads an unrelated file also named `report.md` into the same dataset, with no front matter at all (so the existing governance check saw nothing to object to). Both resolve to the same `document_id`; tenant B's own legitimate ingest permission silently replaces tenant A's chunks.
+
+**Fix applied**
+`ingest_file` now checks, before any changed-document write, whether the resolved `document_id` already has chunks owned by a different tenant (`VectorStore.get_document_owner_tenant_id`); a non-privileged caller is rejected with the same `IngestGovernanceError`/403 path the front-matter-mismatch case already used. A privileged (`cross_tenant_support_roles`) caller may still knowingly replace it.
+
+**Regression test**
+`test_non_privileged_caller_cannot_replace_a_document_already_owned_by_another_tenant` and `test_privileged_caller_may_replace_a_document_owned_by_another_tenant` in `tests/unit/test_ingestion_pipeline_governance.py`.
+
+---
+
 ## 3. Reliability and Distributed Systems
 
 ### DIST-001: Reading a request-scoped context variable inside a stream would have raced its middleware
@@ -1679,6 +1742,9 @@ The following issues are resolved, with a concrete fix and regression test cited
 | SEC-011 | Security | The request ID was reused as a dedup key, although clients could set it |
 | SEC-012 | Security | The default config followed an injected instruction, running older prompts with no access control |
 | SEC-013 | Security | Agent tools that queried the vector store directly skipped the authorization kill-switch |
+| SEC-015 | Security | A hosted reranker received raw candidate content before redaction, with no egress gate |
+| SEC-016 | Security | Egress policy dropped a blocked source's context but still sent the derived answer to the hosted judge |
+| SEC-017 | Security | A same-named upload could silently replace another tenant's document |
 | DIST-001 | Reliability | Reading a request-scoped context variable inside a stream would have raced its middleware |
 | DIST-002 | Reliability | A LangGraph join node ran twice, because its parallel branches had unequal lengths |
 | DIST-003 | Reliability | A deliberate workflow pause would have been counted as a failure in metrics |
