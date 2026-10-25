@@ -106,6 +106,12 @@ class FakePipeline:
             SearchResult(chunk=related, score=0.9, origin="expanded", expanded_from="doc-1_0")
         ]
 
+    def build_context_text(self, results, query, *, history_turns=None, tenant_id=None):
+        """Render via the real build_context; context engineering is disabled in this fake."""
+        from rag.retrieval.pipeline import build_context
+
+        return build_context(results), None
+
 
 class FakeVectorStore:
     """get_chunks_by_ids() resolves only the known seed chunk_id "doc-1_0"."""
