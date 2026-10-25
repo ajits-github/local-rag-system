@@ -62,6 +62,12 @@ class FakePipeline:
         self.resolve_auth_calls.append({"auth": auth, "filters": filters, "versions": versions})
         return auth
 
+    def build_context_text(self, results, query, *, history_turns=None, tenant_id=None):
+        """Render via the real build_context; context engineering is disabled in this fake."""
+        from rag.retrieval.pipeline import build_context
+
+        return build_context(results), None
+
 
 class FakeEmbedder:
     """Deterministic embedder: each chunk's "embedding" is a one-hot vector by its keyword."""
