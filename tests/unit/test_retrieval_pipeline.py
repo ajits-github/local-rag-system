@@ -650,6 +650,78 @@ def test_real_reranker_retains_configured_top_n():
     assert spy.received_top_n == 4
 
 
+class _CapturingReranker:
+    """Records the exact content handed to it, as a stand-in for a hosted reranker."""
+
+    def __init__(self) -> None:
+        self.received_content: list[str] = []
+
+    def rerank(self, query: str, results: list[SearchResult], top_n: int) -> list[SearchResult]:
+        """Record every candidate's content, then behave like an identity reranker."""
+        self.received_content = [r.chunk.content for r in results]
+        return results[:top_n]
+
+
+def test_hosted_reranker_never_receives_unredacted_sensitive_content():
+    """A hosted reranker must see already-redacted content, not raw sensitive values.
+
+    Regression for SEC-015: Cohere's rerank() used to run before the
+    field-redaction pass, so a secret-tagged chunk's raw value reached the
+    hosted API even for a caller whose roles don't permit disclosure.
+    """
+    secret_result = _make_result(
+        "c1",
+        "The admin credential is SYNTHETIC_ONLY_abc123.",
+        source="a.md",
+        score=0.9,
+        sensitive_field_ids=["synthetic_admin_credential"],
+    )
+    config = load_config().model_copy(deep=True)
+    config.security.field_redaction.enabled = True
+    reranker = _CapturingReranker()
+    pipeline = RetrievalPipeline(
+        config,
+        vectorstore=FakeVectorStore([secret_result]),
+        embedder=FakeEmbedder(),
+        reranker=reranker,
+        llm=FakeLLM(),
+    )
+
+    pipeline.retrieve("q", candidate_k=1)
+
+    assert reranker.received_content, "the reranker should have been called"
+    assert "SYNTHETIC_ONLY_abc123" not in reranker.received_content[0]
+    assert "[REDACTED:SENSITIVE_FIELD]" in reranker.received_content[0]
+
+
+def test_hosted_reranker_never_receives_egress_blocked_candidates():
+    """A candidate the egress policy blocks must never reach a hosted reranker call.
+
+    Regression for SEC-015's second half: no provider-egress gate ran at
+    the reranker boundary at all, so a restricted document still had its
+    full text sent externally even with `security.egress_policy.enabled`.
+    """
+    blocked = _make_result("blocked", "Restricted content.", source="a.md", score=0.9)
+    blocked.chunk.metadata.tenant_id = "tenant_blocked"
+    allowed = _make_result("allowed", "Ordinary content.", source="b.md", score=0.8)
+    config = load_config().model_copy(deep=True)
+    config.reranker.provider = "cohere"
+    config.security.egress_policy.enabled = True
+    config.security.egress_policy.blocked_tenant_ids = ["tenant_blocked"]
+    reranker = _CapturingReranker()
+    pipeline = RetrievalPipeline(
+        config,
+        vectorstore=FakeVectorStore([blocked, allowed]),
+        embedder=FakeEmbedder(),
+        reranker=reranker,
+        llm=FakeLLM(),
+    )
+
+    pipeline.retrieve("q", candidate_k=2)
+
+    assert reranker.received_content == ["Ordinary content."]
+
+
 def test_authorization_disabled_by_default_ignores_caller_supplied_auth():
     """config.security.authorization.enabled=False: search() always receives auth=None.
 

@@ -232,6 +232,41 @@ def test_run_ragas_skips_examples_missing_expected_answer(tmp_path, monkeypatch)
     assert report["ragas"]["num_skipped_missing_expected_answer"] == 1
 
 
+def test_run_ragas_drops_whole_row_when_egress_policy_blocks_a_source(tmp_path, monkeypatch):
+    """A row with any egress-blocked source is dropped entirely, answer included.
+
+    Regression for SEC-016: egress policy used to drop only the blocked
+    source's `content` from `contexts` while still sending the generated
+    `answer` (which may quote that same blocked content) to the hosted
+    judge. The row, not the source, is the egress unit.
+    """
+    gold_path = _write_gold(tmp_path)
+    blocked_result = _make_result("c1", "Restricted content.", "a.md", 1.0)
+    blocked_result.chunk.metadata.tenant_id = "tenant_blocked"
+    _patch_pipeline_backends(monkeypatch, [blocked_result])
+    _patch_ragas_backends(monkeypatch, _FakeLLM())
+    config = load_config().model_copy(deep=True)
+    config.security.egress_policy.enabled = True
+    config.security.egress_policy.blocked_tenant_ids = ["tenant_blocked"]
+    monkeypatch.setattr("rag.eval.run_ragas_eval.load_config", lambda path=None: config)
+
+    captured_rows: list[list[dict[str, Any]]] = []
+
+    def _capturing_score(rows, judge_llm, embedder, cache=None):
+        captured_rows.append(rows)
+        return _fake_ragas_score(rows, judge_llm, embedder, cache)
+
+    monkeypatch.setattr("rag.eval.run_ragas_eval.ragas_scorer.score", _capturing_score)
+
+    report = run_ragas_eval.run_ragas(gold_path, None, "test-dataset", sample_size=3)
+
+    # Both answerable rows retrieved the same blocked-tenant chunk, so both
+    # are dropped; only the no-expected-answer row was already excluded.
+    assert report["ragas"]["num_scored"] == 0
+    assert report["ragas"]["num_skipped_egress_blocked"] == 2
+    assert captured_rows == [[]]
+
+
 def test_run_ragas_report_includes_prompt_id_and_version(tmp_path, monkeypatch):
     """The ragas report section surfaces prompt_id/prompt_version for self-description."""
     gold_path = _write_gold(tmp_path)

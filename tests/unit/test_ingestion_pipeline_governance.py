@@ -24,13 +24,23 @@ class _RecordingVectorStore:
     def __init__(self) -> None:
         self.written_chunks: list[Chunk] = []
         self._next_id = 0
+        #: Set by a test to simulate an existing document already owned by
+        #: a tenant, keyed by the document_id get_or_create_document_id
+        #: will return next.
+        self.owner_tenant_by_document_id: dict[str, str] = {}
+        self._fixed_document_id: str | None = None
 
     def health_check(self) -> bool:
         return True
 
     def get_or_create_document_id(self, source: str, checksum: str, dataset_id: str):
+        if self._fixed_document_id is not None:
+            return self._fixed_document_id, True
         self._next_id += 1
         return f"doc-{self._next_id}", True
+
+    def get_document_owner_tenant_id(self, document_id: str) -> str | None:
+        return self.owner_tenant_by_document_id.get(document_id)
 
     def delete_chunks_by_document_id(self, document_id: str) -> None:
         self.written_chunks = [
@@ -129,6 +139,51 @@ def test_privileged_caller_may_upload_on_behalf_of_a_different_explicit_tenant(t
     pipeline.ingest_file(path, "test-dataset", caller=caller)
 
     assert all(c.metadata.tenant_id == "tenant_beta" for c in vectorstore.written_chunks)
+
+
+def test_non_privileged_caller_cannot_replace_a_document_already_owned_by_another_tenant(
+    tmp_path: Path,
+):
+    """SEC-017 regression: a same-named upload must not silently replace another tenant's document.
+
+    Tenant A's content already exists under the (source, dataset_id) pair
+    this upload resolves to (simulated via `owner_tenant_by_document_id`,
+    standing in for chunks a prior tenant-A upload already persisted).
+    Tenant B is fully permitted to ingest under their own tenant and
+    supplies no front-matter tenant claim at all, so
+    `resolve_ingest_tenant_id` alone would have allowed it (it only ever
+    validates the NEW content's claimed tenant, never the EXISTING
+    document's owner). The replacement must still be rejected, and
+    nothing must be written.
+    """
+    path = tmp_path / "report.md"
+    path.write_text("Tenant B's replacement content, no front matter.", encoding="utf-8")
+
+    pipeline, vectorstore = _pipeline()
+    vectorstore._fixed_document_id = "doc-shared"
+    vectorstore.owner_tenant_by_document_id["doc-shared"] = "tenant_alpha"
+    caller = IngestCallerContext(tenant_id="tenant_beta", is_privileged=False)
+
+    with pytest.raises(IngestGovernanceError):
+        pipeline.ingest_file(path, "shared-dataset", caller=caller)
+
+    assert vectorstore.written_chunks == []
+
+
+def test_privileged_caller_may_replace_a_document_owned_by_another_tenant(tmp_path: Path):
+    """A cross-tenant support role may still knowingly replace another tenant's document."""
+    path = tmp_path / "report.md"
+    path.write_text("Support-authored replacement content.", encoding="utf-8")
+
+    pipeline, vectorstore = _pipeline()
+    vectorstore._fixed_document_id = "doc-shared"
+    vectorstore.owner_tenant_by_document_id["doc-shared"] = "tenant_alpha"
+    caller = IngestCallerContext(tenant_id="techfusion_support", is_privileged=True)
+
+    pipeline.ingest_file(path, "shared-dataset", caller=caller)
+
+    assert len(vectorstore.written_chunks) > 0
+    assert all(c.metadata.tenant_id == "techfusion_support" for c in vectorstore.written_chunks)
 
 
 def test_no_caller_preserves_pre_fix_behavior(tmp_path: Path):
