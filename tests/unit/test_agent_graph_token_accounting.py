@@ -51,7 +51,7 @@ class NoTokenTrackingLLM:
 class FakePipeline:
     """RetrievalPipeline double whose answer() returns a fixed classic-RAG result with tokens."""
 
-    def answer(self, query, filters=None, candidate_k=None, auth=None):
+    def answer(self, query, filters=None, candidate_k=None, auth=None, history_turns=None):
         """Return a fixed classic-RAG answer with fixed prompt/completion token counts."""
         return {
             "answer": "classic answer",
@@ -62,6 +62,12 @@ class FakePipeline:
             "prompt_tokens": 50,
             "completion_tokens": 10,
         }
+
+    def build_context_text(self, results, query, *, history_turns=None, tenant_id=None):
+        """Render via the real build_context; context engineering is disabled in this fake."""
+        from rag.retrieval.pipeline import build_context
+
+        return build_context(results), None
 
 
 class FakeVectorStore:
