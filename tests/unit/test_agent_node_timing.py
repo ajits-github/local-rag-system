@@ -72,7 +72,7 @@ class FakePipeline:
         """Store the fixed results this double's retrieve() will return."""
         self.retrieve_results = retrieve_results or []
 
-    def answer(self, query, filters=None, candidate_k=None, auth=None):
+    def answer(self, query, filters=None, candidate_k=None, auth=None, history_turns=None):
         """Return a fixed classic-RAG answer."""
         return {
             "answer": "classic answer",
@@ -97,6 +97,12 @@ class FakePipeline:
     def expand_with_relationships(self, results, auth=None):
         """Return results unchanged; not exercised by these tests."""
         return results
+
+    def build_context_text(self, results, query, *, history_turns=None, tenant_id=None):
+        """Render via the real build_context; context engineering is disabled in this fake."""
+        from rag.retrieval.pipeline import build_context
+
+        return build_context(results), None
 
 
 class FakeVectorStore:

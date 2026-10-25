@@ -177,6 +177,55 @@ GRAPH_EVIDENCE_IN_CONTEXT = Histogram(
     registry=REGISTRY,
 )
 
+CONTEXT_CANDIDATE_TOKENS = Histogram(
+    "rag_context_candidate_tokens",
+    "Total candidate evidence tokens gathered before Context Engineering dedup/packing.",
+    buckets=(50, 100, 250, 500, 1000, 2000, 4000, 8000, 16000, 32000, 64000),
+    registry=REGISTRY,
+)
+CONTEXT_PACKED_TOKENS = Histogram(
+    "rag_context_packed_tokens",
+    "Total tokens actually packed into the final rendered context.",
+    buckets=(50, 100, 250, 500, 1000, 2000, 4000, 8000, 16000, 32000, 64000),
+    registry=REGISTRY,
+)
+CONTEXT_DROPPED_ITEMS_TOTAL = Counter(
+    "rag_context_dropped_items_total",
+    "Candidate context items excluded by packing, by reason.",
+    ["reason"],
+    registry=REGISTRY,
+)
+CONTEXT_DEDUPLICATED_ITEMS_TOTAL = Counter(
+    "rag_context_deduplicated_items_total",
+    "Candidate context items collapsed by deduplication, by match kind.",
+    ["match_kind"],
+    registry=REGISTRY,
+)
+CONTEXT_COMPRESSED_ITEMS_TOTAL = Counter(
+    "rag_context_compressed_items_total",
+    "Context items rewritten by compression before packing.",
+    registry=REGISTRY,
+)
+CONTEXT_BUILD_LATENCY_SECONDS = Histogram(
+    "rag_context_build_latency_seconds",
+    "Time spent in the Context Engineering build pipeline (normalize through packing).",
+    buckets=_LATENCY_BUCKETS_SECONDS,
+    registry=REGISTRY,
+)
+CONTEXT_OVERFLOW_PREVENTED_TOTAL = Counter(
+    "rag_context_overflow_prevented_total",
+    "Requests where packing had to drop or compress at least one eligible item to stay "
+    "within the token budget (i.e. graceful degradation actually engaged).",
+    registry=REGISTRY,
+)
+CONTEXT_UTILIZATION_RATIO = Histogram(
+    "rag_context_utilization_ratio",
+    "packed_context_tokens / available_context_budget, by packing strategy.",
+    ["strategy"],
+    buckets=(0.0, 0.1, 0.25, 0.5, 0.75, 0.9, 1.0),
+    registry=REGISTRY,
+)
+
 FEEDBACK_SUBMISSIONS_TOTAL = Counter(
     "rag_feedback_submissions_total",
     "Total POST /feedback submissions, by rating and outcome.",
@@ -311,6 +360,56 @@ def observe_graph_evidence_in_context(count: int) -> None:
 
 
 @_defensive
+def observe_context_build(
+    *,
+    candidate_tokens: int,
+    packed_tokens: int,
+    build_seconds: float,
+    strategy: str,
+    utilization: float,
+    dropped_by_reason: dict[str, int],
+    dedup_by_kind: dict[str, int],
+    compressed_item_count: int,
+    overflow_prevented: bool,
+) -> None:
+    """Record one Context Engineering build (`rag.context.engine.ContextEngine.build`).
+
+    Parameters
+    ----------
+    candidate_tokens, packed_tokens : int
+        Pre-dedup candidate token total and final packed token total.
+    build_seconds : float
+        Wall-clock time for the whole build pipeline.
+    strategy : str
+        `config.context.packing_strategy` (a fixed, bounded vocabulary).
+    utilization : float
+        `packed_tokens / available_context_tokens`, already computed by
+        the caller (never recomputed here, so this function can never
+        divide by zero).
+    dropped_by_reason : dict[str, int]
+        Counts from `PackingTrace`, keyed by its fixed `reason` strings.
+    dedup_by_kind : dict[str, int]
+        `{"exact": n, "near": n}`.
+    compressed_item_count : int
+    overflow_prevented : bool
+        Whether at least one eligible item had to be dropped or
+        compressed to respect the budget.
+    """
+    CONTEXT_CANDIDATE_TOKENS.observe(candidate_tokens)
+    CONTEXT_PACKED_TOKENS.observe(packed_tokens)
+    CONTEXT_BUILD_LATENCY_SECONDS.observe(build_seconds)
+    CONTEXT_UTILIZATION_RATIO.labels(strategy=strategy).observe(utilization)
+    for reason, count in dropped_by_reason.items():
+        CONTEXT_DROPPED_ITEMS_TOTAL.labels(reason=reason).inc(count)
+    for kind, count in dedup_by_kind.items():
+        CONTEXT_DEDUPLICATED_ITEMS_TOTAL.labels(match_kind=kind).inc(count)
+    if compressed_item_count:
+        CONTEXT_COMPRESSED_ITEMS_TOTAL.inc(compressed_item_count)
+    if overflow_prevented:
+        CONTEXT_OVERFLOW_PREVENTED_TOTAL.inc()
+
+
+@_defensive
 def observe_feedback_submission(rating: str, outcome: str, latency_seconds: float) -> None:
     """Record one `POST /feedback` submission.
 
@@ -345,6 +444,7 @@ __all__ = [
     "REGISTRY",
     "observe_agent_request",
     "observe_authorization_denial",
+    "observe_context_build",
     "observe_error",
     "observe_evidence_sufficiency",
     "observe_feedback_submission",

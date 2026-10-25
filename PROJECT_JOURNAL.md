@@ -11100,3 +11100,174 @@ layer's own tenant/role/trust enforcement (a Cypher predicate plus an
 independent Python post-execution re-check) or the ontology layer's reuse
 of that exact same authorization function. Fixed directly, since it is a
 tracked, low-risk, additive change.
+
+## 2026-10-24 (session 24): Context Engineering subsystem (`rag.context`)
+
+### Interview talking points
+- **What problem did this solve?** Replaced "retrieve top-N chunks,
+  concatenate, hand to the model" with an explicit, measurable,
+  token-budget-aware context-assembly pipeline (`rag.context.engine.
+  ContextEngine`), shared by classic RAG (`RetrievalPipeline.answer()`),
+  GraphRAG (`GraphRAGPipeline`), and the agent's `_synthesize` node,
+  rather than each call site independently deciding how much evidence to
+  include. The system had no token-counting, no model-context-window
+  concept, and no deduplication/compression/prioritization at all before
+  this; `generation_context_top_n` (a fixed chunk count) was the entire
+  "budget."
+- **Why was it hard?** No pre-call tokenizer exists anywhere in this
+  codebase (Ollama only reports token counts *after* a call returns), so
+  a documented estimation strategy had to be built from nothing. The
+  design also had to compose cleanly with five already-existing,
+  independently-evolved evidence shapes (dense/hybrid chunks, graph
+  facts, MCP business-tool results, agent tool-fetched chunks,
+  relationship-expanded chunks), each with different scoring semantics
+  (cosine similarity, RRF, fixed constants) that are explicitly *not*
+  comparable to each other, a constraint `RetrievalPipeline`'s own
+  docstrings already called out for dense-vs-BM25 and that this
+  subsystem had to respect rather than paper over with a fabricated
+  unified score.
+- **How was it debugged?** Three real bugs were found by writing the
+  overflow-regression test suite itself, not by inspection: (1)
+  compression was gated on a candidate's own size against a fixed
+  global floor instead of the *remaining headroom*, which silently
+  produced an empty context under a tight budget with many
+  individually-modest items (`CTX-001`); (2) a generic
+  "looks-uppercase" regex misparsed a graph fact's own acronym-shaped
+  entity name ("Alpha API") as its relationship type, fixed by building
+  the parser from the closed `RELATIONSHIP_TYPES` vocabulary instead
+  (`CTX-002`); (3) several new tests mutated the process-wide cached
+  `load_config()` singleton directly and polluted later tests in the
+  same `pytest` run, the same class of hazard this project's own
+  `RAG_CONFIG_PATH` autouse fixture exists to prevent for a different
+  field, fixed by deep-copying before mutating, matching
+  `test_config.py`'s own established pattern (`CTX-003`).
+- **What metrics proved the fix?** A synthetic, corpus-free benchmark
+  harness (`rag.eval.run_context_eval`, 15 scenarios x 4 strategies x 4
+  candidate-token-size targets, 240 runs) measured, for real, on this
+  machine: baseline top-N dropped 1861/≈ candidate items and reached
+  mean context_utilization 0.136; the full pipeline (dedup + priority-
+  aware packing + compression + adaptive budgets) dropped 0 (compressing
+  6 instead) and reached a 0.357 mean context_reduction, all while never
+  exceeding the configured token budget across any of the 240 runs,
+  including a dedicated extreme-volume regression test. Build latency
+  stayed sub-millisecond for every strategy once a one-time cold-start
+  import cost was isolated into an explicit warm-up call (see "known
+  gaps" below).
+- **What's next?** Wire `GraphRAGPipeline`'s own direct `/graph/query`
+  endpoint to accept conversation history (currently only the agent and
+  classic-RAG routes do); run the lost-in-the-middle ordering experiment
+  (`rag.context.ordering`'s four strategies already exist) against a
+  real Ollama instance, not yet done in this sandbox (no Ollama/Postgres
+  running here); consider whether `multi_agent_experiment/`'s specialist
+  agents should receive genuinely scoped `ContextEngine` instances rather
+  than one shared pool, left as a design note in `docs/
+  context_engineering.md` rather than implemented, since that experiment
+  lives on its own unmerged branch.
+
+### Goal
+Implement sections 1-36 of `.claude-prompts/35.0-Context-Engineering.txt`
+on `feature/context-engineering` (branched from `main`, which already
+contains the merged GraphRAG/Knowledge-Graph/ontology work): a normalized
+`ContextItem` type, model-context-limit resolution, a `TokenCounter`
+abstraction, a budget planner (fixed and adaptive per-source allocation),
+deduplication (exact-id/exact-hash/near-duplicate), relevance/authority/
+freshness prioritization with deterministic tie-breaking, oversized-
+evidence and tool-output compression, three comparable packing strategies
+(`top_n`/`naive_token_first`/`priority_aware`), graph-path-aware hop
+handling, conversation-history management (sliding window/summarized/
+retrieval), a narrow token-count-only cache, and integration into every
+existing generation call site, without weakening authorization/redaction
+or changing default behavior when disabled.
+
+### Configuration
+New `AppConfig.context: ContextEngineeringConfig` (`enabled: false` by
+default, a true no-op matching every prior milestone's kill-switch
+convention): `reserved_output_tokens`, `framework_overhead_tokens`,
+`safety_margin_tokens`, `token_counting` (`heuristic`/`tiktoken`),
+`model_limits` (per-model context-window table, `qwen2.5:*` pre-seeded at
+32768), `source_budgets` (fixed share allocation, validated to sum to
+1.0), `adaptive` (query-type-dependent overrides, classified from
+gathered-evidence composition, never a second LLM call),
+`deduplication.overlap_threshold`, `compression.threshold_tokens`/
+`strategy`/`max_sentences`, `history.strategy`/`max_turns`,
+`packing_strategy`, `ordering_strategy`, `cache` (disabled by default, no
+measurable benefit demonstrated for this single-instance deployment, see
+`docs/context_engineering.md`'s caching section). New `security.dos_limits.
+max_history_turns`/`max_history_turn_chars` bound a request's
+caller-supplied `conversation_history` field (this system has no
+server-side session store; a multi-turn caller re-sends prior turns each
+request, the same "caller asserts, server bounds" pattern `tenant_id`/
+`roles`/`case_approvals` already use).
+
+### Implementation
+`src/rag/context/` (new package): `types.py` (`ContextItem`,
+`ConversationTurn`, `ContextBudget`, `PackedContext`, etc.), `tokens.py`,
+`model_limits.py`, `planner.py`, `normalize.py` (converts `SearchResult`/
+`ConversationTurn` into `ContextItem`, assuming input already passed
+through `RetrievalPipeline.sanitize_evidence`), `dedup.py`,
+`prioritize.py`, `compression.py`, `graph_packing.py`, `packing.py`
+(three strategies), `ordering.py` (four "lost in the middle" render-order
+strategies), `history.py`, `caching.py`, `engine.py` (`ContextEngine`,
+the one orchestrator every call site shares).
+
+Wired into `RetrievalPipeline` via a new `build_context_text()` method
+(returns `build_context()`'s output unchanged when `context.enabled` is
+`False`, a `ContextEngine`-packed string otherwise), reused by
+`GraphRAGPipeline._generate_from_results` and `agent/graph.py`'s
+`_synthesize` node so none of the three independently decide how much
+context to include. `AgentState` gained `conversation_history`/
+`context_engineering` fields; `POST /query`/`POST /agent/query`/`POST
+/agent/query/stream` all gained an optional `conversation_history` request
+field and a `context_engineering` response field (a debug/observability
+summary: token counts, utilization, dedup/compression stats, never raw
+evidence). New Prometheus metrics (`rag_context_*`) and OTel spans
+(`context_normalize`/`context_deduplication`/`context_packing`) follow
+the existing bounded-label/defensive-wrapper conventions exactly.
+
+### Evaluation
+`rag.eval.run_context_eval` (synthetic, no corpus/Postgres/Ollama needed)
+covers all 15 required scenario categories (short context, long document,
+many relevant/irrelevant chunks, duplicates, graph+document,
+MCP+document, conflicting evidence, stale-vs-current, long history,
+prompt injection, over-budget volume, one giant chunk, a multi-agent-
+scoped case, an unanswerable query) across 4 candidate-token-size targets
+and 4 strategies. `scripts/benchmark_context_engineering.py` renders the
+240-run sweep as `experiments/results/context_engineering/report.json`
+and `experiments/reports/context_engineering_benchmark.md`. Deliberately
+computes only deterministic, non-generation metrics (tokens, utilization,
+reduction, dedup/compression counts, truncation, latency); answer-
+correctness/citation-correctness/context-precision-recall would need a
+real LLM call against the real corpus and are explicitly left to
+`run_eval.py`/RAGAS, not duplicated here with a fabricated judge.
+
+~95 new unit tests (`tests/unit/test_context_*.py`,
+`test_run_context_eval.py`) cover every module plus end-to-end overflow-
+regression invariants (a packed prompt never exceeds its budget; a single
+giant chunk/MCP result/graph path/long history can never overflow it;
+duplicated evidence is bounded; system instructions are never part of
+packing at all, so they can never be dropped to make room for evidence;
+prompt injection in retrieved content or conversation history stays data,
+never an instruction channel; a redaction marker already in the text is
+never reconstructed). All patched `FakePipeline`/`RetrievalPipeline`
+test-double classes across the existing agent/API test suite (21 files)
+needed `build_context_text`/`history_turns` stubs added, the same
+"isolated test doubles don't know about a sibling change's new keyword
+argument" pattern already documented for the joint-investigation PRs.
+Full suite: 1262 unit tests passing (up from 1170), 0 regressions; `ruff
+check`/`ruff format`/`mypy` all clean on every touched file.
+
+### Known gaps (documented, not hidden)
+No live Ollama/Postgres/Neo4j instance was running in this sandbox, so
+(a) the lost-in-the-middle ordering experiment (section 15) was
+implemented but not run against a real model, and (b) the full
+`run_eval.py`-style answer-quality/citation metrics were not computed end
+to end against the real `techfusion` corpus. `GraphRAGPipeline`'s own
+`/graph/query` endpoint was not given a `conversation_history` field
+(it has no such field today at all, so this is a scope decision, not a
+regression). Multi-agent-specific context isolation
+(`multi_agent_experiment/`) was exercised only as a single synthetic
+scenario proving the budgeting mechanics scale to a scoped-evidence
+shape; real specialist-scoped `ContextEngine` instances for that
+branch's Knowledge/Business agents were not implemented, since that
+experiment lives on its own unmerged branch, out of scope for this
+feature branch.

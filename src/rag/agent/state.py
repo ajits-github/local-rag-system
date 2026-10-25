@@ -11,6 +11,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from rag.context.types import ConversationTurn
 from rag.mcp.business.schemas import CaseApproval
 from rag.retrieval.authorization import AuthorizationContext
 from rag.schemas import SearchResult
@@ -113,6 +114,16 @@ class AgentState(BaseModel):
         router from a role-gated request field and never derived from
         anything LLM-produced. Empty unless the caller's verified
         identity holds an `mcp.business_actions.approval_roles` role.
+    conversation_history : list[ConversationTurn]
+        Caller-supplied prior conversation turns, set once by the API
+        router from the request body and never mutated by any node.
+        Consumed only by the `synthesize` node (and the `classic_rag`
+        fast path), via `RetrievalPipeline.build_context_text`; the
+        earlier decision prompts (`classify`/`decompose`/`tool_select`/
+        `evidence_sufficiency`) deliberately stay history-free, a
+        scoping decision, not an oversight: those prompts reason about
+        what evidence to gather for the *current* question, which
+        doesn't change based on how a prior turn was phrased.
     query_type : {"simple", "complex"} or None
         `classify_query`'s routing decision.
     subquestions : list[str]
@@ -166,12 +177,19 @@ class AgentState(BaseModel):
         summed across every invocation of that node type this run made.
         Same best-effort/per-call-overwrite caveat as `prompt_tokens`/
         `completion_tokens` applies per invocation.
+    context_engineering : dict[str, Any] | None
+        `rag.context.engine.context_engineering_summary()`'s output from
+        whichever call built this run's final prompt context
+        (`_synthesize` on the agent route, `pipeline.answer()`'s own
+        result on the `classic_rag` route). `None` when
+        `config.context.enabled=False`.
     """
 
     original_query: str
     authorization_context: AuthorizationContext | None = None
     filters: dict[str, Any] | None = None
     case_approvals: list[CaseApproval] = Field(default_factory=list)
+    conversation_history: list[ConversationTurn] = Field(default_factory=list)
     query_type: Literal["simple", "complex"] | None = None
     subquestions: list[str] = Field(default_factory=list)
     current_query: str = ""
@@ -184,6 +202,7 @@ class AgentState(BaseModel):
     completion_tokens: int = 0
     node_timings_ms: dict[str, list[NodeInvocationTiming]] = Field(default_factory=dict)
     node_token_usage: dict[str, dict[str, int]] = Field(default_factory=dict)
+    context_engineering: dict[str, Any] | None = None
     evidence_sufficient: bool | None = None
     final_answer: str | None = None
     citations: list[Citation] = Field(default_factory=list)

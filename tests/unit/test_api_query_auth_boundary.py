@@ -21,7 +21,9 @@ class _RecordingPipeline:
         """Start with no recorded calls."""
         self.calls: list[dict[str, Any]] = []
 
-    def answer(self, query: str, filters=None, candidate_k=None, auth=None) -> dict[str, Any]:
+    def answer(
+        self, query: str, filters=None, candidate_k=None, auth=None, history_turns=None
+    ) -> dict[str, Any]:
         """Record the call and return a minimal QueryResponse-shaped dict."""
         self.calls.append({"query": query, "filters": filters, "auth": auth})
         return {

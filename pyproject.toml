@@ -150,6 +150,7 @@ module = [
     "rdflib.*",
     "owlrl.*",
     "pyshacl.*",
+    "tiktoken.*",
 ]
 ignore_missing_imports = true
 

@@ -11,8 +11,13 @@ from pydantic import BaseModel
 
 from rag.api.auth import VerifiedIdentity
 from rag.api.deps import get_config, get_current_identity, get_rate_limiter, get_retrieval_pipeline
-from rag.api.request_auth import build_authorization_context, enforce_dos_limits
+from rag.api.request_auth import (
+    build_authorization_context,
+    enforce_dos_limits,
+    enforce_history_limits,
+)
 from rag.config import AppConfig
+from rag.context.types import ConversationTurn
 from rag.logging_config import get_request_id
 from rag.retrieval.authorization import AuthorizationContext
 from rag.retrieval.pipeline import RetrievalPipeline
@@ -34,6 +39,13 @@ class QueryRequest(BaseModel):
     JWT claims are used instead. `as_of` and `require_trust_level` are
     caller-supplied query parameters rather than identity claims, so they
     are honored either way.
+
+    `conversation_history` is caller-supplied, oldest first; this system
+    has no server-side session store (see `rag.context.history`'s module
+    docstring), so a multi-turn caller re-sends prior turns on every
+    request. Bounded by `security.dos_limits.max_history_turns`/
+    `max_history_turn_chars`; a true no-op when
+    `config.context.enabled=False`.
     """
 
     query: str
@@ -43,6 +55,7 @@ class QueryRequest(BaseModel):
     roles: list[str] | None = None
     as_of: date | None = None
     require_trust_level: str | None = None
+    conversation_history: list[ConversationTurn] | None = None
 
 
 class SourceItem(BaseModel):
@@ -84,6 +97,12 @@ class QueryResponse(BaseModel):
     (`rag.logging_config.get_request_id`). Exposed here too so a caller
     (the web UI's `POST /feedback` flow) can tie a feedback submission to
     the exact answer/run it rated without a separate lookup.
+
+    `context_engineering` is `rag.context.engine.
+    context_engineering_summary()`'s output, or `None` when
+    `config.context.enabled=False`. Debug/observability only: token
+    counts, utilization, and dedup/compression statistics, never raw
+    evidence content (already available, redacted, in `sources`).
     """
 
     answer: str
@@ -92,6 +111,7 @@ class QueryResponse(BaseModel):
     generation_ms: float
     total_ms: float
     request_id: str | None = None
+    context_engineering: dict[str, Any] | None = None
 
 
 def _build_authorization_context(
@@ -157,8 +177,15 @@ def query(
         The generated answer, its sources, and stage timings.
     """
     _enforce_dos_limits(body, config)
+    enforce_history_limits(body.conversation_history, config)
     auth = _build_authorization_context(body, identity, config)
-    result = pipeline.answer(body.query, filters=body.filters, candidate_k=body.top_k, auth=auth)
+    result = pipeline.answer(
+        body.query,
+        filters=body.filters,
+        candidate_k=body.top_k,
+        auth=auth,
+        history_turns=body.conversation_history,
+    )
     # Same event name/shape as the agent routes' run-completion log
     # (rag.agent.graph._finish); never includes query/answer text.
     logger.info(

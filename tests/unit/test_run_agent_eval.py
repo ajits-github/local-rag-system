@@ -62,7 +62,7 @@ class FakePipeline:
         self.answer_calls = 0
         self.retrieve_calls = 0
 
-    def answer(self, query, filters=None, candidate_k=None, auth=None):
+    def answer(self, query, filters=None, candidate_k=None, auth=None, history_turns=None):
         """Record the call and return a fixed classic-RAG answer."""
         self.answer_calls += 1
         return {
@@ -85,6 +85,12 @@ class FakePipeline:
     def sanitize_evidence(self, results, auth):
         """Return results unchanged; not exercised by these tests."""
         return results
+
+    def build_context_text(self, results, query, *, history_turns=None, tenant_id=None):
+        """Render via the real build_context; context engineering is disabled in this fake."""
+        from rag.retrieval.pipeline import build_context
+
+        return build_context(results), None
 
 
 class FakeVectorStore:
@@ -405,6 +411,12 @@ class TwoChunkPipeline:
     def sanitize_evidence(self, results, auth):
         """Return results unchanged; not exercised by these tests."""
         return results
+
+    def build_context_text(self, results, query, *, history_turns=None, tenant_id=None):
+        """Render via the real build_context; context engineering is disabled in this fake."""
+        from rag.retrieval.pipeline import build_context
+
+        return build_context(results), None
 
 
 def test_citation_support_rate_scores_only_answer_cited_sources():

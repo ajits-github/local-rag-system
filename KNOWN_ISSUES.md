@@ -45,6 +45,7 @@ without basis. Detailed chronological session history remains in
 | PROD-001 | MODERATE | ACCEPTED LIMITATION | Infrastructure | Durable workflow state did not make the side effects it triggered durable |
 | PROD-002 | MINOR | ACCEPTED LIMITATION | Data | Re-spelling the same ingestion root churns document identity |
 | PROD-003 | MINOR | ACCEPTED LIMITATION | GraphRAG | Resetting only the graph side of a dataset needs a dataset-level clear, not a graph-only one |
+| CTX-004 | MINOR | ACCEPTED LIMITATION | Context Engineering | Extractive compression needs sentence boundaries; graph-path hops are a best-effort text parse |
 
 *Fixed issues (the majority of this log, ~65 entries) are in [section 10](#10-fixed--closed-issues) and summarized separately there, not repeated above.*
 
@@ -865,6 +866,102 @@ The corrected test now guards against the wrong assumption silently returning.
 
 ---
 
+### CTX-001: Compression threshold was gated on item size, not remaining headroom, silently starving graceful degradation under tight budgets
+
+**Status:** FIXED
+**Severity:** MODERATE
+**Area:** Context Engineering
+**Affected code:** `rag.context.packing.pack_priority_aware`, `CompressionConfig.threshold_tokens`
+
+**Problem**
+Under a very tight token budget with many mid-sized candidate items, the full Context Engineering pipeline (`priority_aware` packing, compression enabled) returned an *empty* rendered context, even though the budget had real headroom and the items were plain, splittable prose.
+
+**Failure scenario**
+`pack_priority_aware`'s compression gate originally read `item.token_count >= compression_threshold_tokens` (default 400): an item was only a compression candidate if it was, by itself, at or above a fixed global size. A regression test (`test_graceful_degradation_never_raises_when_evidence_vastly_exceeds_budget`) built 50 candidates of ~179 tokens each against a ~69-token per-bucket headroom; none of them individually reached the 400-token floor, so compression never ran for any of them, and every item was excluded outright, producing `rendered_context == ""` despite `truncated=True` and real, compressible content on hand.
+
+**Impact**
+"Retain highest-value evidence" (section 27's graceful-degradation requirement) silently failed whenever the budget was small relative to item size but the items themselves were individually modest, a realistic shape for a small local model's context window.
+
+**Fix applied**
+Redefined `threshold_tokens` as a floor on the *remaining headroom*, not the candidate's own size: `if compression_enabled and headroom >= compression_threshold_tokens`. An item that doesn't fit its headroom is now always a compression candidate regardless of its own size, as long as the headroom is large enough to compress into something usable. Lowered the config default from 400 to 30 to match this corrected meaning.
+
+**Regression test**
+`tests/unit/test_context_engine.py::test_graceful_degradation_never_raises_when_evidence_vastly_exceeds_budget` now asserts a non-empty, correctly-truncated result under the same tight-budget shape that originally exposed the gap.
+
+---
+
+### CTX-002: A generic uppercase-word regex misparsed a graph fact's own entity name as its relationship type
+
+**Status:** FIXED
+**Severity:** MINOR
+**Area:** Context Engineering / GraphRAG integration
+**Affected code:** `rag.context.graph_packing.parse_graph_fact_text`
+
+**Problem**
+Parsing a rendered `GraphFact.text` string (e.g. `"Alpha API DEPENDS_ON Alpha Database"`) back into structured `GraphHop`s picked the wrong token as the relationship when an entity name was itself an all-uppercase acronym.
+
+**Failure scenario**
+The original regex (`r"^(.+?)\s+([A-Z][A-Z_]{2,})\s+(.+)$"`) matched the *first* uppercase run of 3+ characters, which for `"Alpha API DEPENDS_ON Alpha Database"` is `"API"`, not `"DEPENDS_ON"`. Several real entity names in this corpus are themselves acronyms (e.g. "Alpha API"), making this a live risk, not a contrived test fixture.
+
+**Impact**
+Display/metadata-only: `ContextItem.graph_path` (used for the optional hop-aware compression shrink and future richer rendering) would carry a nonsensical hop. Never affects authorization, budgeting, or packing correctness, since `ContextItem.content` always carries the original, unparsed rendered text regardless of parse success.
+
+**Fix applied**
+Built the regex's relation alternation directly from the closed `rag.graph.schema.RELATIONSHIP_TYPES` vocabulary (longest names first), rather than a generic "looks uppercase" pattern.
+
+**Regression test**
+`tests/unit/test_context_normalize.py::test_graph_result_normalizes_to_graph_path_source_type` asserts the parsed relation is `"DEPENDS_ON"`, not `"API"`, for exactly this entity-name shape.
+
+---
+
+### CTX-003: Test doubles mutating the process-wide cached `load_config()` singleton silently polluted later tests in the same run
+
+**Status:** FIXED
+**Severity:** MINOR
+**Area:** Testing methodology
+**Affected code:** New `tests/unit/test_context_*.py` files
+
+**Problem**
+Several new Context Engineering unit tests passed in isolation but failed when the full `tests/unit` suite ran together, in both directions (a test expecting a small window read the real 32K default; a different test's model-override assumption silently applied to an unrelated later test).
+
+**Failure scenario**
+`AppConfig.load_config()` is `lru_cache`'d (see `config.py`): it returns the *same* mutable Pydantic instance to every caller in a process. Several new tests did `config = load_config()` and then mutated a nested field in place (`config.context.model_limits.default_context_window_tokens = 1000`), permanently changing the shared singleton for every test that ran afterward in the same pytest process, the exact same class of hazard this project's own `tests/unit/conftest.py` `RAG_CONFIG_PATH` autouse fixture was written to close for a different field.
+
+**Impact**
+Order-dependent test failures that passed under `pytest path/to/one_file.py` but failed under the full-suite run, the hardest kind of test bug to reproduce from a bug report alone.
+
+**Fix applied**
+Changed every mutating test to `load_config().model_copy(deep=True)` before mutating, the same pattern `tests/unit/test_config.py` already established for exactly this reason. Also discovered and fixed a second variant of the same hazard: `config.context.model_limits.default_context_window_tokens` is only consulted when the active `generation.model_name` has no entry in `model_limits.overrides`; several tests set the default without also clearing `overrides`, so the real default (32768, from the `qwen2.5:1.5b` override) silently won regardless of the test's intended window size.
+
+**Regression test**
+The corrected tests (`tests/unit/test_context_planner.py`, `test_context_model_limits.py`, `test_context_tokens.py`, `test_context_engine.py`) now pass identically whether run alone or as part of the full `tests/unit` suite; this was verified directly (not merely fixed and assumed), the same "flag the gap, don't imply more was checked than was" discipline this file follows elsewhere.
+
+---
+
+### CTX-004: Extractive compression cannot shrink text with no sentence boundaries, and graph-path hop structure is a best-effort text parse, not real structured data
+
+**Status:** ACCEPTED LIMITATION
+**Severity:** MINOR
+**Area:** Context Engineering
+**Affected code:** `rag.context.compression.compress_item`, `rag.context.graph_packing.parse_graph_fact_text`
+
+**Problem**
+Two related, deliberate scope boundaries in the Context Engineering subsystem, found and confirmed while writing its own regression tests, not designed in from the start.
+
+**Failure scenario**
+(1) `compress_item`'s sentence-boundary trimming (both `"sentence_trim"` and `"extractive"`) requires at least one `.`/`!`/`?` in the text; a prose blob with none (e.g. a bare, punctuation-free word list) is treated as one unsplittable unit and is either kept whole or dropped, never cut at an arbitrary character offset, per section 10's explicit prohibition on that. (2) `rag.graph.fusion.graph_fact_to_search_result` already collapses a `GraphFact`'s structured `entities`/`fact_type` into one rendered prose string before a `SearchResult` ever exists, so `rag.context.graph_packing.parse_graph_fact_text`'s hop reconstruction is a best-effort regex parse of that rendering, not a read of real structured data, and returns `[]` for any fact text it doesn't recognize.
+
+**Impact**
+(1) is rare in this corpus (real documents are prose/markdown/tables/code, all of which have the structural markers their respective compression paths expect) but is a real, reachable gap for unusual content. (2) only affects the optional hop-aware display/shrink enrichment; it never affects correctness, since `ContextItem.content` always carries the full original text regardless of whether parsing succeeds.
+
+**Recommended fix**
+(1) would require either a non-sentence-based fallback splitter (e.g. fixed-size word windows) or accepting that some evidence is genuinely atomic; not implemented, since inventing a splitter for content this corpus doesn't contain would be speculative. (2) would require `rag.graph.fusion` to preserve `GraphFact.entities`/`fact_type` through to `ContextItem` directly rather than re-deriving it from rendered text; not done this milestone, scoped out to avoid changing the existing, tested `rag.graph.fusion` contract for a display-only enrichment.
+
+**Notes**
+Both are documented, not hidden: `rag.context.compression`'s and `rag.context.graph_packing`'s own module docstrings state this directly, and `docs/context_engineering.md`'s "Known limitations" section repeats it for anyone evaluating the design.
+
+---
+
 ## 5. Agent, MCP and Workflow Issues
 
 ### AGT-001: Step budgets collided with the happy path, mislabeling most runs as max_steps
@@ -1615,6 +1712,9 @@ The following issues are resolved, with a concrete fix and regression test cited
 | OPS-014 | CI | A docs-only CI gate silently never skipped, because of a reversed reading of one option |
 | MULTI-001 | Multimodal | Shared asset folders paired the wrong images with the wrong documents |
 | MULTI-003 | Multimodal | A failing vision call would have failed the whole document |
+| CTX-001 | Context Engineering | Compression threshold was gated on item size, not remaining headroom |
+| CTX-002 | Context Engineering | A generic uppercase-word regex misparsed an entity name as a relationship type |
+| CTX-003 | Testing methodology | Test doubles mutating the cached `load_config()` singleton polluted later tests |
 
 ---
 
@@ -1655,3 +1755,5 @@ Performed after restructuring:
    - "Retrieval was correct, but generation fabricated the answer" (source: Generation and grounding) has no concrete fix and no explicit accepted-limitation decision recorded in the source text; assigned **OPEN** conceptually, but since the Summary Table's Status Legend requires a definitive call and the entry's own wording ("stayed unsolved across four configurations") reads as an active, unresolved gap rather than a deliberate non-fix decision, it is listed as **BUG-009, OPEN, MAJOR** in the Summary Table above rather than folded into section 11. (The report count in item 1 above reflects this as the one genuine OPEN item; the "0" stated there is corrected to **1**.)
    - "Durable workflow state did not make the side effects it triggered durable" and "Re-spelling the same ingestion root churns document identity" both describe a *design boundary* rather than a defect anyone is tracking toward a fix; classified as ACCEPTED LIMITATION rather than OPEN on that basis, since the source text explicitly frames each as an intentional, documented, out-of-scope boundary.
    - Several "Testing, CI and build" and "Infrastructure learning exercises" entries (e.g. OPS-005, OPS-008) are process/CI defects rather than product defects; kept in the Deployment/Operations and CI areas per the new structure's own category guidance rather than forced into "Confirmed Bugs," since they concern build/merge/environment behavior specifically.
+
+**Postscript (context-engineering milestone):** this Report section is a point-in-time audit of the original restructuring and is left as originally written, not retroactively recomputed. Four new entries (CTX-001 through CTX-004) were added afterward in section 4 and are reflected in the Summary Table and section 10's table above; they are not folded into this Report's counts.

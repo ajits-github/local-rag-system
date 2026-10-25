@@ -21,7 +21,7 @@ from rag.observability import metrics as observability_metrics
 from rag.retrieval.authorization import AuthorizationContext
 from rag.retrieval.field_policy import sanitize_redaction_markers_in_answer
 from rag.retrieval.injection_detection import detect_injection
-from rag.retrieval.pipeline import RetrievalPipeline, build_context, source_dict
+from rag.retrieval.pipeline import RetrievalPipeline, source_dict
 from rag.schemas import SearchResult
 
 logger = logging.getLogger(__name__)
@@ -163,11 +163,25 @@ class GraphRAGPipeline:
         return self._retrieval_pipeline.sanitize_evidence(search_results, auth)
 
     def _generate_from_results(
-        self, query: str, results: list[SearchResult], t0: float, retrieval_ms: float
+        self,
+        query: str,
+        results: list[SearchResult],
+        t0: float,
+        retrieval_ms: float,
+        auth: AuthorizationContext | None = None,
     ) -> dict[str, Any]:
-        """Render context from `results` and generate one answer, in `RetrievalPipeline.answer()`'s shape."""  # noqa: E501
+        """Render context from `results` and generate one answer, in `RetrievalPipeline.answer()`'s shape.
+
+        Context is built via `RetrievalPipeline.build_context_text`
+        (the same Context Engineering seam `answer()` and the agent's
+        `_synthesize` node share), so graph evidence gets the same
+        token-budget-aware treatment as vector evidence rather than a
+        third, independent `build_context` call.
+        """  # noqa: E501
         t1 = time.perf_counter()
-        context = build_context(results)
+        context, context_engineering_info = self._retrieval_pipeline.build_context_text(
+            results, query, tenant_id=auth.tenant_id if auth else None
+        )
         system, user = self._retrieval_pipeline.prompt_template.render(context=context, query=query)
         answer_text = self._retrieval_pipeline.llm.generate(system, user)
         answer_text = sanitize_redaction_markers_in_answer(answer_text)
@@ -187,6 +201,7 @@ class GraphRAGPipeline:
             "generation_ms": generation_ms,
             "latency_breakdown_ms": {"retrieval_ms": retrieval_ms, "generation_ms": generation_ms},
             "total_ms": (t2 - t0) * 1000,
+            "context_engineering": context_engineering_info,
         }
 
     def _answer_graph_only(
@@ -196,7 +211,7 @@ class GraphRAGPipeline:
         t0 = time.perf_counter()
         results = self._graph_search_results(query, dataset_id, auth)
         retrieval_ms = (time.perf_counter() - t0) * 1000
-        return self._generate_from_results(query, results, t0, retrieval_ms)
+        return self._generate_from_results(query, results, t0, retrieval_ms, auth)
 
     def _answer_vector_plus_graph(
         self,
@@ -215,7 +230,7 @@ class GraphRAGPipeline:
         retrieval_ms = (time.perf_counter() - t0) * 1000
         # Graph facts are appended after ranked vector results, never interleaved.
         combined = vector_results + graph_results
-        return self._generate_from_results(query, combined, t0, retrieval_ms)
+        return self._generate_from_results(query, combined, t0, retrieval_ms, auth)
 
     def _answer_graph_seeded_vector(
         self,
@@ -269,4 +284,4 @@ class GraphRAGPipeline:
         )
         results = sorted(results, key=lambda r: r.chunk.metadata.document_id not in document_ids)
         retrieval_ms = (time.perf_counter() - t0) * 1000
-        return self._generate_from_results(query, results, t0, retrieval_ms)
+        return self._generate_from_results(query, results, t0, retrieval_ms, auth)
