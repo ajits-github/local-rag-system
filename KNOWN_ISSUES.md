@@ -31,6 +31,7 @@ without basis. Detailed chronological session history remains in
 | RET-002 | MINOR | ACCEPTED LIMITATION | Retrieval | Embedding and chunk-size changes each traded one metric for another |
 | RET-003 | MINOR | ACCEPTED LIMITATION | Retrieval | Hybrid retrieval's headline recall hid how each retriever contributed |
 | RET-004 | MODERATE | ACCEPTED LIMITATION | Retrieval | A cross-encoder changed answers without changing retrieved evidence |
+| RET-005 | MAJOR | FIXED | Retrieval | BM25 ties depended on unspecified SQL row order |
 | BUG-009 | MAJOR | OPEN | Generation | Retrieval was correct, but generation fabricated the answer |
 | BUG-010 | MODERATE | ACCEPTED LIMITATION | Generation | A larger generation model trades hallucination for over-refusal |
 | EVAL-007 | MODERATE | ACCEPTED LIMITATION | Evaluation | A keyword-overlap answer metric penalized correct refusals |
@@ -776,6 +777,27 @@ One question retained the identical reference-context bucket and identical two s
 
 **Recommended fix**
 None adopted; the finding argued against enabling the reranker, so `reranker.provider: none` stayed the default.
+
+---
+
+### RET-005: BM25 ties depended on unspecified SQL row order
+
+**Status:** FIXED
+**Severity:** MAJOR
+**Area:** Retrieval / determinism
+**Affected code:** `PgVectorStore.search_keyword`
+
+**Problem**
+The BM25 candidate fetch had no `ORDER BY`, and the Python ranking sorted only by score; a tied score's relative order depended on whatever order Postgres happened to return rows in.
+
+**Failure scenario**
+Identical config and corpus could still produce different BM25 (and therefore fused RRF) rankings across runs or after a reload, for any pair of candidates with equal or zero-overlap scores, common in a small corpus.
+
+**Fix applied**
+Added `ORDER BY chunk_id` to the fetch, matching dense search's own existing `ORDER BY embedding <=> ..., chunk_id ASC` tie-break, plus an explicit `(-score, chunk_id)` sort key in Python so determinism doesn't rely solely on the SQL ordering being remembered.
+
+**Regression test**
+`test_search_keyword_ties_break_deterministically_by_chunk_id` in `tests/integration/test_pgvector.py` (returns identical rankings across repeated calls for three byte-identical-content chunks).
 
 ---
 
@@ -1749,6 +1771,7 @@ The following issues are resolved, with a concrete fix and regression test cited
 | DIST-002 | Reliability | A LangGraph join node ran twice, because its parallel branches had unequal lengths |
 | DIST-003 | Reliability | A deliberate workflow pause would have been counted as a failure in metrics |
 | DIST-004 | Reliability | A queue-depth metric built on XLEN could only grow |
+| RET-005 | Retrieval | BM25 ties depended on unspecified SQL row order |
 | GRAPH-001 | GraphRAG | Neo4j failed on one unknown config key and on a null inside a MERGE key |
 | GRAPH-002 | GraphRAG | The driver's convenience method stripped the node labels authorization code needed |
 | GRAPH-003 | GraphRAG | A graph path test failed because one relationship write cannot span two tenant scopes |
