@@ -26,7 +26,11 @@ from rag.factory import (
 from rag.graph.client import Neo4jClient
 from rag.graph.extraction import GraphExtractionStats, extract_and_write_for_document
 from rag.graph.upsert import GraphWriter
-from rag.ingestion.governance import IngestCallerContext, resolve_ingest_tenant_id
+from rag.ingestion.governance import (
+    IngestCallerContext,
+    IngestGovernanceError,
+    resolve_ingest_tenant_id,
+)
 from rag.ingestion.writer import Writer
 from rag.loaders.registry import get_loader
 from rag.path_matching import source_matches_relevant
@@ -199,10 +203,16 @@ class IngestionPipeline:
         ValueError
             If `path`'s extension isn't in `config.ingestion.supported_extensions`.
         IngestGovernanceError
-            If `caller` is set and the loaded document's `tenant_id` names a
-            different tenant than `caller.tenant_id` without `caller`
-            holding a cross-tenant support role. See
-            `rag.ingestion.governance.resolve_ingest_tenant_id`.
+            If `caller` is set and either: the loaded document's
+            `tenant_id` names a different tenant than `caller.tenant_id`
+            without `caller` holding a cross-tenant support role (see
+            `rag.ingestion.governance.resolve_ingest_tenant_id`); or this
+            `(source, dataset_id)` already resolves to an existing
+            document owned by a different tenant's chunks, which would
+            otherwise let a caller's own, legitimate ingest permission
+            silently replace another tenant's content just because a
+            same-named upload happened to resolve to the same
+            `document_id`.
         """
         path = Path(path)
         if path.suffix.lower() not in self._config.ingestion.supported_extensions:
@@ -220,6 +230,28 @@ class IngestionPipeline:
         document_id, changed = self._vectorstore.get_or_create_document_id(
             source=raw_document.source, checksum=checksum, dataset_id=dataset_id
         )
+
+        if changed and caller is not None:
+            # A legitimate ingest permission under one's OWN tenant must
+            # never become a cross-tenant destructive write just because
+            # another tenant's upload happened to resolve to the same
+            # (source, dataset_id) identity (e.g. the same filename shared
+            # across tenants in one dataset). Checked against the existing
+            # chunks' own tenant_id, not just the new content's resolved
+            # tenant_id, since governance.resolve_ingest_tenant_id only
+            # ever validated the latter.
+            existing_tenant_id = self._vectorstore.get_document_owner_tenant_id(document_id)
+            if (
+                existing_tenant_id is not None
+                and existing_tenant_id != raw_document.tenant_id
+                and not caller.is_privileged
+            ):
+                raise IngestGovernanceError(
+                    f"document_id={document_id!r} (source={raw_document.source!r}) already "
+                    f"belongs to tenant_id={existing_tenant_id!r}, which does not match the "
+                    "authenticated caller's own tenant, and the caller does not hold a "
+                    "cross-tenant support role."
+                )
 
         if not changed:
             logger.info(

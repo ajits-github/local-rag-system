@@ -508,6 +508,19 @@ class PgVectorStore(VectorStore):
                 changed = existing_checksum != checksum
                 return str(document_id), changed
 
+    def get_document_owner_tenant_id(self, document_id: str) -> str | None:
+        """See `VectorStore.get_document_owner_tenant_id`."""
+        with self._connection() as conn:
+            with conn, conn.cursor() as cur:
+                cur.execute(
+                    f"""SELECT tenant_id FROM {self._chunks_table}
+                        WHERE document_id = %s AND tenant_id IS NOT NULL
+                        LIMIT 1""",
+                    (document_id,),
+                )
+                row = cur.fetchone()
+                return row[0] if row else None
+
     def delete_chunks_by_document_id(self, document_id: str) -> None:
         """See `VectorStore.delete_chunks_by_document_id`."""
         with self._connection() as conn:

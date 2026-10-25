@@ -101,6 +101,31 @@ class VectorStore(ABC):
         """
 
     @abstractmethod
+    def get_document_owner_tenant_id(self, document_id: str) -> str | None:
+        """Return the `tenant_id` already persisted on `document_id`'s existing chunks, if any.
+
+        Used only by `IngestionPipeline.ingest_file`'s governance check,
+        immediately before a `changed=True` document is about to have its
+        chunks replaced: a brand-new `document_id` (no chunks written yet)
+        and an existing document whose chunks all have `tenant_id IS NULL`
+        (pre-governance content, globally visible by design) both return
+        `None`, since neither asserts an existing owner to protect. Never
+        consulted when `caller is None` (unauthenticated/CLI ingestion,
+        which has no tenant concept to check against).
+
+        Parameters
+        ----------
+        document_id : str
+            The document whose existing chunks (if any) to check.
+
+        Returns
+        -------
+        str | None
+            One of the existing chunks' non-null `tenant_id`, or `None` if
+            no chunks exist yet or every existing chunk is untenanted.
+        """
+
+    @abstractmethod
     def delete_chunks_by_document_id(self, document_id: str) -> None:
         """Remove all chunks for a document, keeping its `documents` row.
 
