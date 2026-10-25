@@ -18,6 +18,11 @@ repos:
         exclude: ^helm/rag-system/templates/
       - id: check-toml
       - id: check-added-large-files
+        # The architecture diagram is a README image kept at its original,
+        # uncompressed resolution by request, excluded by name rather than
+        # raising the global --maxkb, which would weaken this check for
+        # everything else.
+        exclude: ^helm/docs/assets/architecture-diagram\.png$
       - id: check-merge-conflict
       - id: debug-statements
       - id: mixed-line-ending

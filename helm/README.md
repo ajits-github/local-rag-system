@@ -16,6 +16,12 @@ Read `helm/rag-system/README.md` next for the chart-scoped reference
 (values table, the handful of chart-specific design decisions). This file
 is the concept-by-concept walkthrough plus live demos plus interview prep.
 
+![Helm chart for the Kubernetes deployment experiment: chart anatomy
+(Chart.yaml, values.yaml, templates/), the configurable values that
+render into standard Kubernetes resources (Deployment, Service,
+ConfigMap, Secret, HPA, Ingress, PVC), and the install/upgrade/rollback
+lifecycle](docs/assets/architecture-diagram.png)
+
 ---
 
 ## Part 1: Helm concepts, using this chart as the example
