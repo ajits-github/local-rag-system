@@ -51,6 +51,7 @@ from rag.api.request_auth import (
     build_authorization_context,
     enforce_case_approval_limits,
     enforce_dos_limits,
+    enforce_history_limits,
     resolve_case_approvals,
 )
 from rag.api.routers.agent_query import AgentQueryRequest, AgentQueryResponse, _tool_call_details
@@ -179,6 +180,7 @@ def _final_response(result: AgentRunResult, request_id: str | None) -> AgentQuer
         generation_ms=result.generation_ms,
         total_ms=result.total_ms,
         request_id=request_id,
+        context_engineering=final_state.context_engineering,
     )
 
 
@@ -301,6 +303,7 @@ def _build_validated_agent_state(
         raise HTTPException(status_code=404, detail="Live agent events are disabled")
     enforce_dos_limits(body.query, None, body.filters, config)
     enforce_case_approval_limits(body.case_approvals, config)
+    enforce_history_limits(body.conversation_history, config)
     auth = build_authorization_context(
         identity, body.tenant_id, body.roles, body.as_of, body.require_trust_level
     )
@@ -310,6 +313,7 @@ def _build_validated_agent_state(
         authorization_context=auth,
         filters=body.filters,
         case_approvals=case_approvals,
+        conversation_history=body.conversation_history or [],
     )
 
 
