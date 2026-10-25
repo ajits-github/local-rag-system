@@ -13,6 +13,8 @@ from typing import Any
 
 from rag.audit import log_audit_event
 from rag.config import AppConfig
+from rag.context.engine import ContextEngine, context_engineering_summary
+from rag.context.types import ConversationTurn
 from rag.embedders.base import Embedder
 from rag.factory import build_embedder, build_llm, build_reranker, build_vectorstore
 from rag.generation.base import LLM
@@ -173,6 +175,10 @@ class RetrievalPipeline:
         # Independent toggle. When True, a missing identity is treated as
         # zero roles (fail-closed) rather than unrestricted.
         self._field_redaction_enabled = config.security.field_redaction.enabled
+        # `None` when config.context.enabled=False: answer() then calls
+        # build_context() exactly as before this subsystem existed, with
+        # no extra token counting/budgeting/packing cost at all.
+        self._context_engine = ContextEngine(config) if config.context.enabled else None
 
     @property
     def llm(self) -> LLM:
@@ -189,6 +195,17 @@ class RetrievalPipeline:
         Exposed for the same reuse reason as `llm`.
         """
         return self._prompt_template
+
+    @property
+    def context_engine(self) -> ContextEngine | None:
+        """The shared `ContextEngine`, or `None` when `config.context.enabled=False`.
+
+        Shared with `GraphRAGPipeline` and `agent/graph.py`'s
+        `_synthesize` node, the same reuse reason as `llm`/
+        `prompt_template`: one engine instance (and its token-count
+        cache, if enabled) per process, not one per call site.
+        """
+        return self._context_engine
 
     @property
     def authorization_enabled(self) -> bool:
@@ -802,12 +819,61 @@ class RetrievalPipeline:
 
         return results + expanded
 
+    def build_context_text(
+        self,
+        results: list[SearchResult],
+        query: str,
+        *,
+        history_turns: list[ConversationTurn] | None = None,
+        tenant_id: str | None = None,
+    ) -> tuple[str, dict[str, Any] | None]:
+        """Render `results` into prompt-context text, via `ContextEngine` when enabled.
+
+        The one seam every generation call site
+        (`answer()`, `GraphRAGPipeline._generate_from_results`,
+        `agent/graph.py`'s `_synthesize` node) shares, so none of them
+        decide independently how much context to include (section 2 of
+        the design: "Do not let every caller independently decide").
+
+        Parameters
+        ----------
+        results : list[SearchResult]
+            Already-authorized, already-redacted evidence.
+        query : str
+            The current query text.
+        history_turns : list[ConversationTurn] | None, optional
+            Caller-supplied prior conversation turns; ignored when
+            `context_engine` is `None`.
+        tenant_id : str | None, optional
+            For the token-count cache key only.
+
+        Returns
+        -------
+        tuple[str, dict[str, Any] | None]
+            The rendered context text (identical to
+            `build_context(results)`'s output when `context_engine` is
+            `None`, i.e. `config.context.enabled=False`), and a
+            `context_engineering_summary()` dict (or `None` when
+            disabled).
+        """
+        if self._context_engine is None:
+            return build_context(results), None
+        packed = self._context_engine.build(
+            query=query,
+            system_prompt_text=self._prompt_template.system_template,
+            search_results=results,
+            history_turns=history_turns,
+            tenant_id=tenant_id,
+        )
+        return packed.rendered_context, context_engineering_summary(packed)
+
     def answer(
         self,
         query: str,
         filters: dict[str, Any] | None = None,
         candidate_k: int | None = None,
         auth: AuthorizationContext | None = None,
+        history_turns: list[ConversationTurn] | None = None,
     ) -> dict[str, Any]:
         """Retrieve context for `query` and generate an answer from it.
 
@@ -826,13 +892,21 @@ class RetrievalPipeline:
         auth : AuthorizationContext | None, optional
             Caller identity and date context. `None` (the default) is fully
             unrestricted.
+        history_turns : list[ConversationTurn] | None, optional
+            Caller-supplied prior conversation turns, oldest first. A
+            true no-op when `config.context.enabled=False` (see
+            `build_context_text`); this system has no server-side
+            session store (see `rag.context.history`'s module
+            docstring), so a multi-turn caller must re-send prior turns
+            each request.
 
         Returns
         -------
         dict[str, Any]
             ``{"answer", "prompt_tokens", "completion_tokens", "sources",
             "retrieval_ms", "generation_ms", "total_ms",
-            "latency_breakdown_ms", "query_injection_suspected"}``.
+            "latency_breakdown_ms", "query_injection_suspected",
+            "context_engineering"}``.
             `prompt_tokens`/`completion_tokens` come from the LLM
             instance's own last-call tracking (`None` if it doesn't
             support that). Each `sources` entry is a `source_dict()` dict;
@@ -844,13 +918,18 @@ class RetrievalPipeline:
             component stages (embed, dense/BM25 search, fusion, rerank,
             expansion) plus `generation_ms`. `query_injection_suspected`
             runs `detect_injection` against `query` itself.
+            `context_engineering` is `None` unless `config.context.
+            enabled=True` (see `rag.context.engine.
+            context_engineering_summary`).
         """
         t0 = time.perf_counter()
         results, stage_ms = self._retrieve_timed(
             query, filters=filters, candidate_k=candidate_k, auth=auth
         )
         t1 = time.perf_counter()
-        context = build_context(results)
+        context, context_engineering_info = self.build_context_text(
+            results, query, history_turns=history_turns, tenant_id=auth.tenant_id if auth else None
+        )
         system, user = self._prompt_template.render(context=context, query=query)
         answer_text = self._llm.generate(system, user)
         answer_text = sanitize_redaction_markers_in_answer(answer_text)
@@ -866,4 +945,5 @@ class RetrievalPipeline:
             "generation_ms": generation_ms,
             "latency_breakdown_ms": {**stage_ms, "generation_ms": generation_ms},
             "total_ms": (t2 - t0) * 1000,
+            "context_engineering": context_engineering_info,
         }
