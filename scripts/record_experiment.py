@@ -91,10 +91,14 @@ def build_experiment_record(
     def _safety_rate(name: str) -> float | None:
         return safety.get(name, {}).get("rate")
 
+    run_metadata = eval_report.get("run_metadata") or {}
     return {
         "experiment_id": experiment_id,
         "label": label,
         "timestamp": eval_report.get("generated_at"),
+        "git_commit_sha": run_metadata.get("git_commit_sha"),
+        "git_branch": run_metadata.get("git_branch"),
+        "git_dirty": run_metadata.get("git_dirty"),
         "generation_model": config.generation.model_name,
         "embedding_model": config.embedding.model_name,
         "vector_store": config.vectorstore.provider,

@@ -41,6 +41,7 @@ from rag.eval import ragas_cache, ragas_scorer
 from rag.eval.egress_policy import apply_egress_policy
 from rag.eval.gold_schema import load_gold_jsonl
 from rag.eval.run_agent_eval import evaluate_agent
+from rag.eval.run_metadata import capture_git_metadata
 from rag.eval.run_ragas_eval import _cache_summary, _judge_summary
 from rag.factory import build_embedder, build_judge_llm, build_llm, build_vectorstore
 from rag.retrieval.pipeline import RetrievalPipeline
@@ -213,6 +214,7 @@ def run_agent_ragas(
 
     return {
         "generated_at": datetime.now(UTC).isoformat(),
+        "run_metadata": capture_git_metadata(),
         "num_examples": len(examples),
         "agent_summary": agent_report,
         "ragas": ragas_result,

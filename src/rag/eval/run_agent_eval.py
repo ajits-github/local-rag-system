@@ -34,6 +34,7 @@ from rag.eval.answer_quality import KeywordOverlapScorer
 from rag.eval.corpus_lineage import compute_corpus_lineage
 from rag.eval.gold_schema import GoldExample, load_gold_jsonl, source_matches_relevant
 from rag.eval.run_eval import _build_authorization_context
+from rag.eval.run_metadata import capture_git_metadata
 from rag.factory import build_embedder, build_llm, build_vectorstore
 from rag.generation.base import LLM
 from rag.retrieval.pipeline import RetrievalPipeline, source_dict
@@ -943,6 +944,7 @@ def run(
     )
     return {
         "generated_at": datetime.now(UTC).isoformat(),
+        "run_metadata": capture_git_metadata(),
         "corpus_lineage": lineage,
         **result,
     }

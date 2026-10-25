@@ -166,10 +166,14 @@ def build_agent_experiment_record(
         for name, field in _AGENT_PROMPT_FIELDS
     }
 
+    run_metadata = agent_report.get("run_metadata") or {}
     record: dict[str, Any] = {
         "experiment_id": experiment_id,
         "label": label,
         "timestamp": agent_report.get("generated_at"),
+        "git_commit_sha": run_metadata.get("git_commit_sha"),
+        "git_branch": run_metadata.get("git_branch"),
+        "git_dirty": run_metadata.get("git_dirty"),
         "generation_model": config.generation.model_name,
         "embedding_model": config.embedding.model_name,
         "vector_store": config.vectorstore.provider,
