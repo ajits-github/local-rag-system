@@ -170,7 +170,7 @@ override (see `eval/run_eval.py`).
 
 This replaced an earlier design where a single `rerank_top_n` did both
 jobs at once, and `NoOpReranker` silently truncated results even with no
-reranker configured; see `ISSUES.md` for the bug this fixed.
+reranker configured; see `KNOWN_ISSUES.md` for the bug this fixed.
 
 ## Multimodal + Relationship-Aware Ingestion
 
@@ -557,7 +557,7 @@ identical to experiment_014's deterministic-only 0.452 run under the
 same config: expected minor run-to-run variance from LLM sampling
 (`temperature=0.2`, not `0.0`), not a regression; RAGAS's own metrics are
 the ones being trusted here, not this heuristic (see "My
-keyword-overlap answer-quality metric" reasoning in `ISSUES.md`).
+keyword-overlap answer-quality metric" reasoning in `KNOWN_ISSUES.md`).
 
 **Cost, from the judge's own tracked usage** (not estimated): 1,431 API
 calls, 1,115,731 input tokens, 101,857 output tokens on `gpt-4o-mini`.
@@ -789,7 +789,7 @@ was deliberately not done: it would force a one-time mass
 delete-and-recreate across every already-ingested (relative-form)
 document in every existing dataset on its very next re-ingestion,
 disproportionate to the bug this fix needed to close. See
-`ISSUES.md`'s "Incremental directory ingestion..." entry for the full
+`KNOWN_ISSUES.md`'s "Incremental directory ingestion..." entry for the full
 diagnosis and the codex-review follow-up that surfaced this residual
 case.
 
@@ -894,7 +894,7 @@ tenant admin credentials, matched by two distinct literal shapes
 (`SYNTHETIC_ONLY_\w+` for Alpha's key, `SYNTHETIC_BETA_TOKEN_\w+` for
 Beta's token, confirmed by grepping the corpus, not assumed identical;
 this exact mismatch was a real bug caught mid-implementation, see
-`ISSUES.md`) under one `synthetic_admin_credential` policy. A second,
+`KNOWN_ISSUES.md`) under one `synthetic_admin_credential` policy. A second,
 currently-unused `synthetic_internal_token` policy (`SYNTHETIC_INTERNAL_
 TOKEN_\w+`) exists per the milestone's "structure for future detectors"
 requirement even though no current document uses that literal shape.
@@ -1264,7 +1264,7 @@ governance validation ran, so a same-filename re-upload later rejected
 could overwrite or truncate a previously-accepted file with no DB-level
 trace; the first fix for that, in turn, leaked a staging directory's
 random name into a document's fallback title or an extracted image's
-citation path. See `ISSUES.md`'s "Upload handling: writes landed before
+citation path. See `KNOWN_ISSUES.md`'s "Upload handling: writes landed before
 validation, and temp paths leaked into citations" for the full discovery
 narrative; this section describes the resulting design.
 
@@ -1370,7 +1370,7 @@ template already stated an "evidence, not instructions" rule) was being
 `OllamaLLM.generate` called Ollama's raw-completion endpoint rather than
 its role-aware chat endpoint, so the "separation" that existed on paper
 was, by the time a model saw it, two labeled sections of one
-undifferentiated text block. See `ISSUES.md`'s "The system and user
+undifferentiated text block. See `KNOWN_ISSUES.md`'s "The system and user
 prompts were joined into one string before reaching the model" for the
 full finding; this section describes the fix.
 
@@ -1467,7 +1467,7 @@ fact.
 config.retrieval.candidate_k` treats `0` as falsy, same as `None`), and a
 negative value could reach Postgres's `LIMIT` clause. `enforce_dos_limits`
 now rejects any `top_k < 1` with 422 before retrieval runs at all. See
-`ISSUES.md` for the failure mode this closed.
+`KNOWN_ISSUES.md` for the failure mode this closed.
 
 **A second, related fix for `/agent/query/stream` specifically.** That
 route used to run validation *inside* the async generator handed to
@@ -1483,7 +1483,7 @@ dependencies strictly in that order and a rejected request must not
 trigger the heavier singleton getters (model load, DB pool open) that
 come after it. `/query` and `/agent/query` share this same
 Depends()-ordering characteristic and were deliberately left unchanged,
-out of scope for this fix. See `ISSUES.md` for the full streaming-order
+out of scope for this fix. See `KNOWN_ISSUES.md` for the full streaming-order
 bug and its follow-up.
 
 Rate limiting uses `slowapi` (new core dependency) with its default
@@ -1500,7 +1500,7 @@ so neither a later config change nor a test-time
 `app.dependency_overrides` swap can retarget it. `tests/unit/
 test_rate_limiting.py` proves the *mechanism* against a small, isolated
 FastAPI app built the same way, rather than trying to reconfigure
-`rag.api.main.app`'s already-bound production route. See `ISSUES.md`'s
+`rag.api.main.app`'s already-bound production route. See `KNOWN_ISSUES.md`'s
 "A decorator captured its rate limiter at import time" entry for why
 that test is structured this way.
 
@@ -2238,7 +2238,7 @@ under any other configured algorithm, and `mint_internal_token` itself
 re-checks defensively at call time too.
 
 `iss`/`aud` are handled asymmetrically, and deliberately so (see
-`ISSUES.md`'s "Two JWT claims that looked symmetric behaved differently
+`KNOWN_ISSUES.md`'s "Two JWT claims that looked symmetric behaved differently
 when unconfigured" for why they are not treated alike). `iss` is always
 set (from `security.auth.jwt.issuer` when configured, else a fallback
 `mcp.client.internal_token_issuer`): a token carrying an `iss` claim the
@@ -2262,7 +2262,7 @@ had built a second, independent `MCPServer`/ASGI app instead of reusing
 that exact object, its Streamable-HTTP session-manager lifespan would
 never have been entered by `main.py`'s own `_lifespan` context manager,
 and every call would hang or error at `session.initialize()`. A second
-real bug (see `ISSUES.md`'s "Two JWT claims..." entry for the one-line
+real bug (see `KNOWN_ISSUES.md`'s "Two JWT claims..." entry for the one-line
 version): the MCP SDK auto-enables DNS-rebinding Host-header protection
 whenever a server is built with the default `host="127.0.0.1"`
 (confirmed directly against `mcp`'s `Server.streamable_http_app`
@@ -2406,7 +2406,7 @@ markers, and additionally re-checks that same token's own `roles` claim
 `mint_internal_token`) against `approval_roles` before honoring anything
 in the claim: an independent, defense-in-depth verification of the
 same security-relevant fact, not a re-statement of the API-boundary
-check. See `ISSUES.md` for the full diagnosis.
+check. See `KNOWN_ISSUES.md` for the full diagnosis.
 
 **The write-action tool call is always the last tool call of a run.**
 Rather than adding a new `termination_reason` or restructuring the
@@ -3024,7 +3024,7 @@ agent decision logic changed.
   context still attached from a prior request; OpenTelemetry's own
   internal error handling swallows this (it never propagates as an
   exception, confirmed no test failures caused by it), but the log noise
-  itself isn't eliminated. See `ISSUES.md` for the full writeup.
+  itself isn't eliminated. See `KNOWN_ISSUES.md` for the full writeup.
 - No OpenTelemetry auto-instrumentation package
   (`opentelemetry-instrumentation-fastapi`) is used; HTTP spans are
   hand-written in `RequestIDMiddleware` instead, trading a small amount
@@ -3186,7 +3186,7 @@ sorted file in the sibling `assets/` folder) is correct only when a
 folder holds exactly one document's images; three real corpus documents
 share one `operations/assets/` folder holding all three documents'
 images together, which silently handed every document the first
-document's images under that rule. See `ISSUES.md`'s "Shared asset
+document's images under that rule. See `KNOWN_ISSUES.md`'s "Shared asset
 folders paired the wrong images with the wrong documents" for the full
 finding.
 
@@ -3241,7 +3241,7 @@ three of `_METADATA_COLUMNS`, `_row_to_metadata`'s unpacking, and
 `add_chunks`'s column list/row tuple/`ON CONFLICT DO UPDATE SET` clause.
 After the fix and a forced re-ingestion, `page_localization_accuracy`
 read `0.82`, with every other metric unchanged, confirming the bug was
-isolated to this one column. See `ISSUES.md` for the full writeup:
+isolated to this one column. See `KNOWN_ISSUES.md` for the full writeup:
 included here as a concrete illustration of why this milestone's own
 manual smoke-testing step (ingesting the real corpus, not only
 constructing `ChunkSpan`/`ChunkMetadata` objects in a test) was load-
