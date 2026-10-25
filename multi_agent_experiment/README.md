@@ -15,6 +15,11 @@ Neither A nor B is modified by this package. Nothing under
 `langgraph_experiment/` anywhere. This package imports *them*, not the
 other way around.
 
+![Multi-agent LangGraph experiment: a Coordinator/Router dispatches to a
+Knowledge Agent, a Business Agent, or both in parallel for a mixed query,
+merges their results, and synthesizes one final answer with citations and
+business context](docs/assets/architecture-diagram.png)
+
 ## What this demonstrates
 
 `StateGraph` with genuinely distinct nodes, `Send`-based dynamic parallel
