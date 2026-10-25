@@ -268,6 +268,61 @@ def test_search_keyword_finds_lexical_match(require_postgres, config):
         store.delete_document(document_id)
 
 
+def test_search_keyword_ties_break_deterministically_by_chunk_id(require_postgres, config):
+    """Two chunks with identical BM25-relevant content always rank in the same (chunk_id) order.
+
+    Regression for RET-005: with no `ORDER BY` on the fetch and no
+    explicit tie-break in the Python ranking, two tied-score chunks'
+    relative order depended on whatever order Postgres happened to
+    return rows in, not a stable, reproducible property of the config
+    and corpus.
+    """
+    store = _store(config)
+    source = f"test-source-{uuid.uuid4()}"
+    document_id, _ = store.get_or_create_document_id(source, "c1", TEST_DATASET_ID)
+    dim = config.embedding.dimension
+    now = datetime.now(UTC)
+    # Byte-identical content -> byte-identical BM25 score; only chunk_id
+    # can legitimately break the tie.
+    chunk_ids = [f"{document_id}_{i}" for i in range(3)]
+    chunks = [
+        Chunk(
+            id=chunk_id,
+            content="identical_tie_break_probe_token content",
+            metadata=ChunkMetadata(
+                document_id=document_id,
+                chunk_id=chunk_id,
+                source=source,
+                source_type="text",
+                created_at=now,
+                last_modified=now,
+                chunk_index=i,
+                dataset_id=TEST_DATASET_ID,
+            ),
+            embedding=[0.0] * dim,
+        )
+        for i, chunk_id in enumerate(chunk_ids)
+    ]
+
+    store.add_chunks(chunks)
+    try:
+        first_run = [
+            r.chunk.id
+            for r in store.search_keyword(
+                "identical_tie_break_probe_token", top_k=3, filters={"document_id": document_id}
+            )
+        ]
+        second_run = [
+            r.chunk.id
+            for r in store.search_keyword(
+                "identical_tie_break_probe_token", top_k=3, filters={"document_id": document_id}
+            )
+        ]
+        assert first_run == second_run == sorted(chunk_ids)
+    finally:
+        store.delete_document(document_id)
+
+
 def test_search_keyword_respects_filters_and_rejects_disallowed_key(require_postgres, config):
     """search_keyword() applies metadata filters and rejects a non-whitelisted filter key."""
     store = _store(config)
