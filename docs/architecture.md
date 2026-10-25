@@ -3,6 +3,12 @@
 This is the expanded system view for implementation details, experiments,
 and planned extension points. The README keeps a smaller public-facing view.
 
+![Local RAG System architecture: clients and entry points, ingestion and
+knowledge preparation, retrieval and evidence sources, the RAG/agent
+runtime router, the context engineering layer, generation and synthesis,
+feedback/evaluation/safety, and observability and
+operations](assets/architecture-diagram-detailed.png)
+
 ```mermaid
 flowchart TD
     Client(["Client"])
