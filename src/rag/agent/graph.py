@@ -43,7 +43,7 @@ from rag.observability import metrics as observability_metrics
 from rag.observability import tracing
 from rag.prompts.loader import PromptTemplate, load_prompt_template
 from rag.retrieval.field_policy import sanitize_redaction_markers_in_answer
-from rag.retrieval.pipeline import RetrievalPipeline, build_context
+from rag.retrieval.pipeline import RetrievalPipeline
 from rag.schemas import DocumentVersionInfo, SearchResult
 from rag.vectorstore.base import VectorStore
 
@@ -841,15 +841,28 @@ def _citations_from_evidence(evidence: list[SearchResult]) -> list[Citation]:
     ]
 
 
-def _synthesize(state: AgentState, llm: LLM, template: PromptTemplate) -> AgentState:
+def _synthesize(
+    state: AgentState, llm: LLM, template: PromptTemplate, pipeline: RetrievalPipeline
+) -> AgentState:
     """Render accumulated evidence into a cited final answer.
 
-    Evidence is reordered first (see `_order_evidence_for_synthesis`), and
-    the generated answer is passed through
-    `sanitize_redaction_markers_in_answer` before being stored.
+    Evidence is reordered first (see `_order_evidence_for_synthesis`),
+    then rendered via `RetrievalPipeline.build_context_text` (the same
+    Context Engineering seam `answer()` and `GraphRAGPipeline` share),
+    so the agent's gathered tool/graph/MCP evidence gets the same
+    token-budget-aware packing as classic RAG rather than a fourth,
+    independent `build_context` call. The generated answer is passed
+    through `sanitize_redaction_markers_in_answer` before being stored.
     """
     ordered_evidence = _order_evidence_for_synthesis(state.retrieved_evidence)
-    context = build_context(ordered_evidence)
+    tenant_id = state.authorization_context.tenant_id if state.authorization_context else None
+    context, context_engineering_info = pipeline.build_context_text(
+        ordered_evidence,
+        state.original_query,
+        history_turns=state.conversation_history,
+        tenant_id=tenant_id,
+    )
+    state.context_engineering = context_engineering_info
     system, user = template.render(context=context, query=state.original_query)
     state.final_answer = sanitize_redaction_markers_in_answer(llm.generate(system, user))
     _accumulate_tokens(state, llm, "synthesize")
@@ -893,7 +906,9 @@ def _low_confidence_evidence_response(state: AgentState) -> AgentState:
     return state
 
 
-def _finalize(state: AgentState, llm: LLM, synthesize_template: PromptTemplate) -> AgentState:
+def _finalize(
+    state: AgentState, llm: LLM, synthesize_template: PromptTemplate, pipeline: RetrievalPipeline
+) -> AgentState:
     """Route to the deterministic responses, or `synthesize`, based on what evidence exists.
 
     No evidence at all -> `_insufficient_evidence_response`. Evidence
@@ -906,7 +921,7 @@ def _finalize(state: AgentState, llm: LLM, synthesize_template: PromptTemplate) 
         return _insufficient_evidence_response(state)
     if _bound_reached_with_insufficient_evidence(state):
         return _low_confidence_evidence_response(state)
-    return _synthesize(state, llm, synthesize_template)
+    return _synthesize(state, llm, synthesize_template, pipeline)
 
 
 def _finalize_timed(
@@ -915,6 +930,7 @@ def _finalize_timed(
     templates: dict[str, PromptTemplate],
     on_event: OnAgentEvent | None,
     t_start: float,
+    pipeline: RetrievalPipeline,
 ) -> AgentState:
     """`run_agent`'s entrypoint into `_finalize`, timing the `synthesize` node when it runs."""
     if not state.retrieved_evidence:
@@ -925,7 +941,7 @@ def _finalize_timed(
     return _call_node(
         "synthesize",
         state,
-        lambda: _synthesize(state, timed_llm, templates["synthesize"]),
+        lambda: _synthesize(state, timed_llm, templates["synthesize"], pipeline),
         timed_llm=timed_llm,
     )
 
@@ -935,8 +951,12 @@ def _run_classic_rag(
 ) -> tuple[AgentState, dict[str, Any]]:
     """`classic_rag` node: the unmodified `RetrievalPipeline.answer()` fast path."""
     result = pipeline.answer(
-        state.original_query, filters=state.filters, auth=state.authorization_context
+        state.original_query,
+        filters=state.filters,
+        auth=state.authorization_context,
+        history_turns=state.conversation_history,
     )
+    state.context_engineering = result.get("context_engineering")
     state.query_type = state.query_type or "simple"
     state.prompt_tokens += result.get("prompt_tokens") or 0
     state.completion_tokens += result.get("completion_tokens") or 0
@@ -1126,7 +1146,7 @@ def run_agent(
         timed_llm=timed_llm,
     )
     if _step_or_stop(state, agent_cfg):
-        state = _finalize_timed(state, timed_llm, templates, on_event, t_start)
+        state = _finalize_timed(state, timed_llm, templates, on_event, t_start, pipeline)
         return _finish(_agent_result(state, t_start))
 
     if state.query_type != "complex":
@@ -1145,7 +1165,7 @@ def run_agent(
     )
     _emit_event(on_event, "decomposition_completed", state, t_start=t_start)
     if _step_or_stop(state, agent_cfg):
-        state = _finalize_timed(state, timed_llm, templates, on_event, t_start)
+        state = _finalize_timed(state, timed_llm, templates, on_event, t_start, pipeline)
         return _finish(_agent_result(state, t_start))
 
     while True:
@@ -1238,5 +1258,5 @@ def run_agent(
         state.final_answer = None
         state.citations = []
     else:
-        state = _finalize_timed(state, timed_llm, templates, on_event, t_start)
+        state = _finalize_timed(state, timed_llm, templates, on_event, t_start, pipeline)
     return _finish(_agent_result(state, t_start))
