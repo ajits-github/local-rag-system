@@ -750,7 +750,12 @@ class PgVectorStore(VectorStore):
             auth, self._cross_tenant_support_roles
         )
         where_sql = _combine_where_clauses(where_sql, auth_sql)
-        sql = f"SELECT {_METADATA_COLUMNS} FROM {self._chunks_table} {where_sql}"
+        # ORDER BY chunk_id, mirroring dense search's own tie-break
+        # (ORDER BY embedding <=> ..., chunk_id ASC): without it, a tied
+        # BM25 score's rank depends on whatever order Postgres happens to
+        # return rows in, which is not guaranteed stable across a reload
+        # or a query-plan change, for identical config and corpus.
+        sql = f"SELECT {_METADATA_COLUMNS} FROM {self._chunks_table} {where_sql} ORDER BY chunk_id"
 
         with self._connection() as conn, conn.cursor() as cur:
             cur.execute(sql, [*filter_params, *auth_params])
@@ -764,7 +769,12 @@ class PgVectorStore(VectorStore):
         bm25 = BM25Okapi(tokenized_corpus)
         scores = bm25.get_scores(_tokenize(query))
 
-        ranked_indices = sorted(range(len(unpacked)), key=lambda i: scores[i], reverse=True)
+        # Explicit chunk_id tie-break, not just reliance on the fetch's own
+        # ORDER BY: a tied score's rank must never depend on incidental
+        # input order alone. Score descending (negated, since this sorts
+        # ascending overall), chunk_id ascending for ties, matching dense
+        # search's own `ORDER BY embedding <=> ..., chunk_id ASC`.
+        ranked_indices = sorted(range(len(unpacked)), key=lambda i: (-scores[i], unpacked[i][0]))
         results = []
         for i in ranked_indices[:top_k]:
             chunk_id, content, metadata = unpacked[i]
