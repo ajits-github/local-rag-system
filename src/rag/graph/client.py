@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from neo4j import GraphDatabase, RoutingControl
+from neo4j import GraphDatabase, Query, RoutingControl
 from neo4j.exceptions import Neo4jError, ServiceUnavailable
 
 from rag.config import AppConfig
@@ -111,12 +111,12 @@ class Neo4jClient:
             If Neo4j is unreachable or the query fails, including on timeout.
         """
         try:
+            effective_timeout = timeout if timeout is not None else self._query_timeout_seconds
             result = self._driver.execute_query(
-                cypher,
+                Query(cypher, timeout=effective_timeout),
                 parameters or {},
                 database_=self._database,
-                routing_control=RoutingControl.READ,
-                transaction_timeout=timeout if timeout is not None else self._query_timeout_seconds,
+                routing_=RoutingControl.READ,
             )
             return [dict(record) for record in result.records]
         except (ServiceUnavailable, Neo4jError) as exc:
@@ -153,12 +153,12 @@ class Neo4jClient:
             If Neo4j is unreachable, or the write fails for any reason.
         """
         try:
+            effective_timeout = timeout if timeout is not None else self._query_timeout_seconds
             result = self._driver.execute_query(
-                cypher,
+                Query(cypher, timeout=effective_timeout),
                 parameters or {},
                 database_=self._database,
-                routing_control=RoutingControl.WRITE,
-                transaction_timeout=timeout if timeout is not None else self._query_timeout_seconds,
+                routing_=RoutingControl.WRITE,
             )
             counters = result.summary.counters
             return {

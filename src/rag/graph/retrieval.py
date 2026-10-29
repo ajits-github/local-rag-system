@@ -646,13 +646,23 @@ class GraphRetriever:
             return GraphRetrievalResult(
                 intent="dependency_path", resolved_entities=[entity_a, entity_b]
             )
-        path_nodes = rows[0]["path"].nodes
-        path_entries = [(dict(n), list(n.labels)) for n in path_nodes]
+        path = rows[0]["path"]
+        path_entries = [(dict(n), list(n.labels)) for n in path.nodes]
+        # Permission to know two entities exist does not grant permission
+        # to know they are connected: a relationship carries its own
+        # allowed_roles/trust_level/source_document_id (see upsert.py),
+        # independent of either endpoint's. Every node AND every edge on
+        # the path must be authorized before any of it is surfaced.
+        path_relationship_props = [dict(r) for r in path.relationships]
         if not all(
             is_fact_authorized(n, auth, cross_tenant_support_roles=self._cross_tenant_support_roles)
             for n, _labels in path_entries
+        ) or not all(
+            is_fact_authorized(r, auth, cross_tenant_support_roles=self._cross_tenant_support_roles)
+            for r in path_relationship_props
         ):
-            # A path with any unauthorized hop is never partially surfaced.
+            # A path with any unauthorized hop (node or relationship) is
+            # never partially surfaced.
             return GraphRetrievalResult(
                 intent="dependency_path", resolved_entities=[entity_a, entity_b]
             )

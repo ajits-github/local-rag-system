@@ -930,6 +930,48 @@ The demo graph instead uses hand-curated relationships, each traceable to a real
 
 ---
 
+### GRAPH-006: A relationship's own ACL was never checked on the dependency-path query
+
+**Status:** FIXED
+**Severity:** CRITICAL
+**Area:** GraphRAG / authorization
+**Affected code:** `GraphRetriever._search_dependency_path`, `graph/queries.py:dependency_path_query`
+
+**Problem**
+The shortest-path template returns a Neo4j `Path` carrying both nodes and relationships; the Python-side re-check only ever inspected `path.nodes`, never `path.relationships`, even though a relationship carries its own `allowed_roles`/`trust_level`/`source_document_id` (set at write time, see `graph/upsert.py`).
+
+**Failure scenario**
+Two public (authorized) entities connected only by a relationship sourced from a restricted document: a caller unauthorized for that relationship could pass every node check and still receive the path, disclosing a connection they had no right to know about. Permission to know two entities exist is not permission to know they're connected.
+
+**Fix applied**
+Every relationship on the returned path is now re-checked with the same `is_fact_authorized` call nodes already get; a path with any unauthorized hop (node or relationship) is never partially surfaced.
+
+**Regression test**
+`test_a_restricted_relationship_between_two_public_entities_is_not_disclosed` (plus two positive-path tests) in `tests/unit/test_graph_dependency_path_authorization.py`.
+
+---
+
+### GRAPH-007: Neo4j routing/timeout options silently became Cypher query parameters
+
+**Status:** FIXED
+**Severity:** MAJOR
+**Area:** GraphRAG / reliability
+**Affected code:** `Neo4jClient.run_read`, `run_write`
+
+**Problem**
+`execute_query` was called with `routing_control=`/`transaction_timeout=` kwargs. Verified directly against the installed `neo4j==5.28.7` driver: its real parameter is `routing_=`, and the timeout belongs on a `neo4j.Query(text, timeout=...)` object passed as the query itself, not a bare kwarg. The two unrecognized kwargs fell into `execute_query`'s own `**kwargs`, which it forwards into `Transaction.run(query, parameters, **kwargs)` as if they were Cypher query parameters.
+
+**Failure scenario**
+The configured server-side transaction timeout was never actually applied, and every read used the driver's default (write) routing regardless of the `RoutingControl.READ` argument intended.
+
+**Fix applied**
+Both methods now build a real `neo4j.Query(cypher, timeout=effective_timeout)` and pass `routing_=RoutingControl.READ`/`WRITE`.
+
+**Regression test**
+`tests/unit/test_graph_client.py` (a mocked driver, asserting the exact call shape against the real `Query`/`RoutingControl` types).
+
+---
+
 ### ONT-001: A narrow RDFS domain axiom silently reclassified an Application as a Service
 
 **Status:** FIXED
@@ -1321,6 +1363,27 @@ The probe token now carries a real tenant string; issuer/audience probes run onl
 
 **Notes**
 A security probe that fails for an unrelated reason gives a false pass; identical results across unrelated prompt variants was the tell.
+
+---
+
+### EVAL-013: A graph-strategy comparison could silently relabel every row as vector-only
+
+**Status:** FIXED
+**Severity:** CRITICAL
+**Area:** Evaluation / GraphRAG
+**Affected code:** `GraphRAGPipeline.answer`, `run_graph_eval.compare_strategies`/`evaluate_strategy`
+
+**Problem**
+`GraphRAGPipeline.answer()` silently substitutes plain vector retrieval whenever `graph.enabled=False`, with nothing in the returned dict indicating a substitution happened; `evaluate_strategy` labeled every result row with the *requested* strategy regardless of what actually ran.
+
+**Failure scenario**
+Running the graph evaluator's comparison under the shipped, graph-disabled default with all four strategies requested would produce four differently-labeled rows that all executed identical vector-only retrieval, a plausible-looking comparison table that could invalidate a Hybrid-vs-GraphRAG conclusion with no execution error at all.
+
+**Fix applied**
+`GraphRAGPipeline.answer()` now reports `graph_strategy_executed` on every path, including every internal fallback. `compare_strategies` raises `ValueError` up front if a non-`vector_only` strategy is requested while `graph.enabled=False`, rather than silently degrading; `evaluate_strategy` also records a per-row `degraded`/`degraded_run_rate`.
+
+**Regression test**
+`tests/unit/test_graph_pipeline_strategy_labeling.py` (three tests: the disabled-graph mislabel, the correct `vector_only` label, and `compare_strategies` raising).
 
 ---
 
@@ -1819,6 +1882,8 @@ The following issues are resolved, with a concrete fix and regression test cited
 | GRAPH-002 | GraphRAG | The driver's convenience method stripped the node labels authorization code needed |
 | GRAPH-003 | GraphRAG | A graph path test failed because one relationship write cannot span two tenant scopes |
 | GRAPH-004 | GraphRAG | Resetting the graph alone left the graph empty (demo-script fix; see PROD-003 for the general residual) |
+| GRAPH-006 | GraphRAG | A relationship's own ACL was never checked on the dependency-path query |
+| GRAPH-007 | GraphRAG | Neo4j routing/timeout options silently became Cypher query parameters |
 | ONT-001 | Ontology | A narrow RDFS domain axiom silently reclassified an Application as a Service |
 | ONT-002 | Ontology | SHACL was already subclass-aware, before any inference option was requested |
 | AGT-001 | Agentic RAG | Step budgets collided with the happy path, mislabeling most runs as max_steps |
@@ -1828,6 +1893,7 @@ The following issues are resolved, with a concrete fix and regression test cited
 | EVAL-003 | Evaluation | A keyword heuristic produced false regression counts, and a test relied on it |
 | EVAL-005 | Evaluation | Safety metrics read as a perfect zero until the gold paths were checked |
 | EVAL-006 | Evaluation | `oversized_request_rejection_accuracy` read 0/3, because the probe token was rejected first |
+| EVAL-013 | Evaluation | A graph-strategy comparison could silently relabel every row as vector-only |
 | OBS-002 | Observability | Shared mutable LLM token counters could leak across concurrent requests |
 | OPS-001 | Deployment | A 504 at the frontend came from the host running out of memory |
 | OPS-002 | Deployment | A frontend panel stayed "unavailable" because the reverse proxy never routed two endpoints |
