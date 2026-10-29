@@ -1434,8 +1434,13 @@ A stale and a current value for the same fact collapsing into one, with no signa
 **Fix applied**
 The near-duplicate pass now refuses to merge two items whose extracted numeric tokens differ. Both the exact-hash and near-duplicate passes now require matching `tenant_id`; `content_hash -> kept index` tracks a list per hash (not a single overwritable slot) so a later same-tenant duplicate still finds its own match after a different tenant's byte-identical item was correctly kept separate.
 
+The numeric guard alone left two gaps: it fired only when *both* texts contained numbers, and a meaning change with no number ("service accounts are allowed to call" vs "are not allowed to call", "enabled" vs "disabled") still merged above the 0.85 threshold. Because dedup runs before freshness/authority ordering, the stale variant could win. The guard now blocks a merge on any difference in the numeric set, and on any difference in a fixed set of negation/polarity words (`n't` contractions read as `not`).
+
 **Regression test**
-`test_near_duplicate_paragraphs_with_a_conflicting_number_are_never_merged`, `test_exact_content_hash_duplicate_across_tenants_is_never_merged`, `test_near_duplicate_across_tenants_is_never_merged`, `test_exact_content_hash_matching_finds_the_right_tenants_entry_among_several` in `tests/unit/test_context_dedup.py`.
+`test_near_duplicate_paragraphs_with_a_conflicting_number_are_never_merged`, `test_exact_content_hash_duplicate_across_tenants_is_never_merged`, `test_near_duplicate_across_tenants_is_never_merged`, `test_exact_content_hash_matching_finds_the_right_tenants_entry_among_several`, `test_near_duplicates_differing_only_by_negation_are_never_merged`, `test_near_duplicates_differing_only_by_polarity_word_are_never_merged`, `test_near_duplicate_where_only_one_side_has_a_number_is_never_merged` in `tests/unit/test_context_dedup.py`.
+
+**Notes**
+The polarity guard is a word list, not semantic equivalence: a paraphrased contradiction with no listed word can still merge. It errs toward keeping both items, which costs tokens, not correctness.
 
 ---
 
@@ -1586,6 +1591,30 @@ Lowering `num_ctx` (via `model_limits.overrides`) for latency, with a long syste
 
 **Regression test**
 `test_budget_records_the_deficit_when_fixed_costs_exceed_the_window`, `test_feasible_budget_has_no_deficit` in `tests/unit/test_context_planner.py`; `test_infeasible_budget_is_flagged_in_the_summary_and_metrics` in `tests/unit/test_context_engine.py`.
+
+---
+
+### CTX-016: Two graph facts from one chunk collided on identity, and one was silently dropped
+
+**Status:** FIXED
+**Severity:** MAJOR
+**Area:** Context Engineering / GraphRAG
+**Affected code:** `rag.context.dedup.deduplicate_items`, `rag.graph.fusion.graph_fact_to_search_result`, `rag.retrieval.pipeline._results_actually_packed`
+
+**Problem**
+Graph fusion reused the fact's `source_chunk_id` as the graph result's `chunk_id`, so every fact extracted from one chunk, and the retrieved chunk itself, shared one id. Dedup's identity pass keyed on `source_id` alone, before any tenant or type check, so all but the first were dropped as "duplicates". The same id also confused `_results_actually_packed`, which maps packed items back to results by `chunk_id`. The exact-hash pass similarly had no source-type guard, so a history turn could fold into a document item with identical text.
+
+**Failure scenario**
+`vector_plus_graph` retrieves a chunk and two graph facts extracted from it ("A DEPENDS_ON B", "A DEPENDS_ON C"). Only the chunk survives dedup; both relationship facts vanish with no trace beyond a `merged_from` entry, and the answer misses a dependency. A caller-supplied history `turn_id` equal to a chunk id could erase that chunk the same way.
+
+**Fix applied**
+Graph results get a fact-specific id, `graph:<source chunk or document>:<sha256 of type, text, entities>`. The identity pass keys on `(budget bucket, tenant_id, dataset_id, source_id)`, and the exact-hash pass only merges history with history.
+
+**Regression test**
+`test_two_facts_from_one_chunk_get_distinct_ids_distinct_from_the_chunk` in `tests/unit/test_graph_fusion_governance.py`; `test_same_id_in_different_buckets_is_not_an_identity_duplicate`, `test_same_id_in_different_tenants_is_not_an_identity_duplicate`, `test_history_and_document_with_identical_content_never_merge` in `tests/unit/test_context_dedup.py`.
+
+**Notes**
+A graph result's `chunk_id` is no longer a real chunk id, so `get_related_context` on it returns an empty result rather than the source chunk's neighbors; graph facts were never expandable evidence in the first place.
 
 ---
 
@@ -2516,6 +2545,7 @@ The following issues are resolved, with a concrete fix and regression test cited
 | CTX-013 | Context Engineering | `run_eval.py` silently dropped `answer()`'s own `context_engineering` field |
 | CTX-014 | Context Engineering | Compression dropped the render overhead from an item's token count, admitting it over budget |
 | CTX-015 | Context Engineering | An infeasible prompt was silently budgeted as zero evidence |
+| CTX-016 | Context Engineering / GraphRAG | Two graph facts from one chunk collided on identity, and one was silently dropped |
 | EVAL-014 | Evaluation / Context Engineering | `sources`/citations could credit evidence Context Engineering had already dropped or compressed |
 
 ---

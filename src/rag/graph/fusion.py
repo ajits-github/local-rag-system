@@ -9,6 +9,7 @@ deleted, outside the dataset, or no longer visible to the caller is dropped.
 
 from __future__ import annotations
 
+import hashlib
 from datetime import UTC, datetime
 
 from rag.audit import log_audit_event
@@ -47,12 +48,14 @@ def graph_fact_to_search_result(
         even though the citation itself points at the same real document
         path a chunk from that document would. `sensitive_field_ids` is
         detected on the fact's own text, as ingestion does for a chunk.
+        `chunk_id` is fact-specific (`graph:<source chunk or document>:<hash>`),
+        never the source chunk's own id, so two facts from one chunk, or a
+        fact and that retrieved chunk, never share an identity downstream.
     """
     document_id = source_metadata.document_id
-    chunk_id = (
-        fact.source_chunk_id
-        or f"graph:{document_id}:{'|'.join(e.canonical_id for e in fact.entities)}"
-    )
+    fact_key = "|".join([fact.fact_type, fact.text, *(e.canonical_id for e in fact.entities)])
+    fact_hash = hashlib.sha256(fact_key.encode("utf-8")).hexdigest()[:16]
+    chunk_id = f"graph:{fact.source_chunk_id or document_id}:{fact_hash}"
     now = datetime.now(UTC)
     metadata = ChunkMetadata(
         document_id=document_id,
