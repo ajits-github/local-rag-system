@@ -206,6 +206,7 @@ security:
     block_unredacted_sensitive_fields: true
     require_authoritative_trust: false
     blocked_tenant_ids: []
+    allow_unclassified: false # fail closed: a source with no classification never egresses
     classification_policy:
       public: true
       internal: true

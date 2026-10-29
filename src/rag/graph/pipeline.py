@@ -14,7 +14,7 @@ from typing import Any
 
 from rag.audit import log_audit_event
 from rag.config import AppConfig
-from rag.graph.client import GraphUnavailableError, Neo4jClient
+from rag.graph.client import Neo4jClient
 from rag.graph.fusion import graph_facts_to_search_results
 from rag.graph.retrieval import GraphRetriever
 from rag.observability import metrics as observability_metrics
@@ -185,23 +185,26 @@ class GraphRAGPipeline:
     def _graph_search_results(
         self, query: str, dataset_id: str, auth: AuthorizationContext | None
     ) -> list[SearchResult]:
-        """Run graph retrieval and return bounded, sanitized `SearchResult`s.
+        """Run graph retrieval and return bounded, revalidated, sanitized `SearchResult`s.
 
         Returns an empty list on graph failure. A degraded result is treated
-        the same as an empty one.
+        the same as an empty one. Facts are revalidated against Postgres
+        under the resolved `auth` (see `rag.graph.fusion`).
         """
-        assert self._retriever is not None and self._client is not None
+        assert self._retriever is not None
         result = self._retriever.search(query, dataset_id=dataset_id, auth=auth)
         if result.degraded:
             observability_metrics.observe_graph_retrieval_failure("neo4j_unavailable")
         facts = result.facts[: self._config.graph.fusion.max_graph_evidence_items]
-        try:
-            search_results = graph_facts_to_search_results(facts, self._client, dataset_id)
-        except GraphUnavailableError:
-            logger.warning("Failed to resolve graph fact source paths", exc_info=True)
-            return []
+        effective_auth = self._retrieval_pipeline.resolve_auth(auth, {"dataset_id": dataset_id})
+        search_results = graph_facts_to_search_results(
+            facts,
+            vectorstore=self._retrieval_pipeline.vectorstore,
+            dataset_id=dataset_id,
+            auth=effective_auth,
+        )
         # Same redaction and injection-flagging pass as every other evidence source.
-        return self._retrieval_pipeline.sanitize_evidence(search_results, auth)
+        return self._retrieval_pipeline.sanitize_evidence(search_results, effective_auth)
 
     def _generate_from_results(
         self,
@@ -313,14 +316,23 @@ class GraphRAGPipeline:
                 auth,
                 executed_strategy="graph_seeded_vector_no_entities_resolved",
             )
-        document_ids: set[str] = set()
+        linked_ids: set[str] = set()
         for entity in entities:
             neighbors = self._client.run_read(
                 "MATCH (e {canonical_id: $id, dataset_id: $dataset_id})-[r]-(d:Document) "
-                "RETURN DISTINCT d.canonical_id AS document_id LIMIT 20",
+                "RETURN DISTINCT d.canonical_id AS document_id "
+                "ORDER BY document_id LIMIT 20",
                 {"id": entity.canonical_id, "dataset_id": dataset_id},
             )
-            document_ids.update(row["document_id"] for row in neighbors)
+            linked_ids.update(row["document_id"] for row in neighbors)
+        # Keep only documents the caller can read in Postgres now, so the seed
+        # set never carries an id that Neo4j's ACL copy alone would allow.
+        effective_auth = self._retrieval_pipeline.resolve_auth(auth, {"dataset_id": dataset_id})
+        document_ids = set(
+            self._retrieval_pipeline.vectorstore.get_document_governance(
+                sorted(linked_ids), dataset_id, effective_auth
+            )
+        )
         log_audit_event(
             "graph_seeded_vector_retrieval",
             dataset_id=dataset_id,

@@ -521,9 +521,11 @@ egress points:
   count is audit-logged.
 
 Production generation is `ollama` only (`generation.provider` is a
-single-value literal), so it is not an egress point. Graph-derived
-results currently lose governance metadata before this check
-(`SEC-R01` in the 2026-10-29 audit).
+single-value literal), so it is not an egress point. A source with no
+`classification` egresses only while `allow_unclassified` is `true`
+(`config/production.yaml` sets it `false`). Graph-derived results carry
+their source document's current Postgres governance metadata, so they
+pass through the same checks as chunks.
 
 ### Input size / DoS limits and rate limiting
 

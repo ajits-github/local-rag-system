@@ -6,8 +6,9 @@ Tools contain no retrieval or authorization logic of their own. Each takes
 
 `get_document`, `get_latest_document`, and `get_related_context` query
 `VectorStore` directly, so they resolve `auth` through
-`RetrievalPipeline.resolve_auth` first. `search_knowledge_base` does not,
-because `retrieve()` resolves it internally.
+`RetrievalPipeline.resolve_auth` first; so do the graph tools, to revalidate
+each fact against Postgres. `search_knowledge_base` does not, because
+`retrieve()` resolves it internally.
 
 The number of chunks loaded by the document tools is set by server config,
 not by the model.
@@ -28,9 +29,8 @@ from rag.agent.tool_schemas import (
     SearchKnowledgeGraphArgs,
 )
 from rag.embedders.base import Embedder
-from rag.graph.client import Neo4jClient
 from rag.graph.fusion import graph_facts_to_search_results
-from rag.graph.retrieval import GraphRetriever
+from rag.graph.retrieval import GraphFact, GraphRetriever
 from rag.retrieval.authorization import AuthorizationContext
 from rag.retrieval.freshness import resolve_current_document_source
 from rag.retrieval.pipeline import RetrievalPipeline
@@ -257,17 +257,31 @@ def get_related_context(
     return [r.chunk for r in expanded if r.origin == "expanded"]
 
 
+def _revalidated_graph_results(
+    facts: list[GraphFact],
+    pipeline: RetrievalPipeline,
+    dataset_id: str,
+    auth: AuthorizationContext | None,
+) -> list[SearchResult]:
+    """Convert facts to results, revalidated against Postgres under the resolved `auth`."""
+    effective_auth = pipeline.resolve_auth(auth, {"dataset_id": dataset_id})
+    return graph_facts_to_search_results(
+        facts, vectorstore=pipeline.vectorstore, dataset_id=dataset_id, auth=effective_auth
+    )
+
+
 def search_knowledge_graph(
     args: SearchKnowledgeGraphArgs,
     graph_retriever: GraphRetriever,
-    graph_client: Neo4jClient,
+    pipeline: RetrievalPipeline,
     dataset_id: str | None,
     auth: AuthorizationContext | None,
 ) -> list[SearchResult]:
     """Run bounded graph retrieval for a natural-language question.
 
-    Wraps `GraphRetriever.search`. The retriever applies the authorization
-    checks, so this tool returns only facts the caller may see.
+    Wraps `GraphRetriever.search`. The retriever applies the graph-side
+    authorization checks; every fact is then revalidated against its source
+    document in Postgres, so this tool returns only facts the caller may see.
 
     Raises
     ------
@@ -278,13 +292,13 @@ def search_knowledge_graph(
     if not dataset_id:
         raise ToolExecutionError("search_knowledge_graph requires a dataset_id filter")
     result = graph_retriever.search(args.query, dataset_id=dataset_id, auth=auth)
-    return graph_facts_to_search_results(result.facts, graph_client, dataset_id)
+    return _revalidated_graph_results(result.facts, pipeline, dataset_id, auth)
 
 
 def get_entity(
     args: GetEntityArgs,
     graph_retriever: GraphRetriever,
-    graph_client: Neo4jClient,
+    pipeline: RetrievalPipeline,
     dataset_id: str | None,
     auth: AuthorizationContext | None,
 ) -> list[SearchResult]:
@@ -300,13 +314,13 @@ def get_entity(
     result = graph_retriever.get_entity(
         args.name, dataset_id=dataset_id, auth=auth, entity_type=args.entity_type
     )
-    return graph_facts_to_search_results(result.facts, graph_client, dataset_id)
+    return _revalidated_graph_results(result.facts, pipeline, dataset_id, auth)
 
 
 def get_neighbors(
     args: GetNeighborsArgs,
     graph_retriever: GraphRetriever,
-    graph_client: Neo4jClient,
+    pipeline: RetrievalPipeline,
     dataset_id: str | None,
     auth: AuthorizationContext | None,
 ) -> list[SearchResult]:
@@ -326,13 +340,13 @@ def get_neighbors(
         relationship_type=args.relationship_type,
         max_hops=args.max_hops,
     )
-    return graph_facts_to_search_results(result.facts, graph_client, dataset_id)
+    return _revalidated_graph_results(result.facts, pipeline, dataset_id, auth)
 
 
 def find_dependency_path(
     args: FindDependencyPathArgs,
     graph_retriever: GraphRetriever,
-    graph_client: Neo4jClient,
+    pipeline: RetrievalPipeline,
     dataset_id: str | None,
     auth: AuthorizationContext | None,
 ) -> list[SearchResult]:
@@ -348,4 +362,4 @@ def find_dependency_path(
     result = graph_retriever.find_path(
         args.source_entity_name, args.target_entity_name, dataset_id=dataset_id, auth=auth
     )
-    return graph_facts_to_search_results(result.facts, graph_client, dataset_id)
+    return _revalidated_graph_results(result.facts, pipeline, dataset_id, auth)

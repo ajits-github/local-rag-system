@@ -46,6 +46,7 @@ AuthEventType = Literal[
     "agent_business_action_disabled",
     "agent_graph_tool_disabled",
     "graph_seeded_vector_retrieval",
+    "graph_facts_failed_revalidation",
     "case_action_requested",
     "case_action_approval_required",
     "case_action_executed",

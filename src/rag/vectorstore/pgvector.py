@@ -828,6 +828,27 @@ class PgVectorStore(VectorStore):
             for chunk_id, content, metadata in (_row_to_metadata(row) for row in rows)
         ]
 
+    def get_document_governance(
+        self, document_ids: list[str], dataset_id: str, auth: AuthorizationContext | None = None
+    ) -> dict[str, ChunkMetadata]:
+        """See `VectorStore.get_document_governance`."""
+        unique_ids = sorted({doc_id for doc_id in document_ids if doc_id})
+        if not unique_ids:
+            return {}
+        auth_sql, auth_params = build_authorization_where_clause(
+            auth, self._cross_tenant_support_roles
+        )
+        where_sql = _combine_where_clauses(
+            "WHERE document_id::text = ANY(%s) AND dataset_id = %s", auth_sql
+        )
+        sql = f"""SELECT DISTINCT ON (document_id) {_METADATA_COLUMNS} FROM {self._chunks_table}
+            {where_sql}
+            ORDER BY document_id, chunk_index"""
+        with self._connection() as conn, conn.cursor() as cur:
+            cur.execute(sql, [unique_ids, dataset_id, *auth_params])
+            rows = cur.fetchall()
+        return {metadata.document_id: metadata for _, _, metadata in map(_row_to_metadata, rows)}
+
     def get_chunks_by_section(
         self,
         document_id: str,

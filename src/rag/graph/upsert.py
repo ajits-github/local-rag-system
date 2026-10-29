@@ -11,6 +11,12 @@ from two chunks creates two relationships, each removed when its own source
 document is deleted. `delete_facts_by_document` removes a document's
 relationships, then any node first seen in that document that has no
 remaining relationships.
+
+Entity ACL properties (`tenant_id`, `allowed_roles`, `trust_level`) are set
+only `ON CREATE`, so they reflect the first document that mentioned the
+entity; relationship ACLs are refreshed on every write. Graph evidence is
+revalidated against the source document in Postgres at read time (see
+`rag.graph.fusion`), so a stale entity ACL cannot widen what reaches a prompt.
 """
 
 from __future__ import annotations

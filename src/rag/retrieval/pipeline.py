@@ -247,6 +247,15 @@ class RetrievalPipeline:
         return self._prompt_template
 
     @property
+    def vectorstore(self) -> VectorStore:
+        """The `VectorStore` this pipeline retrieves from.
+
+        Shared with `GraphRAGPipeline`, which revalidates graph facts
+        against it (see `rag.graph.fusion`).
+        """
+        return self._vectorstore
+
+    @property
     def context_engine(self) -> ContextEngine | None:
         """The shared `ContextEngine`, or `None` when `config.context.enabled=False`.
 
