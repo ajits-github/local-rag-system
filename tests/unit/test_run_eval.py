@@ -450,6 +450,7 @@ def test_duplicate_scan_query_is_scoped_to_dataset_id(monkeypatch):
     """
     from rag.eval.run_eval import _fetch_chunks_for_duplicate_scan
 
+    monkeypatch.setenv("DATABASE_URL", "postgresql://rag:rag@localhost:15987/ragdb")
     recorder: list[tuple[str, tuple]] = []
     config = load_config()
     monkeypatch.setattr("rag.eval.run_eval.psycopg2.connect", lambda dsn: _FakeConnection(recorder))
