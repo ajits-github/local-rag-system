@@ -245,13 +245,19 @@ test_context_prioritize.py::test_ties_break_deterministically_on_original_order`
 
 Three passes, in order, over items in priority order (`rag.context.dedup`):
 
-1. **Exact identity**: same `chunk_id`/`source_id` twice.
+1. **Exact identity**: same `source_id` twice within one budget bucket,
+   tenant and dataset. Graph facts carry fact-specific ids
+   (`graph:<source chunk>:<hash>`), so two facts from one chunk, or a
+   fact and its source chunk, are never identity duplicates.
 2. **Exact content hash**: different ids, byte-identical text (sha256,
-   never the raw text, stored as the dedup key).
+   never the raw text, stored as the dedup key), same tenant. History
+   turns only merge with history.
 3. **Near-duplicate overlap**: word-shingle (3-gram) Jaccard similarity
    above `overlap_threshold` (default 0.85), scoped per `source_type` so
    a document chunk and a graph fact that happen to restate the same
-   sentence are never merged across source types by accident.
+   sentence are never merged across source types by accident. A pair is
+   never merged when its numbers or its negation/polarity words differ
+   (`"allowed"` vs `"not allowed"`, `"enabled"` vs `"disabled"`).
 
 Each merge keeps the *first* occurrence (callers hand candidates in
 priority order, so "first" already means "best" for ties) and records

@@ -199,3 +199,18 @@ def test_graph_seeded_neighbor_query_is_deterministically_ordered():
     pipeline.answer("q", filters={"dataset_id": "ds"}, strategy_override="graph_seeded_vector")
 
     assert "ORDER BY document_id LIMIT 20" in client.cypher[0]
+
+
+def test_two_facts_from_one_chunk_get_distinct_ids_distinct_from_the_chunk():
+    """Graph ids are fact-specific, so dedup never collapses sibling facts (CTX-016)."""
+    store = _FakeVectorStore({"doc-a": _metadata("doc-a")})
+    facts = [
+        _fact("doc-a", text="Document Service DEPENDS_ON PostgreSQL"),
+        _fact("doc-a", text="Document Service DEPENDS_ON Redis"),
+    ]
+
+    results = graph_facts_to_search_results(facts, vectorstore=store, dataset_id="ds", auth=None)
+    ids = [r.chunk.metadata.chunk_id for r in results]
+
+    assert len(set(ids)) == 2
+    assert all(i.startswith("graph:doc-a_3:") for i in ids)

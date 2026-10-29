@@ -166,3 +166,72 @@ def test_exact_content_hash_matching_finds_the_right_tenants_entry_among_several
     assert alpha_kept.source_id == "c1"
     assert alpha_kept.merged_from == ["c3"]
     assert stats.exact_duplicates_removed == 1
+
+
+_BASE = (
+    "Service accounts in the billing namespace are {} to call the payments API "
+    "directly from batch jobs running in the nightly reconciliation window, "
+    "according to the platform access policy maintained by the security team"
+)
+
+
+def test_same_id_in_different_buckets_is_not_an_identity_duplicate():
+    """A history turn_id equal to a chunk id never erases the document chunk (CTX-016)."""
+    items = [
+        _item("c1", "document evidence text"),
+        _item("c1", "User: an unrelated question", source_type="conversation_history"),
+    ]
+    kept, stats = deduplicate_items(items)
+    assert len(kept) == 2
+    assert stats.exact_duplicates_removed == 0
+
+
+def test_same_id_in_different_tenants_is_not_an_identity_duplicate():
+    """The identity pass is tenant-scoped, like the content passes (CTX-016)."""
+    items = [
+        _item("c1", "alpha text", tenant_id="alpha"),
+        _item("c1", "beta text", tenant_id="beta"),
+    ]
+    kept, _ = deduplicate_items(items)
+    assert [i.tenant_id for i in kept] == ["alpha", "beta"]
+
+
+def test_history_and_document_with_identical_content_never_merge():
+    """The exact-hash pass never folds a history turn into evidence or vice versa."""
+    items = [
+        _item("c1", "identical text"),
+        _item("turn_0", "identical text", source_type="conversation_history"),
+    ]
+    kept, _ = deduplicate_items(items)
+    assert len(kept) == 2
+
+
+def test_near_duplicates_differing_only_by_negation_are_never_merged():
+    """A negation ("allowed" vs "not allowed") is a conflict, not a duplicate (CTX-007)."""
+    items = [
+        _item("c1", _BASE.format("allowed")),
+        _item("c2", _BASE.format("not allowed")),
+    ]
+    assert _jaccard_overlap(_shingles(items[0].content), _shingles(items[1].content)) >= 0.85
+    kept, _ = deduplicate_items(items)
+    assert len(kept) == 2
+
+
+def test_near_duplicates_differing_only_by_polarity_word_are_never_merged():
+    """A word-valued change such as "enabled" vs "disabled" also blocks the merge."""
+    base = _BASE.replace("are {} to call", "have direct calls {} for")
+    items = [_item("c1", base.format("enabled")), _item("c2", base.format("disabled"))]
+    assert _jaccard_overlap(_shingles(items[0].content), _shingles(items[1].content)) >= 0.8
+    kept, _ = deduplicate_items(items, overlap_threshold=0.8)
+    assert len(kept) == 2
+
+
+def test_near_duplicate_where_only_one_side_has_a_number_is_never_merged():
+    """A value present on one side only is a conflict, not a duplicate."""
+    items = [
+        _item("c1", _BASE.format("allowed") + " with a limit of 30 calls"),
+        _item("c2", _BASE.format("allowed") + " with a limit of many calls"),
+    ]
+    assert _jaccard_overlap(_shingles(items[0].content), _shingles(items[1].content)) >= 0.8
+    kept, _ = deduplicate_items(items, overlap_threshold=0.8)
+    assert len(kept) == 2

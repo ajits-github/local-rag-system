@@ -91,7 +91,9 @@ known limitations); this section is the condensed version.
 - **Deduplication** (`rag.context.dedup`): exact-id, exact-content-hash,
   then word-shingle Jaccard near-duplicate matching (scoped per
   `source_type`, so a document chunk and a graph fact restating the same
-  sentence are never merged across source types). Keeps the first
+  sentence are never merged across source types; identity is scoped by
+  bucket, tenant and dataset, and a pair whose numbers or negation words
+  differ is treated as a conflict, never merged). Keeps the first
   occurrence, records the discarded item's id onto the kept item's
   `merged_from`, never silently losing provenance. Two genuinely
   different facts about the same topic are never merged, only

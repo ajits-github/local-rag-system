@@ -2,14 +2,17 @@
 
 Three passes, in order, each strictly narrowing what survives:
 
-1. **Exact identity** -- the same `chunk_id`/`source_id` appearing twice
-   (e.g. a chunk surfaced by both direct retrieval and relationship
-   expansion, or by both dense and BM25 before fusion already
-   deduplicated it, kept here as a second safety net for callers that
-   assemble candidates from more than one pipeline call).
+1. **Exact identity** -- the same `source_id` appearing twice within one
+   budget bucket, tenant and dataset (e.g. a chunk surfaced by both
+   direct retrieval and relationship expansion, or by both dense and BM25
+   before fusion already deduplicated it, kept here as a second safety
+   net for callers that assemble candidates from more than one pipeline
+   call). The id alone is never trusted across buckets: a caller-chosen
+   history `turn_id` must not erase a document chunk with the same id.
 2. **Exact content hash** -- different ids, byte-identical text (e.g.
    the same document fact surfaced once as a retrieved chunk and again
-   as a graph fact derived from that same sentence).
+   as a graph fact derived from that same sentence). Conversation
+   history only ever merges with history, never with evidence.
 3. **Near-duplicate overlap** -- different ids, different-but-highly-
    overlapping text, via word-shingle Jaccard similarity
    (`config.context.deduplication.overlap_threshold`). Deliberately a
@@ -36,7 +39,10 @@ differ (CTX-007), since a near-duplicate paragraph restating an
 old value alongside a current, authoritative one is exactly the
 "different-but-highly-overlapping" case this pass would otherwise merge,
 silently discarding whichever value lost the merge regardless of which
-one was actually current.
+one was actually current. The same pass also refuses a merge when the
+two texts differ in negation or polarity words ("allowed" vs "not
+allowed", "enabled" vs "disabled"), which change meaning without changing
+any number.
 
 Both the exact-content-hash and near-duplicate passes additionally
 require matching `tenant_id` before merging (CTX-007): a single
@@ -53,15 +59,59 @@ from __future__ import annotations
 import re
 
 from rag.context.normalize import content_hash
+from rag.context.planner import bucket_for_item
 from rag.context.types import ContextItem, DeduplicationStats
 
 _WORD_RE = re.compile(r"\w+")
 _NUMBER_RE = re.compile(r"\d+(?:\.\d+)?")
+_POLARITY_WORDS = frozenset(
+    {
+        "not",
+        "no",
+        "never",
+        "none",
+        "cannot",
+        "without",
+        "allowed",
+        "denied",
+        "forbidden",
+        "prohibited",
+        "permitted",
+        "enabled",
+        "disabled",
+        "required",
+        "optional",
+        "true",
+        "false",
+        "deprecated",
+        "supported",
+        "unsupported",
+    }
+)
 
 
 def _numbers(text: str) -> set[str]:
     """Distinct numeric tokens in `text` (e.g. `{"30", "60"}`), for the conflict guard."""
     return set(_NUMBER_RE.findall(text))
+
+
+def _polarity(text: str) -> set[str]:
+    """Negation/polarity words in `text`, with any `n't` contraction read as `not`."""
+    words = {w.lower() for w in _WORD_RE.findall(text)}
+    lowered = text.lower().replace("\u2019", "'")
+    if "n't" in lowered:
+        words.add("not")
+    return words & _POLARITY_WORDS
+
+
+def _identity_key(item: ContextItem) -> tuple[str, str | None, str | None, str]:
+    """Key for the exact-identity pass: bucket, tenant and dataset scope the id."""
+    return (bucket_for_item(item), item.tenant_id, item.dataset_id, item.source_id)
+
+
+def _is_history(item: ContextItem) -> bool:
+    """Whether `item` is a conversation-history turn."""
+    return item.source_type == "conversation_history"
 
 
 def _tenant_matches(a: ContextItem, b: ContextItem) -> bool:
@@ -118,7 +168,7 @@ def deduplicate_items(
         occurrence), and counts for observability.
     """
     tokens_before = sum(i.token_count for i in items)
-    seen_ids: set[str] = set()
+    seen_ids: set[tuple[str, str | None, str | None, str]] = set()
     # content_hash -> every kept index with that hash, not just one: two
     # different tenants' byte-identical content (CTX-007) must each get
     # their own kept entry under the same hash, so a later same-tenant
@@ -131,18 +181,24 @@ def deduplicate_items(
     shingle_cache: list[set[tuple[str, ...]]] = []
 
     for item in items:
-        if item.source_id in seen_ids:
+        identity = _identity_key(item)
+        if identity in seen_ids:
             exact_removed += 1
             continue
         chash = content_hash(item.content)
         matched_hash_idx = next(
-            (idx for idx in seen_hashes.get(chash, []) if _tenant_matches(kept[idx], item)), None
+            (
+                idx
+                for idx in seen_hashes.get(chash, [])
+                if _tenant_matches(kept[idx], item) and _is_history(kept[idx]) == _is_history(item)
+            ),
+            None,
         )
         if matched_hash_idx is not None:
             kept[matched_hash_idx] = kept[matched_hash_idx].model_copy(
                 update={"merged_from": [*kept[matched_hash_idx].merged_from, item.source_id]}
             )
-            seen_ids.add(item.source_id)
+            seen_ids.add(identity)
             exact_removed += 1
             continue
         # Either no hash match at all, or only a different tenant's
@@ -151,6 +207,7 @@ def deduplicate_items(
 
         item_shingles = _shingles(item.content)
         item_numbers = _numbers(item.content)
+        item_polarity = _polarity(item.content)
         merged_into_existing = False
         for idx, existing in enumerate(kept):
             if existing.source_type != item.source_type:
@@ -159,25 +216,27 @@ def deduplicate_items(
                 continue
             if _jaccard_overlap(shingle_cache[idx], item_shingles) < overlap_threshold:
                 continue
-            existing_numbers = _numbers(existing.content)
-            if existing_numbers and item_numbers and existing_numbers != item_numbers:
-                # High text overlap but different numeric values: likely
-                # a conflicting/updated fact (e.g. "timeout = 30s" vs
-                # "timeout = 60s"), not a true duplicate. Never merge;
-                # let freshness/authority ordering (not deduplication)
-                # decide which one to prioritize.
+            if (
+                _numbers(existing.content) != item_numbers
+                or _polarity(existing.content) != item_polarity
+            ):
+                # High text overlap but a different number, or a negation/
+                # polarity change: likely a conflicting or updated fact
+                # (e.g. "timeout = 30s" vs "timeout = 60s", "allowed" vs
+                # "not allowed"), not a true duplicate. Never merge; let
+                # freshness/authority ordering decide which one to prioritize.
                 continue
             kept[idx] = existing.model_copy(
                 update={"merged_from": [*existing.merged_from, item.source_id]}
             )
-            seen_ids.add(item.source_id)
+            seen_ids.add(identity)
             near_removed += 1
             merged_into_existing = True
             break
         if merged_into_existing:
             continue
 
-        seen_ids.add(item.source_id)
+        seen_ids.add(identity)
         seen_hashes.setdefault(chash, []).append(len(kept))
         kept.append(item)
         shingle_cache.append(item_shingles)
