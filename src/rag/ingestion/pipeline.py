@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +41,9 @@ from rag.vectorstore.base import VectorStore
 from rag.vision.base import VisionProvider
 
 logger = logging.getLogger(__name__)
+
+# A Markdown image reference's target, as the structured chunker reads it.
+_IMAGE_REFERENCE_RE = re.compile(r"!\[[^\]\[]*\]\(([^()\s]+)\)")
 
 
 def _source_is_under_root(source: str, root: Path) -> bool:
@@ -226,7 +230,7 @@ class IngestionPipeline:
             updates["tenant_id"] = resolve_ingest_tenant_id(raw_document.tenant_id, caller)
         if updates:
             raw_document = raw_document.model_copy(update=updates)
-        checksum = hashlib.sha256(path.read_bytes()).hexdigest()
+        checksum = self._document_checksum(path, raw_document)
         document_id, changed = self._vectorstore.get_or_create_document_id(
             source=raw_document.source, checksum=checksum, dataset_id=dataset_id
         )
@@ -267,7 +271,12 @@ class IngestionPipeline:
         cleaned = self._cleaner.clean(raw_document.content)
         chunk_spans = self._chunker.split(cleaned, source_type=raw_document.source_type)
         chunks = self._writer.write(
-            raw_document, document_id, chunk_spans, dataset_id=dataset_id, category=category
+            raw_document,
+            document_id,
+            chunk_spans,
+            dataset_id=dataset_id,
+            category=category,
+            asset_base_dir=path.parent,
         )
         # One transaction: the checksum and the chunk replacement commit together,
         # so a failure cannot leave the checksum ahead of the stored chunks.
@@ -289,6 +298,28 @@ class IngestionPipeline:
             raw_document, document_id, dataset_id, category, checksum, chunks
         )
         return {"document_id": document_id, "chunks_written": len(chunks), "changed": True}
+
+    def _document_checksum(self, path: Path, raw_document: RawDocument) -> str:
+        """Return the change-detection checksum for `path`.
+
+        The sha256 of the file's bytes. When a vision provider is configured,
+        each referenced local image's digest (or `missing`) is folded in too,
+        so replacing or removing an image re-ingests the document and drops
+        its stale vision chunk; a document with no image references keeps
+        its plain-bytes checksum.
+        """
+        digest = hashlib.sha256(path.read_bytes())
+        if self._writer.vision_provider is None:
+            return digest.hexdigest()
+        for anchor in sorted(set(_IMAGE_REFERENCE_RE.findall(raw_document.content))):
+            if "://" in anchor:
+                continue
+            asset = (path.parent / anchor).resolve()
+            asset_digest = (
+                hashlib.sha256(asset.read_bytes()).hexdigest() if asset.is_file() else "missing"
+            )
+            digest.update(f"|{anchor}|{asset_digest}".encode())
+        return digest.hexdigest()
 
     def _run_graph_extraction(
         self,

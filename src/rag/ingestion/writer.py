@@ -71,6 +71,7 @@ class Writer:
         chunk_spans: list[ChunkSpan],
         dataset_id: str,
         category: str | None = None,
+        asset_base_dir: Path | None = None,
     ) -> list[Chunk]:
         """Embed `chunk_spans` and build `Chunk`s from `document`'s metadata.
 
@@ -91,6 +92,10 @@ class Writer:
             Namespace tag stored on every chunk.
         category : str | None, optional
             Folder-derived category tag, by default None.
+        asset_base_dir : Path | None, optional
+            Directory image `source_anchor`s are read from: the physical
+            file's own directory (a staged upload's staging directory, not
+            its final location). Defaults to `document.source`'s directory.
 
         Returns
         -------
@@ -98,7 +103,8 @@ class Writer:
             The built chunks, each with its embedding set, not yet persisted.
         """
         if self._vision_provider is not None:
-            chunk_spans = self._with_vision_siblings(chunk_spans, document)
+            base_dir = asset_base_dir or Path(document.source).parent
+            chunk_spans = self._with_vision_siblings(chunk_spans, document, base_dir)
         texts = [span.text for span in chunk_spans]
         embeddings = self._embedder.embed_documents(texts)
         chunk_ids = [f"{document_id}_{i}" for i in range(len(chunk_spans))]
@@ -194,13 +200,13 @@ class Writer:
         return parent_ids
 
     def _with_vision_siblings(
-        self, chunk_spans: list[ChunkSpan], document: RawDocument
+        self, chunk_spans: list[ChunkSpan], document: RawDocument, asset_base_dir: Path
     ) -> list[ChunkSpan]:
         """Insert a vision-generated sibling span immediately after each image span.
 
         Only called when a `VisionProvider` is configured. For each
         `content_type="image"` span, resolves `source_anchor` to a file
-        relative to `document.source`, and consults the image-description
+        relative to `asset_base_dir`, and consults the image-description
         cache (keyed on the image's sha256, so an unchanged image is never
         reprocessed) before calling `VisionProvider.describe_image`. The
         original caption/alt-text span is never modified.
@@ -215,7 +221,10 @@ class Writer:
         chunk_spans : list[ChunkSpan]
             Chunk spans, in document order, before vision expansion.
         document : RawDocument
-            Source document, used to resolve `source_anchor` to a real path.
+            Source document; its `source` is the citation-facing path
+            recorded in the description cache.
+        asset_base_dir : Path
+            Directory the image bytes are actually read from.
 
         Returns
         -------
@@ -231,7 +240,7 @@ class Writer:
             result.append(span)
             if span.content_type != "image" or not span.source_anchor:
                 continue
-            image_path = (Path(document.source).parent / span.source_anchor).resolve()
+            image_path = (asset_base_dir / span.source_anchor).resolve()
             if not image_path.is_file():
                 continue
 
@@ -260,7 +269,7 @@ class Writer:
                 self.vision_stats.total_latency_ms += (time.perf_counter() - call_start) * 1000
                 self._vectorstore.cache_image_description(
                     image_checksum=checksum,
-                    source_path=str(image_path),
+                    source_path=str(Path(document.source).parent / span.source_anchor),
                     provider=provider.provider_name,
                     model_name=provider.model_name,
                     prompt_version=provider.prompt_version,

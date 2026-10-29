@@ -47,8 +47,6 @@ without basis. Detailed chronological session history remains in
 | PROD-003 | MINOR | ACCEPTED LIMITATION | GraphRAG | Resetting only the graph side of a dataset needs a dataset-level clear, not a graph-only one |
 | CTX-004 | MINOR | ACCEPTED LIMITATION | Context Engineering | Extractive compression needs sentence boundaries; graph-path hops are a best-effort text parse |
 | BUG-015 | MAJOR | OPEN | Ingestion | A graph write failure after a successful vector commit has no durable retry |
-| BUG-016 | MAJOR | OPEN | Ingestion | Replacing or removing a referenced image does not invalidate the document that references it |
-| BUG-017 | MAJOR | OPEN | Ingestion | A staged upload can resolve vision assets against the wrong document version |
 | GRAPH-011 | MINOR | ACCEPTED LIMITATION | GraphRAG | Entity-node ACL properties are frozen at first write (mitigated by read-time revalidation) |
 | RET-006 | MINOR | ACCEPTED LIMITATION | Retrieval | BM25 rebuilds a full in-memory index on every hybrid query |
 | DIST-006 | MAJOR | OPEN | Reliability (experiment branch) | The distributed-state worker claims a full batch every loop, regardless of jobs still running |
@@ -310,46 +308,47 @@ Track graph projection status/checksum durably (e.g. a `graph_projected_checksum
 
 ---
 
-### BUG-016: Replacing or removing a referenced image does not invalidate the document that references it
+### BUG-016: Replacing or removing a referenced image did not invalidate the document that references it
 
-**Status:** OPEN
+**Status:** FIXED
 **Severity:** MAJOR
 **Area:** Ingestion / multimodal consistency
-**Affected code:** `ingest_file`'s checksum gate, `Writer`'s vision-sibling-chunk step
+**Affected code:** `IngestionPipeline.ingest_file` (checksum gate), `IngestionPipeline._document_checksum`
 
 **Problem**
-The document checksum covers only the source file's own bytes; image checksums and the vision-description cache lookup only run *after* that unchanged-document gate, so they never run at all when the gate already returned early.
+The document checksum covered only the source file's own bytes; image checksums and the vision-description cache lookup only ran *after* that unchanged-document gate, so they never ran at all when the gate already returned early.
 
 **Failure scenario**
 Replace or remove an image referenced by an otherwise-unchanged Markdown file, then re-ingest the Markdown: `changed=False`, and the old vision description / image-derived evidence is retained regardless of what the image now actually is (or that it no longer exists).
 
-**Why not fixed yet**
-Including referenced-image state in the unchanged-check would require parsing the document to discover its images *before* the cheap checksum gate that exists specifically to avoid that cost on every re-ingest; a real tradeoff, not yet resolved.
+**Fix applied**
+The recorded tradeoff (parsing before the cheap gate) turned out not to exist: `ingest_file` already loads the document before computing the checksum. `_document_checksum` now folds each referenced local image's sha256 (or `missing`) into the document checksum whenever a vision provider is configured, the only consumer of image bytes. A document with no image references keeps its plain-bytes checksum, so nothing re-ingests needlessly, and with vision off image changes are ignored by design.
 
-**Recommended fix**
-Fold referenced-asset digests (or at least existence) into the document's lineage/checksum, or add a separate, narrower invalidation path for image-derived chunks specifically.
+**Regression test**
+`test_replacing_a_referenced_image_reingests_the_document`, `test_removing_a_referenced_image_reingests_the_document`, `test_without_vision_image_bytes_do_not_affect_the_checksum`, `test_document_without_images_keeps_its_plain_bytes_checksum` in `tests/unit/test_ingestion_asset_lineage.py`.
 
+**Notes**
+Enabling vision on an existing dataset changes the checksum of every document that references an image, so each is re-ingested once; that is the point (their vision chunks must be created).
 ---
 
-### BUG-017: A staged upload can resolve vision assets against the wrong document version
+### BUG-017: A staged upload could resolve vision assets against the wrong document version
 
-**Status:** OPEN
+**Status:** FIXED
 **Severity:** MAJOR
 **Area:** Ingestion / multimodal / upload atomicity
-**Affected code:** `api/routers/ingest.py`'s staged-upload flow, `Writer`'s image-path resolution
+**Affected code:** `Writer.write` / `Writer._with_vision_siblings`, `IngestionPipeline.ingest_file`
 
 **Problem**
-PDF/DOCX image extraction resolves asset paths beside the *staging* file; `source_override` only renames the final persisted `source` string after `ingest_file` already ran, and staged assets are installed into the real `UPLOAD_DIR/assets/` only once `ingest_file` returns successfully.
+`Writer` resolved each image `source_anchor` relative to `document.source`. For a staged upload, `source_override` sets that to the *final* destination path, while the loader had extracted the new version's assets beside the *staging* file; staged assets reach `UPLOAD_DIR/assets/` only after `ingest_file` succeeds.
 
 **Failure scenario**
-On a document's first upload, vision resolution can find no final-location asset yet and skip the image. On a same-filename replacement, resolution can instead find and describe the *previous* version's final asset while the new document's own checksum is being committed, mismatching vision-generated text to the wrong document version.
+On a document's first upload, vision resolution found no final-location asset yet and skipped the image. On a same-filename replacement, it found and described the *previous* version's final asset while the new document's checksum was being committed, mismatching vision-generated text to the wrong document version.
 
-**Why not fixed yet**
-Fixing this cleanly means separating physical asset resolution (which legitimately needs a real path to read bytes from) from stable citation identity more thoroughly than the current staging-directory-only fix (which already solved the adjacent temp-path-leak bug, see **SEC-006**); judged out of scope for this pass.
+**Fix applied**
+Physical asset resolution is now separate from citation identity: `Writer.write` takes `asset_base_dir`, and `ingest_file` passes the physical file's own directory (the staging directory for an upload), so image bytes always come from the version being ingested. The vision cache's `source_path` records the citation-facing path (beside `document.source`), so no staging path reaches the database (see **SEC-006**).
 
-**Recommended fix**
-Resolve and process vision assets entirely from the staged location during ingestion, independent of the final installed path, and reconcile only identity/citation strings afterward.
-
+**Regression test**
+`test_vision_reads_the_staged_image_not_the_final_location` in `tests/unit/test_ingestion_asset_lineage.py` (a stale image at the final location, a new one in staging: only the staged bytes are described).
 ---
 
 ### MULTI-001: Shared asset folders paired the wrong images with the wrong documents
@@ -2564,6 +2563,8 @@ The following issues are resolved, with a concrete fix and regression test cited
 | BUG-008 | API | A streaming endpoint validated requests after its 200 status was sent |
 | BUG-013 | Evaluation | Recall@10 was structurally unmeasurable |
 | BUG-014 | Evaluation | A RAGAS metric returned null for every question without raising an error |
+| BUG-016 | Ingestion | Replacing or removing a referenced image did not invalidate the document that references it |
+| BUG-017 | Ingestion | A staged upload could resolve vision assets against the wrong document version |
 | SEC-001 | Security | Document-level access control could not stop a legitimate reader from getting a secret |
 | SEC-002 | Security | A pattern written from one document missed a second credential format |
 | SEC-003 | Security | The system and user prompts were joined into one string before reaching the model |
@@ -2690,4 +2691,4 @@ Performed after restructuring:
 
 **Postscript (2026-10-29 pre-experiment audits):** two independent audits of `main` at `64321ed` (Codex: `.claude-prompts/35.9-...`, Claude: `35.10-...`; both untracked) were reconciled against the code before any fix. Fixed: **CTX-014**, **CTX-015**, **CTX-016**, **CTX-017**, **SEC-018**, **SEC-019**, **GRAPH-008**, **GRAPH-010**, plus follow-ups folded into existing stories (**CTX-007** negation guard, **CTX-011** telemetry clamp, **EVAL-015** Context Engineering report). New accepted limitations: **GRAPH-011**, **RET-006**, **OPS-016**. New open items on experiment branches only: **DIST-006**, **OPS-015**. Re-confirmed still open, not fixed here: **BUG-015**/**BUG-016**/**BUG-017** (structural ingestion-consistency changes; avoid graph-projection failures and image-only edits on any benchmark corpus until they land) and **GRAPH-009** (dead code). Two test-coverage gaps were closed without separate entries: `GraphRetriever.search`'s Neo4j-outage degradation (`tests/unit/test_graph_retrieval_degradation.py`) and an MCP remote-tool transport failure (`test_remote_tool_connection_failure_is_recorded_not_raised`). The Codex report's cited repro script, `experiments/reports/audit_repro_2026_10_29.py`, was never committed and does not exist.
 
-**Follow-up (2026-10-29, after the audit PRs):** **GRAPH-009** and **OBS-001** fixed; see their entries.
+**Follow-up (2026-10-29, after the audit PRs):** **GRAPH-009**, **OBS-001**, **BUG-016** and **BUG-017** fixed; see their entries.
