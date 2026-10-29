@@ -11271,3 +11271,172 @@ shape; real specialist-scoped `ContextEngine` instances for that
 branch's Knowledge/Business agents were not implemented, since that
 experiment lives on its own unmerged branch, out of scope for this
 feature branch.
+
+---
+
+## 2026-10-25 (session 25): Reconciling two pre-experiment audits, and the first real Context Engineering smoke evaluation
+
+### Interview talking points
+- Two independent adversarial audits of `feature/context-engineering`
+  (a self-directed pass and an independent "Codex" pass, neither shown
+  the other's output) had already flagged 25 findings before this
+  session. The job here was to fix them, not re-audit: 22 were fixed
+  with regression tests, 5 larger cross-store/cross-version consistency
+  gaps were deliberately deferred with a documented "why not fixed yet"
+  and a recommended fix each, rather than silently skipped.
+- Three of the fixes were CRITICAL and genuinely security-relevant: a
+  hosted reranker receiving raw candidate content before redaction with
+  no egress gate at all (SEC-015); a graph dependency-path query
+  authorizing only the path's nodes, never its relationships, which
+  could disclose that two public entities are connected via a
+  relationship sourced from a restricted document (GRAPH-006); and
+  `sources`/citations being built from the pre-packing retrieval result
+  rather than what Context Engineering's own packing step actually put
+  in the prompt, so judge/citation metrics could score evidence the
+  model was never shown (EVAL-014).
+- Found one more real gap while actually running the smoke evaluation
+  this session closes with, not from either audit: `run_eval.py` read
+  every other key off `answer()`'s result dict except
+  `context_engineering`, so a report produced with Context Engineering
+  on looked identical to one with it off (CTX-013). A real
+  end-to-end run surfaced this in about the time it takes to read one
+  report file; the synthetic harness and unit tests never would have,
+  since neither exercises `run_eval.py`'s own report assembly against a
+  real `answer()` call.
+- The most interesting individual finding: `num_ctx` was never passed to
+  Ollama at all (CTX-005), so the budget planner's assumed 32768-token
+  window for `qwen2.5:3b` and the real runtime window could silently
+  disagree. Fixing it and then actually running the fixed code exposed a
+  second, more concrete problem: 32768 tokens measured at ~6.6 minutes
+  per call on this 8GB-RAM CPU-only host (`prompt_eval_duration` alone
+  ~107s for an identical 30-token prompt). The experiment config was
+  recalibrated to a measured, practical 4096 rather than the model's
+  trained length,
+  with the numbers recorded directly in the config file. The fix was
+  correct the whole time; running it for real is what turned a
+  theoretical risk `docs/context_engineering.md` had already flagged
+  into a concrete, host-specific number.
+- A second, unplanned finding from actually running real processes: two
+  separate `run_eval.py` smoke-eval attempts ended up alive at once (an
+  artifact of combining this session's own `run_in_background` tooling
+  with a stray trailing `&`), both hitting the same Postgres dataset and
+  the same Ollama server concurrently on a resource-constrained host.
+  Killing the stale one let the real run finish cleanly. A small
+  operational lesson, not a code bug: don't background a command twice.
+- A routine consistency check of `KNOWN_ISSUES.md` (comparing section
+  10's navigational "Fixed" table against the full topical entries each
+  row is supposed to point to) found three pre-existing rows with no
+  entry to point to at all (MULTI-001/002/003). All three described
+  real, already-fixed (or already-accepted) findings documented
+  elsewhere in the project (CLAUDE.md's layout-vision section, and the
+  `_matching_assets`/`_with_vision_siblings` docstrings themselves), so
+  full entries were written from that existing, verified material
+  rather than inventing new content to fill the gap.
+
+### Goal
+Fix the findings from `.claude-prompts/35.3-Audit-Report.md` and
+`.claude-prompts/35.5-Codex-audit-report.md` (identical content to
+`experiments/reports/pre_experiment_audit_2026-10-24.md`), write the
+combined result as `.claude-prompts/35.6-Final-Fix-Report.md`, record
+each fix (and each deferred item) in `KNOWN_ISSUES.md` following its
+existing structure, create
+`config/experiments/context-engineering-v1.yaml`, and run one real
+end-to-end Context Engineering smoke evaluation against it.
+
+### Changes made
+- 22 fixes across `src/rag/retrieval/`, `src/rag/retrieval/egress_policy.py`
+  (new, relocated from `rag.eval.egress_policy`), `src/rag/graph/`,
+  `src/rag/context/`, `src/rag/eval/` (including a new
+  `run_metadata.py`), `src/rag/generation/ollama_llm.py`,
+  `src/rag/factory.py`, `src/rag/ingestion/pipeline.py`,
+  `src/rag/vectorstore/`, and `src/rag/agent/graph.py`. Full list with
+  problem/failure-scenario/fix/regression-test detail is in
+  `KNOWN_ISSUES.md` (SEC-015 through SEC-017, DIST-005, RET-005,
+  GRAPH-006, GRAPH-007, CTX-005 through CTX-013, EVAL-010 through
+  EVAL-015, OBS-002) and summarized in
+  `.claude-prompts/35.6-Final-Fix-Report.md`.
+- 5 findings deliberately deferred (GRAPH-008, GRAPH-009, BUG-015,
+  BUG-016, BUG-017), each recorded OPEN with its own "why not fixed yet"
+  and recommended fix, not silently dropped.
+- `KNOWN_ISSUES.md`: added all of the above, updated the Summary Table
+  and section 10's navigational table, added a dated postscript to the
+  "Final Consistency Pass" section, and added three full topical entries
+  (MULTI-001, MULTI-002, MULTI-003) that the table referenced but the
+  file never actually contained.
+- New: `config/experiments/context-engineering-v1.yaml`
+  (`secure-rag-baseline-v1.yaml` plus one `context` block:
+  `enabled: true`, `packing_strategy: priority_aware`,
+  `ordering_strategy: begin_end_sandwich`, `model_limits.overrides:
+  {qwen2.5:3b: 4096}`, recalibrated from an initial 32768 after a real
+  timeout).
+- New: `.claude-prompts/35.6-Final-Fix-Report.md` (the consolidated
+  fix report).
+- Test files: ~20 new/modified unit and integration test files proving
+  each fix, including `tests/unit/test_graph_dependency_path_authorization.py`,
+  `test_graph_client.py`, `test_agent_stream_disconnect_cancellation.py`,
+  `test_agent_synthesize_budgets_its_own_template.py`,
+  `test_graph_pipeline_strategy_labeling.py`, `test_run_metadata.py`
+  (all new), plus updates across `test_retrieval_pipeline.py`,
+  `test_run_ragas_eval.py`, `test_ingestion_pipeline_governance.py`,
+  `test_run_eval.py`, `test_metrics.py`, `test_ollama_llm.py`,
+  `test_factory.py`, `test_context_engine.py`, `test_context_dedup.py`,
+  `test_context_normalize.py`, `test_context_planner.py`,
+  `test_run_context_eval.py`, and a new integration test
+  (`test_pgvector.py::test_search_keyword_ties_break_deterministically_by_chunk_id`).
+
+### Evaluation results
+- Full unit suite: 1300 passed, 1 skipped, 0 failed.
+- `ruff check src/ scripts/ tests/`: all checks passed.
+- `mypy src/`: no issues found across 154 source files.
+- `test_run_eval.py` alone (55 tests, after the CTX-013 fix): all
+  passing.
+- First real end-to-end `run_eval.py` pass against
+  `context-engineering-v1.yaml` (real Postgres, real Ollama,
+  `qwen2.5:3b`, `data/eval/sample_gold.jsonl`, 4 questions, dataset id
+  `ctx_eng_smoke`): `recall@5`/`recall@10` 0.75, `mrr` 0.75,
+  `answer_quality.mean_overall` 0.559 (keyword-overlap heuristic),
+  `generation_mean` latency ~50.3s/answer (consistent with the
+  recalibrated 4096-token window, not the earlier multi-minute
+  32768-token failure), `run_metadata` populated with the real commit
+  SHA/branch/dirty state. All 4 answers grounded and correct on
+  inspection, including a correct refusal on the one unanswerable
+  question (parental leave policy, not present in the sample corpus).
+- Second confirmation pass, identical config and gold set, after the
+  CTX-013 fix: retrieval/MRR/answer-quality metrics byte-identical to
+  the first run (as expected, since CTX-013 only changed what
+  `run_eval.py` records, not what `answer()` computes);
+  `context_engineering` now populates on every `per_example` row and as
+  a top-level aggregate (`packing_strategy: priority_aware`, mean
+  utilization ~0.219, 0 items dropped or compressed across all 4
+  questions at this small sample-corpus scale, mean build latency
+  ~2.2ms).
+
+### Interpretation
+Running the real integration path, not just the synthetic harness and
+unit tests with fakes, earned its keep twice in one session: once by
+turning a theoretical risk (CTX-005's num_ctx mismatch) into a concrete,
+host-specific calibration number, and once by surfacing a gap (CTX-013)
+that no amount of component-level testing would have caught, since the
+bug was specifically in how `run_eval.py` assembles its own report
+around a real `answer()` call. Both reinforce the same lesson this
+project keeps relearning on every milestone: a feature validated only
+component-by-component is not the same claim as a feature proven to
+work end to end, and the two can diverge in ways that are cheap to find
+once you actually run the thing, but easy to miss otherwise.
+
+### Open problems
+The 5 deferred findings (GRAPH-008, GRAPH-009, BUG-015, BUG-016,
+BUG-017) remain OPEN, each with a recommended fix recorded in
+`KNOWN_ISSUES.md`. The smoke evaluation used the small tracked sample
+corpus (4 questions), not the full `techfusion` gold set; a full-corpus
+Context Engineering run (comparable in scale to the Context Engineering
+milestone's own synthetic benchmark) has not been performed.
+
+### Next recommended step
+Work through the 5 deferred findings as their own reviewed changes, each
+with the regression test its own entry already specifies. Separately,
+consider a full-corpus `context-engineering-v1` run (not just the
+4-question smoke test) once `config/default.yaml` itself is a candidate
+for enabling Context Engineering by default, to get real
+utilization/dedup/compression numbers at production scale rather than
+this session's intentionally small smoke-test scale.

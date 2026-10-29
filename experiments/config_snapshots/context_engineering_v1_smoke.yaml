@@ -1,0 +1,148 @@
+# context_engineering_v1: the first real end-to-end Context Engineering run.
+#
+# Identical to secure-rag-baseline-v1.yaml (the canonical safety/freshness
+# baseline) except for one added block:
+#   - context.enabled: true, with packing_strategy: priority_aware (the
+#     real algorithm) and ordering_strategy: begin_end_sandwich (both
+#     config defaults, made explicit here for self-description).
+# No other variable (embedding, chunking, retrieval, reranker, generation
+# model/temperature/seed, security) changes, so any answer-quality/
+# retrieval-metric delta against secure-rag-baseline-v1.yaml's own recorded
+# results is attributable to Context Engineering alone, per this project's
+# established "one isolated toggle per experiment config" convention (see
+# CLAUDE.md's "Known deviations" section and every secure-rag-baseline-v*
+# pair).
+#
+# Per docs/context_engineering.md's "Recommendations for production
+# deployment" (section 20, item 1): this is the staged-rollout step that
+# closes CTX-012 in KNOWN_ISSUES.md -- a real run_eval.py pass against the
+# real corpus with context.enabled=true, not just the synthetic
+# rag.eval.run_context_eval harness. Run before ever flipping
+# config/default.yaml's own context.enabled.
+#
+# model_limits.overrides must match the real deployed Ollama model's
+# actual runtime num_ctx (see CTX-005 in KNOWN_ISSUES.md): as of that
+# fix, rag.factory.build_llm always passes num_ctx explicitly to Ollama
+# from this same table, so the budget planner's assumption and the real
+# Ollama call can never silently disagree.
+#
+# 32768 (qwen2.5:3b's trained context length) was measured directly on
+# this project's 8GB-RAM CPU-only host and found impractical: a single
+# trivial chat call took ~6.6 minutes end to end (load_duration ~287s,
+# prompt_eval_duration ~107s for a 30-token prompt), confirming
+# docs/context_engineering.md's own recommendation #2 ("if the
+# deployment sets a smaller num_ctx than 32768 for memory reasons...
+# the budget planner will otherwise systematically over-allocate")
+# with real numbers, not just a theoretical concern. 4096 below is this
+# host's actual calibrated value, confirmed practical by this config's
+# own real end-to-end smoke evaluation (generation_mean ~47s/answer
+# against real multi-hundred-token RAG prompts, not the trivial
+# 30-token probe above; see experiments/results/
+# context_engineering_v1_smoke.json and PROJECT_JOURNAL.md's
+# corresponding session entry). Raise it only after confirming your
+# own host's latency at that window.
+#
+# Every component below is a "swap point": change `provider` (and its
+# provider-specific block) to try a different embedding model, vector
+# backend, chunker, reranker, or LLM without touching pipeline code.
+#
+# Secrets and host/port values are never hardcoded here: fields ending in
+# `_env_var` name an environment variable that is resolved at load time by
+# rag.config.Settings.
+
+app:
+  name: local-rag-system
+  log_level: INFO
+
+embedding:
+  provider: sentence_transformers # swap point
+  model_name: sentence-transformers/all-MiniLM-L6-v2
+  device: cpu
+  batch_size: 32
+  normalize: true
+  dimension: 384 # must match model output dim; used to size the pgvector column
+
+vectorstore:
+  provider: pgvector # swap point (future: chroma, faiss, ...)
+  connection_env_var: DATABASE_URL # never hardcode host/port/credentials
+  documents_table: documents
+  chunks_table: chunks
+  distance_metric: cosine
+
+chunking:
+  provider: structured_markdown # swap point: recursive_character | structured_markdown
+  chunk_size: 500
+  chunk_overlap: 50
+  structured_markdown:
+    table_row_group_size: 20
+    max_atomic_block_chars: 2000
+
+reranker:
+  provider: none # swap point: none | cross_encoder | cohere
+  cross_encoder:
+    model_name: cross-encoder/ms-marco-MiniLM-L-6-v2
+  cohere:
+    model_name: rerank-english-v3.0
+    api_key_env_var: COHERE_API_KEY
+
+generation:
+  provider: ollama # swap point
+  model_name: qwen2.5:3b
+  base_url_env_var: OLLAMA_BASE_URL
+  temperature: 0.0 # matches classic_rag_baseline_v1's deterministic baseline
+  max_tokens: 512
+  seed: 42 # matches classic_rag_baseline_v1
+  prompt:
+    id: rag_answer
+    version: v3 # safety milestone: explicit instruction/data boundary for retrieved context
+    path: src/rag/prompts/templates/rag_answer_v3.yaml
+
+judge:
+  provider: openai # swap point: openai | anthropic | ollama (ollama = local, for experimentation only)
+  temperature: 0.0
+  max_tokens: 1024
+  openai:
+    model_name: gpt-4o-mini
+    api_key_env_var: OPENAI_API_KEY
+  anthropic:
+    model_name: claude-haiku-4-5-20251001
+    api_key_env_var: ANTHROPIC_API_KEY
+  ollama:
+    model_name: llama3.1:8b # deliberately distinct from generation.model_name
+
+mlflow:
+  enabled: true
+  tracking_uri: "sqlite:///mlflow.db" # swap point: local sqlite file | a real MLflow tracking server URL
+  experiment_name: local-rag-system
+
+retrieval:
+  provider: hybrid # matches classic_rag_baseline_v1/experiment_015
+  candidate_k: 5
+  generation_context_top_n: 3
+  hybrid:
+    rrf_k: 60
+  relationship_expansion:
+    enabled: true # matches classic_rag_baseline_v1/experiment_015
+    include_parent: true
+    include_neighbors: true
+    max_related_elements: 3
+
+ingestion:
+  supported_extensions: [".pdf", ".docx", ".html", ".htm", ".txt", ".md"]
+
+vision:
+  provider: none # hosted vision OFF (not this milestone)
+
+security:
+  authorization:
+    enabled: true # THE safety-milestone toggle -- see secure-rag-baseline-v1-auth-disabled.yaml
+    cross_tenant_support_roles: ["techfusion_support"]
+
+# The one isolated toggle this config adds relative to secure-rag-baseline-v1.yaml.
+context:
+  enabled: true # THE context-engineering-milestone toggle
+  packing_strategy: priority_aware # swap point: top_n | naive_token_first | priority_aware
+  ordering_strategy: begin_end_sandwich # swap point: priority_first | authority_first | begin_end_sandwich | grouped_by_source
+  model_limits:
+    overrides:
+      qwen2.5:3b: 4096 # calibrated for this 8GB-RAM CPU-only host; see the comment block above
