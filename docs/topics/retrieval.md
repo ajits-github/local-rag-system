@@ -21,3 +21,54 @@ redaction pass both run inside the same retrieval pipeline; see
 for those.
 
 API reference: [Retrieval](../reference/retrieval.md), [Vector store](../reference/vectorstore.md).
+
+## Retrieval: dense vs. hybrid
+
+`config.retrieval.provider` is `dense` (default: pure vector similarity
+search) or `hybrid` (dense + BM25 keyword search, each run at
+`candidate_k`, fused via Reciprocal Rank Fusion before reranking,
+`retrieval/pipeline.py:RetrievalPipeline.retrieve`, `retrieval/fusion.py`).
+`VectorStore.search_keyword` is the BM25 side of that (implemented in
+`pgvector.py`); its `.score` is an unbounded raw BM25 score, never
+comparable to a cosine-similarity `.score` from `search()`, that's
+exactly why fusion goes through rank position (`reciprocal_rank_fusion`,
+`config.retrieval.hybrid.rrf_k`, default 60, the standard RRF/Elasticsearch/
+Weaviate constant) rather than combining the two `.score` scales directly.
+Fusion dedupes by `chunk.id` and sums `1/(k+rank)` contributions across
+whichever lists a chunk appears in.
+
+`RetrievalPipeline.retrieve_attribution` (additive, observability-only,
+`retrieve()`/`answer()` are unaffected by its existence) always fetches
+dense and BM25 independently and fuses them, regardless of
+`config.retrieval.provider`, and never calls the reranker or relationship
+expansion. `eval/retrieval_attribution.py` uses it to compute dense-only/
+BM25-only/hybrid Recall/Hit-Rate/MRR against the same gold set, a
+dense-vs-BM25 contribution bucket and an RRF-impact classification
+(`rescued`/`improved`/`unchanged`/`degraded`) per question. On the full
+84-question `techfusion` gold set: BM25 never independently finds a
+document dense alone misses (`bm25_only_success = 0`); hybrid's
+Recall@10 is actually slightly *lower* than dense-only's (fusion
+demoting an already-correct dense top-1/2 result costs more at that
+cutoff than it rescues), but hybrid clearly wins on MRR and
+evidence-level `supporting_context_hit_rate`, see
+`PROJECT_JOURNAL.md`'s 2026-08-13 attribution entry and
+`experiments/results/attribution/experiment_016.json` for the full
+numbers.
+
+
+## Prompt templates
+
+`config.generation.prompt` (`id`/`version`/`path`) selects a versioned
+YAML prompt template under `src/rag/prompts/templates/`, loaded and
+validated by `prompts/loader.py`. Each template declares
+`system_template`/`user_template` (Python `str.format` syntax) plus a
+`required_variables` list that's cross-checked at load time against the
+actual `{placeholder}` names in both templates, a template with an
+undeclared placeholder or an unused declared variable fails validation
+immediately rather than failing at render time. `load_prompt_template_from_config`
+additionally checks the loaded file's own `prompt_id`/`version` match what
+config expects, catching a stale `path` pointing at the wrong version.
+`RetrievalPipeline.answer()` renders with `context` (the reranked,
+`[Source N: ...]`-labeled chunk text) and `query`. Bumping the prompt
+version means adding a new template file and pointing `config.generation.
+prompt` at it, old versions stay on disk for comparison, not overwritten.

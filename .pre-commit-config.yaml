@@ -13,11 +13,11 @@ repos:
       - id: check-toml
       - id: check-added-large-files
         # PROJECT_JOURNAL.md is a growing, legitimate plain-text engineering
-        # log; docs/assets/architecture-diagram.png is a README image kept
-        # at its original, uncompressed resolution by request. Both
+        # log; the two architecture diagrams under docs/assets/ are kept at
+        # their original, uncompressed resolution by request. All three
         # excluded by name rather than raising the global --maxkb, which
         # would weaken this check for everything else.
-        exclude: ^(PROJECT_JOURNAL\.md|docs/assets/architecture-diagram\.png)$
+        exclude: ^(PROJECT_JOURNAL\.md|docs/assets/architecture-diagram(-detailed)?\.png)$
       - id: check-merge-conflict
       - id: debug-statements
       - id: mixed-line-ending
