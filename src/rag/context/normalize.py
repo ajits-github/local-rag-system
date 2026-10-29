@@ -17,6 +17,7 @@ import hashlib
 from rag.context.graph_packing import parse_graph_fact_text
 from rag.context.prioritize import authority_score_for_trust_level
 from rag.context.types import ContextItem, ContextSourceType, ConversationTurn
+from rag.retrieval.injection_detection import detect_injection
 from rag.schemas import SearchResult
 
 
@@ -112,7 +113,12 @@ def normalize_conversation_turn(turn: ConversationTurn, index: int) -> ContextIt
     ContextItem
         `relevance_score`/`authority_score`/`freshness_status` are all
         `None`: history turns have no retrieval-ranking or governance
-        concept.
+        concept. `injection_suspected` is set via the same
+        `detect_injection` heuristic every document/graph/tool evidence
+        item already carries (telemetry/reinforcement only, exactly as
+        for any other evidence: the trust boundary is that history
+        renders as data inside the user turn, never as an instruction,
+        regardless of this flag).
     """
     source_id = turn.turn_id or f"turn_{index}"
     label = "User" if turn.role == "user" else "Assistant"
@@ -121,6 +127,7 @@ def normalize_conversation_turn(turn: ConversationTurn, index: int) -> ContextIt
         source_type="conversation_history",
         source_id=source_id,
         citation=f"conversation turn {index} ({turn.role})",
+        injection_suspected=detect_injection(turn.content),
     )
 
 
