@@ -100,8 +100,8 @@ def context_engineering_summary(packed: PackedContext) -> dict:
     -------
     dict
         JSON-serializable summary: candidate/packed token counts,
-        utilization, reduction, dedup/compression counts, truncation
-        flag, and the packing strategy used.
+        utilization, reduction, dedup/compression counts, truncation and
+        infeasible-budget flags, and the packing strategy used.
     """
     return {
         "packing_strategy": packed.packing_trace.strategy,
@@ -117,6 +117,7 @@ def context_engineering_summary(packed: PackedContext) -> dict:
         "compression_ratio": round(packed.compression_stats.compression_ratio, 4),
         "dropped_item_count": packed.packing_trace.dropped_item_count,
         "truncated": packed.truncated,
+        "budget_infeasible": packed.budget.infeasible,
         "build_latency_ms": round(packed.build_latency_ms, 2),
     }
 
@@ -269,6 +270,14 @@ class ContextEngine:
             candidate_items=evidence_items,
             has_history=bool(history_turns),
         )
+        if budget.infeasible:
+            logger.warning(
+                "Context budget infeasible: fixed prompt costs exceed the model window",
+                extra={
+                    "budget_deficit_tokens": budget.budget_deficit_tokens,
+                    "model_context_window": budget.model_context_window,
+                },
+            )
 
         with tracing.start_span("context_packing") as pack_span:
             strategy = cfg.packing_strategy
@@ -305,7 +314,11 @@ class ContextEngine:
 
         ordered = order_for_rendering(kept, strategy=cfg.ordering_strategy)
         rendered = render_context(ordered)
-        packed_token_count = sum(i.token_count for i in ordered)
+        # Per-item counts are estimates; never report less than the
+        # rendered text actually costs.
+        packed_token_count = max(
+            sum(i.token_count for i in ordered), self._count(tenant_id, rendered)
+        )
 
         tokens_before_compression = sum(
             (i.original_token_count if i.original_token_count is not None else i.token_count)
@@ -336,7 +349,7 @@ class ContextEngine:
             packed_tokens=packed_token_count,
             build_seconds=build_latency_ms / 1000,
             strategy=strategy,
-            utilization=min(utilization, 1.0),
+            utilization=utilization,
             dropped_by_reason=dropped_by_reason,
             dedup_by_kind={
                 "exact": dedup_stats.exact_duplicates_removed,
@@ -344,6 +357,8 @@ class ContextEngine:
             },
             compressed_item_count=compressed_count,
             overflow_prevented=truncated,
+            budget_exceeded=packed_token_count > available,
+            budget_infeasible=budget.infeasible,
         )
 
         return PackedContext(

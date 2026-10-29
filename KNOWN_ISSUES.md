@@ -1426,10 +1426,10 @@ Harmless while history items aren't counted by the bucket logic, but duplicate g
 `docs/context_engineering.md`'s own benchmark table claimed "every run respected its computed budget exactly," which the project's own committed `report.json` directly contradicted (5/240 `top_n` rows overflowed at larger candidate sizes).
 
 **Fix applied**
-`context_utilization` is now reported unclamped; `context_overflow`/`context_excess_tokens` fields were added, and the benchmark report/table/doc text were corrected and regenerated.
+`context_utilization` is now reported unclamped; `context_overflow`/`context_excess_tokens` fields were added, and the benchmark report/table/doc text were corrected and regenerated. The same clamp survived in runtime telemetry: `ContextEngine.build` still passed `min(utilization, 1.0)` to `rag_context_utilization_ratio`, so Prometheus could never show an overflow either. It now observes the unclamped value (histogram buckets extend to 4.0) and counts packed-over-budget builds in `rag_context_budget_exceeded_total{strategy}`.
 
 **Regression test**
-`test_top_n_baseline_genuinely_overflows_and_reports_it_honestly` (and the updated `test_full_pipeline_never_exceeds_budget...` now also asserting `context_overflow is False`) in `tests/unit/test_run_context_eval.py`.
+`test_top_n_baseline_genuinely_overflows_and_reports_it_honestly` (and the updated `test_full_pipeline_never_exceeds_budget...` now also asserting `context_overflow is False`) in `tests/unit/test_run_context_eval.py`; `test_metrics_receive_unclamped_utilization_on_overflow` in `tests/unit/test_context_engine.py` for the telemetry path.
 
 ---
 
@@ -1451,6 +1451,51 @@ A reviewer comparing a Context-Engineering-enabled report against a baseline wou
 
 **Regression test**
 Verified by unit tests exercising `evaluate()` with `config.context.enabled=True` and inspecting the resulting report's `context_engineering` key.
+
+---
+
+### CTX-014: Compression dropped the render overhead from an item's token count, admitting it over budget
+
+**Status:** FIXED
+**Severity:** MAJOR
+**Area:** Context Engineering
+**Affected code:** `rag.context.compression.compress_item`, `ContextEngine.build`
+
+**Problem**
+Since CTX-006, an item's `token_count` is content plus its citation label and separator overhead. `compress_item` recounted only the compressed *content*, so the returned count silently lost that overhead. Worse, an item whose content could not be shortened at all still came back with `new_tokens < original_tokens` (content alone is smaller than content plus overhead), so it was marked `compressed=True` and admitted with an undercount. The engine then summed those per-item counts and never measured the rendered text.
+
+**Failure scenario**
+Under a tight budget, `priority_aware` packing admits "compressed" items whose real rendered cost exceeds the remaining headroom; `packed_token_count` and utilization under-report, and the benchmark trusts the same numbers.
+
+**Fix applied**
+`compress_item` measures the item's overhead (`token_count - count(content)`), compresses content toward `target - overhead`, adds the overhead back to the new count, and returns the item unchanged when the content did not change. `ContextEngine.build` reports `packed_token_count` as the larger of the per-item sum and the token count of the actual rendered context, so it can never under-report the prompt.
+
+**Regression test**
+`test_compression_keeps_render_overhead_in_the_compressed_token_count`, `test_unchanged_content_is_never_marked_compressed` in `tests/unit/test_context_compression.py`; `test_packed_token_count_is_never_below_the_rendered_context_cost` in `tests/unit/test_context_engine.py`.
+
+**Notes**
+A follow-on gap of the CTX-006 fix: the overhead was added at normalization but not carried through the one code path that rewrites `token_count`.
+
+---
+
+### CTX-015: An infeasible prompt was silently budgeted as zero evidence
+
+**Status:** FIXED
+**Severity:** MODERATE
+**Area:** Context Engineering
+**Affected code:** `rag.context.planner.plan_context_budget`, `ContextEngine.build`
+
+**Problem**
+When the system prompt, query, output reservation, framework overhead and safety margin together exceeded the model window, the planner clamped `available_context_tokens` to 0 with no signal. Packing then dropped every item, which looked identical to an ordinary "nothing relevant fit" truncation.
+
+**Failure scenario**
+Lowering `num_ctx` (via `model_limits.overrides`) for latency, with a long system prompt and `max_tokens` reservation, makes every request answer with no evidence and no error, flag, or metric distinguishing it from a retrieval miss.
+
+**Fix applied**
+`ContextBudget` gained `budget_deficit_tokens` and an `infeasible` property. `ContextEngine.build` logs a warning when the budget is infeasible, counts it in `rag_context_budget_infeasible_total`, and `context_engineering_summary()` exposes `budget_infeasible` on API responses and eval records. The request is still served (the engine's never-raise contract is unchanged); the condition is now visible instead of silent.
+
+**Regression test**
+`test_budget_records_the_deficit_when_fixed_costs_exceed_the_window`, `test_feasible_budget_has_no_deficit` in `tests/unit/test_context_planner.py`; `test_infeasible_budget_is_flagged_in_the_summary_and_metrics` in `tests/unit/test_context_engine.py`.
 
 ---
 
@@ -2375,6 +2420,8 @@ The following issues are resolved, with a concrete fix and regression test cited
 | CTX-010 | Context Engineering | Adaptive budget classification counted post-dedup evidence, contrary to its own contract |
 | CTX-011 | Context Engineering | The Context Engineering benchmark clamped utilization to 1.0, hiding real overflow |
 | CTX-013 | Context Engineering | `run_eval.py` silently dropped `answer()`'s own `context_engineering` field |
+| CTX-014 | Context Engineering | Compression dropped the render overhead from an item's token count, admitting it over budget |
+| CTX-015 | Context Engineering | An infeasible prompt was silently budgeted as zero evidence |
 | EVAL-014 | Evaluation / Context Engineering | `sources`/citations could credit evidence Context Engineering had already dropped or compressed |
 
 ---

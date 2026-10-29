@@ -52,7 +52,9 @@ known limitations); this section is the condensed version.
 - **Budget algorithm** (`rag.context.planner`): `available_context_tokens
   = model_context_window - reserved_output_tokens - system_prompt_tokens
   - user_query_tokens - framework_overhead_tokens - safety_margin_tokens`,
-  floored at 0, then allocated across four buckets (`document`/
+  floored at 0 (a negative raw value is recorded as `budget_deficit_tokens`
+  and surfaced as `budget_infeasible`, logged and counted, never silently
+  treated as an empty-context success), then allocated across four buckets (`document`/
   `graph_path`/`mcp_tool`/`conversation_history`) by `SourceBudgetConfig`'s
   four shares (validated to sum to 1.0 at config-load time). `config.
   context.model_limits` is a per-`generation.model_name` context-window
@@ -187,7 +189,9 @@ known limitations); this section is the condensed version.
   `rag_context_compressed_items_total`/
   `rag_context_build_latency_seconds`/
   `rag_context_overflow_prevented_total`/
-  `rag_context_utilization_ratio{strategy}`) and new OTel spans
+  `rag_context_utilization_ratio{strategy}` (unclamped)/
+  `rag_context_budget_exceeded_total{strategy}`/
+  `rag_context_budget_infeasible_total`) and new OTel spans
   (`context_normalize`/`context_deduplication`/`context_packing`).
   `QueryResponse`/`AgentQueryResponse` both gained an optional
   `context_engineering` field (token counts, utilization, reduction,

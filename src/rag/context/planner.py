@@ -121,7 +121,10 @@ def plan_context_budget(
     -------
     ContextBudget
         `available_context_tokens` floored at 0, with `source_budgets`
-        populated from whichever `SourceBudgetConfig` was selected.
+        populated from whichever `SourceBudgetConfig` was selected. When
+        the fixed costs alone exceed the window, `budget_deficit_tokens`
+        records by how much, so the caller can flag the request as
+        infeasible instead of treating empty context as a normal result.
     """
     limits = resolve_model_context_limits(config)
     reserved_output = (
@@ -134,7 +137,7 @@ def plan_context_budget(
     overhead_tokens = config.context.framework_overhead_tokens
     safety_margin = config.context.safety_margin_tokens
 
-    available = (
+    raw_available = (
         limits.context_window_tokens
         - reserved_output
         - system_tokens
@@ -142,7 +145,7 @@ def plan_context_budget(
         - overhead_tokens
         - safety_margin
     )
-    available = max(available, 0)
+    available = max(raw_available, 0)
 
     source_budget_cfg = _resolve_source_budget_config(config, candidate_items, has_history)
     caps = {
@@ -173,6 +176,7 @@ def plan_context_budget(
         framework_overhead_tokens=overhead_tokens,
         safety_margin_tokens=safety_margin,
         available_context_tokens=available,
+        budget_deficit_tokens=max(-raw_available, 0),
         source_budgets=source_budgets,
     )
 
