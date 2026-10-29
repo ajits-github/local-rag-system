@@ -26,7 +26,7 @@ import signal
 import threading
 import time
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 
 from . import metrics
@@ -194,8 +194,13 @@ class IngestionWorker:
         just because shutdown was requested; it is only ever abandoned by
         a hard process kill (`kill -9` / `taskkill /F`), which is exactly
         what experiment 4 uses to prove `reclaim_stale()` recovers it.
+
+        Claims only as many jobs as there are free slots (`max_concurrency`
+        minus jobs still running or queued in the pool), so a claimed job
+        never waits in the executor long enough to age past
+        `reclaim_idle_ms` and be reclaimed by another worker.
         """
-        futures = []
+        futures: list[Future] = []
         while not self._shutdown.is_set():
             self.queue.heartbeat(self.config.consumer_name)
             metrics.ACTIVE_WORKERS.set(self.queue.active_worker_count())
@@ -203,16 +208,20 @@ class IngestionWorker:
             self.queue.promote_due_retries()
             metrics.QUEUE_DEPTH.set(self.queue.backlog_depth())
             metrics.DEAD_LETTER_DEPTH.set(self.queue.dead_letter_depth())
+            futures = [f for f in futures if not f.done()]
+            free_slots = self.config.max_concurrency - len(futures)
+            if free_slots <= 0:
+                wait(futures, timeout=self.config.claim_block_ms / 1000, return_when=FIRST_COMPLETED)
+                continue
             claimed = self.queue.claim(
                 self.config.consumer_name,
-                count=self.config.max_concurrency,
+                count=free_slots,
                 block_ms=self.config.claim_block_ms,
             )
             for job in claimed:
                 if job.redelivered:
                     metrics.JOBS_DUPLICATE_DELIVERIES_TOTAL.inc()
                 futures.append(self._executor.submit(self._process_one, job))
-            futures = [f for f in futures if not f.done()]
         self._executor.shutdown(wait=True)
         logger.info("worker %s: drained, exiting", self.config.consumer_name)
 
