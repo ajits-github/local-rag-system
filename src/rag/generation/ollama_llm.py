@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 import ollama
@@ -16,6 +17,19 @@ class OllamaLLM(LLM):
     cumulative), read from Ollama's `prompt_eval_count`/`eval_count`
     response fields. `None` if either field is omitted, though this
     hasn't been observed in practice for a non-streaming call.
+
+    This one `OllamaLLM` instance is a process-wide singleton
+    (`rag.api.deps.get_llm`), shared across concurrent requests. Storing
+    `last_prompt_tokens`/`last_completion_tokens` as plain instance
+    attributes would let two concurrent `generate()` calls race: request
+    A's `generate()` returns, but before A's caller reads
+    `last_prompt_tokens`, request B's `generate()` call (on a different
+    worker thread) overwrites it with B's own counts, so A reports B's
+    usage. Backed by `threading.local()` instead, so each calling
+    thread sees only the counts from its own most recent call on this
+    instance; every existing call site's `llm.last_prompt_tokens`/
+    `getattr(llm, "last_prompt_tokens", None)` access is unchanged,
+    since attribute syntax is identical either way.
     """
 
     def __init__(
@@ -50,8 +64,17 @@ class OllamaLLM(LLM):
         self._temperature = temperature
         self._max_tokens = max_tokens
         self._seed = seed
-        self.last_prompt_tokens: int | None = None
-        self.last_completion_tokens: int | None = None
+        self._thread_local = threading.local()
+
+    @property
+    def last_prompt_tokens(self) -> int | None:
+        """The calling thread's own most recent `generate()` call's prompt-token count."""
+        return getattr(self._thread_local, "prompt_tokens", None)
+
+    @property
+    def last_completion_tokens(self) -> int | None:
+        """The calling thread's own most recent `generate()` call's completion-token count."""
+        return getattr(self._thread_local, "completion_tokens", None)
 
     def generate(self, system: str, user: str) -> str:
         """See `LLM.generate`.
@@ -71,8 +94,8 @@ class OllamaLLM(LLM):
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": user})
         response = self._client.chat(model=self._model_name, messages=messages, options=options)
-        self.last_prompt_tokens = response.get("prompt_eval_count")
-        self.last_completion_tokens = response.get("eval_count")
+        self._thread_local.prompt_tokens = response.get("prompt_eval_count")
+        self._thread_local.completion_tokens = response.get("eval_count")
         return response["message"]["content"]
 
     def health_check(self) -> bool:

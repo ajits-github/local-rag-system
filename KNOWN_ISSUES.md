@@ -1351,6 +1351,27 @@ A `/health` latency assertion against a cold process, with no dependency pre-war
 
 ---
 
+### OBS-002: Shared mutable LLM token counters could leak across concurrent requests
+
+**Status:** FIXED
+**Severity:** MODERATE
+**Area:** Observability / concurrency
+**Affected code:** `OllamaLLM.last_prompt_tokens`/`last_completion_tokens`
+
+**Problem**
+`OllamaLLM` is a process-wide singleton; its token counts were plain instance attributes, written by `generate()` and read by the caller afterward.
+
+**Failure scenario**
+Two concurrent requests sharing the singleton: request A's `generate()` returns, but before A reads `last_prompt_tokens`, request B's concurrent `generate()` call overwrites it with B's own counts, so A reports B's usage.
+
+**Fix applied**
+Both counters are now backed by `threading.local()`, exposed as read-only properties with the same names, so each calling thread sees only its own most recent call's counts. No call-site change needed.
+
+**Regression test**
+`test_concurrent_calls_on_one_shared_instance_never_cross_token_counts` in `tests/unit/test_ollama_llm.py` (two threads, forced interleaving via `threading.Event`, each asserting its own counts).
+
+---
+
 ## 7. Deployment and Operations
 
 ### OPS-001: A 504 at the frontend came from the host running out of memory
@@ -1807,6 +1828,7 @@ The following issues are resolved, with a concrete fix and regression test cited
 | EVAL-003 | Evaluation | A keyword heuristic produced false regression counts, and a test relied on it |
 | EVAL-005 | Evaluation | Safety metrics read as a perfect zero until the gold paths were checked |
 | EVAL-006 | Evaluation | `oversized_request_rejection_accuracy` read 0/3, because the probe token was rejected first |
+| OBS-002 | Observability | Shared mutable LLM token counters could leak across concurrent requests |
 | OPS-001 | Deployment | A 504 at the frontend came from the host running out of memory |
 | OPS-002 | Deployment | A frontend panel stayed "unavailable" because the reverse proxy never routed two endpoints |
 | OPS-003 | MCP | The MCP SDK's built-in auth did not match this system's trust model |

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+
 from rag.generation.ollama_llm import OllamaLLM
 
 
@@ -94,6 +96,55 @@ def test_generate_omits_seed_from_options_when_not_configured(monkeypatch):
     llm.generate("system text", "some prompt")
 
     assert "seed" not in llm._client.last_options
+
+
+def test_concurrent_calls_on_one_shared_instance_never_cross_token_counts(monkeypatch):
+    """Two threads sharing one OllamaLLM instance must each see only their own token counts.
+
+    Regression for OBS-002: `last_prompt_tokens`/`last_completion_tokens`
+    used to be plain instance attributes on this process-wide singleton
+    LLM; a concurrent request could read another request's just-written
+    counts instead of its own.
+    """
+    llm = OllamaLLM(model_name="qwen2.5:3b")
+    responses = {
+        "thread-a": {"message": {"content": "a"}, "prompt_eval_count": 111, "eval_count": 11},
+        "thread-b": {"message": {"content": "b"}, "prompt_eval_count": 222, "eval_count": 22},
+    }
+
+    class _ThreadAwareFakeClient:
+        def chat(self, model, messages, options):
+            return responses[threading.current_thread().name]
+
+    monkeypatch.setattr(llm, "_client", _ThreadAwareFakeClient())
+    observed: dict[str, tuple[int | None, int | None]] = {}
+    a_generated = threading.Event()
+    b_generated = threading.Event()
+
+    def _worker_a():
+        llm.generate("sys", "user")
+        a_generated.set()
+        # Force the exact interleaving that would expose a shared-attribute
+        # race: B writes its own counts onto the same instance *before* A
+        # ever reads its own counts back.
+        b_generated.wait(timeout=5)
+        observed["thread-a"] = (llm.last_prompt_tokens, llm.last_completion_tokens)
+
+    def _worker_b():
+        a_generated.wait(timeout=5)
+        llm.generate("sys", "user")
+        observed["thread-b"] = (llm.last_prompt_tokens, llm.last_completion_tokens)
+        b_generated.set()
+
+    thread_a = threading.Thread(target=_worker_a, name="thread-a")
+    thread_b = threading.Thread(target=_worker_b, name="thread-b")
+    thread_a.start()
+    thread_b.start()
+    thread_a.join(timeout=5)
+    thread_b.join(timeout=5)
+
+    assert observed["thread-a"] == (111, 11)
+    assert observed["thread-b"] == (222, 22)
 
 
 def test_generate_passes_configured_temperature_and_max_tokens(monkeypatch):
