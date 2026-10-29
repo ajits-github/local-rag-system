@@ -620,8 +620,15 @@ and never changed by an LLM decision.
 
 ### Tools
 
-Local tools wrap existing services (`agent/tools.py`); none reimplements
-retrieval or security logic:
+![Agent tool architecture: the in-process agent dispatches local RAG and
+optional graph tools directly in Python, and business tools through its
+MCP client to the internal /mcp server, which resolves identity, verifies
+the internal JWT, and dispatches to the case backend](assets/agent-tool-architecture.png)
+
+The agent has three tool families. Local RAG and graph tools are direct
+Python calls; business tools go through the MCP client (see
+[MCP Integration](#mcp-integration)). None reimplements retrieval or
+security logic (`agent/tools.py`):
 
 | Tool | Calls | Bounding |
 |---|---|---|
@@ -629,12 +636,18 @@ retrieval or security logic:
 | `get_document` | `VectorStore.get_chunks_by_source` | SQL ceiling (`max_chunks_per_document_fetch_hard_ceiling`, 50), then relevance selection to `max_chunks_per_document_fetch` (10); not LLM-writable |
 | `get_latest_document` | `list_document_versions` + `freshness.resolve_current_document_source` + `get_chunks_by_source` | same as `get_document` |
 | `get_related_context` | `RetrievalPipeline.expand_with_relationships()` | `relationship_expansion.max_related_elements` |
+| `search_knowledge_graph`, `get_entity`, `get_neighbors`, `find_dependency_path` | `GraphRetriever` / `Neo4jClient` | bounded string lengths; `get_neighbors.max_hops` is `Field(ge=1, le=3)` and clamped again by `GraphRetriever` |
+| `get_customer_case`, `get_case_status`, `update_case_status` | MCP client to `rag.mcp.business.store` | see [MCP Integration](#mcp-integration) |
+
+Graph tools are offered (via `agent.tool_select_graph_prompt_path`) only
+when `graph.enabled` is true; `GraphRetriever` applies the caller's
+authorization. A call to a disabled tool family is recorded as a failure
+and audited, never dispatched.
 
 `get_latest_document` takes a `source` path, not a topic: the intended
 pattern is `search_knowledge_base` to find a source, then
 `get_latest_document` to resolve its current version (an old version's
-path returns the current version's content). Three remote MCP tools
-(customer cases) are added in [MCP Integration](#mcp-integration).
+path returns the current version's content).
 
 ### Security invariants
 
@@ -723,32 +736,19 @@ calls and never go through MCP.
 
 ### Architecture
 
-```mermaid
-flowchart LR
-    Client(["External MCP Client<br/>(Claude Desktop, another agent)"])
-    Client -->|"Streamable HTTP<br/>Authorization: Bearer JWT"| Mount["/mcp mount<br/>(mount_mcp_app)"]
+![Agent and MCP architecture: run_agent dispatches the four local RAG
+tools directly in Python to RetrievalPipeline and the knowledge base, and
+the business tools through rag.agent.mcp_client, which mints an internal
+service JWT and calls the /mcp server over Streamable HTTP; the server
+resolves identity, verifies the JWT, and dispatches to
+rag.mcp.business.store](assets/agent-mcp-architecture.png)
 
-    subgraph RagApi["rag-api process"]
-        Graph["run_agent<br/>(rag.agent.graph)"] -->|"tool_name in<br/>REMOTE_MCP_TOOL_NAMES"| McpClient["rag.agent.mcp_client"]
-        McpClient -->|"mints a short-lived<br/>internal service token"| Mint["mint_internal_token"]
-        Mint -->|"ASGITransport(app=mcp_app)<br/>default transport, no socket"| Mount
-
-        Mount --> Server["MCPServer<br/>(rag.mcp.server)"]
-        Server -->|"Resolve()"| Identity["rag.mcp.identity<br/>resolve_http_identity"]
-        Identity -->|"verify_jwt"| Auth["rag.api.auth<br/>(shared with POST /query)"]
-
-        Graph -->|"local tools, unchanged"| Dispatch
-        Server --> Dispatch["_run_tool: dispatch -> sanitize -> serialize"]
-        Dispatch --> Tools["rag.agent.tools.*<br/>(unmodified)"]
-        Tools --> Pipeline["RetrievalPipeline / VectorStore"]
-        Dispatch -->|"sanitize_evidence"| Pipeline
-
-        Server --> BizDispatch["_run_business_tool"]
-        BizDispatch --> Store["rag.mcp.business.store<br/>(synthetic case backend)"]
-    end
-
-    Pipeline --> DB[("Postgres + pgvector")]
-```
+Reading the diagram against the code: the orchestrator is the custom
+bounded loop in `rag.agent.graph`, not LangGraph (LangGraph exists only
+on the `experiment/langgraph-agent` branch); the vector store is
+Postgres + pgvector only; and an external MCP client (Claude Desktop,
+another agent) calls the `/mcp` server directly, the same endpoint the
+agent's own MCP client reaches, rather than calling `run_agent`.
 
 `rag.mcp.asgi.build_mcp_asgi_app` wraps the `MCPServer` in a Starlette app
 that `rag.api.main` mounts at `mcp.server.mount_path` (default `/mcp`),
