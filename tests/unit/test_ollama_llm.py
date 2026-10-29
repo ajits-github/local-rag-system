@@ -98,6 +98,22 @@ def test_generate_omits_seed_from_options_when_not_configured(monkeypatch):
     assert "seed" not in llm._client.last_options
 
 
+def test_generate_passes_num_ctx_in_options_when_configured(monkeypatch):
+    """A configured num_ctx is forwarded to Ollama's options.num_ctx.
+
+    Regression for CTX-005: the Context Engineering budget planner
+    assumes a per-model context window (`rag.context.model_limits`),
+    but nothing ever told the real Ollama server what that window
+    actually is, so the assumption and the real runtime behavior could
+    silently disagree.
+    """
+    llm = _make_llm(monkeypatch, {"message": {"content": "answer"}}, num_ctx=32768)
+
+    llm.generate("system text", "some prompt")
+
+    assert llm._client.last_options["num_ctx"] == 32768
+
+
 def test_concurrent_calls_on_one_shared_instance_never_cross_token_counts(monkeypatch):
     """Two threads sharing one OllamaLLM instance must each see only their own token counts.
 
@@ -145,6 +161,15 @@ def test_concurrent_calls_on_one_shared_instance_never_cross_token_counts(monkey
 
     assert observed["thread-a"] == (111, 11)
     assert observed["thread-b"] == (222, 22)
+
+
+def test_generate_omits_num_ctx_from_options_when_not_configured(monkeypatch):
+    """No num_ctx key is sent at all when num_ctx is None (default)."""
+    llm = _make_llm(monkeypatch, {"message": {"content": "answer"}})
+
+    llm.generate("system text", "some prompt")
+
+    assert "num_ctx" not in llm._client.last_options
 
 
 def test_generate_passes_configured_temperature_and_max_tokens(monkeypatch):

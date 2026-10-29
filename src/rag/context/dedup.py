@@ -27,8 +27,25 @@ kept item's `merged_from`, never dropping provenance silently.
 
 Never merges two items just because they are about the same *topic*;
 only byte-identical or near-byte-identical text triggers a merge, so two
-genuinely different facts about the same entity are never accidentally
-collapsed into one.
+genuinely different facts about the same entity (e.g. "timeout = 30s" vs
+"timeout = 60s") are never accidentally collapsed into one. The exact-
+content-hash pass can never hit this case by construction (byte-identical
+text has byte-identical numbers); the near-duplicate pass explicitly
+refuses to merge two otherwise-near-identical passages whose *numbers*
+differ (CTX-007), since a near-duplicate paragraph restating an
+old value alongside a current, authoritative one is exactly the
+"different-but-highly-overlapping" case this pass would otherwise merge,
+silently discarding whichever value lost the merge regardless of which
+one was actually current.
+
+Both the exact-content-hash and near-duplicate passes additionally
+require matching `tenant_id` before merging (CTX-007): a single
+request's candidate set can legitimately span two tenants (a
+`cross_tenant_support_roles` caller), and merging byte-identical or
+near-identical boilerplate text across that boundary would silently
+drop one tenant's citation into the other's `merged_from`, misattributing
+a shared fact to the wrong tenant's document even though both chunks
+were independently authorized for this caller.
 """
 
 from __future__ import annotations
@@ -39,6 +56,23 @@ from rag.context.normalize import content_hash
 from rag.context.types import ContextItem, DeduplicationStats
 
 _WORD_RE = re.compile(r"\w+")
+_NUMBER_RE = re.compile(r"\d+(?:\.\d+)?")
+
+
+def _numbers(text: str) -> set[str]:
+    """Distinct numeric tokens in `text` (e.g. `{"30", "60"}`), for the conflict guard."""
+    return set(_NUMBER_RE.findall(text))
+
+
+def _tenant_matches(a: ContextItem, b: ContextItem) -> bool:
+    """Whether two items may be merged under the tenant-scoping rule.
+
+    `None` (untenanted, pre-governance content) is treated as its own
+    single bucket: two untenanted items may still merge with each other,
+    but never with a real tenant's content, and two different real
+    tenants' items never merge with each other.
+    """
+    return a.tenant_id == b.tenant_id
 
 
 def _shingles(text: str, size: int = 3) -> set[tuple[str, ...]]:
@@ -85,7 +119,12 @@ def deduplicate_items(
     """
     tokens_before = sum(i.token_count for i in items)
     seen_ids: set[str] = set()
-    seen_hashes: dict[str, int] = {}
+    # content_hash -> every kept index with that hash, not just one: two
+    # different tenants' byte-identical content (CTX-007) must each get
+    # their own kept entry under the same hash, so a later same-tenant
+    # duplicate of either still finds its own matching one rather than
+    # whichever tenant happened to occupy the (overwritten) single slot.
+    seen_hashes: dict[str, list[int]] = {}
     kept: list[ContextItem] = []
     exact_removed = 0
     near_removed = 0
@@ -96,21 +135,37 @@ def deduplicate_items(
             exact_removed += 1
             continue
         chash = content_hash(item.content)
-        if chash in seen_hashes:
-            idx = seen_hashes[chash]
-            kept[idx] = kept[idx].model_copy(
-                update={"merged_from": [*kept[idx].merged_from, item.source_id]}
+        matched_hash_idx = next(
+            (idx for idx in seen_hashes.get(chash, []) if _tenant_matches(kept[idx], item)), None
+        )
+        if matched_hash_idx is not None:
+            kept[matched_hash_idx] = kept[matched_hash_idx].model_copy(
+                update={"merged_from": [*kept[matched_hash_idx].merged_from, item.source_id]}
             )
             seen_ids.add(item.source_id)
             exact_removed += 1
             continue
+        # Either no hash match at all, or only a different tenant's
+        # byte-identical content (CTX-007): falls through to be kept as
+        # its own item below, exactly as if no hash match had occurred.
 
         item_shingles = _shingles(item.content)
+        item_numbers = _numbers(item.content)
         merged_into_existing = False
         for idx, existing in enumerate(kept):
             if existing.source_type != item.source_type:
                 continue
+            if not _tenant_matches(existing, item):
+                continue
             if _jaccard_overlap(shingle_cache[idx], item_shingles) < overlap_threshold:
+                continue
+            existing_numbers = _numbers(existing.content)
+            if existing_numbers and item_numbers and existing_numbers != item_numbers:
+                # High text overlap but different numeric values: likely
+                # a conflicting/updated fact (e.g. "timeout = 30s" vs
+                # "timeout = 60s"), not a true duplicate. Never merge;
+                # let freshness/authority ordering (not deduplication)
+                # decide which one to prioritize.
                 continue
             kept[idx] = existing.model_copy(
                 update={"merged_from": [*existing.merged_from, item.source_id]}
@@ -123,7 +178,7 @@ def deduplicate_items(
             continue
 
         seen_ids.add(item.source_id)
-        seen_hashes[chash] = len(kept)
+        seen_hashes.setdefault(chash, []).append(len(kept))
         kept.append(item)
         shingle_cache.append(item_shingles)
 

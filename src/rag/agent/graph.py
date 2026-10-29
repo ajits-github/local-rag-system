@@ -856,17 +856,26 @@ def _synthesize(
     """
     ordered_evidence = _order_evidence_for_synthesis(state.retrieved_evidence)
     tenant_id = state.authorization_context.tenant_id if state.authorization_context else None
-    context, context_engineering_info = pipeline.build_context_text(
+    context, context_engineering_info, packed_evidence = pipeline.build_context_text(
         ordered_evidence,
         state.original_query,
         history_turns=state.conversation_history,
         tenant_id=tenant_id,
+        # This node renders with `template` (agent_synthesize_v2.yaml),
+        # never the pipeline's own classic-RAG `generation.prompt`
+        # template, so the budget must measure *this* system prompt's
+        # token cost, not the other one's (CTX-006).
+        system_prompt_text=template.system_template,
     )
     state.context_engineering = context_engineering_info
     system, user = template.render(context=context, query=state.original_query)
     state.final_answer = sanitize_redaction_markers_in_answer(llm.generate(system, user))
     _accumulate_tokens(state, llm, "synthesize")
-    state.citations = _citations_from_evidence(ordered_evidence)
+    # citations reflect what the prompt actually contained
+    # (`packed_evidence`), never the pre-packing `ordered_evidence`
+    # (EVAL-014): a context-engineering drop/compression decision must
+    # never leave a citation crediting evidence the model wasn't shown.
+    state.citations = _citations_from_evidence(packed_evidence)
     if state.termination_reason is None:
         state.termination_reason = "synthesized"
     return state

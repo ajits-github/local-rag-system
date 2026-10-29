@@ -39,6 +39,7 @@ class OllamaLLM(LLM):
         temperature: float = 0.2,
         max_tokens: int = 512,
         seed: int | None = None,
+        num_ctx: int | None = None,
     ) -> None:
         """Construct the Ollama client.
 
@@ -58,12 +59,26 @@ class OllamaLLM(LLM):
             `options` entirely, matching prior non-deterministic
             behavior. Not passed as a literal `0`, which is itself a
             valid, distinct seed value).
+        num_ctx : int | None, optional
+            The model's real runtime context window, passed through to
+            Ollama's `options.num_ctx`. `None` (omitted from `options`
+            entirely) leaves Ollama's own default in effect, which is a
+            real gap, not a safe fallback: Ollama defaults every model to
+            a 2048-token context unless `num_ctx` is set explicitly,
+            independent of that model's trained context length.
+            `rag.factory.build_llm` resolves this from
+            `rag.context.model_limits.resolve_model_context_limits`, the
+            same table `rag.context.planner` uses to compute the Context
+            Engineering token budget, so the two can never silently
+            disagree about how large a prompt the real Ollama call will
+            actually accept.
         """
         self._client = ollama.Client(host=base_url)
         self._model_name = model_name
         self._temperature = temperature
         self._max_tokens = max_tokens
         self._seed = seed
+        self._num_ctx = num_ctx
         self._thread_local = threading.local()
 
     @property
@@ -89,6 +104,8 @@ class OllamaLLM(LLM):
         }
         if self._seed is not None:
             options["seed"] = self._seed
+        if self._num_ctx is not None:
+            options["num_ctx"] = self._num_ctx
         messages = []
         if system:
             messages.append({"role": "system", "content": system})

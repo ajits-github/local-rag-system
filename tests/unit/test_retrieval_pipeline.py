@@ -250,6 +250,54 @@ def test_answer_sources_include_chunk_content():
     assert result["sources"][0]["content"] == "Alpha content."
 
 
+def test_answer_sources_reflect_what_context_engineering_actually_packed():
+    """A context-engineering drop must also drop that chunk from sources, not just the prompt.
+
+    Regression for EVAL-014: `sources` used to always reflect the full,
+    pre-packing retrieval result, so a chunk Context Engineering excluded
+    from the prompt entirely would still be credited as a cited source,
+    even though the model never saw it. Citation/RAGAS-judge-context
+    metrics built from `sources` would therefore see evidence the model
+    was never shown.
+    """
+    kept = _make_result("kept", "Short kept content.", source="a.md", score=0.9)
+    dropped = _make_result(
+        "dropped", "Dropped content that should not be cited.", source="b.md", score=0.8
+    )
+    config = load_config().model_copy(deep=True)
+    config.context.enabled = True
+    config.context.model_limits.overrides = {}
+    config.context.model_limits.default_context_window_tokens = 40
+    config.generation.max_tokens = 5
+    config.context.reserved_output_tokens = 5
+    config.context.framework_overhead_tokens = 1
+    config.context.safety_margin_tokens = 1
+    config.context.compression.enabled = False  # force exclusion, not compression
+    tiny_template = PromptTemplate(
+        prompt_id="rag_answer",
+        version="test",
+        description="minimal test template",
+        system_template="",
+        user_template="{context}\n{query}",
+        required_variables=["context", "query"],
+        created_at="2026-01-01",
+    )
+    pipeline = RetrievalPipeline(
+        config,
+        vectorstore=FakeVectorStore([kept, dropped]),
+        embedder=FakeEmbedder(),
+        reranker=FakeReranker(),
+        llm=FakeLLM(),
+        prompt_template=tiny_template,
+    )
+
+    result = pipeline.answer("q", candidate_k=2)
+
+    source_ids = {s["chunk_id"] for s in result["sources"]}
+    assert "kept" in source_ids
+    assert "dropped" not in source_ids
+
+
 def test_answer_sanitizes_an_echoed_redaction_marker_in_the_generated_answer():
     """answer() strips a literal [REDACTED:SENSITIVE_FIELD] marker the LLM echoed back.
 

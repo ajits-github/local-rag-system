@@ -68,3 +68,41 @@ def test_full_pipeline_never_exceeds_budget_even_under_extreme_candidate_volume(
     )
     for row in report.results:
         assert row.packed_token_count <= row.available_context_tokens
+        assert row.context_overflow is False
+        assert row.context_excess_tokens == 0
+
+
+def test_top_n_baseline_genuinely_overflows_and_reports_it_honestly():
+    """The top_n baseline can exceed its budget by design; the report must say so, unclamped.
+
+    Regression for CTX-011: `context_utilization` used to be
+    clamped to 1.0 in this report, making a run that overflowed its
+    budget by 600% read identically to one that landed exactly at
+    capacity. Under the same extreme-candidate-volume condition that
+    `full_pipeline` is proven clean against above, `top_n` (which
+    ignores token size entirely, by design) must show real, unclamped
+    overflow.
+    """
+    # A larger window than the other extreme-volume tests in this file:
+    # enough headroom that available_context_tokens is meaningfully
+    # positive (not the degenerate all-fixed-costs-exhaust-the-window
+    # case), while still far smaller than the 32000-token candidate
+    # volume, so top_n (which ignores token size entirely by design)
+    # has real room to overflow by a meaningful, non-zero ratio.
+    report = evaluate_context_engineering(
+        model_context_window_tokens=8192,
+        reserved_output_tokens=512,
+        candidate_token_targets=[32000],
+        strategies=["top_n"],
+    )
+    overflowing = [
+        row for row in report.results if row.context_overflow and row.available_context_tokens > 0
+    ]
+    assert overflowing, "expected at least one genuinely overflowing top_n row"
+    for row in overflowing:
+        assert row.context_excess_tokens > 0
+        assert row.context_utilization > 1.0
+        assert row.packed_token_count > row.available_context_tokens
+
+    summary = report.by_strategy_summary()["top_n"]
+    assert summary["overflow_run_count"] > 0

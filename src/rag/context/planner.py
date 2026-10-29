@@ -10,9 +10,10 @@ LLM call: see `classify_context_query_type`).
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from rag.config import AppConfig, SourceBudgetConfig
 from rag.context.model_limits import resolve_model_context_limits
-from rag.context.tokens import TokenCounter
 from rag.context.types import ContextBudget, ContextItem, ContextSourceType, SourceBudget
 
 #: query-type labels `classify_context_query_type` can return.
@@ -83,7 +84,7 @@ def _resolve_source_budget_config(
 
 def plan_context_budget(
     config: AppConfig,
-    token_counter: TokenCounter,
+    count_tokens: Callable[[str], int],
     *,
     system_prompt_text: str,
     user_query_text: str,
@@ -96,8 +97,15 @@ def plan_context_budget(
     ----------
     config : AppConfig
         Application configuration; `config.context` supplies every bound.
-    token_counter : TokenCounter
-        Used to measure `system_prompt_text`/`user_query_text`.
+    count_tokens : Callable[[str], int]
+        Used to measure `system_prompt_text`/`user_query_text`. Takes a
+        plain counting function, not a raw `TokenCounter`, so the caller
+        can route it through the same safe-fallback wrapper
+        (`ContextEngine._count`) that evidence/history counting already
+        uses. Regression for CTX-008: this function used to call a raw
+        `TokenCounter.count()` directly, so a counting failure escaped
+        as an unhandled exception instead of degrading like every other
+        token count in this subsystem.
     system_prompt_text : str
         The rendered system prompt (never includes retrieved content).
     user_query_text : str
@@ -121,8 +129,8 @@ def plan_context_budget(
         if config.context.reserved_output_tokens is not None
         else limits.default_reserved_output_tokens
     )
-    system_tokens = token_counter.count(system_prompt_text)
-    query_tokens = token_counter.count(user_query_text)
+    system_tokens = count_tokens(system_prompt_text)
+    query_tokens = count_tokens(user_query_text)
     overhead_tokens = config.context.framework_overhead_tokens
     safety_margin = config.context.safety_margin_tokens
 

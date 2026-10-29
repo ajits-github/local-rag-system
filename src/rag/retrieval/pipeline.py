@@ -14,7 +14,7 @@ from typing import Any
 from rag.audit import log_audit_event
 from rag.config import AppConfig
 from rag.context.engine import ContextEngine, context_engineering_summary
-from rag.context.types import ConversationTurn
+from rag.context.types import ContextItem, ConversationTurn
 from rag.embedders.base import Embedder
 from rag.factory import build_embedder, build_llm, build_reranker, build_vectorstore
 from rag.generation.base import LLM
@@ -137,6 +137,50 @@ def source_dict(result: SearchResult) -> dict[str, Any]:
         "redacted_field_ids": result.redacted_field_ids,
         "sensitive_field_ids": result.chunk.metadata.sensitive_field_ids,
     }
+
+
+def _results_actually_packed(
+    results: list[SearchResult], included_items: list[ContextItem]
+) -> list[SearchResult]:
+    """Filter/adjust `results` to exactly what `included_items` actually packed.
+
+    Drops any result whose `chunk_id` isn't among `included_items`
+    (dropped by packing), and replaces a compressed item's `chunk.content`
+    with the actually-rendered (possibly shortened) text. History/system/
+    query `ContextItem`s never came from `results` in the first place and
+    are not matched against here. Preserves `results`' own original rank
+    order, not `included_items`' own (possibly render-reordered) order.
+
+    Parameters
+    ----------
+    results : list[SearchResult]
+        The original, pre-packing candidate evidence.
+    included_items : list[ContextItem]
+        `PackedContext.included_items` from the same `ContextEngine.build()`
+        call that rendered the prompt `results` was packed into.
+
+    Returns
+    -------
+    list[SearchResult]
+        The subset of `results` that actually reached the rendered
+        prompt, each possibly content-adjusted to match.
+    """
+    included_by_chunk_id = {
+        item.source_id: item
+        for item in included_items
+        if item.source_type != "conversation_history"
+    }
+    packed: list[SearchResult] = []
+    for result in results:
+        item = included_by_chunk_id.get(result.chunk.metadata.chunk_id)
+        if item is None:
+            continue
+        if item.compressed:
+            result = result.model_copy(
+                update={"chunk": result.chunk.model_copy(update={"content": item.content})}
+            )
+        packed.append(result)
+    return packed
 
 
 class RetrievalPipeline:
@@ -887,7 +931,8 @@ class RetrievalPipeline:
         *,
         history_turns: list[ConversationTurn] | None = None,
         tenant_id: str | None = None,
-    ) -> tuple[str, dict[str, Any] | None]:
+        system_prompt_text: str | None = None,
+    ) -> tuple[str, dict[str, Any] | None, list[SearchResult]]:
         """Render `results` into prompt-context text, via `ContextEngine` when enabled.
 
         The one seam every generation call site
@@ -907,26 +952,56 @@ class RetrievalPipeline:
             `context_engine` is `None`.
         tenant_id : str | None, optional
             For the token-count cache key only.
+        system_prompt_text : str | None, optional
+            The system prompt text that will actually be rendered for
+            *this* generation call, for budgeting only (never mixed into
+            any `ContextItem`). Defaults to this pipeline's own
+            `self._prompt_template.system_template`, correct for
+            `answer()`'s own classic-RAG call. A caller rendering with a
+            *different* template (e.g. `agent/graph.py`'s `_synthesize`
+            node, which renders with `agent_synthesize_v2.yaml`, not this
+            pipeline's `generation.prompt` template) must pass that
+            template's own `system_template` here; regression for
+            CTX-006, which budgeted the wrong template's token cost for
+            every agent-routed synthesis call.
 
         Returns
         -------
-        tuple[str, dict[str, Any] | None]
+        tuple[str, dict[str, Any] | None, list[SearchResult]]
             The rendered context text (identical to
             `build_context(results)`'s output when `context_engine` is
-            `None`, i.e. `config.context.enabled=False`), and a
+            `None`, i.e. `config.context.enabled=False`), a
             `context_engineering_summary()` dict (or `None` when
-            disabled).
+            disabled), and the subset of `results` that actually reached
+            the rendered prompt (`results` unchanged when `context_engine`
+            is `None`). Callers must build `sources`/citations from this
+            third value, never the original `results`: regression for
+            EVAL-014, where a packing decision could drop or compress a
+            chunk out of the prompt while the caller's own `sources`/
+            citation list (and therefore RAGAS's judge context) still
+            credited the original, un-packed evidence, so the judge and
+            citation metrics could see evidence the model was never
+            actually shown. An item compressed by packing is returned
+            with its `chunk.content` replaced by the actually-rendered
+            (possibly shortened) text, in `results`' own original rank
+            order (never the render-shuffled order `included_items`
+            itself may have been placed in).
         """
         if self._context_engine is None:
-            return build_context(results), None
+            return build_context(results), None, results
         packed = self._context_engine.build(
             query=query,
-            system_prompt_text=self._prompt_template.system_template,
+            system_prompt_text=(
+                system_prompt_text
+                if system_prompt_text is not None
+                else self._prompt_template.system_template
+            ),
             search_results=results,
             history_turns=history_turns,
             tenant_id=tenant_id,
         )
-        return packed.rendered_context, context_engineering_summary(packed)
+        packed_results = _results_actually_packed(results, packed.included_items)
+        return packed.rendered_context, context_engineering_summary(packed), packed_results
 
     def answer(
         self,
@@ -988,7 +1063,7 @@ class RetrievalPipeline:
             query, filters=filters, candidate_k=candidate_k, auth=auth
         )
         t1 = time.perf_counter()
-        context, context_engineering_info = self.build_context_text(
+        context, context_engineering_info, packed_results = self.build_context_text(
             results, query, history_turns=history_turns, tenant_id=auth.tenant_id if auth else None
         )
         system, user = self._prompt_template.render(context=context, query=query)
@@ -1001,7 +1076,14 @@ class RetrievalPipeline:
             "prompt_tokens": getattr(self._llm, "last_prompt_tokens", None),
             "completion_tokens": getattr(self._llm, "last_completion_tokens", None),
             "query_injection_suspected": detect_injection(query),
-            "sources": [source_dict(r) for r in results],
+            # Built from what the prompt actually contained
+            # (`packed_results`), never the pre-packing `results`:
+            # regression for EVAL-014, where a context-engineering drop/
+            # compression decision could leave `sources` (and therefore
+            # citation/RAGAS-judge-context metrics) crediting evidence the
+            # model was never shown. Byte-identical to `results` when
+            # Context Engineering is disabled.
+            "sources": [source_dict(r) for r in packed_results],
             "retrieval_ms": (t1 - t0) * 1000,
             "generation_ms": generation_ms,
             "latency_breakdown_ms": {**stage_ms, "generation_ms": generation_ms},

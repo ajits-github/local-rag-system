@@ -55,6 +55,8 @@ class ScenarioResult(BaseModel):
     packed_token_count: int
     available_context_tokens: int
     context_utilization: float
+    context_overflow: bool
+    context_excess_tokens: int
     context_reduction: float
     items_before_dedup: int
     items_after_dedup: int
@@ -86,6 +88,15 @@ class ContextEvalReport(BaseModel):
                 "total_dropped_items": sum(r.dropped_item_count for r in rows),
                 "total_items_compressed": sum(r.items_compressed for r in rows),
                 "truncated_run_count": sum(1 for r in rows if r.truncated),
+                # Distinct from `truncated_run_count`: truncation means
+                # packing had to drop/compress something to respect the
+                # budget (the intended, successful outcome); overflow
+                # means the final packed result still exceeded the
+                # budget anyway (expected for the `top_n` baseline by
+                # design, never expected for a production strategy).
+                "overflow_run_count": sum(1 for r in rows if r.context_overflow),
+                "mean_context_excess_tokens": sum(r.context_excess_tokens for r in rows)
+                / len(rows),
                 "run_count": len(rows),
             }
         return summary
@@ -420,7 +431,17 @@ def run_scenario(
         candidate_token_count=packed.candidate_token_count,
         packed_token_count=packed.packed_token_count,
         available_context_tokens=packed.budget.available_context_tokens,
-        context_utilization=round(min(packed.context_utilization, 1.0), 4),
+        # Raw, unclamped ratio: clamping to 1.0 here would make a
+        # strategy that overflows its budget by, say, 600% (the `top_n`
+        # baseline's own documented behavior) read identically to one
+        # that landed exactly at capacity, hiding the real cost of an
+        # overflowing baseline from this benchmark's own numbers (see
+        # CTX-011 in KNOWN_ISSUES.md).
+        context_utilization=round(packed.context_utilization, 4),
+        context_overflow=packed.packed_token_count > packed.budget.available_context_tokens,
+        context_excess_tokens=max(
+            packed.packed_token_count - packed.budget.available_context_tokens, 0
+        ),
         context_reduction=round(max(packed.context_reduction, 0.0), 4),
         items_before_dedup=packed.dedup_stats.candidates_before,
         items_after_dedup=packed.dedup_stats.items_after,

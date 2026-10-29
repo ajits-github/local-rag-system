@@ -53,6 +53,31 @@ def test_build_llm_seed_defaults_to_none():
     assert llm._seed is None
 
 
+def test_build_llm_resolves_num_ctx_from_the_context_engineering_model_limits_table():
+    """build_llm's num_ctx must match the same table the Context Engineering budget planner uses.
+
+    Regression for CTX-005: the budget planner assumed a per-model
+    context window that nothing ever told the real Ollama server about,
+    so the two could silently disagree. Resolving both from
+    `rag.context.model_limits.resolve_model_context_limits` makes that
+    impossible by construction.
+    """
+    config = load_config().model_copy(deep=True)
+    config.generation.model_name = "qwen2.5:1.5b"
+    llm = build_llm(config)
+    assert isinstance(llm, OllamaLLM)
+    assert llm._num_ctx == config.context.model_limits.overrides["qwen2.5:1.5b"] == 32768
+
+
+def test_build_llm_num_ctx_follows_a_custom_model_limits_override():
+    """Changing the model-limits override changes what build_llm sends as num_ctx."""
+    config = load_config().model_copy(deep=True)
+    config.generation.model_name = "my-custom-model"
+    config.context.model_limits.overrides["my-custom-model"] = 4096
+    llm = build_llm(config)
+    assert llm._num_ctx == 4096
+
+
 def test_build_judge_llm_openai_without_api_key_raises(monkeypatch):
     """Selecting 'openai' without its API key set raises a clear RuntimeError."""
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)

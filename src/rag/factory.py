@@ -8,6 +8,7 @@ implementations, so adding a new provider never touches pipeline code.
 from __future__ import annotations
 
 from rag.config import AppConfig
+from rag.context.model_limits import resolve_model_context_limits
 from rag.embedders.base import Embedder
 from rag.embedders.sentence_transformers_embedder import SentenceTransformersEmbedder
 from rag.generation.anthropic_llm import AnthropicLLM
@@ -150,6 +151,12 @@ def build_llm(config: AppConfig) -> LLM:
             temperature=config.generation.temperature,
             max_tokens=config.generation.max_tokens,
             seed=config.generation.seed,
+            # Resolved from the same per-model window table
+            # rag.context.planner uses, so a Context Engineering budget
+            # built against `context_window_tokens` can never silently
+            # disagree with what the real Ollama call will accept (see
+            # OllamaLLM's `num_ctx` docstring).
+            num_ctx=resolve_model_context_limits(config).context_window_tokens,
         )
     raise ValueError(f"Unknown generation provider: {config.generation.provider}")
 

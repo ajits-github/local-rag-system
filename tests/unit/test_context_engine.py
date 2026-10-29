@@ -266,6 +266,97 @@ def test_build_never_raises_with_zero_evidence_and_zero_history():
     assert packed.packed_token_count == 0
 
 
+class _AlwaysRaisingTokenCounter:
+    """TokenCounter double whose count() always raises, simulating a broken tokenizer."""
+
+    strategy_name = "always-raises"
+
+    def count(self, text: str) -> int:
+        raise RuntimeError("simulated tokenizer failure")
+
+
+def test_build_degrades_gracefully_when_the_token_counter_always_raises():
+    """A tokenizer failure must degrade via the char/4 fallback, never raise.
+
+    Regression for CTX-008: `plan_context_budget` used to call
+    `token_counter.count()` directly for the system/query text, bypassing
+    `ContextEngine._count`'s try/except fallback entirely, so a counter
+    failure during budget *planning* (as opposed to evidence counting)
+    turned into an unhandled exception even with zero evidence/history
+    to blame it on.
+    """
+    config = load_config().model_copy(deep=True)
+    config.context.enabled = True
+    engine = ContextEngine(config, token_counter=_AlwaysRaisingTokenCounter())
+
+    packed = engine.build(query="anything", system_prompt_text="s", search_results=[])
+
+    assert packed.budget.system_prompt_tokens == len("s") // 4
+    assert packed.budget.user_query_tokens == len("anything") // 4
+
+
+def test_item_token_count_includes_citation_label_and_separator_overhead():
+    """An item's measured token_count must exceed its raw content's own token count.
+
+    Regression for CTX-006: `item.token_count` used to be exactly
+    `count(item.content)`, never accounting for the `"[Source N: ...]"`
+    label or the `"---"` join separator `render_context()` actually adds
+    to the final prompt, so a packing decision could admit (and the
+    reported `packed_token_count` could under-report) real rendered-text
+    overhead that the real outbound prompt pays for every single item.
+    """
+    config = load_config().model_copy(deep=True)
+    config.context.enabled = True
+    config.context.token_counting.chars_per_token = 4.0
+    engine = ContextEngine(config)
+    counter = HeuristicTokenCounter(chars_per_token=4.0)
+    result = _result("c1", "short", section_path="Some Long Section Path > Subsection")
+
+    packed = engine.build(query="q", system_prompt_text="s", search_results=[result])
+
+    assert len(packed.included_items) == 1
+    item = packed.included_items[0]
+    content_only_tokens = counter.count(item.content)
+    assert item.token_count > content_only_tokens
+
+
+def test_adaptive_classification_uses_pre_dedup_evidence_composition():
+    """Adaptive query-type classification must count pre-dedup evidence, not post-dedup.
+
+    Regression for CTX-010: three byte-identical graph facts plus two
+    distinct documents is genuinely graph-dominant (3 vs 2) before
+    deduplication collapses the three duplicates into one. Classifying
+    from the post-dedup list instead would read graph_count=1 vs
+    document_count=2 and misclassify this as knowledge_only, applying
+    the wrong adaptive budget split.
+    """
+    config = load_config().model_copy(deep=True)
+    config.context.enabled = True
+    config.context.adaptive.enabled = True
+    engine = ContextEngine(config)
+    duplicate_graph_facts = [
+        _result(f"g{i}", "Alpha API DEPENDS_ON Alpha Database", origin="graph") for i in range(3)
+    ]
+    distinct_documents = [
+        _result("d1", "Document one content."),
+        _result("d2", "Document two content."),
+    ]
+
+    packed = engine.build(
+        query="how does Alpha API depend on Alpha Database",
+        system_prompt_text="s",
+        search_results=duplicate_graph_facts + distinct_documents,
+    )
+
+    relationship_graph_share = config.context.adaptive.overrides["relationship"].graph_path_share
+    knowledge_only_graph_share = config.context.adaptive.overrides[
+        "knowledge_only"
+    ].graph_path_share
+    assert relationship_graph_share > knowledge_only_graph_share  # sanity: overrides differ
+    expected_allocated = int(packed.budget.available_context_tokens * relationship_graph_share)
+    assert packed.budget.source_budgets["graph_path"].allocated_tokens == expected_allocated
+
+
 def test_render_context_matches_build_context_labeling_convention():
     """Render context matches build context labeling convention."""
     results = [_result("c1", "a"), _result("c2", "b")]

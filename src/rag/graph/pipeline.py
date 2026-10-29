@@ -221,8 +221,10 @@ class GraphRAGPipeline:
         third, independent `build_context` call.
         """  # noqa: E501
         t1 = time.perf_counter()
-        context, context_engineering_info = self._retrieval_pipeline.build_context_text(
-            results, query, tenant_id=auth.tenant_id if auth else None
+        context, context_engineering_info, packed_results = (
+            self._retrieval_pipeline.build_context_text(
+                results, query, tenant_id=auth.tenant_id if auth else None
+            )
         )
         system, user = self._retrieval_pipeline.prompt_template.render(context=context, query=query)
         answer_text = self._retrieval_pipeline.llm.generate(system, user)
@@ -238,7 +240,10 @@ class GraphRAGPipeline:
                 self._retrieval_pipeline.llm, "last_completion_tokens", None
             ),
             "query_injection_suspected": detect_injection(query),
-            "sources": [source_dict(r) for r in results],
+            # See RetrievalPipeline.answer()'s identical fix: sources
+            # must reflect what the prompt actually contained
+            # (EVAL-014), not pre-packing `results`.
+            "sources": [source_dict(r) for r in packed_results],
             "retrieval_ms": retrieval_ms,
             "generation_ms": generation_ms,
             "latency_breakdown_ms": {"retrieval_ms": retrieval_ms, "generation_ms": generation_ms},
