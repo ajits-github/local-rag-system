@@ -685,6 +685,27 @@ Both assertions pass; no consumer calls the old metric for remaining-work semant
 
 ---
 
+### DIST-005: An SSE disconnect was only noticed between queue items, never while waiting for one
+
+**Status:** FIXED
+**Severity:** MAJOR
+**Area:** Reliability / agent streaming
+**Affected code:** `agent_stream._stream_agent_query`
+
+**Problem**
+The SSE consumer loop checked `request.is_disconnected()` only after `await queue.get()` returned an item. A long-running node that emits no intermediate event (in practice, a single slow LLM call) left the queue empty for the whole call, during which a disconnect was never noticed and the worker's `cancel_event` was never set.
+
+**Failure scenario**
+A client disconnects while the agent worker thread is mid-generation; cooperative cancellation never fires, so the worker runs to completion regardless, consuming CPU/model time for a client no longer listening.
+
+**Fix applied**
+The queue read is now bounded by a short poll timeout (`_DISCONNECT_POLL_SECONDS`), checking `is_disconnected()` on every timeout rather than only after an item arrives. `cancel_event.set()` also runs unconditionally in the loop's `finally` block, covering generator teardown paths the explicit disconnect branch didn't reach.
+
+**Regression test**
+`test_disconnect_is_noticed_while_the_queue_is_empty` and `test_generator_teardown_also_sets_cancel_event` in `tests/unit/test_agent_stream_disconnect_cancellation.py`.
+
+---
+
 ## 4. Retrieval, Graph, Ontology and Context
 
 ### RET-001: Retrieval window too narrow for one document (idempotency-key question)
@@ -1771,6 +1792,7 @@ The following issues are resolved, with a concrete fix and regression test cited
 | DIST-002 | Reliability | A LangGraph join node ran twice, because its parallel branches had unequal lengths |
 | DIST-003 | Reliability | A deliberate workflow pause would have been counted as a failure in metrics |
 | DIST-004 | Reliability | A queue-depth metric built on XLEN could only grow |
+| DIST-005 | Reliability | An SSE disconnect was only noticed between queue items, never while waiting for one |
 | RET-005 | Retrieval | BM25 ties depended on unspecified SQL row order |
 | GRAPH-001 | GraphRAG | Neo4j failed on one unknown config key and on a null inside a MERGE key |
 | GRAPH-002 | GraphRAG | The driver's convenience method stripped the node labels authorization code needed |
