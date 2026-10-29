@@ -38,9 +38,9 @@ def _render_markdown(report) -> str:
         f"Generated at: {report.generated_at}",
         f"Total scenario/strategy/size combinations: {len(report.results)}",
         "",
-        "| Strategy | Mean utilization | Mean reduction | Mean build (ms) | "
-        "Dropped items | Compressed items | Runs |",
-        "|---|---|---|---|---|---|---|",
+        "| Strategy | Mean utilization | Overflowing runs | Mean excess tokens | "
+        "Mean reduction | Mean build (ms) | Dropped items | Compressed items | Runs |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
     labels = {
         "top_n": "A: top-N (baseline)",
@@ -54,6 +54,8 @@ def _render_markdown(report) -> str:
             continue
         lines.append(
             f"| {labels.get(strategy, strategy)} | {row['mean_context_utilization']:.3f} | "
+            f"{row['overflow_run_count']:.0f}/{row['run_count']:.0f} | "
+            f"{row['mean_context_excess_tokens']:.1f} | "
             f"{row['mean_context_reduction']:.3f} | {row['mean_build_latency_ms']:.3f} | "
             f"{row['total_dropped_items']:.0f} | {row['total_items_compressed']:.0f} | "
             f"{row['run_count']:.0f} |"

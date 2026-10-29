@@ -540,18 +540,34 @@ python -m mypy src/rag/context/
 240-run synthetic sweep (15 scenarios x 4 strategies x 4 candidate-token
 targets, `experiments/reports/context_engineering_benchmark.md`):
 
-| Strategy | Mean utilization | Mean reduction | Mean build (ms) | Dropped items | Compressed items |
-|---|---|---|---|---|---|
-| A: top-N (baseline) | 0.136 | 0.244 | 0.562 | 1861 | 0 |
-| B: naive token-first | 0.225 | 0.196 | 0.550 | 1348 | 0 |
-| C: token-budget + dedup | 0.043 | 0.342 | 0.892 | 5 | 0 |
-| D: full pipeline | 0.031 | 0.357 | 1.160 | 0 | 6 |
+| Strategy | Mean utilization | Overflowing runs | Mean excess tokens | Mean reduction | Mean build (ms) | Dropped items | Compressed items |
+|---|---|---|---|---|---|---|---|
+| A: top-N (baseline) | 0.322 | 5/60 | 590.0 | 0.244 | 0.773 | 1861 | 0 |
+| B: naive token-first | 0.225 | 0/60 | 0.0 | 0.196 | 0.903 | 1348 | 0 |
+| C: token-budget + dedup | 0.043 | 0/60 | 0.0 | 0.342 | 1.372 | 5 | 0 |
+| D: full pipeline | 0.031 | 0/60 | 0.0 | 0.357 | 1.758 | 0 | 6 |
 
-Every strategy respects its own computed budget
+Per-item token counts here also include each item's own rendered
+`"[Source N: ...]"` label and join-separator overhead, not just its raw
+content (CTX-006, see `KNOWN_ISSUES.md`): an earlier version measured
+only raw content, under-counting the real serialized prompt cost of
+every item.
+
+`context_utilization`/`context_overflow`/`context_excess_tokens` are
+reported unclamped (CTX-011, see `KNOWN_ISSUES.md`): an earlier version
+of this table clamped utilization to 1.0, which hid real overflow
+magnitude and made an overflowing `top_n` run read identically to one
+that landed exactly at capacity. Strategies B/C/D (the three that
+actually enforce the budget) respect it on every one of their 180 runs
+here, across every candidate size up to 32,000 estimated candidate
+tokens against windows as small as 512 tokens
 (`packed_token_count <= available_context_tokens`, asserted directly in
-`tests/unit/test_run_context_eval.py`), across every candidate size up
-to 32,000 estimated candidate tokens against windows as small as 512
-tokens. D's build latency is roughly 2x A's, both sub-millisecond,
+`tests/unit/test_run_context_eval.py`). `top_n` (baseline A) genuinely
+overflows on 5/60 runs, exactly as its own docstring says it will
+("ignores token size entirely... even if it alone would overflow the
+model's context window downstream"), this is expected baseline
+behavior, not a bug, and exists specifically so B/C/D can be measured
+against it. D's build latency is roughly 2x A's, both sub-millisecond,
 negligible next to this project's own measured ~20-80s LLM generation
 latency on local hardware. **Not measured in this sandbox** (no live
 Ollama/Postgres/Neo4j reachable): real answer-correctness/citation-
