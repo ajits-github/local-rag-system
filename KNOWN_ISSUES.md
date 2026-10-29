@@ -52,6 +52,10 @@ without basis. Detailed chronological session history remains in
 | BUG-017 | MAJOR | OPEN | Ingestion | A staged upload can resolve vision assets against the wrong document version |
 | GRAPH-009 | MODERATE | OPEN | Ontology | A live-Neo4j ontology query helper has no authorization check at all (currently unreachable) |
 | GRAPH-011 | MINOR | ACCEPTED LIMITATION | GraphRAG | Entity-node ACL properties are frozen at first write (mitigated by read-time revalidation) |
+| RET-006 | MINOR | ACCEPTED LIMITATION | Retrieval | BM25 rebuilds a full in-memory index on every hybrid query |
+| DIST-006 | MAJOR | OPEN | Reliability (experiment branch) | The distributed-state worker claims a full batch every loop, regardless of jobs still running |
+| OPS-015 | MODERATE | OPEN | Deployment (experiment branch) | The Helm chart's default values make both PodDisruptionBudgets unsatisfiable |
+| OPS-016 | MAJOR | ACCEPTED LIMITATION | CI / merge risk | The experiment branches have diverged too far from main to merge mechanically |
 
 *Fixed issues (the majority of this log, ~65 entries) are in [section 10](#10-fixed--closed-issues) and summarized separately there, not repeated above.*
 
@@ -882,6 +886,24 @@ The queue read is now bounded by a short poll timeout (`_DISCONNECT_POLL_SECONDS
 
 ---
 
+### DIST-006: The distributed-state worker claims a full batch every loop, regardless of jobs still running
+
+**Status:** OPEN
+**Severity:** MAJOR (experiment branch only)
+**Area:** Reliability / job queue
+**Affected code:** `experiment/distributed-state`: `distributed_state_experiment/job_queue/worker.py`, `Worker.run_forever`
+
+**Problem**
+Each loop calls `queue.claim(count=max_concurrency)` and submits every claimed job to a `ThreadPoolExecutor(max_workers=max_concurrency)`, without subtracting futures still running or queued. The class docstring promises a worker "never claims more than `max_concurrency` un-acked jobs at a time"; the loop does not enforce it.
+
+**Failure scenario**
+Under sustained load, claimed-but-unstarted jobs pile up in the executor's queue. Their pending entries age past `reclaim_idle_ms` while waiting, so another worker reclaims and runs them too: duplicate processing and an unbounded backlog.
+
+**Recommended fix**
+Claim `max_concurrency - len(in_flight)` (skip the claim when zero), counting running plus queued futures. Not fixed here: the branch is a learning exercise 194 commits behind `main` (see **OPS-016**); fix it when the worker is re-ported.
+
+---
+
 ## 4. Retrieval, Graph, Ontology and Context
 
 ### RET-001: Retrieval window too narrow for one document (idempotency-key question)
@@ -995,6 +1017,24 @@ Added `ORDER BY chunk_id` to the fetch, matching dense search's own existing `OR
 
 **Regression test**
 `test_search_keyword_ties_break_deterministically_by_chunk_id` in `tests/integration/test_pgvector.py` (returns identical rankings across repeated calls for three byte-identical-content chunks).
+
+---
+
+### RET-006: BM25 rebuilds a full in-memory index on every hybrid query
+
+**Status:** ACCEPTED LIMITATION
+**Severity:** MINOR
+**Area:** Retrieval / performance
+**Affected code:** `PgVectorStore.search_keyword`
+
+**Problem**
+`search_keyword` fetches every chunk matching the filters (no SQL `LIMIT`), tokenizes it, and builds a fresh `rank_bm25.BM25Okapi` per call: O(filtered corpus) work per query. It was documented only in the function's docstring.
+
+**Failure scenario**
+A dense-vs-hybrid latency comparison on a larger corpus attributes the index rebuild to "BM25 is slow" or to hybrid fusion.
+
+**Why accepted**
+At the current corpus size the cost is small next to generation latency (**EVAL-004**). Now documented in `docs/topics/retrieval.md`; a persistent index (Postgres full-text search or a cached per-dataset BM25) is the fix before any at-scale latency claim.
 
 ---
 
@@ -1618,6 +1658,30 @@ A graph result's `chunk_id` is no longer a real chunk id, so `get_related_contex
 
 ---
 
+### CTX-017: Agent decision prompts were never budgeted, so a small context window could silently truncate them
+
+**Status:** FIXED
+**Severity:** MODERATE
+**Area:** Context Engineering / agentic RAG
+**Affected code:** `rag.agent.graph._summarize_evidence`, `_select_tool`, `_evaluate_evidence`
+
+**Problem**
+Only `_synthesize` goes through `ContextEngine`. The tool-select and evidence-sufficiency prompts render `_summarize_evidence(state.retrieved_evidence)`: each item is capped at 400 characters, but the number of items grows with every tool call, bounded only by `max_tool_calls` times the per-call chunk count.
+
+**Failure scenario**
+Lowering `num_ctx` for latency (the lever **CTX-005**'s notes recommend calibrating) leaves these two prompts exposed: Ollama silently drops the oldest prompt tokens, and nothing flags, logs, or counts it.
+
+**Fix applied**
+New `agent.max_evidence_summary_chars` (default 6000, minimum 500). Items past the ceiling are omitted in order, the prompt states how many were omitted, and the cut is logged with shown/omitted counts.
+
+**Regression test**
+`test_summarize_evidence_is_bounded_and_says_what_it_omitted`, `test_summarize_evidence_under_the_cap_is_unchanged` in `tests/unit/test_agent_graph_related_context_chunk_id_exposure.py`.
+
+**Notes**
+A character ceiling, not a token budget: it bounds the prompt independent of the tokenizer. Set it with the model window in mind when `num_ctx` is reduced.
+
+---
+
 ### EVAL-014: `sources`/citations could credit evidence Context Engineering had already dropped or compressed
 
 **Status:** FIXED
@@ -1757,7 +1821,7 @@ The evidence summary now includes `chunk_id=<id>` on each line; a new prompt ver
 A unit test runs a full agent flow and confirms the id *shown* to the model is the id *dispatched*, proving the mechanism works. However, the live 18-question re-run did not happen to select the local tools at all, so there is no live evidence this fix actually changes model behavior in practice, only that the plumbing is correct when exercised directly.
 
 **Required verification**
-A live run where the model actually selects `get_related_context`, confirming it copies the shown `chunk_id` rather than inventing one.
+A live run where the model actually selects `get_related_context`, confirming it copies the shown `chunk_id` rather than inventing one. The verification run recorded as `experiments/results/agentic/experiment_040.json` still reports `agent_tool_selection_accuracy: 0.0`, so the fix has not yet moved live tool selection (see **AGT-004**).
 
 ---
 
@@ -1995,8 +2059,10 @@ A benchmark run against uncommitted code becomes permanently unattributable to a
 **Fix applied**
 Added `rag.eval.run_metadata.capture_git_metadata()` (best-effort, never raises); wired a `run_metadata` field into every `run_eval`/`run_ragas_eval`/`run_agent_ragas_eval`/`run_agent_eval`/`run_graph_eval`/`retrieval_attribution` report, and flattened `git_commit_sha`/`git_branch`/`git_dirty` into the flat record schema in `record_experiment.py`/`record_agent_experiment.py` (the third, `record_attribution_experiment.py`, inherits it automatically since it spreads the whole raw report).
 
+The Context Engineering benchmark (`run_context_eval.ContextEvalReport`, written by `scripts/benchmark_context_engineering.py`) was the one report builder the wiring missed; it now carries `run_metadata` too.
+
 **Regression test**
-`tests/unit/test_run_metadata.py` (a real-repo check plus a simulated git-unavailable degrade).
+`tests/unit/test_run_metadata.py` (a real-repo check plus a simulated git-unavailable degrade); `test_report_carries_git_run_metadata` in `tests/unit/test_run_context_eval.py`.
 
 ---
 
@@ -2356,6 +2422,42 @@ Verified live: a push touching only `.github/workflows/ci.yml` itself (a real fi
 
 ---
 
+### OPS-015: The Helm chart's default values make both PodDisruptionBudgets unsatisfiable
+
+**Status:** OPEN
+**Severity:** MODERATE (experiment branch only)
+**Area:** Deployment / Kubernetes reliability
+**Affected code:** `experiment/helm`: `helm/rag-system/values.yaml`
+
+**Problem**
+Defaults set `replicaCount: 1` with `podDisruptionBudget.minAvailable: 1` for both `rag-api` and `frontend`. A PDB that requires every replica to stay up blocks every voluntary eviction. `helm lint` and `helm template` both pass, because the chart is syntactically valid.
+
+**Failure scenario**
+`kubectl drain` during a node upgrade hangs on both pods until someone deletes the PDB by hand. The production values (3 replicas, `minAvailable: 2`) are fine.
+
+**Recommended fix**
+Render the PDB only when `replicaCount > 1` (or default `maxUnavailable: 1`), and add a `helm template` assertion for the single-replica case.
+
+---
+
+### OPS-016: The experiment branches have diverged too far from main to merge mechanically
+
+**Status:** ACCEPTED LIMITATION
+**Severity:** MAJOR (merge risk, not a defect on main)
+**Area:** CI / cross-branch merge risk
+**Affected code:** `experiment/kubernetes-deployment` (inherited by `helm`, `distributed-state`), `experiment/distributed-state`
+
+**Problem**
+All five experiment branches are 194 commits behind `main`. Two would silently regress it if merged wholesale. `experiment/distributed-state` edits core wiring (Redis rate limiter) in `config.py`, `api/deps.py` and `api/main.py`, all of which `main` has since grown substantially (`config.py` alone by about 565 lines). `experiment/kubernetes-deployment` rewrites `api/routers/health.py` into `/health`/`/livez`/`/readyz` from before GraphRAG existed, so taking that file drops `main`'s graph reachability check.
+
+**Failure scenario**
+A conflict resolved by "take theirs" on `health.py` loses the GraphRAG health check with no test failure; a `config.py` merge silently drops settings added since the fork. This is the same failure shape as **OPS-008**, at a larger scale.
+
+**Why accepted**
+The branches are learning exercises, not release candidates. Treat them as idea sources: re-port the Redis rate limiter against current `main` (keeping `get_rate_limiter()` in-memory by default), and add `/livez`/`/readyz` alongside the current `/health` rather than replacing the file. The branch's `/readyz` does not reproduce **OBS-001**'s cold-load problem, which is worth keeping when ported. `experiment/langgraph-agent` and `experiment/multi-agent` are isolated packages with no such conflict.
+
+---
+
 ## 8. Production-Hardening Gaps
 
 These are not bugs; they are scope boundaries and process-local designs that are acceptable for this project's current demo/learning-exercise posture but would need real work before a genuine multi-replica or enterprise production deployment.
@@ -2546,6 +2648,7 @@ The following issues are resolved, with a concrete fix and regression test cited
 | CTX-014 | Context Engineering | Compression dropped the render overhead from an item's token count, admitting it over budget |
 | CTX-015 | Context Engineering | An infeasible prompt was silently budgeted as zero evidence |
 | CTX-016 | Context Engineering / GraphRAG | Two graph facts from one chunk collided on identity, and one was silently dropped |
+| CTX-017 | Context Engineering | Agent decision prompts were never budgeted, so a small context window could silently truncate them |
 | EVAL-014 | Evaluation / Context Engineering | `sources`/citations could credit evidence Context Engineering had already dropped or compressed |
 
 ---
@@ -2591,3 +2694,5 @@ Performed after restructuring:
 **Postscript (context-engineering milestone):** this Report section is a point-in-time audit of the original restructuring and is left as originally written, not retroactively recomputed. Four new entries (CTX-001 through CTX-004) were added afterward in section 4 and are reflected in the Summary Table and section 10's table above; they are not folded into this Report's counts.
 
 **Postscript (pre-experiment audit, ingestion/graph gaps):** an adversarial audit of the ingestion and graph-consistency paths found three new ingestion-consistency gaps (BUG-015, BUG-016, BUG-017) and two graph-authorization gaps (GRAPH-008, GRAPH-009), all deliberately left OPEN rather than fixed in this pass, each with its own "why not fixed yet" note on its entry; they are structural changes, not local patches. These are not folded into this Report's original counts above. Separately, this pass's own cross-check of section 10's table against the full topical entries found three pre-existing table rows (MULTI-001, MULTI-002, MULTI-003) with no corresponding topical-section entry; all three were real, already-fixed (or, for MULTI-002, already-accepted) findings already described elsewhere in the project (CLAUDE.md, source docstrings), so full entries were added rather than leaving the table's own citation dangling.
+
+**Postscript (2026-10-29 pre-experiment audits):** two independent audits of `main` at `64321ed` (Codex: `.claude-prompts/35.9-...`, Claude: `35.10-...`; both untracked) were reconciled against the code before any fix. Fixed: **CTX-014**, **CTX-015**, **CTX-016**, **CTX-017**, **SEC-018**, **SEC-019**, **GRAPH-008**, **GRAPH-010**, plus follow-ups folded into existing stories (**CTX-007** negation guard, **CTX-011** telemetry clamp, **EVAL-015** Context Engineering report). New accepted limitations: **GRAPH-011**, **RET-006**, **OPS-016**. New open items on experiment branches only: **DIST-006**, **OPS-015**. Re-confirmed still open, not fixed here: **BUG-015**/**BUG-016**/**BUG-017** (structural ingestion-consistency changes; avoid graph-projection failures and image-only edits on any benchmark corpus until they land) and **GRAPH-009** (dead code). Two test-coverage gaps were closed without separate entries: `GraphRetriever.search`'s Neo4j-outage degradation (`tests/unit/test_graph_retrieval_degradation.py`) and an MCP remote-tool transport failure (`test_remote_tool_connection_failure_is_recorded_not_raised`). The Codex report's cited repro script, `experiments/reports/audit_repro_2026_10_29.py`, was never committed and does not exist.

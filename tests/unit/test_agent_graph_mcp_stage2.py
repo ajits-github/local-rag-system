@@ -288,6 +288,41 @@ def test_update_case_status_is_never_retried_within_the_same_run(monkeypatch):
     assert result.state.termination_reason == "synthesized"
 
 
+def test_remote_tool_connection_failure_is_recorded_not_raised(monkeypatch):
+    """An MCP transport failure takes the same safe fallback as a local tool failure.
+
+    `dispatch_remote_tool_sync` raising (server down, connection reset) must
+    become a failed `ToolCallRecord`, never an exception out of `run_agent`.
+    """
+    from rag.agent import mcp_client
+
+    def _failing_dispatch(tool_name, args, *, auth, config, mcp_app, case_approvals=()):
+        raise ConnectionError("MCP server unreachable")
+
+    monkeypatch.setattr(mcp_client, "dispatch_remote_tool_sync", _failing_dispatch)
+
+    state = AgentState(
+        original_query="a question about case CASE-1001",
+        authorization_context=AuthorizationContext(tenant_id="tenant_alpha", roles=["op"]),
+    )
+    result = run_agent(
+        state,
+        pipeline=FakePipeline(),
+        vectorstore=FakeVectorStore(),
+        embedder=FakeEmbedder(),
+        llm=RemoteToolAlwaysLLM(),
+        config=_agent_config(max_agent_steps=1000, max_tool_calls=2, mcp_client_enabled=True),
+        mcp_app=None,
+    )
+
+    remote_calls = [r for r in result.state.tool_call_history if r.tool_name == "get_customer_case"]
+    assert remote_calls
+    assert all(r.success is False for r in remote_calls)
+    assert all("unreachable" in (r.error or "") for r in remote_calls)
+    assert result.state.retrieved_evidence == []
+    assert result.state.termination_reason == "max_tool_calls"
+
+
 # --- max_tool_calls bounds local and remote calls identically ----------------
 
 

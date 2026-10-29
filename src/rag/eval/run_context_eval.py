@@ -32,6 +32,7 @@ from pydantic import BaseModel, Field
 from rag.config import AppConfig, load_config
 from rag.context.engine import ContextEngine
 from rag.context.types import ConversationTurn
+from rag.eval.run_metadata import capture_git_metadata
 from rag.schemas import Chunk, ChunkMetadata, SearchResult
 
 Strategy = Literal["top_n", "naive_token_first", "dedup_plus_budget", "full_pipeline"]
@@ -69,9 +70,14 @@ class ScenarioResult(BaseModel):
 
 
 class ContextEvalReport(BaseModel):
-    """Full report across every scenario/strategy/candidate-size combination."""
+    """Full report across every scenario/strategy/candidate-size combination.
+
+    `run_metadata` is `capture_git_metadata()`'s commit/branch/dirty snapshot,
+    the same field every other eval report carries.
+    """
 
     generated_at: str
+    run_metadata: dict[str, Any] = Field(default_factory=dict)
     results: list[ScenarioResult] = Field(default_factory=list)
 
     def by_strategy_summary(self) -> dict[str, dict[str, float]]:
@@ -516,7 +522,11 @@ def evaluate_context_engineering(
                 run_config = config.model_copy(deep=True)
                 results.append(run_scenario(run_config, scenario, strategy, target))
 
-    return ContextEvalReport(generated_at=datetime.now(UTC).isoformat(), results=results)
+    return ContextEvalReport(
+        generated_at=datetime.now(UTC).isoformat(),
+        run_metadata=capture_git_metadata(),
+        results=results,
+    )
 
 
 def _print_summary_table(report: ContextEvalReport) -> None:

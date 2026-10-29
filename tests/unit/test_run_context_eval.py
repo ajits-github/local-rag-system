@@ -106,3 +106,16 @@ def test_top_n_baseline_genuinely_overflows_and_reports_it_honestly():
 
     summary = report.by_strategy_summary()["top_n"]
     assert summary["overflow_run_count"] > 0
+
+
+def test_report_carries_git_run_metadata():
+    """The benchmark report names the commit that produced it, like every other eval report."""
+    report = evaluate_context_engineering(
+        model_context_window_tokens=1024,
+        reserved_output_tokens=128,
+        candidate_token_targets=[500],
+        strategies=["full_pipeline"],
+    )
+
+    assert set(report.run_metadata) >= {"git_commit_sha", "git_branch", "git_dirty"}
+    assert "run_metadata" in report.model_dump()

@@ -220,6 +220,7 @@ agent:
   max_tool_calls: 6
   max_json_parse_retries: 1
   max_tool_top_k: 20
+  max_evidence_summary_chars: 6000 # decision-prompt evidence ceiling (not budgeted by Context Engineering)
   max_chunks_per_document_fetch: 10
   max_chunks_per_document_fetch_hard_ceiling: 50
   classify_prompt_path: src/rag/prompts/templates/agent_classify_v2.yaml # matches default.yaml --

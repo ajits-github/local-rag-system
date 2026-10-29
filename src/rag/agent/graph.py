@@ -187,21 +187,35 @@ def _load_templates(config: AppConfig) -> dict[str, PromptTemplate]:
     }
 
 
-def _summarize_evidence(evidence: list[SearchResult]) -> str:
+def _summarize_evidence(evidence: list[SearchResult], max_chars: int = 6000) -> str:
     """Render a short, source-labeled summary of gathered evidence for a decision prompt.
 
     Exposes `chunk_id` alongside `source` so `get_related_context` can be
     given a real chunk id to look up. No other internal metadata, such as
     document_id, dataset_id, tenant_id, or sensitive_field_ids, is exposed
-    here.
+    here. Items that would push the summary past `max_chars` are omitted,
+    with a note in the summary and a log line, so a decision prompt cannot
+    grow without bound as evidence accumulates.
     """
     if not evidence:
         return "(no evidence gathered yet)"
-    lines = [
-        f"[{i}] chunk_id={r.chunk.metadata.chunk_id} source={r.chunk.metadata.source}: "
-        f"{r.chunk.content[:_EVIDENCE_SUMMARY_CHARS]}"
-        for i, r in enumerate(evidence, start=1)
-    ]
+    lines: list[str] = []
+    used = 0
+    for i, r in enumerate(evidence, start=1):
+        line = (
+            f"[{i}] chunk_id={r.chunk.metadata.chunk_id} source={r.chunk.metadata.source}: "
+            f"{r.chunk.content[:_EVIDENCE_SUMMARY_CHARS]}"
+        )
+        if lines and used + len(line) > max_chars:
+            omitted = len(evidence) - len(lines)
+            logger.info(
+                "Agent evidence summary truncated",
+                extra={"shown_items": len(lines), "omitted_items": omitted},
+            )
+            lines.append(f"({omitted} more evidence item(s) omitted to fit the prompt)")
+            break
+        lines.append(line)
+        used += len(line) + 2
     return "\n\n".join(lines)
 
 
@@ -452,7 +466,11 @@ def _decompose(
 
 
 def _select_tool(
-    state: AgentState, llm: LLM, template: PromptTemplate, max_retries: int
+    state: AgentState,
+    llm: LLM,
+    template: PromptTemplate,
+    max_retries: int,
+    max_summary_chars: int = 6000,
 ) -> ToolSelectionDecision | None:
     """`select_tool` node: decide which tool to dispatch next, and with what raw arguments."""
     return run_decision(
@@ -461,7 +479,7 @@ def _select_tool(
         ToolSelectionDecision,
         max_retries,
         query=state.current_query,
-        evidence_summary=_summarize_evidence(state.retrieved_evidence),
+        evidence_summary=_summarize_evidence(state.retrieved_evidence, max_summary_chars),
     )
 
 
@@ -780,7 +798,11 @@ def _execute_tool(
 
 
 def _evaluate_evidence(
-    state: AgentState, llm: LLM, template: PromptTemplate, max_retries: int
+    state: AgentState,
+    llm: LLM,
+    template: PromptTemplate,
+    max_retries: int,
+    max_summary_chars: int = 6000,
 ) -> AgentState:
     """`evaluate_evidence` node: decide if gathered evidence suffices, or reformulate."""
     decision = run_decision(
@@ -789,7 +811,7 @@ def _evaluate_evidence(
         EvidenceSufficiencyDecision,
         max_retries,
         query=state.original_query,
-        evidence_summary=_summarize_evidence(state.retrieved_evidence),
+        evidence_summary=_summarize_evidence(state.retrieved_evidence, max_summary_chars),
     )
     _accumulate_tokens(state, llm, "evidence_sufficiency")
     if decision is None:
@@ -1194,6 +1216,7 @@ def run_agent(
                 timed_llm,
                 templates["tool_select"],
                 agent_cfg.max_json_parse_retries,
+                agent_cfg.max_evidence_summary_chars,
             ),
             timed_llm=timed_llm,
         )
@@ -1239,6 +1262,7 @@ def run_agent(
                 timed_llm,
                 templates["evidence"],
                 agent_cfg.max_json_parse_retries,
+                agent_cfg.max_evidence_summary_chars,
             ),
             timed_llm=timed_llm,
         )
