@@ -136,6 +136,22 @@ class IngestionPipeline:
                 )
             )
 
+    def reset_graph(self, dataset_id: str) -> None:
+        """Clear only the graph side of `dataset_id`, so the next ingest re-projects it.
+
+        Deletes the dataset's graph facts and its recorded graph checksums;
+        the vector store's chunks and checksums are untouched, so re-running
+        ingestion rebuilds the graph from stored chunks without re-embedding.
+
+        Parameters
+        ----------
+        dataset_id : str
+            The dataset whose graph projection to clear.
+        """
+        if self._graph_writer is not None:
+            self._graph_writer.delete_facts_by_dataset(dataset_id)
+        self._vectorstore.clear_graph_checksums(dataset_id)
+
     def clear_dataset(self, dataset_id: str) -> None:
         """Remove every document (and cascade its chunks) tagged with dataset_id.
 
@@ -266,6 +282,7 @@ class IngestionPipeline:
                     "dataset_id": dataset_id,
                 },
             )
+            self._repair_graph_projection(raw_document, document_id, dataset_id, category, checksum)
             return {"document_id": document_id, "chunks_written": 0, "changed": False}
 
         cleaned = self._cleaner.clean(raw_document.content)
@@ -321,6 +338,47 @@ class IngestionPipeline:
             digest.update(f"|{anchor}|{asset_digest}".encode())
         return digest.hexdigest()
 
+    def _graph_extraction_active(self) -> bool:
+        """Whether graph extraction is configured and its client/writer exist."""
+        return (
+            self._config.graph.enabled
+            and self._config.graph.extraction.enabled
+            and self._graph_client is not None
+            and self._graph_writer is not None
+        )
+
+    def _repair_graph_projection(
+        self,
+        raw_document: RawDocument,
+        document_id: str,
+        dataset_id: str,
+        category: str | None,
+        checksum: str,
+    ) -> None:
+        """Re-project an unchanged document whose recorded graph checksum is behind.
+
+        Covers a graph write that failed after the vector commit, a graph-only
+        reset, and graph extraction enabled after the document was ingested.
+        Uses the stored chunks, so nothing is re-embedded.
+        """
+        if not self._graph_extraction_active():
+            return
+        try:
+            if self._vectorstore.get_graph_checksum(document_id) == checksum:
+                return
+            chunks = self._vectorstore.get_chunks_by_source(raw_document.source, dataset_id)
+        except Exception:
+            # e.g. a database not yet migrated by scripts/init_db.py; never fail the ingest.
+            logger.warning("Graph projection check failed for %s", document_id, exc_info=True)
+            return
+        logger.info(
+            "graph_projection_repair",
+            extra={"document_id": document_id, "dataset_id": dataset_id, "chunks": len(chunks)},
+        )
+        self._run_graph_extraction(
+            raw_document, document_id, dataset_id, category, checksum, chunks
+        )
+
     def _run_graph_extraction(
         self,
         raw_document: RawDocument,
@@ -335,7 +393,10 @@ class IngestionPipeline:
         Resolves `supersedes_document_id` with the path-suffix rule that
         `retrieval/freshness.py` uses, then delegates to
         `extract_and_write_for_document`. Any exception is logged and
-        swallowed, so a graph failure never fails the ingestion.
+        swallowed, so a graph failure never fails the ingestion. Only a
+        successful write records `checksum` as the document's graph
+        checksum, so a failure leaves it behind and the next unchanged
+        re-ingest retries (see `_repair_graph_projection`).
 
         Returns
         -------
@@ -343,10 +404,9 @@ class IngestionPipeline:
             `None` when graph extraction is disabled, otherwise the stats
             from `extract_and_write_for_document`.
         """
-        if not (self._config.graph.enabled and self._config.graph.extraction.enabled):
+        if not self._graph_extraction_active():
             return None
-        if self._graph_client is None or self._graph_writer is None:
-            return None
+        assert self._graph_client is not None and self._graph_writer is not None
         try:
             supersedes_document_id = None
             if raw_document.supersedes_source:
@@ -359,7 +419,7 @@ class IngestionPipeline:
                     ),
                     None,
                 )
-            return extract_and_write_for_document(
+            stats = extract_and_write_for_document(
                 self._graph_writer,
                 self._graph_client,
                 self._config,
@@ -380,6 +440,8 @@ class IngestionPipeline:
                 supersedes_document_id=supersedes_document_id,
                 chunks=chunks,
             )
+            self._vectorstore.set_graph_checksum(document_id, checksum)
+            return stats
         except Exception:
             logger.warning("Graph extraction failed for %s", document_id, exc_info=True)
             return None

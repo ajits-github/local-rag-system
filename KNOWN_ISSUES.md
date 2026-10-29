@@ -44,13 +44,10 @@ without basis. Detailed chronological session history remains in
 | GRAPH-005 | MODERATE | ACCEPTED LIMITATION | GraphRAG | LLM graph extraction worked correctly, but was impractical on a memory-starved host |
 | PROD-001 | MODERATE | ACCEPTED LIMITATION | Infrastructure | Durable workflow state did not make the side effects it triggered durable |
 | PROD-002 | MINOR | ACCEPTED LIMITATION | Data | Re-spelling the same ingestion root churns document identity |
-| PROD-003 | MINOR | ACCEPTED LIMITATION | GraphRAG | Resetting only the graph side of a dataset needs a dataset-level clear, not a graph-only one |
 | CTX-004 | MINOR | ACCEPTED LIMITATION | Context Engineering | Extractive compression needs sentence boundaries; graph-path hops are a best-effort text parse |
-| BUG-015 | MAJOR | OPEN | Ingestion | A graph write failure after a successful vector commit has no durable retry |
 | GRAPH-011 | MINOR | ACCEPTED LIMITATION | GraphRAG | Entity-node ACL properties are frozen at first write (mitigated by read-time revalidation) |
 | RET-006 | MINOR | ACCEPTED LIMITATION | Retrieval | BM25 rebuilds a full in-memory index on every hybrid query |
-| DIST-006 | MAJOR | OPEN | Reliability (experiment branch) | The distributed-state worker claims a full batch every loop, regardless of jobs still running |
-| OPS-015 | MODERATE | OPEN | Deployment (experiment branch) | The Helm chart's default values make both PodDisruptionBudgets unsatisfiable |
+| OPS-015 | MODERATE | ACCEPTED LIMITATION | Deployment (experiment branch) | The Helm chart's default values make both PodDisruptionBudgets unsatisfiable (deliberate demo) |
 | OPS-016 | MAJOR | ACCEPTED LIMITATION | CI / merge risk | The experiment branches have diverged too far from main to merge mechanically |
 
 *Fixed issues (the majority of this log, ~65 entries) are in [section 10](#10-fixed--closed-issues) and summarized separately there, not repeated above.*
@@ -287,25 +284,27 @@ Both metrics now produce real scores; the re-run hit the judge cache on 55% of c
 
 ---
 
-### BUG-015: A graph write failure after a successful vector commit has no durable retry
+### BUG-015: A graph write failure after a successful vector commit had no durable retry
 
-**Status:** OPEN
+**Status:** FIXED
 **Severity:** MAJOR
 **Area:** Ingestion / GraphRAG consistency
-**Affected code:** `IngestionPipeline._run_graph_extraction`, `ingest_file`'s unchanged-document shortcut
+**Affected code:** `IngestionPipeline._run_graph_extraction`, `_repair_graph_projection`, `ingest_file`'s unchanged-document shortcut, `documents.graph_checksum`
 
 **Problem**
-Postgres commits before graph extraction runs; a graph-extraction failure is caught and logged, never re-raised, which correctly protects the vector write but leaves no record that this document's graph projection is now missing or stale. The checksum-unchanged shortcut then returns before extraction on every later re-ingest of the identical bytes, so there is no path back to repair it short of a full dataset clear.
+Postgres commits before graph extraction runs; a graph-extraction failure is caught and logged, never re-raised, which correctly protects the vector write but left no record that this document's graph projection was missing or stale. The checksum-unchanged shortcut then returned before extraction on every later re-ingest of the identical bytes, so there was no path back to repair it short of a full dataset clear.
 
 **Failure scenario**
 Ingest while Neo4j is unavailable, restore Neo4j, then re-ingest the identical file: the vector corpus looks complete and ingestion reports success, but graph evidence for that document stays permanently absent until someone notices and clears the whole dataset.
 
-**Why not fixed yet**
-Closing this needs a durable graph-projection-status column plus an independent retry path that doesn't depend on the vector checksum changing; a structural ingestion change, not a local patch, and out of scope for this pass.
+**Fix applied**
+A nullable `documents.graph_checksum` column (added idempotently by `scripts/init_db.py`) records the checksum of the last *successful* graph projection; `_run_graph_extraction` sets it only after `extract_and_write_for_document` returns. On the unchanged-document path, `_repair_graph_projection` compares it with the current checksum and, when it is missing or stale, re-projects from the document's stored chunks (no re-embedding; extraction already deletes a document's facts before rewriting, so the retry is idempotent). The check is defensive: a not-yet-migrated database logs a warning and never fails the ingest. No outbox or background worker is needed, because every re-ingest is the retry.
 
-**Recommended fix**
-Track graph projection status/checksum durably (e.g. a `graph_projected_checksum` column alongside the existing vector checksum), and retry pending projection independently of whether the source bytes changed.
+**Regression test**
+`test_failed_graph_write_is_retried_on_the_next_unchanged_ingest`, `test_current_projection_is_not_rebuilt` in `tests/unit/test_graph_projection_retry.py`; `test_graph_checksum_set_read_and_clear` in `tests/integration/test_graph_checksum_tracking.py` (real Postgres, CI-safe).
 
+**Notes**
+Recovery still needs a re-ingest to run; nothing retries on its own in the background. Turning graph extraction on for an already-ingested dataset now projects every document on the next ingest run, by the same mechanism.
 ---
 
 ### BUG-016: Replacing or removing a referenced image did not invalidate the document that references it
@@ -883,9 +882,9 @@ The queue read is now bounded by a short poll timeout (`_DISCONNECT_POLL_SECONDS
 
 ---
 
-### DIST-006: The distributed-state worker claims a full batch every loop, regardless of jobs still running
+### DIST-006: The distributed-state worker claimed a full batch every loop, regardless of jobs still running
 
-**Status:** OPEN
+**Status:** FIXED (on `experiment/distributed-state`)
 **Severity:** MAJOR (experiment branch only)
 **Area:** Reliability / job queue
 **Affected code:** `experiment/distributed-state`: `distributed_state_experiment/job_queue/worker.py`, `Worker.run_forever`
@@ -896,9 +895,11 @@ Each loop calls `queue.claim(count=max_concurrency)` and submits every claimed j
 **Failure scenario**
 Under sustained load, claimed-but-unstarted jobs pile up in the executor's queue. Their pending entries age past `reclaim_idle_ms` while waiting, so another worker reclaims and runs them too: duplicate processing and an unbounded backlog.
 
-**Recommended fix**
-Claim `max_concurrency - len(in_flight)` (skip the claim when zero), counting running plus queued futures. Not fixed here: the branch is a learning exercise 194 commits behind `main` (see **OPS-016**); fix it when the worker is re-ported.
+**Fix applied**
+On `experiment/distributed-state` (PR #37): the loop prunes finished futures first, claims only `max_concurrency - in_flight` jobs, and waits for a slot (`concurrent.futures.wait(..., FIRST_COMPLETED)`, bounded by `claim_block_ms`) when the pool is full.
 
+**Regression test**
+`distributed_state_experiment/tests/test_worker_bounded_claims.py` on that branch: with both slots blocked, the old loop issued `[2, 2, 2, ...]` claims; the fixed loop issues `[2]`. The branch has no CI, so the test was run locally.
 ---
 
 ## 4. Retrieval, Graph, Ontology and Context
@@ -1100,7 +1101,7 @@ Denied, same-tenant-authorized, and open-control cases all pass, cleanly separat
 
 ### GRAPH-004: Resetting the graph alone left the graph empty, because change detection only looked at Postgres
 
-**Status:** ACCEPTED LIMITATION (as a residual constraint; the demo-reset gap itself is FIXED)
+**Status:** FIXED
 **Severity:** MINOR
 **Area:** GraphRAG / ingestion consistency
 **Affected code:** Graph-reset seeding script, checksum-based change detection
@@ -1115,8 +1116,7 @@ Ingestion compares Postgres checksums before reaching graph extraction. A graph-
 The script now calls the dataset-level clear, removing chunks and graph facts together.
 
 **Notes**
-Documented residual design property, not fully closed: *any* future recovery path that clears only the graph side will hit the identical gap, since the one-directional check is structural, not specific to this one script. See **PROD-003**.
-
+The residual design property (any graph-only reset would hit the same gap, because change detection was one-directional) is closed by **BUG-015**'s `documents.graph_checksum`: `IngestionPipeline.reset_graph` deletes a dataset's graph facts and clears its graph checksums, and the next ingest re-projects every document from stored chunks. Covered by `test_graph_only_reset_is_rebuilt_on_the_next_ingest` in `tests/unit/test_graph_projection_retry.py`. See **PROD-003**.
 ---
 
 ### GRAPH-005: LLM graph extraction worked correctly, but was impractical on a memory-starved host
@@ -2414,8 +2414,8 @@ Verified live: a push touching only `.github/workflows/ci.yml` itself (a real fi
 
 ### OPS-015: The Helm chart's default values make both PodDisruptionBudgets unsatisfiable
 
-**Status:** OPEN
-**Severity:** MODERATE (experiment branch only)
+**Status:** ACCEPTED LIMITATION (experiment branch only)
+**Severity:** MODERATE
 **Area:** Deployment / Kubernetes reliability
 **Affected code:** `experiment/helm`: `helm/rag-system/values.yaml`
 
@@ -2425,9 +2425,11 @@ Defaults set `replicaCount: 1` with `podDisruptionBudget.minAvailable: 1` for bo
 **Failure scenario**
 `kubectl drain` during a node upgrade hangs on both pods until someone deletes the PDB by hand. The production values (3 replicas, `minAvailable: 2`) are fine.
 
-**Recommended fix**
-Render the PDB only when `replicaCount > 1` (or default `maxUnavailable: 1`), and add a `helm template` assertion for the single-replica case.
+**Why accepted**
+It is deliberate on that branch: `helm/README.md`'s "Demo 6: replica failure while a PDB is active" uses exactly these defaults to show that `minAvailable` equal to the replica count blocks every voluntary eviction, and explains why a scaled deployment must never do that. `values-prod.yaml` (3 rag-api replicas with `minAvailable: 2`, 2 frontend replicas with `minAvailable: 1`) renders satisfiable budgets. Gating the template on the replica count was tried and dropped, because it removes the PDB that demo relies on.
 
+**If the chart is ever used outside the demo**
+Render each PDB only when the replica floor (`autoscaling.minReplicas`, else `replicaCount`) exceeds `minAvailable`, and move the demo to an explicit `--set` override.
 ---
 
 ### OPS-016: The experiment branches have diverged too far from main to merge mechanically
@@ -2497,22 +2499,21 @@ Verified directly with two end-to-end tests that this churn never duplicates or 
 
 ---
 
-### PROD-003: Resetting only the graph side of a dataset doesn't actually clear it
+### PROD-003: Resetting only the graph side of a dataset didn't actually clear it
 
-**Status:** ACCEPTED LIMITATION
+**Status:** FIXED
 **Severity:** MINOR
 **Area:** Production-hardening / GraphRAG consistency
-**Affected code:** Checksum-based change detection (Postgres-only)
+**Affected code:** Checksum-based change detection, `IngestionPipeline.reset_graph`
 
 **Problem**
-Any future recovery path that clears *only* the Neo4j graph side of a dataset (not just the one demo script already fixed, see **GRAPH-004**) will hit the identical gap: ingestion's checksum-based "unchanged" shortcut lives entirely in Postgres and has no visibility into the graph store at all.
+Any recovery path that clears *only* the Neo4j graph side of a dataset (not just the one demo script already fixed, see **GRAPH-004**) hit the identical gap: ingestion's checksum-based "unchanged" shortcut lived entirely in Postgres and had no visibility into the graph store at all.
 
-**Why not fixed generally**
-A fully bidirectional consistency check was judged out of scope; the dataset-level clear (which resets both stores together) is the documented correct recovery path instead.
+**Fix applied**
+Change detection now tracks the graph side too (`documents.graph_checksum`, see **BUG-015**). `IngestionPipeline.reset_graph(dataset_id)` is the supported graph-only reset: it deletes the dataset's facts and clears their graph checksums, so the next ingest rebuilds the graph from stored chunks without re-embedding. The dataset-level clear remains the way to reset both stores.
 
-**Recommended mitigation**
-Always use the dataset-level clear, never a graph-only reset, when recovering from any graph-side data loss.
-
+**Regression test**
+`test_graph_only_reset_is_rebuilt_on_the_next_ingest` in `tests/unit/test_graph_projection_retry.py`.
 ---
 
 ## 9. Needs Verification
@@ -2563,6 +2564,7 @@ The following issues are resolved, with a concrete fix and regression test cited
 | BUG-008 | API | A streaming endpoint validated requests after its 200 status was sent |
 | BUG-013 | Evaluation | Recall@10 was structurally unmeasurable |
 | BUG-014 | Evaluation | A RAGAS metric returned null for every question without raising an error |
+| BUG-015 | Ingestion | A graph write failure after a successful vector commit had no durable retry |
 | BUG-016 | Ingestion | Replacing or removing a referenced image did not invalidate the document that references it |
 | BUG-017 | Ingestion | A staged upload could resolve vision assets against the wrong document version |
 | SEC-001 | Security | Document-level access control could not stop a legitimate reader from getting a secret |
@@ -2586,11 +2588,13 @@ The following issues are resolved, with a concrete fix and regression test cited
 | DIST-003 | Reliability | A deliberate workflow pause would have been counted as a failure in metrics |
 | DIST-004 | Reliability | A queue-depth metric built on XLEN could only grow |
 | DIST-005 | Reliability | An SSE disconnect was only noticed between queue items, never while waiting for one |
+| DIST-006 | Reliability (experiment branch) | The distributed-state worker claimed a full batch every loop, regardless of jobs still running |
 | RET-005 | Retrieval | BM25 ties depended on unspecified SQL row order |
 | GRAPH-001 | GraphRAG | Neo4j failed on one unknown config key and on a null inside a MERGE key |
 | GRAPH-002 | GraphRAG | The driver's convenience method stripped the node labels authorization code needed |
 | GRAPH-003 | GraphRAG | A graph path test failed because one relationship write cannot span two tenant scopes |
-| GRAPH-004 | GraphRAG | Resetting the graph alone left the graph empty (demo-script fix; see PROD-003 for the general residual) |
+| GRAPH-004 | GraphRAG | Resetting the graph alone left the graph empty, because change detection only looked at Postgres |
+| PROD-003 | GraphRAG | Resetting only the graph side of a dataset didn't actually clear it |
 | GRAPH-006 | GraphRAG | A relationship's own ACL was never checked on the dependency-path query |
 | GRAPH-007 | GraphRAG | Neo4j routing/timeout options silently became Cypher query parameters |
 | GRAPH-008 | GraphRAG | A stale graph fact was never revalidated against its source's current Postgres state |
@@ -2691,4 +2695,4 @@ Performed after restructuring:
 
 **Postscript (2026-10-29 pre-experiment audits):** two independent audits of `main` at `64321ed` (Codex: `.claude-prompts/35.9-...`, Claude: `35.10-...`; both untracked) were reconciled against the code before any fix. Fixed: **CTX-014**, **CTX-015**, **CTX-016**, **CTX-017**, **SEC-018**, **SEC-019**, **GRAPH-008**, **GRAPH-010**, plus follow-ups folded into existing stories (**CTX-007** negation guard, **CTX-011** telemetry clamp, **EVAL-015** Context Engineering report). New accepted limitations: **GRAPH-011**, **RET-006**, **OPS-016**. New open items on experiment branches only: **DIST-006**, **OPS-015**. Re-confirmed still open, not fixed here: **BUG-015**/**BUG-016**/**BUG-017** (structural ingestion-consistency changes; avoid graph-projection failures and image-only edits on any benchmark corpus until they land) and **GRAPH-009** (dead code). Two test-coverage gaps were closed without separate entries: `GraphRetriever.search`'s Neo4j-outage degradation (`tests/unit/test_graph_retrieval_degradation.py`) and an MCP remote-tool transport failure (`test_remote_tool_connection_failure_is_recorded_not_raised`). The Codex report's cited repro script, `experiments/reports/audit_repro_2026_10_29.py`, was never committed and does not exist.
 
-**Follow-up (2026-10-29, after the audit PRs):** **GRAPH-009**, **OBS-001**, **BUG-016** and **BUG-017** fixed; see their entries.
+**Follow-up (2026-10-29, after the audit PRs):** **GRAPH-009**, **OBS-001**, **BUG-015**, **BUG-016** and **BUG-017** fixed, which also closes the graph-only-reset residual of **GRAPH-004**/**PROD-003**; **DIST-006** fixed on `experiment/distributed-state`; **OPS-015** reclassified as an accepted limitation (a deliberate Helm demo). Still open by nature: **AGT-004**/**AGT-005** (model tool-selection behavior, needs live evaluation runs, not a code change) and **OPS-016** (a merge-strategy decision).

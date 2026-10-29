@@ -316,6 +316,44 @@ class VectorStore(ABC):
         """
 
     @abstractmethod
+    def get_graph_checksum(self, document_id: str) -> str | None:
+        """Return the document checksum last projected into the graph, or `None` if never.
+
+        Parameters
+        ----------
+        document_id : str
+            The document to look up.
+
+        Returns
+        -------
+        str | None
+            Equal to the document's own `checksum` when its graph projection
+            is current; anything else means the projection is missing or stale.
+        """
+
+    @abstractmethod
+    def set_graph_checksum(self, document_id: str, checksum: str) -> None:
+        """Record that `checksum` was successfully projected into the graph.
+
+        Parameters
+        ----------
+        document_id : str
+            The document that was projected.
+        checksum : str
+            The document checksum the projection was built from.
+        """
+
+    @abstractmethod
+    def clear_graph_checksums(self, dataset_id: str) -> None:
+        """Mark every document in `dataset_id` as not projected, after a graph-only reset.
+
+        Parameters
+        ----------
+        dataset_id : str
+            The dataset whose graph projection was cleared.
+        """
+
+    @abstractmethod
     def add_chunks(self, chunks: list[Chunk]) -> None:
         """Persist chunks; each chunk must already have its embedding set.
 

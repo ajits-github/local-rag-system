@@ -11465,3 +11465,19 @@ BUG-015/016/017 (structural ingestion consistency) and GRAPH-009 (dead code) rem
 
 ### Next recommended step
 Merge the four stacked PRs (#30 to #33) in order, retargeting each to `main` before deleting the branch below it (deleting a stacked PR's base branch closes the PR rather than retargeting it). Then run the graph integration tests with Neo4j up before any graph-mode benchmark.
+
+## 2026-10-29 (session 27): Closing the items the audit fixes left open
+
+### Interview talking points
+- The BUG-016 entry deferred a fix because "including image state would mean parsing before the cheap checksum gate"; reading the code showed the loader already runs before that gate, so the cost it guarded against did not exist. Re-check a recorded tradeoff before honoring it.
+- BUG-015 needed no outbox: recording the checksum of the last successful graph projection per document makes every unchanged re-ingest the retry, and the same column closes the graph-only-reset gap (GRAPH-004/PROD-003) for free.
+- Not every audit finding is a defect: OPS-015's "unsatisfiable PDB" is the exact behavior a documented Helm demo exists to show, so it was reclassified instead of "fixed".
+
+### Changes made
+Merged #30 to #33 (audit fixes), then #34 (topic-page architecture diagrams; five re-exported, cleaner images), #35 (GRAPH-009 authorized live-Neo4j helper; OBS-001 `/health` probes only the graph client), and opened #36 (BUG-016 image digests in the checksum; BUG-017 vision reads the staged file) and the BUG-015 PR (`documents.graph_checksum`, repair on unchanged re-ingest, `reset_graph`). DIST-006 fixed on `experiment/distributed-state` (#37).
+
+### Process notes
+Deleting a stacked PR's base branch closes the dependent PR instead of retargeting it (#31 had to be reopened); retarget first, then delete. Changing a PR's base does not trigger `pull_request` CI; a close/reopen does. A `git add -A` swept unrelated user-added images into a commit once; stage by name.
+
+### Open problems
+AGT-004/AGT-005 need live model evaluation runs, not code; OPS-016 is a merge-strategy decision. Graph integration tests were still not run against a live Neo4j.
