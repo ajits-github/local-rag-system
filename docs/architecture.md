@@ -463,8 +463,11 @@ staged file. Only after full success are extracted assets moved into
 deletes the staging directory, leaving a previously accepted file intact.
 `ingest_file(source_override=...)` persists the stable destination path as
 `source`, so re-uploads keep the same `document_id`
-(`test_upload_staging_no_temp_leak.py`). Image resolution during staged
-uploads has an open gap, **BUG-017** in `KNOWN_ISSUES.md`.
+(`test_upload_staging_no_temp_leak.py`). Vision reads image bytes from the
+staged file's own directory (`Writer.write(asset_base_dir=...)`), never from
+the destination, so a replacement upload is never described from the
+previous version's image; only the citation-facing path uses the
+destination.
 
 ### Metadata and citation protection
 
@@ -1202,8 +1205,10 @@ MLflow log `layout_parser`, `vision_provider`, `vision_model`, and
 - DOCX page numbers need explicit manual page breaks.
 - PDF image-index pairing between `pdfplumber` and `pypdf` assumes the
   same stream order; verified on simple single-column documents only.
-- Changing or removing a referenced image under an unchanged document
-  doesn't invalidate its vision chunk (**BUG-016**).
+- With a vision provider configured, the change-detection checksum also
+  covers every referenced local image, so swapping or removing an image
+  re-ingests its document; with vision off, image bytes feed nothing and
+  are ignored.
 
 ## Feedback loop (feedback milestone)
 
