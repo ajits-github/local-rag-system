@@ -149,3 +149,35 @@ def test_upsert_entity_rejects_out_of_allowlist_type():
     with pytest.raises(GraphSchemaViolationError):
         writer.upsert_entity(entity)
     assert client.write_calls == []
+
+
+def test_entity_acl_is_written_on_create_only_while_relationship_acl_refreshes():
+    """Pins current behavior: endpoint ACLs freeze at first write, relationship ACLs refresh.
+
+    Read-time Postgres revalidation (`rag.graph.fusion`) is what keeps a frozen
+    entity ACL from widening access; changing this write behavior must be a
+    deliberate decision, not a side effect.
+    """
+    client = _FakeNeo4jClient()
+    writer = GraphWriter(client)
+    writer.upsert_relationship(
+        GraphRelationship(
+            subject_type="Service",
+            subject_name="Document Service",
+            relationship_type="DEPENDS_ON",
+            object_type="Database",
+            object_name="PostgreSQL",
+            provenance=_provenance(allowed_roles=["admin"]),
+        )
+    )
+    cypher = client.write_calls[0][0]
+    relationship_set = cypher.split("]->(o)", 1)[1]
+    endpoint_clauses = cypher.split("]->(o)", 1)[0]
+
+    for var in ("s", "o"):
+        assert f"ON CREATE SET {var}.name" in endpoint_clauses
+        assert f"{var}.allowed_roles = $allowed_roles" in endpoint_clauses
+    assert "\n        SET s." not in endpoint_clauses
+    assert "\n        SET o." not in endpoint_clauses
+    assert "r.allowed_roles = $allowed_roles" in relationship_set
+    assert "ON CREATE" not in relationship_set

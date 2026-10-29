@@ -49,8 +49,8 @@ def apply_egress_policy(source: dict[str, Any], config: AppConfig) -> EgressDeci
     2. `source["classification"]` against `classification_policy`, which
        **fails closed**: a classification with no entry in that dict is
        blocked, not silently allowed (`.get(classification, False)`).
-       `None`/missing classification is treated as allowed, matching
-       `"internal"`'s default, for the pre-governance-metadata corpus.
+       A missing classification is allowed only when `allow_unclassified`
+       is `True`; otherwise it is blocked as `"unclassified"`.
     3. `require_authoritative_trust`. When `True`, only
        `trust_level == "authoritative"` may egress.
     4. `block_unredacted_sensitive_fields`. When `True`, any source
@@ -87,7 +87,10 @@ def apply_egress_policy(source: dict[str, Any], config: AppConfig) -> EgressDeci
         return EgressDecision(allowed=False, redacted_context="", blocked_reason="blocked_tenant")
 
     classification = source.get("classification")
-    if classification is not None and not policy.classification_policy.get(classification, False):
+    if classification is None:
+        if not policy.allow_unclassified:
+            return EgressDecision(allowed=False, redacted_context="", blocked_reason="unclassified")
+    elif not policy.classification_policy.get(classification, False):
         return EgressDecision(allowed=False, redacted_context="", blocked_reason="classification")
 
     if policy.require_authoritative_trust and source.get("trust_level") != "authoritative":

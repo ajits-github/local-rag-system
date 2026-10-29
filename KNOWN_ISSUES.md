@@ -50,8 +50,8 @@ without basis. Detailed chronological session history remains in
 | BUG-015 | MAJOR | OPEN | Ingestion | A graph write failure after a successful vector commit has no durable retry |
 | BUG-016 | MAJOR | OPEN | Ingestion | Replacing or removing a referenced image does not invalidate the document that references it |
 | BUG-017 | MAJOR | OPEN | Ingestion | A staged upload can resolve vision assets against the wrong document version |
-| GRAPH-008 | MAJOR | OPEN | GraphRAG | A stale graph fact is never revalidated against its source's current Postgres state |
 | GRAPH-009 | MODERATE | OPEN | Ontology | A live-Neo4j ontology query helper has no authorization check at all (currently unreachable) |
+| GRAPH-011 | MINOR | ACCEPTED LIMITATION | GraphRAG | Entity-node ACL properties are frozen at first write (mitigated by read-time revalidation) |
 
 *Fixed issues (the majority of this log, ~65 entries) are in [section 10](#10-fixed--closed-issues) and summarized separately there, not repeated above.*
 
@@ -730,6 +730,51 @@ Tenant A uploads `report.md` into a shared dataset. A different, independently i
 
 ---
 
+### SEC-018: Graph-derived evidence carried no governance metadata, so the egress gate could not block it
+
+**Status:** FIXED
+**Severity:** MAJOR (CRITICAL for a hosted-judge run over a graph strategy)
+**Area:** Security / provider egress / GraphRAG
+**Affected code:** `rag.graph.fusion.graph_fact_to_search_result`
+
+**Problem**
+A graph fact became a `SearchResult` whose `ChunkMetadata` had a source path and dataset only: no `tenant_id`, `classification`, `trust_level`, `allowed_roles`, or `sensitive_field_ids`. `apply_egress_policy` reads exactly those fields, and field redaction skips any result with no `sensitive_field_ids`.
+
+**Failure scenario**
+A graph-mode RAGAS run against a hosted judge with egress enabled: a fact derived from a `classification: confidential` document reads as unclassified, passes the classification check, and its text (unscanned for secrets) is sent to the hosted provider.
+
+**Fix applied**
+Fusion now copies the source document's current Postgres governance fields onto the graph result (the same lookup that closes **GRAPH-008**) and detects `sensitive_field_ids` on the fact's own text, exactly as ingestion tags a chunk. Graph evidence therefore goes through classification, trust, tenant, redaction and unredacted-sensitive-field checks like any chunk.
+
+**Regression test**
+`test_fact_carries_current_postgres_governance_metadata`, `test_graph_evidence_from_a_confidential_document_is_blocked_from_egress`, `test_sensitive_values_in_fact_text_are_tagged_for_redaction` in `tests/unit/test_graph_fusion_governance.py`.
+
+**Notes**
+Codex audit `SEC-R01` (2026-10-29). Graph strategies are off by default (`graph.enabled: false`), so no recorded benchmark was affected.
+
+---
+
+### SEC-019: A source with no classification egressed silently, even under the production config
+
+**Status:** FIXED
+**Severity:** MODERATE
+**Area:** Security / provider egress
+**Affected code:** `rag.retrieval.egress_policy.apply_egress_policy`, `EgressPolicyConfig`
+
+**Problem**
+The classification check ran only when `classification` was set. A missing classification was always allowed, documented but implicit, with no way to fail closed. Same root-cause shape as **SEC-001**/**SEC-005**/**SEC-009**: missing metadata defaulting to permissive.
+
+**Failure scenario**
+A confidential document ingested without front matter, under `config/production.yaml` (`confidential: false`), still reaches the hosted reranker or RAGAS judge, and nothing distinguishes "explicitly allowed" from "never classified."
+
+**Fix applied**
+New `security.egress_policy.allow_unclassified` knob. `true` in `config/default.yaml` (keeps the pre-governance corpus and every recorded experiment reproducible); `false` in `config/production.yaml`, where an unclassified source is blocked with `blocked_reason="unclassified"`.
+
+**Regression test**
+`test_unclassified_source_is_allowed_by_default`, `test_unclassified_source_is_blocked_when_allow_unclassified_is_false`, `test_production_config_fails_closed_on_unclassified_sources` in `tests/unit/test_egress_policy.py`.
+
+---
+
 ## 3. Reliability and Distributed Systems
 
 ### DIST-001: Reading a request-scoped context variable inside a stream would have raced its middleware
@@ -1103,12 +1148,12 @@ Both methods now build a real `neo4j.Query(cypher, timeout=effective_timeout)` a
 
 ---
 
-### GRAPH-008: A stale graph fact is never revalidated against its source's current Postgres state
+### GRAPH-008: A stale graph fact was never revalidated against its source's current Postgres state
 
-**Status:** OPEN
+**Status:** FIXED
 **Severity:** MAJOR
 **Area:** GraphRAG / cross-store consistency
-**Affected code:** `graph/fusion.py`, `rag.graph.retrieval`
+**Affected code:** `rag.graph.fusion.graph_facts_to_search_results`, `GraphRAGPipeline`, the four agent graph tools, `VectorStore.get_document_governance`
 
 **Problem**
 Graph retrieval authorizes a fact against the ACL copied onto its Neo4j nodes/relationships at write time; it never re-checks the fact's source document/chunk against Postgres's current, authoritative state.
@@ -1116,11 +1161,14 @@ Graph retrieval authorizes a fact against the ACL copied onto its Neo4j nodes/re
 **Failure scenario**
 A document's ACL is narrowed, or the document is deleted, in Postgres, while the corresponding Neo4j fact survives (a real possibility given the already-documented graph-cleanup gaps, see **GRAPH-004**/**PROD-003**, and the lack of any durable graph-write retry ledger). The stale fact is still authorized and surfaced as prompt evidence, potentially after the access it reflects should have been revoked.
 
-**Why not fixed yet**
-Closing this fully requires batch-resolving every fact's supporting document/chunk against Postgres before it's ever converted to evidence (a real per-query cost), and failing closed on a mismatch; this is a structural change to the graph-fusion read path, not a local patch, and was judged out of scope for this pass.
+**Fix applied**
+Every graph fact is now revalidated before it becomes evidence. `graph_facts_to_search_results` batch-resolves the facts' `source_document_id`s with one `VectorStore.get_document_governance` query (`DISTINCT ON (document_id)`, same SQL authorization predicate as search) under the caller's `resolve_auth`-resolved context, so freshness exclusions and the kill-switch apply too. A fact whose document is deleted, outside the dataset, superseded, or no longer readable is dropped (fail closed) and the count is audit-logged as `graph_facts_failed_revalidation`. The Neo4j `Document`-node path lookup is gone; the citeable path also comes from Postgres. `GraphRAGPipeline` and all four agent graph tools go through this one function.
 
-**Recommended fix**
-Resolve each fact's `source_document_id` against Postgres's live ACL/existence at read time (not just at graph-write time), failing closed on a checksum/ACL mismatch.
+**Regression test**
+`test_fact_whose_source_is_gone_or_unauthorized_is_dropped` in `tests/unit/test_graph_fusion_governance.py`; `test_governance_lookup_returns_current_metadata_and_respects_auth` in `tests/integration/test_document_governance_lookup.py` (real Postgres, CI-safe synthetic dataset: other tenant excluded, wrong dataset excluded, deleted document excluded).
+
+**Notes**
+Cost is one extra indexed Postgres query per graph retrieval. Entity facts are checked at document level (their `first_seen_document_id`), since an entity has no single source chunk. Confirmed still open by both 2026-10-29 audits before this fix (Codex `SEC-R02`).
 
 ---
 
@@ -1141,7 +1189,49 @@ Confirmed dead code today: `grep` across `src/rag/{api,agent,graph,retrieval}` f
 No live caller exists yet to fix a live bug in; adding authorization now to dead code was judged lower priority than the two reachable gaps above.
 
 **Recommended fix**
-Add `is_entity_authorized` filtering, mirroring `rag.graph.retrieval`'s pattern, before this function is ever wired into anything live. Add a regression test now, preemptively, so the gate exists before the first real caller does.
+Add `is_entity_authorized` filtering, mirroring `rag.graph.retrieval`'s pattern, before this function is ever wired into anything live. Add a regression test now, preemptively, so the gate exists before the first real caller does. Its query also applies `LIMIT` with no `ORDER BY`, so results are not reproducible; add one at the same time. Both 2026-10-29 audits reconfirmed it has zero callers.
+
+---
+
+### GRAPH-010: The graph-seeded neighbor-document lookup ran unauthorized Cypher
+
+**Status:** FIXED
+**Severity:** MINOR
+**Area:** GraphRAG / authorization consistency
+**Affected code:** `GraphRAGPipeline._answer_graph_seeded_vector`
+
+**Problem**
+The `graph_seeded_vector` strategy collected documents linked to the query's resolved entities with a Cypher query that had no authorization predicate or re-check, and `LIMIT 20` with no `ORDER BY`.
+
+**Failure scenario**
+Harmless today, because the ids only re-sort independently authorized vector results. Any later use of that id set as a filter, a count, or a displayed list would disclose documents the caller cannot read; and the seed set could differ between identical runs.
+
+**Fix applied**
+The linked ids are filtered through `VectorStore.get_document_governance` under the resolved auth context before seeding, and the query orders by `document_id` before `LIMIT`.
+
+**Regression test**
+`test_graph_seeded_vector_ignores_linked_documents_the_caller_cannot_read`, `test_graph_seeded_neighbor_query_is_deterministically_ordered` in `tests/unit/test_graph_fusion_governance.py`.
+
+---
+
+### GRAPH-011: Entity-node ACL properties are frozen at first write
+
+**Status:** ACCEPTED LIMITATION
+**Severity:** MINOR
+**Area:** GraphRAG / consistency
+**Affected code:** `GraphWriter.upsert_relationship`, `GraphWriter.upsert_entity`
+
+**Problem**
+Entity `tenant_id`/`allowed_roles`/`trust_level` are set only `ON CREATE`, so they reflect the first document that mentioned the entity; relationship ACLs are refreshed on every write. Same staleness family as **GRAPH-008**.
+
+**Failure scenario**
+An entity first seen in a public document and later mentioned only in a restricted one keeps the public ACL in Neo4j.
+
+**Why accepted**
+Graph evidence no longer trusts the Neo4j ACL alone: every fact is revalidated against its source document in Postgres before it reaches a prompt (**GRAPH-008**), so a stale entity ACL cannot widen access. Rewriting entity ACLs on every write would instead let the *last* document win, which is no more correct for an entity shared by several documents.
+
+**Regression test**
+`test_entity_acl_is_written_on_create_only_while_relationship_acl_refreshes` in `tests/unit/test_graph_upsert.py` pins the current behavior so a change is deliberate.
 
 ---
 
@@ -2366,6 +2456,8 @@ The following issues are resolved, with a concrete fix and regression test cited
 | SEC-015 | Security | A hosted reranker received raw candidate content before redaction, with no egress gate |
 | SEC-016 | Security | Egress policy dropped a blocked source's context but still sent the derived answer to the hosted judge |
 | SEC-017 | Security | A same-named upload could silently replace another tenant's document |
+| SEC-018 | Security | Graph-derived evidence carried no governance metadata, so the egress gate could not block it |
+| SEC-019 | Security | A source with no classification egressed silently, even under the production config |
 | DIST-001 | Reliability | Reading a request-scoped context variable inside a stream would have raced its middleware |
 | DIST-002 | Reliability | A LangGraph join node ran twice, because its parallel branches had unequal lengths |
 | DIST-003 | Reliability | A deliberate workflow pause would have been counted as a failure in metrics |
@@ -2378,6 +2470,8 @@ The following issues are resolved, with a concrete fix and regression test cited
 | GRAPH-004 | GraphRAG | Resetting the graph alone left the graph empty (demo-script fix; see PROD-003 for the general residual) |
 | GRAPH-006 | GraphRAG | A relationship's own ACL was never checked on the dependency-path query |
 | GRAPH-007 | GraphRAG | Neo4j routing/timeout options silently became Cypher query parameters |
+| GRAPH-008 | GraphRAG | A stale graph fact was never revalidated against its source's current Postgres state |
+| GRAPH-010 | GraphRAG | The graph-seeded neighbor-document lookup ran unauthorized Cypher |
 | ONT-001 | Ontology | A narrow RDFS domain axiom silently reclassified an Application as a Service |
 | ONT-002 | Ontology | SHACL was already subclass-aware, before any inference option was requested |
 | AGT-001 | Agentic RAG | Step budgets collided with the happy path, mislabeling most runs as max_steps |

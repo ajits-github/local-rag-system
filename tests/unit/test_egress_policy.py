@@ -150,3 +150,30 @@ def test_require_authoritative_trust_allows_authoritative_source():
     decision = apply_egress_policy(source, config)
 
     assert decision.allowed is True
+
+
+def test_unclassified_source_is_allowed_by_default():
+    """`allow_unclassified` defaults to True so the pre-governance corpus still egresses."""
+    decision = apply_egress_policy(_source(classification=None), _enabled_config())
+
+    assert decision.allowed is True
+
+
+def test_unclassified_source_is_blocked_when_allow_unclassified_is_false():
+    """A source with no classification fails closed when the knob is off (production)."""
+    config = _enabled_config(allow_unclassified=False)
+
+    decision = apply_egress_policy(_source(classification=None), config)
+
+    assert decision.allowed is False
+    assert decision.blocked_reason == "unclassified"
+    assert decision.redacted_context == ""
+
+
+def test_production_config_fails_closed_on_unclassified_sources():
+    """The production-shaped config ships with unclassified egress disabled."""
+    from pathlib import Path
+
+    config = load_config(Path(__file__).resolve().parents[2] / "config" / "production.yaml")
+
+    assert config.security.egress_policy.allow_unclassified is False

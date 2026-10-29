@@ -482,7 +482,6 @@ def _dispatch_tool(
     agent_cfg: AgentConfig,
     versions: list[DocumentVersionInfo] | None = None,
     graph_retriever: GraphRetriever | None = None,
-    graph_client: Neo4jClient | None = None,
 ) -> list[SearchResult]:
     """Call the matching `rag.agent.tools` function and wrap its output as `SearchResult`s.
 
@@ -497,22 +496,21 @@ def _dispatch_tool(
     too. Ignored by `search_knowledge_base`, which resolves `auth`
     (and any versions it needs) inside `retrieve()` itself.
 
-    `graph_retriever`/`graph_client` back the four `GRAPH_TOOL_NAMES` tools.
-    `_execute_tool` rejects graph-tool calls before this point when either is `None`.
+    `graph_retriever` backs the four `GRAPH_TOOL_NAMES` tools, whose facts are
+    revalidated through `pipeline`'s vector store. `_execute_tool` rejects
+    graph-tool calls before this point when graph retrieval is unavailable.
     """
     if tool_name in GRAPH_TOOL_NAMES:
         # GraphRetriever clamps max_hops itself, so no clamp is repeated here.
-        assert graph_retriever is not None and graph_client is not None
+        assert graph_retriever is not None
         auth = state.authorization_context
         if tool_name == "search_knowledge_graph":
-            return tools.search_knowledge_graph(
-                args, graph_retriever, graph_client, dataset_id, auth
-            )
+            return tools.search_knowledge_graph(args, graph_retriever, pipeline, dataset_id, auth)
         if tool_name == "get_entity":
-            return tools.get_entity(args, graph_retriever, graph_client, dataset_id, auth)
+            return tools.get_entity(args, graph_retriever, pipeline, dataset_id, auth)
         if tool_name == "get_neighbors":
-            return tools.get_neighbors(args, graph_retriever, graph_client, dataset_id, auth)
-        return tools.find_dependency_path(args, graph_retriever, graph_client, dataset_id, auth)
+            return tools.get_neighbors(args, graph_retriever, pipeline, dataset_id, auth)
+        return tools.find_dependency_path(args, graph_retriever, pipeline, dataset_id, auth)
     if tool_name == "search_knowledge_base":
         clamped_top_k = min(args.top_k, agent_cfg.max_tool_top_k)
         clamped_args = args.model_copy(update={"top_k": clamped_top_k})
@@ -719,7 +717,6 @@ def _execute_tool(
                     agent_cfg=agent_cfg,
                     versions=versions,
                     graph_retriever=graph_retriever,
-                    graph_client=graph_client,
                 )
             tracing.set_attributes(span, {"tool_success": True, "result_count": len(results)})
     except Exception as exc:  # tool failure must never crash the request

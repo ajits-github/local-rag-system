@@ -60,8 +60,9 @@ reference; this section is the condensed version.
   allowlist re-validation) + `retrieval.py` (`GraphRetriever`: literal
   keyword intent classification, capitalized-noun-phrase entity linking,
   bounded traversal) + `fusion.py` (`GraphFact` -> `SearchResult` with
-  `origin="graph"`, resolving a real citeable document path from the
-  fact's own `Document` node rather than a bare Neo4j id) + `pipeline.py`
+  `origin="graph"`, taking the citeable path and governance metadata from
+  the fact's source document in Postgres, and dropping a fact whose source
+  the caller can no longer read) + `pipeline.py`
   (`GraphRAGPipeline`, four fusion strategies) + `constraints.py`
   (per-label uniqueness constraints/indexes, run via
   `scripts/init_graph_db.py`).
@@ -71,9 +72,10 @@ reference; this section is the condensed version.
   real `VectorStore` content, so it's never eligible for freshness
   resolution or relationship expansion, but unlike MCP business evidence
   it *does* resolve to a real, citeable document path (via
-  `rag.graph.fusion.resolve_document_sources`, reading each fact's
-  `source_document_id`'s `source` property straight off its `Document`
-  node). `Citation.origin`/`SourceItem.origin` were extended to match.
+  `VectorStore.get_document_governance`, which also supplies the fact's
+  tenant, roles, classification, trust and status, so the egress gate and
+  redaction treat graph evidence like any chunk).
+  `Citation.origin`/`SourceItem.origin` were extended to match.
 - **Graph authorization is enforced twice, independently**: the Cypher
   `WHERE` predicate (mirroring `pgvector.py`'s tenant/role/trust rule
   exactly) on every deterministic template, *and* a Python-side

@@ -565,8 +565,10 @@ HTTP request
   in order: `blocked_tenant_ids`; `classification_policy` (a dict mapping
   classification -> allowed, **fails closed** on any classification with
   no entry via `.get(classification, False)`, `confidential`/
-  `restricted` are `False` by default, `None`/missing classification is
-  `True` to preserve pre-governance-metadata corpus behavior);
+  `restricted` are `False` by default; a missing classification is
+  allowed only while `allow_unclassified` is `True`, the default kept for
+  the pre-governance corpus, and `config/production.yaml` sets it `False`
+  so unclassified content fails closed);
   `require_authoritative_trust`; and `block_unredacted_sensitive_fields`
   (a tagged sensitive field not fully covered by `redacted_field_ids` is
   blocked outright, regardless of why it wasn't redacted). `enabled:

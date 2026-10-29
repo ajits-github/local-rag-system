@@ -109,8 +109,17 @@ Graph authorization applies the same rule as the SQL predicate in
 A path is returned only when every node on it is authorized. A single
 unauthorized hop removes the whole path.
 
+3. **Postgres revalidation** (`rag.graph.fusion.graph_facts_to_search_results`).
+   The Neo4j ACL is a copy written at ingestion time, so before a fact becomes
+   evidence its source document is resolved in Postgres under the caller's
+   resolved `AuthorizationContext`. A fact whose document was deleted, narrowed,
+   or superseded is dropped, and the surviving fact carries the document's
+   current tenant, roles, classification and trust. `graph_seeded_vector` filters
+   its seed documents the same way.
+
 Graph evidence then goes through `sanitize_evidence` like every other evidence
-source, so field redaction and injection flagging apply to it too.
+source, so field redaction and injection flagging apply to it too. Its
+`sensitive_field_ids` are detected on the fact's own text, as for a chunk.
 
 Tests that prove this include a live authorization scenario set in
 `tests/integration/test_graph_authorization_isolation.py`.

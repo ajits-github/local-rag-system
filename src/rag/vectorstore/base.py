@@ -11,7 +11,7 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 from rag.retrieval.authorization import AuthorizationContext
-from rag.schemas import Chunk, DocumentVersionInfo, SearchResult
+from rag.schemas import Chunk, ChunkMetadata, DocumentVersionInfo, SearchResult
 
 # Metadata fields that retrieval filters are allowed to touch. An explicit
 # whitelist so a filters dict can never be used to inject arbitrary SQL
@@ -456,6 +456,32 @@ class VectorStore(ABC):
         list[Chunk]
             Matching chunks, in no particular order; ids with no matching
             row (or excluded by `auth`) are silently omitted.
+        """
+
+    @abstractmethod
+    def get_document_governance(
+        self, document_ids: list[str], dataset_id: str, auth: AuthorizationContext | None = None
+    ) -> dict[str, ChunkMetadata]:
+        """Return current governance metadata for each document `auth` may still read.
+
+        Used to revalidate graph-derived evidence against Postgres, the
+        authoritative store, rather than the ACL copy written into Neo4j.
+
+        Parameters
+        ----------
+        document_ids : list[str]
+            Documents to resolve.
+        dataset_id : str
+            Dataset namespace the documents must belong to.
+        auth : AuthorizationContext | None, optional
+            See `search`'s `auth` parameter.
+
+        Returns
+        -------
+        dict[str, ChunkMetadata]
+            `{document_id: metadata}` from each document's first visible
+            chunk. A deleted document, one outside `dataset_id`, or one
+            `auth` excludes is absent.
         """
 
     @abstractmethod

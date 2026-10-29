@@ -540,14 +540,18 @@ class EgressPolicyConfig(BaseModel):
         Tenants whose content may never egress.
     classification_policy : dict[str, bool]
         Maps a document `classification` to whether it may egress. A
-        classification with no entry is blocked (fail-closed); missing
-        classification is treated as allowed, matching `"internal"`.
+        classification with no entry is blocked (fail-closed).
+    allow_unclassified : bool
+        Whether a source with no `classification` may egress. `True` keeps
+        the pre-governance corpus usable; production-shaped configs set it
+        `False` so a document ingested without front matter fails closed.
     """
 
     enabled: bool = False
     block_unredacted_sensitive_fields: bool = True
     require_authoritative_trust: bool = False
     blocked_tenant_ids: list[str] = Field(default_factory=list)
+    allow_unclassified: bool = True
     classification_policy: dict[str, bool] = Field(
         default_factory=lambda: {
             "public": True,
