@@ -46,6 +46,23 @@ from rag.schemas import SearchResult
 logger = logging.getLogger(__name__)
 
 
+def _render_overhead_text(citation: str) -> str:
+    r"""Return representative text for one item's `render_context()` wrapper, for sizing only.
+
+    `"[Source {i}: {citation}]\n"` plus the `"\n\n---\n\n"` join
+    separator every item but the first gets, never both measured at
+    all before this (CTX-006): an item's `token_count` used to be just
+    its `content`'s own token count, so packing could admit (and the
+    final `packed_token_count` could under-report) exactly the label/
+    separator overhead the real rendered prompt actually pays for every
+    single item. `"99"` is a deliberately generous 2-digit stand-in for
+    the source number (`enumerate(..., 1)`); over-estimating this by a
+    token or two is the safe direction, matching every other estimate
+    in this subsystem.
+    """
+    return f"[Source 99: {citation}]\n\n\n---\n\n"
+
+
 def render_context(items: list[ContextItem]) -> str:
     """Render ordered, packed items as a `"[Source N: ...]"`-labeled text block.
 
@@ -192,7 +209,9 @@ class ContextEngine:
         with tracing.start_span("context_normalize"):
             evidence_items = normalize_search_results(search_results)
             for item in evidence_items:
-                item.token_count = self._count(tenant_id, item.content)
+                item.token_count = self._count(tenant_id, item.content) + self._count(
+                    tenant_id, _render_overhead_text(item.citation)
+                )
 
             summary_target = max(cfg.safety_margin_tokens, 64)
             history_items = select_history_items(
@@ -207,7 +226,9 @@ class ContextEngine:
             )
             for item in history_items:
                 if item.token_count == 0:
-                    item.token_count = self._count(tenant_id, item.content)
+                    item.token_count = self._count(tenant_id, item.content) + self._count(
+                        tenant_id, _render_overhead_text(item.citation)
+                    )
 
             all_candidates = evidence_items + history_items
             candidate_token_count = sum(i.token_count for i in all_candidates)
@@ -234,10 +255,18 @@ class ContextEngine:
 
         budget = plan_context_budget(
             self._config,
-            self._token_counter,
+            lambda t: self._count(tenant_id, t),
             system_prompt_text=system_prompt_text,
             user_query_text=query,
-            candidate_items=deduped,
+            # Pre-dedup evidence_items, excluding history (matching this
+            # parameter's own documented contract): classifying the
+            # query's dominant evidence composition from post-dedup
+            # counts could flip the classification when duplicate
+            # graph/document/tool items happen to collapse (e.g. three
+            # duplicate graph facts collapsing to one could make a
+            # genuinely relationship-dominant request read as
+            # knowledge_only).
+            candidate_items=evidence_items,
             has_history=bool(history_turns),
         )
 
