@@ -24,7 +24,7 @@ def test_budget_arithmetic_subtracts_every_fixed_cost():
 
     budget = plan_context_budget(
         config,
-        counter,
+        counter.count,
         system_prompt_text="s" * 100,
         user_query_text="q" * 20,
         candidate_items=[],
@@ -49,7 +49,7 @@ def test_budget_never_goes_negative_when_fixed_costs_exceed_the_window():
 
     budget = plan_context_budget(
         config,
-        counter,
+        counter.count,
         system_prompt_text="",
         user_query_text="",
         candidate_items=[],
@@ -71,7 +71,7 @@ def test_fixed_source_budgets_sum_to_available_tokens():
 
     budget = plan_context_budget(
         config,
-        counter,
+        counter.count,
         system_prompt_text="",
         user_query_text="",
         candidate_items=[],
@@ -123,7 +123,7 @@ def test_adaptive_allocation_actually_changes_the_resolved_shares():
     graph_heavy = [_item("graph_path") for _ in range(5)]
     budget = plan_context_budget(
         config,
-        counter,
+        counter.count,
         system_prompt_text="",
         user_query_text="",
         candidate_items=graph_heavy,
@@ -146,7 +146,7 @@ def test_disabling_adaptive_allocation_always_uses_the_fixed_budget():
 
     budget = plan_context_budget(
         config,
-        counter,
+        counter.count,
         system_prompt_text="",
         user_query_text="",
         candidate_items=graph_heavy,
