@@ -365,3 +365,60 @@ def test_render_context_matches_build_context_labeling_convention():
     items = normalize_search_results(results)
     assert render_context(items).startswith("[Source 1:")
     assert build_context(results).startswith("[Source 1:")
+
+
+def test_packed_token_count_is_never_below_the_rendered_context_cost():
+    """`packed_token_count` covers the real rendered text, not just per-item estimates."""
+    config = _small_window_config(window_tokens=2000, reserved_output=50)
+    engine = ContextEngine(config)
+    counter = HeuristicTokenCounter(chars_per_token=4.0)
+    results = [_result(f"c{i}", f"Fact {i}. " * 20) for i in range(5)]
+
+    packed = engine.build(query="q", system_prompt_text="s", search_results=results)
+
+    assert packed.packed_token_count >= counter.count(packed.rendered_context)
+
+
+def test_infeasible_budget_is_flagged_in_the_summary_and_metrics(monkeypatch):
+    """A prompt whose fixed costs overflow the window is reported, not silently empty (CTX-R04)."""
+    from rag.context import engine as engine_module
+    from rag.context.engine import context_engineering_summary
+
+    observed: dict = {}
+    monkeypatch.setattr(
+        engine_module.observability_metrics,
+        "observe_context_build",
+        lambda **kwargs: observed.update(kwargs),
+    )
+    config = _small_window_config(window_tokens=100, reserved_output=50)
+    engine = ContextEngine(config)
+
+    packed = engine.build(
+        query="q" * 400, system_prompt_text="s", search_results=[_result("c1", "evidence")]
+    )
+
+    assert packed.budget.infeasible is True
+    assert context_engineering_summary(packed)["budget_infeasible"] is True
+    assert observed["budget_infeasible"] is True
+
+
+def test_metrics_receive_unclamped_utilization_on_overflow(monkeypatch):
+    """The metrics observer sees real overflow above 1.0, not a clamped value (OBS-R01)."""
+    from rag.context import engine as engine_module
+
+    observed: dict = {}
+    monkeypatch.setattr(
+        engine_module.observability_metrics,
+        "observe_context_build",
+        lambda **kwargs: observed.update(kwargs),
+    )
+    config = _small_window_config(window_tokens=300, reserved_output=50)
+    config.context.packing_strategy = "top_n"
+    engine = ContextEngine(config)
+    results = [_result(f"c{i}", "Long evidence sentence. " * 40) for i in range(3)]
+
+    packed = engine.build(query="q", system_prompt_text="s", search_results=results)
+
+    assert packed.context_utilization > 1.0
+    assert observed["utilization"] == packed.context_utilization
+    assert observed["budget_exceeded"] is True

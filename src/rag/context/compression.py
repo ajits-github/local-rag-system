@@ -162,7 +162,8 @@ def compress_item(
     Parameters
     ----------
     item : ContextItem
-        The item to compress; `item.token_count` must already be set.
+        The item to compress; `item.token_count` must already be set and
+        may include render overhead beyond `content` (kept in the result).
     target_tokens : int
         The budget to shrink toward. Compression is best-effort: a
         result may still exceed `target_tokens` when even one
@@ -189,13 +190,18 @@ def compress_item(
         return item
 
     original_tokens = item.token_count
+    # `token_count` is content plus the citation label/separator overhead
+    # `ContextEngine` adds; compress content toward what is left after that
+    # overhead, and carry the overhead into the new count.
+    overhead_tokens = max(original_tokens - count_tokens(item.content), 0)
+    content_target = max(target_tokens - overhead_tokens, 0)
     if item.source_type == "graph_path" and item.graph_path:
-        new_content = shrink_graph_path(item, target_tokens, count_tokens)
+        new_content = shrink_graph_path(item, content_target, count_tokens)
         compression_strategy = "graph_hop_trim"
     elif item.content_type in _LINE_BASED_CONTENT_TYPES:
         new_content = _compress_lines(
             item.content,
-            target_tokens=target_tokens,
+            target_tokens=content_target,
             count_tokens=count_tokens,
             max_lines=max_sentences,
         )
@@ -203,7 +209,7 @@ def compress_item(
     else:
         new_content = _compress_prose(
             item.content,
-            target_tokens=target_tokens,
+            target_tokens=content_target,
             count_tokens=count_tokens,
             query=query,
             strategy=strategy,
@@ -211,7 +217,9 @@ def compress_item(
         )
         compression_strategy = strategy
 
-    new_tokens = count_tokens(new_content)
+    if new_content == item.content:
+        return item
+    new_tokens = count_tokens(new_content) + overhead_tokens
     if new_tokens >= original_tokens:
         # Compression produced no reduction (e.g. a single unsplittable
         # sentence); return the item unchanged rather than claiming a

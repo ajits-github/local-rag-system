@@ -165,3 +165,47 @@ def test_bucket_for_item_maps_tool_fetched_onto_the_document_bucket():
     assert bucket_for_item(_item("graph_path")) == "graph_path"
     assert bucket_for_item(_item("mcp_tool")) == "mcp_tool"
     assert bucket_for_item(_item("conversation_history")) == "conversation_history"
+
+
+def test_budget_records_the_deficit_when_fixed_costs_exceed_the_window():
+    """An infeasible prompt is flagged with its deficit, not just floored to 0 (CTX-R04)."""
+    config = load_config().model_copy(deep=True)
+    config.context.model_limits.default_context_window_tokens = 100
+    config.context.model_limits.overrides = {}
+    config.context.reserved_output_tokens = 50
+    config.context.framework_overhead_tokens = 0
+    config.context.safety_margin_tokens = 0
+    counter = HeuristicTokenCounter(chars_per_token=1.0)
+
+    budget = plan_context_budget(
+        config,
+        counter.count,
+        system_prompt_text="s" * 40,
+        user_query_text="q" * 30,
+        candidate_items=[],
+        has_history=False,
+    )
+
+    assert budget.available_context_tokens == 0
+    assert budget.budget_deficit_tokens == 20
+    assert budget.infeasible is True
+
+
+def test_feasible_budget_has_no_deficit():
+    """A prompt that fits reports no deficit."""
+    config = load_config().model_copy(deep=True)
+    config.context.model_limits.default_context_window_tokens = 1000
+    config.context.model_limits.overrides = {}
+    counter = HeuristicTokenCounter(chars_per_token=1.0)
+
+    budget = plan_context_budget(
+        config,
+        counter.count,
+        system_prompt_text="s",
+        user_query_text="q",
+        candidate_items=[],
+        has_history=False,
+    )
+
+    assert budget.budget_deficit_tokens == 0
+    assert budget.infeasible is False

@@ -262,6 +262,9 @@ class ContextBudget(BaseModel):
         `model_context_window - reserved_output_tokens -
         system_prompt_tokens - user_query_tokens -
         framework_overhead_tokens - safety_margin_tokens`, floored at 0.
+    budget_deficit_tokens : int
+        How far the fixed costs above exceed the window, or 0. Positive
+        means the prompt cannot fit even with no evidence at all.
     source_budgets : dict[str, SourceBudget]
         Per-source allocation of `available_context_tokens`.
     """
@@ -273,7 +276,13 @@ class ContextBudget(BaseModel):
     framework_overhead_tokens: int
     safety_margin_tokens: int
     available_context_tokens: int
+    budget_deficit_tokens: int = 0
     source_budgets: dict[str, SourceBudget] = Field(default_factory=dict)
+
+    @property
+    def infeasible(self) -> bool:
+        """Whether the mandatory system/query/output reservation alone overflows the window."""
+        return self.budget_deficit_tokens > 0
 
 
 class DeduplicationStats(BaseModel):

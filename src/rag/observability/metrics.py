@@ -220,9 +220,21 @@ CONTEXT_OVERFLOW_PREVENTED_TOTAL = Counter(
 )
 CONTEXT_UTILIZATION_RATIO = Histogram(
     "rag_context_utilization_ratio",
-    "packed_context_tokens / available_context_budget, by packing strategy.",
+    "packed_context_tokens / available_context_budget, by packing strategy (unclamped).",
     ["strategy"],
-    buckets=(0.0, 0.1, 0.25, 0.5, 0.75, 0.9, 1.0),
+    buckets=(0.0, 0.1, 0.25, 0.5, 0.75, 0.9, 1.0, 1.25, 1.5, 2.0, 4.0),
+    registry=REGISTRY,
+)
+CONTEXT_BUDGET_EXCEEDED_TOTAL = Counter(
+    "rag_context_budget_exceeded_total",
+    "Context builds whose packed tokens still exceeded the available budget, by strategy.",
+    ["strategy"],
+    registry=REGISTRY,
+)
+CONTEXT_BUDGET_INFEASIBLE_TOTAL = Counter(
+    "rag_context_budget_infeasible_total",
+    "Context builds where system prompt, query and output reservation alone overflowed "
+    "the model window, leaving no room for any evidence.",
     registry=REGISTRY,
 )
 
@@ -371,6 +383,8 @@ def observe_context_build(
     dedup_by_kind: dict[str, int],
     compressed_item_count: int,
     overflow_prevented: bool,
+    budget_exceeded: bool = False,
+    budget_infeasible: bool = False,
 ) -> None:
     """Record one Context Engineering build (`rag.context.engine.ContextEngine.build`).
 
@@ -385,7 +399,7 @@ def observe_context_build(
     utilization : float
         `packed_tokens / available_context_tokens`, already computed by
         the caller (never recomputed here, so this function can never
-        divide by zero).
+        divide by zero). Unclamped: a value above 1.0 is a real overflow.
     dropped_by_reason : dict[str, int]
         Counts from `PackingTrace`, keyed by its fixed `reason` strings.
     dedup_by_kind : dict[str, int]
@@ -394,6 +408,10 @@ def observe_context_build(
     overflow_prevented : bool
         Whether at least one eligible item had to be dropped or
         compressed to respect the budget.
+    budget_exceeded : bool, optional
+        Whether the packed result still exceeded the available budget.
+    budget_infeasible : bool, optional
+        Whether the fixed prompt costs alone overflowed the model window.
     """
     CONTEXT_CANDIDATE_TOKENS.observe(candidate_tokens)
     CONTEXT_PACKED_TOKENS.observe(packed_tokens)
@@ -407,6 +425,10 @@ def observe_context_build(
         CONTEXT_COMPRESSED_ITEMS_TOTAL.inc(compressed_item_count)
     if overflow_prevented:
         CONTEXT_OVERFLOW_PREVENTED_TOTAL.inc()
+    if budget_exceeded:
+        CONTEXT_BUDGET_EXCEEDED_TOTAL.labels(strategy=strategy).inc()
+    if budget_infeasible:
+        CONTEXT_BUDGET_INFEASIBLE_TOTAL.inc()
 
 
 @_defensive

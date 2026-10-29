@@ -431,14 +431,16 @@ only): `rag_context_candidate_tokens`, `rag_context_packed_tokens`,
 `rag_context_compressed_items_total`,
 `rag_context_build_latency_seconds`,
 `rag_context_overflow_prevented_total`,
-`rag_context_utilization_ratio{strategy}`. New OTel spans:
+`rag_context_utilization_ratio{strategy}` (unclamped, so values above 1.0
+are real overflow), `rag_context_budget_exceeded_total{strategy}`,
+`rag_context_budget_infeasible_total`. New OTel spans:
 `context_normalize`, `context_deduplication`, `context_packing`, nested
 under the same span tree `retrieval`/`agent_query` already populate.
 `QueryResponse`/`AgentQueryResponse` both gained an optional
 `context_engineering` field (`rag.context.engine.
 context_engineering_summary()`'s output): candidate/packed token counts,
-utilization, reduction, dedup/compression counts, truncation flag,
-build latency. Never raw evidence content (already available, redacted,
+utilization, reduction, dedup/compression counts, truncation and
+`budget_infeasible` flags, and build latency. Never raw evidence content (already available, redacted,
 in `sources`).
 
 ## 15. Configuration reference

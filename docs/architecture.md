@@ -1066,8 +1066,6 @@ Starting the stack doesn't enable tracing; set
 - Reused threadpool threads can log a noisy but harmless OTel "Failed to
   detach context" error (see `KNOWN_ISSUES.md`).
 - HTTP spans are hand-written; no OTel auto-instrumentation package.
-- Context Engineering utilization telemetry is still clamped at 1.0
-  (`OBS-R01` in the 2026-10-29 audit).
 
 ## Layout-Aware Document Ingestion and Vision
 

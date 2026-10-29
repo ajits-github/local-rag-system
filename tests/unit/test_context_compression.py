@@ -138,3 +138,47 @@ def test_shrink_graph_path_drops_whole_trailing_hops_not_mid_hop_text():
     assert "Shared Storage" not in shrunk or shrunk == item.content
     # Never truncated mid-name.
     assert "Alpha Data" not in shrunk.replace("Alpha Database", "")
+
+
+def test_compression_keeps_render_overhead_in_the_compressed_token_count():
+    """A compressed item's token_count still includes the citation/separator overhead.
+
+    Regression for CTX-R01: `compress_item` recounted content only, so an
+    item whose `token_count` carried render overhead came back with an
+    undercount and could be admitted past its real rendered cost.
+    """
+    text = "First sentence about webhooks. Second sentence about retries. Third one here."
+    overhead = 12
+    item = ContextItem(content=text, source_type="document", source_id="c1", content_type="prose")
+    item.token_count = _count(text) + overhead
+
+    compressed = compress_item(
+        item,
+        target_tokens=_count(text) + overhead - 1,
+        count_tokens=_count,
+        query="webhooks",
+        strategy="sentence_trim",
+        max_sentences=8,
+    )
+
+    assert compressed.compressed is True
+    assert compressed.token_count == _count(compressed.content) + overhead
+
+
+def test_unchanged_content_is_never_marked_compressed():
+    """An unsplittable item with render overhead is returned as-is, not as compressed."""
+    text = "One single sentence with no boundary to split on"
+    item = ContextItem(content=text, source_type="document", source_id="c1", content_type="prose")
+    item.token_count = _count(text) + 12
+
+    result = compress_item(
+        item,
+        target_tokens=_count(text),
+        count_tokens=_count,
+        query="sentence",
+        strategy="extractive",
+        max_sentences=8,
+    )
+
+    assert result.compressed is False
+    assert result.token_count == item.token_count
