@@ -99,11 +99,13 @@ class _FakePipeline:
     def expand_with_relationships(self, results, auth=None):
         return results
 
-    def build_context_text(self, results, query, *, history_turns=None, tenant_id=None):
+    def build_context_text(
+        self, results, query, *, history_turns=None, tenant_id=None, system_prompt_text=None
+    ):
         """Render via the real build_context; context engineering is disabled in this fake."""
         from rag.retrieval.pipeline import build_context
 
-        return build_context(results), None
+        return build_context(results), None, results
 
 
 class _FakeVectorStore:
