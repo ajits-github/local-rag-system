@@ -19,6 +19,10 @@ for the fast, deterministic subset of this that runs on every PR.
 
 API reference: [Evaluation](../reference/eval.md).
 
+![Evaluation framework: gold datasets, retrieval, generation, agent and optional RAGAS evaluation, experiment records, MLflow, and CI gates](../assets/evaluation-framework.png)
+
+Gold sets drive deterministic retrieval, generation and agent evaluations plus an optional hosted RAGAS judge; each run is recorded with its config snapshot, git metadata and corpus lineage, and optionally logged to MLflow. Of these, CI runs only the fast deterministic retrieval gate and the security regression tests; RAGAS and full agent experiments stay manual.
+
 ## CI evaluation gates (ci-eval-gates milestone)
 
 Adds a fast, deterministic quality/security gate on top of the pre-existing

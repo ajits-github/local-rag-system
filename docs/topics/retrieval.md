@@ -22,6 +22,10 @@ for those.
 
 API reference: [Retrieval](../reference/retrieval.md), [Vector store](../reference/vectorstore.md).
 
+![Retrieval pipeline: auth and freshness resolution, dense and BM25 search, RRF fusion, reranking, generation cutoff, and relationship expansion](../assets/retrieval-pipeline.png)
+
+Authorization and freshness are resolved before search; dense and (in hybrid mode) BM25 candidates are fused by RRF, optionally reranked, then cut to `generation_context_top_n`. Relationship expansion, when enabled, appends supporting chunks after that cutoff without changing the primary ranking.
+
 ## Retrieval: dense vs. hybrid
 
 `config.retrieval.provider` is `dense` (default: pure vector similarity

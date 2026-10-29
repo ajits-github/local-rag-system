@@ -8,6 +8,10 @@ benchmark numbers, known limitations).
 
 API reference: [Context Engineering](../reference/context.md).
 
+![Context Engineering flow: normalize, deduplicate, prioritize, budget, compress and pack](../assets/context-engineering-flow.png)
+
+Document, graph, MCP and history evidence is normalized into `ContextItem`s, deduplicated, prioritized, budgeted against the model window, then compressed and packed with citations preserved. It decides which already-authorized evidence reaches the prompt; it performs no retrieval or authorization of its own.
+
 ## Context Engineering (context-engineering milestone)
 
 Adds an explicit, measurable, token-budget-aware context-assembly layer

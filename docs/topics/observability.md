@@ -11,6 +11,10 @@ Full design writeup: [Observability](../architecture.md#observability).
 
 API reference: [Observability](../reference/observability.md).
 
+![Observability architecture: OpenTelemetry traces, Prometheus metrics with Grafana, structured logs, SSE progress events, and MLflow](../assets/observability-architecture.png)
+
+OpenTelemetry traces individual requests, Prometheus aggregates metrics for Grafana, structured logs carry `request_id`, and the SSE stream reports bounded agent progress. MLflow tracks offline experiments, not live requests.
+
 ## Observability (observability milestone)
 
 Adds operational telemetry above the bounded agentic workflow: per-node

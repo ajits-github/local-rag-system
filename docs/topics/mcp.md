@@ -9,6 +9,10 @@ active on the MCP path and cannot be bypassed by an MCP tool call, the
 same guarantee [Agentic RAG](agentic-rag.md) makes for the in-process
 agent; see [Security](security.md) for the control-by-control breakdown.
 
+![Agent and MCP architecture: local RAG tools dispatched in Python, business tools through the MCP client and server](../assets/agent-mcp-architecture.png)
+
+The agent dispatches the local RAG and graph tools directly in Python, and the three business tools through `rag.agent.mcp_client`, which mints a short-lived internal service JWT and calls the MCP server (in-process ASGI transport by default); the server resolves identity and dispatches to `rag.mcp.business.store`. The orchestrator is the custom bounded loop in `rag.agent.graph` (not LangGraph), storage is Postgres + pgvector, and external MCP clients call `/mcp` directly.
+
 ## The four RAG tools
 
 | Tool | What it does | Underlying function |

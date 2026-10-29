@@ -17,6 +17,10 @@ Full design writeups:
 - [Layout-Aware Document Ingestion and Vision](../architecture.md#layout-aware-document-ingestion-and-vision)
 - API reference: [Vision](../reference/vision.md), [Loaders](../reference/loaders.md), [Chunkers](../reference/chunkers.md)
 
+![Multimodal and layout-aware ingestion: loaders, normalized structure, typed chunks, optional vision, and relationship expansion](../assets/multimodal-ingestion-flow.png)
+
+PDF and DOCX loaders serialize their layout into the same Markdown-equivalent structure Markdown files already use, which the chunker splits into typed chunks (prose, table, code/config, chart, image) with structural metadata. Optional local vision adds a description as a sibling chunk, and relationship expansion appends parent/neighbor context at query time.
+
 ## Multimodal ingestion: images, relationships, and gold evaluation
 
 `data/knowledge_base` includes real images (dashboards, diagrams, charts,
