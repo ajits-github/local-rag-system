@@ -550,16 +550,17 @@ targets, `experiments/reports/context_engineering_benchmark.md`):
 
 | Strategy | Mean utilization | Overflowing runs | Mean excess tokens | Mean reduction | Mean build (ms) | Dropped items | Compressed items |
 |---|---|---|---|---|---|---|---|
-| A: top-N (baseline) | 0.322 | 5/60 | 590.0 | 0.244 | 0.773 | 1861 | 0 |
-| B: naive token-first | 0.225 | 0/60 | 0.0 | 0.196 | 0.903 | 1348 | 0 |
-| C: token-budget + dedup | 0.043 | 0/60 | 0.0 | 0.342 | 1.372 | 5 | 0 |
-| D: full pipeline | 0.031 | 0/60 | 0.0 | 0.357 | 1.758 | 0 | 6 |
+| A: top-N (baseline) | 0.333 | 5/60 | 591.0 | 0.244 | 1.849 | 1861 | 0 |
+| B: naive token-first | 0.244 | 0/60 | 0.0 | 0.206 | 1.552 | 1425 | 0 |
+| C: token-budget + dedup | 0.051 | 0/60 | 0.0 | 0.342 | 3.201 | 5 | 0 |
+| D: full pipeline | 0.038 | 0/60 | 0.0 | 0.358 | 4.022 | 0 | 9 |
 
 Per-item token counts here also include each item's own rendered
 `"[Source N: ...]"` label and join-separator overhead, not just its raw
-content (CTX-006, see `KNOWN_ISSUES.md`): an earlier version measured
-only raw content, under-counting the real serialized prompt cost of
-every item.
+content (CTX-006, see `KNOWN_ISSUES.md`), including after compression
+(CTX-014), and `packed_token_count` is never below the token count of
+the rendered context itself. Each report carries `run_metadata` (commit,
+branch, dirty flag) identifying the code that produced it.
 
 `context_utilization`/`context_overflow`/`context_excess_tokens` are
 reported unclamped (CTX-011, see `KNOWN_ISSUES.md`): an earlier version
@@ -575,7 +576,9 @@ overflows on 5/60 runs, exactly as its own docstring says it will
 ("ignores token size entirely... even if it alone would overflow the
 model's context window downstream"), this is expected baseline
 behavior, not a bug, and exists specifically so B/C/D can be measured
-against it. D's build latency is roughly 2x A's, both sub-millisecond,
+against it. D's build latency is 2-3x A's across runs, all in single-digit
+milliseconds (the latency column varies with host load; every other column
+is deterministic),
 negligible next to this project's own measured ~20-80s LLM generation
 latency on local hardware. **Not measured in this sandbox** (no live
 Ollama/Postgres/Neo4j reachable): real answer-correctness/citation-
