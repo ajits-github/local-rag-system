@@ -47,6 +47,11 @@ without basis. Detailed chronological session history remains in
 | PROD-002 | MINOR | ACCEPTED LIMITATION | Data | Re-spelling the same ingestion root churns document identity |
 | PROD-003 | MINOR | ACCEPTED LIMITATION | GraphRAG | Resetting only the graph side of a dataset needs a dataset-level clear, not a graph-only one |
 | CTX-004 | MINOR | ACCEPTED LIMITATION | Context Engineering | Extractive compression needs sentence boundaries; graph-path hops are a best-effort text parse |
+| BUG-015 | MAJOR | OPEN | Ingestion | A graph write failure after a successful vector commit has no durable retry |
+| BUG-016 | MAJOR | OPEN | Ingestion | Replacing or removing a referenced image does not invalidate the document that references it |
+| BUG-017 | MAJOR | OPEN | Ingestion | A staged upload can resolve vision assets against the wrong document version |
+| GRAPH-008 | MAJOR | OPEN | GraphRAG | A stale graph fact is never revalidated against its source's current Postgres state |
+| GRAPH-009 | MODERATE | OPEN | Ontology | A live-Neo4j ontology query helper has no authorization check at all (currently unreachable) |
 
 *Fixed issues (the majority of this log, ~65 entries) are in [section 10](#10-fixed--closed-issues) and summarized separately there, not repeated above.*
 
@@ -279,6 +284,132 @@ Lookup now tries an exact match, then a prefix match on `<name>(`. A unit test u
 
 **Regression test**
 Both metrics now produce real scores; the re-run hit the judge cache on 55% of calls, so the earlier paid calls were not wasted.
+
+---
+
+### BUG-015: A graph write failure after a successful vector commit has no durable retry
+
+**Status:** OPEN
+**Severity:** MAJOR
+**Area:** Ingestion / GraphRAG consistency
+**Affected code:** `IngestionPipeline._run_graph_extraction`, `ingest_file`'s unchanged-document shortcut
+
+**Problem**
+Postgres commits before graph extraction runs; a graph-extraction failure is caught and logged, never re-raised, which correctly protects the vector write but leaves no record that this document's graph projection is now missing or stale. The checksum-unchanged shortcut then returns before extraction on every later re-ingest of the identical bytes, so there is no path back to repair it short of a full dataset clear.
+
+**Failure scenario**
+Ingest while Neo4j is unavailable, restore Neo4j, then re-ingest the identical file: the vector corpus looks complete and ingestion reports success, but graph evidence for that document stays permanently absent until someone notices and clears the whole dataset.
+
+**Why not fixed yet**
+Closing this needs a durable graph-projection-status column plus an independent retry path that doesn't depend on the vector checksum changing; a structural ingestion change, not a local patch, and out of scope for this pass.
+
+**Recommended fix**
+Track graph projection status/checksum durably (e.g. a `graph_projected_checksum` column alongside the existing vector checksum), and retry pending projection independently of whether the source bytes changed.
+
+---
+
+### BUG-016: Replacing or removing a referenced image does not invalidate the document that references it
+
+**Status:** OPEN
+**Severity:** MAJOR
+**Area:** Ingestion / multimodal consistency
+**Affected code:** `ingest_file`'s checksum gate, `Writer`'s vision-sibling-chunk step
+
+**Problem**
+The document checksum covers only the source file's own bytes; image checksums and the vision-description cache lookup only run *after* that unchanged-document gate, so they never run at all when the gate already returned early.
+
+**Failure scenario**
+Replace or remove an image referenced by an otherwise-unchanged Markdown file, then re-ingest the Markdown: `changed=False`, and the old vision description / image-derived evidence is retained regardless of what the image now actually is (or that it no longer exists).
+
+**Why not fixed yet**
+Including referenced-image state in the unchanged-check would require parsing the document to discover its images *before* the cheap checksum gate that exists specifically to avoid that cost on every re-ingest; a real tradeoff, not yet resolved.
+
+**Recommended fix**
+Fold referenced-asset digests (or at least existence) into the document's lineage/checksum, or add a separate, narrower invalidation path for image-derived chunks specifically.
+
+---
+
+### BUG-017: A staged upload can resolve vision assets against the wrong document version
+
+**Status:** OPEN
+**Severity:** MAJOR
+**Area:** Ingestion / multimodal / upload atomicity
+**Affected code:** `api/routers/ingest.py`'s staged-upload flow, `Writer`'s image-path resolution
+
+**Problem**
+PDF/DOCX image extraction resolves asset paths beside the *staging* file; `source_override` only renames the final persisted `source` string after `ingest_file` already ran, and staged assets are installed into the real `UPLOAD_DIR/assets/` only once `ingest_file` returns successfully.
+
+**Failure scenario**
+On a document's first upload, vision resolution can find no final-location asset yet and skip the image. On a same-filename replacement, resolution can instead find and describe the *previous* version's final asset while the new document's own checksum is being committed, mismatching vision-generated text to the wrong document version.
+
+**Why not fixed yet**
+Fixing this cleanly means separating physical asset resolution (which legitimately needs a real path to read bytes from) from stable citation identity more thoroughly than the current staging-directory-only fix (which already solved the adjacent temp-path-leak bug, see **SEC-006**); judged out of scope for this pass.
+
+**Recommended fix**
+Resolve and process vision assets entirely from the staged location during ingestion, independent of the final installed path, and reconcile only identity/citation strings afterward.
+
+---
+
+### MULTI-001: Shared asset folders paired the wrong images with the wrong documents
+
+**Status:** FIXED
+**Severity:** MAJOR
+**Area:** Ingestion / multimodal
+**Affected code:** `loaders/base.py:resolve_image_asset`, `_matching_assets`
+
+**Problem**
+A category folder can hold more than one source document, each contributing images to one shared sibling `assets/` directory. Pairing embedded images with that folder's files purely by position silently handed every document in the folder the *first* document's images.
+
+**Failure scenario**
+Three review documents under one `operations/` category, each with its own two images in a shared `operations/assets/`: every document's citations and vision descriptions pointed at the first document's images instead of its own.
+
+**Fix applied**
+`_matching_assets` narrows candidates to the ones whose filename shares a non-stopword word with the source document's own filename (this project's asset-naming convention), falling back to positional pairing only when no candidate matches any word.
+
+**Regression test**
+`test_resolve_image_asset_matches_by_shared_filename_word` and `test_resolve_image_asset_falls_back_to_all_candidates_when_no_word_matches` in `tests/unit/test_loaders.py`.
+
+---
+
+### MULTI-002: A working vision provider did not improve answers, because the model was weak
+
+**Status:** ACCEPTED LIMITATION
+**Severity:** MINOR
+**Area:** Multimodal
+**Affected code:** `vision.provider: ollama` (`moondream`), the A/B/C layout-vision evaluation
+
+**Problem**
+The B (layout-aware, no vision) to C (layout-aware plus vision) comparison against the 28-question layout/vision gold set showed vision descriptions correctly retrieved and cited (`visual_evidence_support_rate` 0.0 to 1.0) and fewer hallucinations on unanswerable-visual questions, but no improvement in `multimodal_answer_quality` on answerable vision-required questions (0.161 to 0.144).
+
+**Failure scenario**
+Not a defect: direct inspection of `moondream`'s cached description for the clearest regression showed it echoing the image's own caption ("Figure 2") instead of describing the image's actual content, a model-capability gap in the small local vision model, not an integration bug (the provider, cache, retrieval, and citation path were all confirmed working correctly).
+
+**Impact**
+The integration is correct and ready to use; answer-quality gains depend on a stronger vision model than this project's CPU-only host can practically run.
+
+**Recommended fix**
+None adopted for this host; revisit with a stronger vision model if host constraints change.
+
+---
+
+### MULTI-003: A failing vision call would have failed the whole document
+
+**Status:** FIXED
+**Severity:** MODERATE
+**Area:** Ingestion / multimodal
+**Affected code:** `Writer._with_vision_siblings`
+
+**Problem**
+Without isolation around the vision-provider call, an unreachable provider, a timeout, or an unparsable response on any one image would propagate and fail ingestion of the entire document, including every other chunk that had nothing to do with that image.
+
+**Failure scenario**
+One bad or temporarily unreachable image in a multi-page document blocking ingestion of all of that document's text content.
+
+**Fix applied**
+`describe_image` is called inside a `try`/`except`; a failure is logged (`vision_provider_call_failed`) and that one image is skipped (no vision sibling chunk), while the rest of the document, including its other images, still ingests normally.
+
+**Regression test**
+`test_vision_provider_call_failure_skips_image_without_failing_document` in `tests/unit/test_writer.py`.
 
 ---
 
@@ -969,6 +1100,48 @@ Both methods now build a real `neo4j.Query(cypher, timeout=effective_timeout)` a
 
 **Regression test**
 `tests/unit/test_graph_client.py` (a mocked driver, asserting the exact call shape against the real `Query`/`RoutingControl` types).
+
+---
+
+### GRAPH-008: A stale graph fact is never revalidated against its source's current Postgres state
+
+**Status:** OPEN
+**Severity:** MAJOR
+**Area:** GraphRAG / cross-store consistency
+**Affected code:** `graph/fusion.py`, `rag.graph.retrieval`
+
+**Problem**
+Graph retrieval authorizes a fact against the ACL copied onto its Neo4j nodes/relationships at write time; it never re-checks the fact's source document/chunk against Postgres's current, authoritative state.
+
+**Failure scenario**
+A document's ACL is narrowed, or the document is deleted, in Postgres, while the corresponding Neo4j fact survives (a real possibility given the already-documented graph-cleanup gaps, see **GRAPH-004**/**PROD-003**, and the lack of any durable graph-write retry ledger). The stale fact is still authorized and surfaced as prompt evidence, potentially after the access it reflects should have been revoked.
+
+**Why not fixed yet**
+Closing this fully requires batch-resolving every fact's supporting document/chunk against Postgres before it's ever converted to evidence (a real per-query cost), and failing closed on a mismatch; this is a structural change to the graph-fusion read path, not a local patch, and was judged out of scope for this pass.
+
+**Recommended fix**
+Resolve each fact's `source_document_id` against Postgres's live ACL/existence at read time (not just at graph-write time), failing closed on a checksum/ACL mismatch.
+
+---
+
+### GRAPH-009: A live-Neo4j ontology query helper has no authorization check at all
+
+**Status:** OPEN
+**Severity:** MODERATE (unreachable today; would be CRITICAL if ever wired into a live endpoint)
+**Area:** Ontology / GraphRAG integration
+**Affected code:** `rag.ontology.graphrag_integration.expand_and_query_live_neo4j`
+
+**Problem**
+This function queries live Neo4j, filtering only by `dataset_id` and label; it has no `AuthorizationContext` parameter and never calls `is_fact_authorized`/`is_entity_authorized`.
+
+**Failure scenario**
+Confirmed dead code today: `grep` across `src/rag/{api,agent,graph,retrieval}` finds zero callers, and the module's own docstring calls it "sketched (written, not executed)." The scenario is latent: if this is ever promoted into a real agent tool or endpoint without adding the same authorization gate every other graph-read path has, it would disclose unauthorized entities outright.
+
+**Why not fixed yet**
+No live caller exists yet to fix a live bug in; adding authorization now to dead code was judged lower priority than the two reachable gaps above.
+
+**Recommended fix**
+Add `is_entity_authorized` filtering, mirroring `rag.graph.retrieval`'s pattern, before this function is ever wired into anything live. Add a regression test now, preemptively, so the gate exists before the first real caller does.
 
 ---
 
@@ -2245,3 +2418,5 @@ Performed after restructuring:
    - Several "Testing, CI and build" and "Infrastructure learning exercises" entries (e.g. OPS-005, OPS-008) are process/CI defects rather than product defects; kept in the Deployment/Operations and CI areas per the new structure's own category guidance rather than forced into "Confirmed Bugs," since they concern build/merge/environment behavior specifically.
 
 **Postscript (context-engineering milestone):** this Report section is a point-in-time audit of the original restructuring and is left as originally written, not retroactively recomputed. Four new entries (CTX-001 through CTX-004) were added afterward in section 4 and are reflected in the Summary Table and section 10's table above; they are not folded into this Report's counts.
+
+**Postscript (pre-experiment audit, ingestion/graph gaps):** an adversarial audit of the ingestion and graph-consistency paths found three new ingestion-consistency gaps (BUG-015, BUG-016, BUG-017) and two graph-authorization gaps (GRAPH-008, GRAPH-009), all deliberately left OPEN rather than fixed in this pass, each with its own "why not fixed yet" note on its entry; they are structural changes, not local patches. These are not folded into this Report's original counts above. Separately, this pass's own cross-check of section 10's table against the full topical entries found three pre-existing table rows (MULTI-001, MULTI-002, MULTI-003) with no corresponding topical-section entry; all three were real, already-fixed (or, for MULTI-002, already-accepted) findings already described elsewhere in the project (CLAUDE.md, source docstrings), so full entries were added rather than leaving the table's own citation dangling.
