@@ -31,15 +31,13 @@ without basis. Detailed chronological session history remains in
 | RET-002 | MINOR | ACCEPTED LIMITATION | Retrieval | Embedding and chunk-size changes each traded one metric for another |
 | RET-003 | MINOR | ACCEPTED LIMITATION | Retrieval | Hybrid retrieval's headline recall hid how each retriever contributed |
 | RET-004 | MODERATE | ACCEPTED LIMITATION | Retrieval | A cross-encoder changed answers without changing retrieved evidence |
-| RET-005 | MAJOR | FIXED | Retrieval | BM25 ties depended on unspecified SQL row order |
 | BUG-009 | MAJOR | OPEN | Generation | Retrieval was correct, but generation fabricated the answer |
 | BUG-010 | MODERATE | ACCEPTED LIMITATION | Generation | A larger generation model trades hallucination for over-refusal |
 | EVAL-007 | MODERATE | ACCEPTED LIMITATION | Evaluation | A keyword-overlap answer metric penalized correct refusals |
 | EVAL-009 | MINOR | ACCEPTED LIMITATION | Evaluation | Generation dominated latency, and the latency A/B could not be trusted |
 | AGT-004 | MAJOR | IN PROGRESS | Agentic RAG | The tool worked, but the agent rarely chose it (specialized-tool selection) |
 | AGT-005 | MODERATE | NEEDS VERIFICATION | Agentic RAG | Tool-selection prompt's chunk_id fix is unverified against live tool selection |
-| SEC-007 | MODERATE | NEEDS VERIFICATION | Security | Upload atomicity fix: crash window between DB write and file install unverified |
-| SEC-008 | MINOR | NEEDS VERIFICATION | Security | Cross-tenant upload isolation integration tests were written but never run |
+| SEC-007 | MODERATE | ACCEPTED LIMITATION | Security | Upload atomicity: a crash between the DB write and the file install leaves the database one step ahead (verified, self-healing on retry) |
 | MULTI-002 | MINOR | ACCEPTED LIMITATION | Multimodal | A working vision provider did not improve answers, because the model was weak |
 | GRAPH-005 | MODERATE | ACCEPTED LIMITATION | GraphRAG | LLM graph extraction worked correctly, but was impractical on a memory-starved host |
 | PROD-001 | MODERATE | ACCEPTED LIMITATION | Infrastructure | Durable workflow state did not make the side effects it triggered durable |
@@ -305,6 +303,7 @@ A nullable `documents.graph_checksum` column (added idempotently by `scripts/ini
 
 **Notes**
 Recovery still needs a re-ingest to run; nothing retries on its own in the background. Turning graph extraction on for an already-ingested dataset now projects every document on the next ingest run, by the same mechanism.
+
 ---
 
 ### BUG-016: Replacing or removing a referenced image did not invalidate the document that references it
@@ -328,6 +327,7 @@ The recorded tradeoff (parsing before the cheap gate) turned out not to exist: `
 
 **Notes**
 Enabling vision on an existing dataset changes the checksum of every document that references an image, so each is re-ingested once; that is the point (their vision chunks must be created).
+
 ---
 
 ### BUG-017: A staged upload could resolve vision assets against the wrong document version
@@ -348,6 +348,7 @@ Physical asset resolution is now separate from citation identity: `Writer.write`
 
 **Regression test**
 `test_vision_reads_the_staged_image_not_the_final_location` in `tests/unit/test_ingestion_asset_lineage.py` (a stale image at the final location, a new one in staging: only the staged bytes are described).
+
 ---
 
 ### MULTI-001: Shared asset folders paired the wrong images with the wrong documents
@@ -528,7 +529,7 @@ Cross-tenant data exposure for any upload lacking governance metadata, the commo
 17 new tests passed with no regressions.
 
 **Notes**
-See **SEC-008** below: cross-tenant *integration* tests for this fix were written but never actually run (no local Postgres available at the time).
+Its cross-tenant *integration* tests (`tests/integration/test_ingest_governance.py`) now run against a real Postgres locally and in CI; see **SEC-008**.
 
 ---
 
@@ -552,7 +553,7 @@ Uploads are staged in a unique directory, keeping the destination's own filename
 New tests prove: a rejected upload leaves no final file; a rejected re-upload leaves prior bytes unchanged; no temp-path fragment survives in any persisted chunk.
 
 **Notes**
-Two residual gaps were explicitly recorded, not closed, see **SEC-007** below.
+The DB-write-to-file-install crash window was later verified by fault injection and accepted as bounded and self-healing; see **SEC-007**.
 
 ---
 
@@ -900,6 +901,7 @@ On `experiment/distributed-state` (PR #37): the loop prunes finished futures fir
 
 **Regression test**
 `distributed_state_experiment/tests/test_worker_bounded_claims.py` on that branch: with both slots blocked, the old loop issued `[2, 2, 2, ...]` claims; the fixed loop issues `[2]`. The branch has no CI, so the test was run locally.
+
 ---
 
 ## 4. Retrieval, Graph, Ontology and Context
@@ -1117,6 +1119,7 @@ The script now calls the dataset-level clear, removing chunks and graph facts to
 
 **Notes**
 The residual design property (any graph-only reset would hit the same gap, because change detection was one-directional) is closed by **BUG-015**'s `documents.graph_checksum`: `IngestionPipeline.reset_graph` deletes a dataset's graph facts and clears its graph checksums, and the next ingest re-projects every document from stored chunks. Covered by `test_graph_only_reset_is_rebuilt_on_the_next_ingest` in `tests/unit/test_graph_projection_retry.py`. See **PROD-003**.
+
 ---
 
 ### GRAPH-005: LLM graph extraction worked correctly, but was impractical on a memory-starved host
@@ -2081,6 +2084,7 @@ The test was first fixed by stubbing `get_graphrag_pipeline`. The product fix: `
 
 **Regression test**
 `test_health_never_depends_on_the_retrieval_or_graphrag_pipeline` in `tests/unit/test_health_graph_check.py` walks the route's full dependency tree and asserts neither pipeline (nor the embedder) is in it, a deterministic stand-in for a cold-process latency check. `test_disabled_graph_reads_as_disabled_not_degraded` and `test_unreachable_neo4j_degrades_health` pin the response.
+
 ---
 
 ### OBS-002: Shared mutable LLM token counters could leak across concurrent requests
@@ -2430,6 +2434,7 @@ It is deliberate on that branch: `helm/README.md`'s "Demo 6: replica failure whi
 
 **If the chart is ever used outside the demo**
 Render each PDB only when the replica floor (`autoscaling.minReplicas`, else `replicaCount`) exceeds `minAvailable`, and move the demo to an explicit `--set` override.
+
 ---
 
 ### OPS-016: The experiment branches have diverged too far from main to merge mechanically
@@ -2514,37 +2519,50 @@ Change detection now tracks the graph side too (`documents.graph_checksum`, see 
 
 **Regression test**
 `test_graph_only_reset_is_rebuilt_on_the_next_ingest` in `tests/unit/test_graph_projection_retry.py`.
+
 ---
 
 ## 9. Needs Verification
 
-### SEC-007: Upload atomicity fix: crash window between DB write and file install unverified
+Both entries below have since been verified (see their status lines); they stay in this section so existing references keep pointing here.
 
-**Status:** NEEDS VERIFICATION
+### SEC-007: Upload atomicity: a crash between the DB write and the file install leaves the database one step ahead
+
+**Status:** ACCEPTED LIMITATION (verified)
 **Severity:** MODERATE
 **Area:** Security / upload atomicity
-**Affected code:** `_ingest_upload_atomically`, post-DB-write file install step
+**Affected code:** `api/routers/ingest.py:_ingest_upload_atomically`, post-DB-write file install step
 
-**What needs to be verified**
-Whether a process crash occurring specifically between the successful database write and the final atomic file install could leave a DB row pointing at a file that was never actually installed. This was explicitly recorded as a residual gap during the **SEC-006** fix, not reproduced, not closed, and not proven to be a real, triggerable window in practice.
+**Problem**
+Recorded as a residual gap during the **SEC-006** fix: whether a process crash between the successful database write and the final atomic file install (`os.replace`) could leave a database row pointing at a file that was never installed.
 
-**Recommended verification approach**
-A fault-injection test killing the process between the two steps, inspecting whether the resulting DB/filesystem state is detectable and recoverable.
+**What verification found**
+The window is real, and bounded. A fault-injection test simulates the crash at the final install against a real Postgres, for both a first upload and a same-name replacement. Afterwards:
+- Postgres holds the new version (checksum and chunks), while the file on disk is the previous version or absent.
+- Retrieval is unaffected, because chunks are self-contained in Postgres: queries already serve the new content.
+- The state is detectable: the stored checksum disagrees with the file's sha256, and the orphaned `.upload-tmp-*` staging directory remains.
+- Retrying the same upload heals it: `ingest_file` reports the document unchanged (no re-embedding) and the file is installed.
+
+**Why accepted**
+Only the on-disk copy of the uploaded file lags, retrieval stays correct, and the client's natural retry (the request failed, so no success was ever reported) repairs it. What remains is housekeeping: an orphaned staging directory is never swept automatically. A startup sweep of stale `.upload-tmp-*` directories is the follow-up if that ever matters operationally.
+
+**Regression test**
+`test_crash_after_db_commit_is_detectable_and_healed_by_retrying_the_upload[first-upload|replacement]` in `tests/integration/test_upload_crash_window.py` (real Postgres, CI-safe).
 
 ---
 
 ### SEC-008: Cross-tenant upload isolation integration tests were written but never run
 
-**Status:** NEEDS VERIFICATION
+**Status:** FIXED (verified)
 **Severity:** MINOR
 **Area:** Security / multi-tenancy test coverage
 **Affected code:** Cross-tenant upload integration tests (associated with **SEC-005**)
 
-**What needs to be verified**
-The cross-tenant upload integration tests for the **SEC-005** fix were written but never executed, no local Postgres instance was available at the time. The unit-level fix is tested and believed correct, but end-to-end cross-tenant behavior against a real database has not been confirmed.
+**Problem**
+The cross-tenant upload integration tests for the **SEC-005** fix were written when no local Postgres was available, so end-to-end cross-tenant behavior against a real database had never been confirmed.
 
-**Recommended verification approach**
-Run the existing (already-written) integration test suite against a real Postgres instance.
+**Verification**
+All four tests in `tests/integration/test_ingest_governance.py` pass against a real Postgres: tenant-scoped upload with cross-tenant denial, cross-tenant front matter rejected before persistence, privileged on-behalf-of upload, and identity-less ingestion unchanged. They also run on every PR in CI's `integration-tests` job (a pgvector service container), where all four pass, so the gap closed as soon as that job existed; this entry was stale.
 
 ---
 
@@ -2583,6 +2601,7 @@ The following issues are resolved, with a concrete fix and regression test cited
 | SEC-017 | Security | A same-named upload could silently replace another tenant's document |
 | SEC-018 | Security | Graph-derived evidence carried no governance metadata, so the egress gate could not block it |
 | SEC-019 | Security | A source with no classification egressed silently, even under the production config |
+| SEC-008 | Security | Cross-tenant upload isolation integration tests were written but never run (now run, locally and in CI) |
 | DIST-001 | Reliability | Reading a request-scoped context variable inside a stream would have raced its middleware |
 | DIST-002 | Reliability | A LangGraph join node ran twice, because its parallel branches had unequal lengths |
 | DIST-003 | Reliability | A deliberate workflow pause would have been counted as a failure in metrics |
@@ -2696,3 +2715,5 @@ Performed after restructuring:
 **Postscript (2026-10-29 pre-experiment audits):** two independent audits of `main` at `64321ed` (Codex: `.claude-prompts/35.9-...`, Claude: `35.10-...`; both untracked) were reconciled against the code before any fix. Fixed: **CTX-014**, **CTX-015**, **CTX-016**, **CTX-017**, **SEC-018**, **SEC-019**, **GRAPH-008**, **GRAPH-010**, plus follow-ups folded into existing stories (**CTX-007** negation guard, **CTX-011** telemetry clamp, **EVAL-015** Context Engineering report). New accepted limitations: **GRAPH-011**, **RET-006**, **OPS-016**. New open items on experiment branches only: **DIST-006**, **OPS-015**. Re-confirmed still open, not fixed here: **BUG-015**/**BUG-016**/**BUG-017** (structural ingestion-consistency changes; avoid graph-projection failures and image-only edits on any benchmark corpus until they land) and **GRAPH-009** (dead code). Two test-coverage gaps were closed without separate entries: `GraphRetriever.search`'s Neo4j-outage degradation (`tests/unit/test_graph_retrieval_degradation.py`) and an MCP remote-tool transport failure (`test_remote_tool_connection_failure_is_recorded_not_raised`). The Codex report's cited repro script, `experiments/reports/audit_repro_2026_10_29.py`, was never committed and does not exist.
 
 **Follow-up (2026-10-29, after the audit PRs):** **GRAPH-009**, **OBS-001**, **BUG-015**, **BUG-016** and **BUG-017** fixed, which also closes the graph-only-reset residual of **GRAPH-004**/**PROD-003**; **DIST-006** fixed on `experiment/distributed-state`; **OPS-015** reclassified as an accepted limitation (a deliberate Helm demo). Still open by nature: **AGT-004**/**AGT-005** (model tool-selection behavior, needs live evaluation runs, not a code change) and **OPS-016** (a merge-strategy decision).
+
+**Follow-up (verification leftovers):** **SEC-008** confirmed (its integration tests run against real Postgres locally and in CI); **SEC-007** verified by fault injection and accepted as bounded and self-healing; **RET-005** removed from the summary table, which lists only non-fixed items.
