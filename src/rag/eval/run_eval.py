@@ -1069,6 +1069,7 @@ def evaluate(
     completion_tokens_values: list[int] = []
     refusal_records: list[bool] = []
     expansion_utilization_records: list[bool] = []
+    context_engineering_records: list[dict[str, Any]] = []
     per_example: list[dict[str, Any]] = []
 
     # Collected only from examples where the relevant gold field is set,
@@ -1248,6 +1249,9 @@ def evaluate(
             expansion_used = _expansion_utilization(result["sources"], result["answer"])
             if expansion_used is not None:
                 expansion_utilization_records.append(expansion_used)
+            context_engineering_info = result.get("context_engineering")
+            if context_engineering_info is not None:
+                context_engineering_records.append(context_engineering_info)
             entry.update(
                 answer=result["answer"],
                 # Production-config sources-with-content (this answer()
@@ -1262,6 +1266,7 @@ def evaluate(
                 prompt_tokens=result.get("prompt_tokens"),
                 completion_tokens=result.get("completion_tokens"),
                 expansion_utilized=expansion_used,
+                context_engineering=context_engineering_info,
             )
             if example.unanswerable:
                 refused = _looks_like_refusal(result["answer"])
@@ -1801,6 +1806,33 @@ def evaluate(
                 "count": len(expansion_utilization_records),
                 "answer_appears_to_use_expanded_content_rate": _mean(
                     [1.0 if u else 0.0 for u in expansion_utilization_records]
+                ),
+            }
+        if context_engineering_records:
+            report["context_engineering"] = {
+                "note": (
+                    "Mean of each answer() call's own context_engineering_summary() "
+                    "(see rag.context.engine), present only when config.context.enabled "
+                    "is true for this run. Reflects production generation_context_top_n, "
+                    "not the broader top-10 retrieve() used for Recall@10 above."
+                ),
+                "count": len(context_engineering_records),
+                "packing_strategy": context_engineering_records[0].get("packing_strategy"),
+                "mean_context_utilization": _mean(
+                    [r["context_utilization"] for r in context_engineering_records]
+                ),
+                "mean_context_reduction": _mean(
+                    [r["context_reduction"] for r in context_engineering_records]
+                ),
+                "mean_items_compressed": _mean(
+                    [float(r["items_compressed"]) for r in context_engineering_records]
+                ),
+                "mean_dropped_item_count": _mean(
+                    [float(r["dropped_item_count"]) for r in context_engineering_records]
+                ),
+                "truncated_count": sum(1 for r in context_engineering_records if r["truncated"]),
+                "mean_build_latency_ms": _mean(
+                    [r["build_latency_ms"] for r in context_engineering_records]
                 ),
             }
         all_quality = answerable_quality_scores + unanswerable_quality_scores
