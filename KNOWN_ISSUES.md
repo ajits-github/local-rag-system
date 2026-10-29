@@ -1110,6 +1110,198 @@ Both are documented, not hidden: `rag.context.compression`'s and `rag.context.gr
 
 ---
 
+### CTX-005: The context budget assumed a model window that nothing ever told Ollama about
+
+**Status:** FIXED
+**Severity:** CRITICAL
+**Area:** Context Engineering
+**Affected code:** `OllamaLLM.generate`, `rag.factory.build_llm`
+
+**Problem**
+`config.context.model_limits` assumes a per-model context window (32768 for `qwen2.5:*`), but `OllamaLLM.generate()` never set `options.num_ctx`, so Ollama's own real runtime window (its default, independent of a model's trained length) could silently differ from what the budget planner assumed.
+
+**Failure scenario**
+A packed prompt reported as "within budget" against the assumed window could still be silently truncated by the real Ollama server running at a smaller actual window, with no error and no metric ever showing it.
+
+**Fix applied**
+`build_llm` now resolves `num_ctx` from the same `rag.context.model_limits` table the budget planner uses and passes it explicitly to `OllamaLLM`, which forwards it as `options.num_ctx`. The assumption and the real runtime setting can no longer silently disagree.
+
+**Regression test**
+`test_generate_passes_num_ctx_in_options_when_configured` in `tests/unit/test_ollama_llm.py`; `test_build_llm_resolves_num_ctx_from_the_context_engineering_model_limits_table` in `tests/unit/test_factory.py`.
+
+**Notes**
+Measuring this directly on this project's 8GB-RAM CPU-only host found the assumed 32768 window impractical for `qwen2.5:3b` (a single trivial call took ~6.6 minutes; see `config/experiments/context-engineering-v1.yaml`'s own comments for the numbers). The fix makes the real cost of a given window *visible* rather than removing the cost; calibrate `model_limits.overrides` per deployment.
+
+---
+
+### CTX-006: Packed token counts omitted rendered overhead, and agent synthesis budgeted the wrong template
+
+**Status:** FIXED
+**Severity:** MAJOR
+**Area:** Context Engineering
+**Affected code:** `ContextEngine.build`, `RetrievalPipeline.build_context_text`, `agent/graph.py:_synthesize`
+
+**Problem**
+An item's `token_count` was exactly `count(item.content)`, never including the `"[Source N: ...]"` label or the `"---"` join separator `render_context()` actually adds. Separately, the agent's `_synthesize` node renders with its own `agent_synthesize_v2.yaml` template but called `build_context_text` with no override, so the budget measured the *pipeline's* classic-RAG system template's token cost instead.
+
+**Failure scenario**
+A packing decision could admit (and the reported `packed_token_count` could under-report) real per-item rendered overhead; an agent-routed synthesis call's budget could be computed against an entirely different system prompt's length than the one actually sent.
+
+**Fix applied**
+Each item's `token_count` now also includes a representative render-overhead estimate (`_render_overhead_text`). `build_context_text` gained an optional `system_prompt_text` override; `_synthesize` passes its own template's `system_template` explicitly.
+
+**Regression test**
+`test_item_token_count_includes_citation_label_and_separator_overhead` in `tests/unit/test_context_engine.py`; `test_synthesize_passes_its_own_templates_system_template_for_budgeting` in `tests/unit/test_agent_synthesize_budgets_its_own_template.py`.
+
+---
+
+### CTX-007: Deduplication could merge conflicting facts, and could cross a tenant boundary
+
+**Status:** FIXED
+**Severity:** MAJOR
+**Area:** Context Engineering
+**Affected code:** `rag.context.dedup.deduplicate_items`
+
+**Problem**
+The near-duplicate pass merged on word-shingle overlap alone; two long, otherwise-identical passages differing only in one number (e.g. "timeout 60" vs. a current "timeout 30") could still exceed the overlap threshold and get merged, silently discarding whichever value lost. Separately, neither the exact-content-hash nor the near-duplicate pass checked `tenant_id`, so a legitimately multi-tenant candidate set (a `cross_tenant_support_roles` request) could merge one tenant's citation into another's `merged_from`.
+
+**Failure scenario**
+A stale and a current value for the same fact collapsing into one, with no signal for which survived; or a shared-boilerplate fact ending up attributed to the wrong tenant's document in the final citation list.
+
+**Fix applied**
+The near-duplicate pass now refuses to merge two items whose extracted numeric tokens differ. Both the exact-hash and near-duplicate passes now require matching `tenant_id`; `content_hash -> kept index` tracks a list per hash (not a single overwritable slot) so a later same-tenant duplicate still finds its own match after a different tenant's byte-identical item was correctly kept separate.
+
+**Regression test**
+`test_near_duplicate_paragraphs_with_a_conflicting_number_are_never_merged`, `test_exact_content_hash_duplicate_across_tenants_is_never_merged`, `test_near_duplicate_across_tenants_is_never_merged`, `test_exact_content_hash_matching_finds_the_right_tenants_entry_among_several` in `tests/unit/test_context_dedup.py`.
+
+---
+
+### CTX-008: A tokenizer failure during budget planning escaped the documented graceful fallback
+
+**Status:** FIXED
+**Severity:** MODERATE
+**Area:** Context Engineering
+**Affected code:** `rag.context.planner.plan_context_budget`
+
+**Problem**
+Evidence/history counting goes through `ContextEngine._count`'s try/except char-estimate fallback, but the planner called a raw `TokenCounter.count()` directly for the system/query text, bypassing that fallback entirely.
+
+**Failure scenario**
+A tokenizer failure during budget planning (as opposed to evidence counting) turned into an unhandled exception reaching the caller, even with zero evidence/history to blame it on.
+
+**Fix applied**
+`plan_context_budget` now takes a `count_tokens: Callable[[str], int]` instead of a raw `TokenCounter`; `ContextEngine.build` passes its own safe-counting wrapper, the same one evidence/history counting already uses.
+
+**Regression test**
+`test_build_degrades_gracefully_when_the_token_counter_always_raises` in `tests/unit/test_context_engine.py`.
+
+---
+
+### CTX-009: Conversation-history evidence never got injection-flagged
+
+**Status:** FIXED
+**Severity:** MODERATE
+**Area:** Context Engineering / security telemetry
+**Affected code:** `rag.context.normalize.normalize_conversation_turn`
+
+**Problem**
+Every other evidence type (document, graph, MCP, tool-fetched) carries `injection_suspected` through from `detect_injection`; history turns never ran that check at all, so the flag was structurally always `False` for them.
+
+**Failure scenario**
+The actual trust boundary (history renders as data, never as an instruction) held regardless, but `prompt_injection_success_rate`-style telemetry had zero visibility into history-borne injection attempts, and a forged/replayed turn got no reinforcement annotation a suspicious document chunk already gets.
+
+**Fix applied**
+`normalize_conversation_turn` now runs `detect_injection` on the turn's content, same as every other evidence path.
+
+**Regression test**
+`test_conversation_turn_flags_suspected_injection` in `tests/unit/test_context_normalize.py`.
+
+---
+
+### CTX-010: Adaptive budget classification counted post-dedup evidence, contrary to its own contract
+
+**Status:** FIXED
+**Severity:** MINOR
+**Area:** Context Engineering
+**Affected code:** `ContextEngine.build`, `rag.context.planner.classify_context_query_type`
+
+**Problem**
+`classify_context_query_type`'s own docstring says its input should be pre-dedup and exclude history; `ContextEngine.build` called it with the post-dedup `deduped` list instead.
+
+**Failure scenario**
+Harmless while history items aren't counted by the bucket logic, but duplicate graph/document/tool items collapsing before classification runs could flip a genuinely relationship-dominant request into reading as knowledge-only, applying the wrong adaptive budget split.
+
+**Fix applied**
+`ContextEngine.build` now passes the pre-dedup `evidence_items` to the budget planner, matching the documented contract.
+
+**Regression test**
+`test_adaptive_classification_uses_pre_dedup_evidence_composition` in `tests/unit/test_context_engine.py` (three duplicate graph facts plus two distinct documents, genuinely graph-dominant pre-dedup).
+
+---
+
+### CTX-011: The Context Engineering benchmark clamped utilization to 1.0, hiding real overflow
+
+**Status:** FIXED
+**Severity:** MODERATE
+**Area:** Context Engineering / evaluation
+**Affected code:** `rag.eval.run_context_eval.run_scenario`
+
+**Problem**
+`context_utilization` was clamped to `1.0` in the synthetic benchmark report, so a `top_n` baseline run overflowing its budget by 600% read identically to one that landed exactly at capacity.
+
+**Failure scenario**
+`docs/context_engineering.md`'s own benchmark table claimed "every run respected its computed budget exactly," which the project's own committed `report.json` directly contradicted (5/240 `top_n` rows overflowed at larger candidate sizes).
+
+**Fix applied**
+`context_utilization` is now reported unclamped; `context_overflow`/`context_excess_tokens` fields were added, and the benchmark report/table/doc text were corrected and regenerated.
+
+**Regression test**
+`test_top_n_baseline_genuinely_overflows_and_reports_it_honestly` (and the updated `test_full_pipeline_never_exceeds_budget...` now also asserting `context_overflow is False`) in `tests/unit/test_run_context_eval.py`.
+
+---
+
+### CTX-013: `run_eval.py` silently dropped `answer()`'s own `context_engineering` field
+
+**Status:** FIXED
+**Severity:** MINOR
+**Area:** Context Engineering / evaluation
+**Affected code:** `rag.eval.run_eval.evaluate`
+
+**Problem**
+`RetrievalPipeline.answer()` returns a `"context_engineering"` key (a `context_engineering_summary()` dict: utilization, reduction, dedup/compression counts, truncation, build latency) whenever `config.context.enabled` is true, but `run_eval.py`'s generation loop read every other key off that same result dict (`answer`, `sources`, `retrieval_ms`, `prompt_tokens`, ...) and never this one. A `run_eval.py` report produced with Context Engineering turned on looked identical to one with it off.
+
+**Failure scenario**
+A reviewer comparing a Context-Engineering-enabled report against a baseline would have no deterministic signal that Context Engineering was exercised at all, short of re-reading the config.
+
+**Fix applied**
+`evaluate()` now records each `answer()` call's `context_engineering` dict onto its `per_example` entry, and (when at least one example populated it) reports a `report["context_engineering"]` aggregate (`packing_strategy`, mean utilization/reduction/items-compressed/dropped-item-count, truncated-run count, mean build latency).
+
+**Regression test**
+Verified by unit tests exercising `evaluate()` with `config.context.enabled=True` and inspecting the resulting report's `context_engineering` key.
+
+---
+
+### EVAL-014: `sources`/citations could credit evidence Context Engineering had already dropped or compressed
+
+**Status:** FIXED
+**Severity:** CRITICAL
+**Area:** Evaluation / Context Engineering
+**Affected code:** `RetrievalPipeline.build_context_text`/`answer`, `GraphRAGPipeline._generate_from_results`, `agent/graph.py:_synthesize`
+
+**Problem**
+`sources`/citations (and, downstream, RAGAS's judge `contexts`) were always built from the pre-packing retrieval result, never from what Context Engineering's packing step actually included in the rendered prompt.
+
+**Failure scenario**
+A packing decision dropping or compressing a chunk left `sources` (and the RAGAS judge context built from it) still crediting the original, un-packed evidence, so citation-accuracy and judge-faithfulness metrics could be scored against evidence the model was never actually shown.
+
+**Fix applied**
+`build_context_text` now also returns the subset of results that actually reached the rendered prompt (content-adjusted for any compressed item), and all three generation call sites build `sources`/citations from that value instead of the pre-packing list. Byte-identical to the old behavior when Context Engineering is disabled.
+
+**Regression test**
+`test_answer_sources_reflect_what_context_engineering_actually_packed` in `tests/unit/test_retrieval_pipeline.py`.
+
+---
+
 ## 5. Agent, MCP and Workflow Issues
 
 ### AGT-001: Step budgets collided with the happy path, mislabeling most runs as max_steps
@@ -2002,6 +2194,15 @@ The following issues are resolved, with a concrete fix and regression test cited
 | CTX-001 | Context Engineering | Compression threshold was gated on item size, not remaining headroom |
 | CTX-002 | Context Engineering | A generic uppercase-word regex misparsed an entity name as a relationship type |
 | CTX-003 | Testing methodology | Test doubles mutating the cached `load_config()` singleton polluted later tests |
+| CTX-005 | Context Engineering | The context budget assumed a model window that nothing ever told Ollama about |
+| CTX-006 | Context Engineering | Packed token counts omitted rendered overhead, and agent synthesis budgeted the wrong template |
+| CTX-007 | Context Engineering | Deduplication could merge conflicting facts, and could cross a tenant boundary |
+| CTX-008 | Context Engineering | A tokenizer failure during budget planning escaped the documented graceful fallback |
+| CTX-009 | Context Engineering | Conversation-history evidence never got injection-flagged |
+| CTX-010 | Context Engineering | Adaptive budget classification counted post-dedup evidence, contrary to its own contract |
+| CTX-011 | Context Engineering | The Context Engineering benchmark clamped utilization to 1.0, hiding real overflow |
+| CTX-013 | Context Engineering | `run_eval.py` silently dropped `answer()`'s own `context_engineering` field |
+| EVAL-014 | Evaluation / Context Engineering | `sources`/citations could credit evidence Context Engineering had already dropped or compressed |
 
 ---
 
