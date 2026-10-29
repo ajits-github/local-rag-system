@@ -1366,6 +1366,69 @@ A security probe that fails for an unrelated reason gives a false pass; identica
 
 ---
 
+### EVAL-010: The corpus-wide duplicate-secret scan was not scoped to dataset_id
+
+**Status:** FIXED
+**Severity:** MAJOR
+**Area:** Evaluation / security-metric correctness
+**Affected code:** `run_eval._fetch_chunks_for_duplicate_scan`
+
+**Problem**
+This was the one query in the module not scoped by `dataset_id`, contrary to the module's own stated invariant; it scanned every chunk in the table regardless of which dataset was under evaluation.
+
+**Failure scenario**
+If multiple datasets (e.g. `techfusion`, `sample_docs`, graph/ontology/context-eval corpora) ever share one Postgres instance for a consolidated benchmark run, `duplicate_sensitive_field_miss_rate` for one dataset would silently include findings from an unrelated one.
+
+**Fix applied**
+Added `WHERE dataset_id = %s`, threaded the parameter through from the one real caller.
+
+**Regression test**
+`test_duplicate_scan_query_is_scoped_to_dataset_id` in `tests/unit/test_run_eval.py`.
+
+---
+
+### EVAL-011: Relationship expansion could inflate Recall@K/Hit@K/MRR, and MRR had no rank cutoff
+
+**Status:** FIXED
+**Severity:** MAJOR
+**Area:** Evaluation / retrieval-metric correctness
+**Affected code:** `run_eval.evaluate`, `metrics.reciprocal_rank`
+
+**Problem**
+The primary ranking-quality population (`all_retrieved_sources`) included every result `retrieve()` returned, including `origin="expanded"` relationship-expansion filler appended after the primary ranked list. `reciprocal_rank` itself has no cutoff at all.
+
+**Failure scenario**
+Whenever a gold question's primary candidate pool was thinner than the fixed `RETRIEVAL_K=10`, expanded chunks filled the measured top-K slots (or, for MRR, contributed from any rank), inflating ranking metrics in a way a vector/hybrid-only baseline with expansion off would never produce for the identical primary ranking.
+
+**Fix applied**
+The population feeding Recall@K/Hit@K/MRR is now filtered to `origin == "retrieved"` only, leaving the broader (expansion-inclusive) list in place for the safety-leak checks that intentionally want it.
+
+**Regression test**
+`test_recall_and_mrr_exclude_expanded_origin_results_from_the_primary_population` in `tests/unit/test_run_eval.py`.
+
+---
+
+### EVAL-012: Duplicate relevant-document ids in gold data inflated Recall@K
+
+**Status:** FIXED
+**Severity:** MODERATE
+**Area:** Evaluation / metric correctness
+**Affected code:** `metrics.recall_at_k`
+
+**Problem**
+`relevant_ids` was never deduplicated; a gold row listing the same id twice counted it twice against an un-deduplicated denominator.
+
+**Failure scenario**
+`retrieved=["a"]`, `relevant=["a","a","b"]` computed `2/3` instead of the correct `1/2` over the distinct relevant set. Not currently firing on the 126-row `techfusion_gold.jsonl` (no duplicates present), but a real risk for any future or smaller gold file.
+
+**Fix applied**
+`relevant_ids` is now deduplicated (`dict.fromkeys`) before scoring, the standard definition of Recall@K over a *set* of relevant items.
+
+**Regression test**
+`test_recall_at_k_deduplicates_repeated_relevant_ids` in `tests/unit/test_metrics.py`.
+
+---
+
 ### EVAL-013: A graph-strategy comparison could silently relabel every row as vector-only
 
 **Status:** FIXED
@@ -1384,6 +1447,27 @@ Running the graph evaluator's comparison under the shipped, graph-disabled defau
 
 **Regression test**
 `tests/unit/test_graph_pipeline_strategy_labeling.py` (three tests: the disabled-graph mislabel, the correct `vector_only` label, and `compare_strategies` raising).
+
+---
+
+### EVAL-015: No experiment record captured which git commit produced it
+
+**Status:** FIXED
+**Severity:** MAJOR
+**Area:** Evaluation / reproducibility
+**Affected code:** `rag.eval.run_metadata` (new), every `run_*.py` report builder, the three `scripts/record_*.py` scripts
+
+**Problem**
+Every experiment-recording path captures an extensive model/config/corpus field list, but none captured the exact code version (commit, branch, dirty state) that produced it.
+
+**Failure scenario**
+A benchmark run against uncommitted code becomes permanently unattributable to a specific commit the moment that code is later committed, amended, or rebased.
+
+**Fix applied**
+Added `rag.eval.run_metadata.capture_git_metadata()` (best-effort, never raises); wired a `run_metadata` field into every `run_eval`/`run_ragas_eval`/`run_agent_ragas_eval`/`run_agent_eval`/`run_graph_eval`/`retrieval_attribution` report, and flattened `git_commit_sha`/`git_branch`/`git_dirty` into the flat record schema in `record_experiment.py`/`record_agent_experiment.py` (the third, `record_attribution_experiment.py`, inherits it automatically since it spreads the whole raw report).
+
+**Regression test**
+`tests/unit/test_run_metadata.py` (a real-repo check plus a simulated git-unavailable degrade).
 
 ---
 
@@ -1893,7 +1977,11 @@ The following issues are resolved, with a concrete fix and regression test cited
 | EVAL-003 | Evaluation | A keyword heuristic produced false regression counts, and a test relied on it |
 | EVAL-005 | Evaluation | Safety metrics read as a perfect zero until the gold paths were checked |
 | EVAL-006 | Evaluation | `oversized_request_rejection_accuracy` read 0/3, because the probe token was rejected first |
+| EVAL-010 | Evaluation | The corpus-wide duplicate-secret scan was not scoped to dataset_id |
+| EVAL-011 | Evaluation | Relationship expansion could inflate Recall@K/Hit@K/MRR, and MRR had no rank cutoff |
+| EVAL-012 | Evaluation | Duplicate relevant-document ids in gold data inflated Recall@K |
 | EVAL-013 | Evaluation | A graph-strategy comparison could silently relabel every row as vector-only |
+| EVAL-015 | Evaluation | No experiment record captured which git commit produced it |
 | OBS-002 | Observability | Shared mutable LLM token counters could leak across concurrent requests |
 | OPS-001 | Deployment | A 504 at the frontend came from the host running out of memory |
 | OPS-002 | Deployment | A frontend panel stayed "unavailable" because the reverse proxy never routed two endpoints |

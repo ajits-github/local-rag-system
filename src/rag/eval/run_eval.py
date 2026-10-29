@@ -44,6 +44,7 @@ from rag.eval.gold_schema import (
     source_matches_relevant,
 )
 from rag.eval.metrics import mean_hit_rate_at_k, mean_recall_at_k, mean_reciprocal_rank
+from rag.eval.run_metadata import capture_git_metadata
 from rag.factory import build_vectorstore
 from rag.retrieval.authorization import AuthorizationContext
 from rag.retrieval.field_policy import (
@@ -728,7 +729,9 @@ class _DuplicateScanChunk:
     metadata: _DuplicateScanChunkMetadata
 
 
-def _fetch_chunks_for_duplicate_scan(config: AppConfig) -> list[_DuplicateScanChunk]:
+def _fetch_chunks_for_duplicate_scan(
+    config: AppConfig, dataset_id: str
+) -> list[_DuplicateScanChunk]:
     """Read every chunk's id/content/sensitive-scannable metadata directly from Postgres.
 
     Uses direct SQL because `VectorStore` has no "fetch every chunk"
@@ -739,6 +742,12 @@ def _fetch_chunks_for_duplicate_scan(config: AppConfig) -> list[_DuplicateScanCh
     `field_policy.SCANNABLE_METADATA_FIELDS`), not just `content`, so a
     sensitive literal living only in metadata is caught by this corpus-wide
     diagnostic too.
+
+    Scoped to `dataset_id`, like every other retrieval this module makes
+    (see this module's own docstring): this was the one exception, a
+    corpus-wide, unscoped scan that would blend findings from unrelated
+    datasets sharing the same `chunks` table into a `techfusion`-scoped
+    (or any other single-dataset) eval run's report.
     """
     table = config.vectorstore.chunks_table
     conn = psycopg2.connect(config.database_url())
@@ -746,7 +755,9 @@ def _fetch_chunks_for_duplicate_scan(config: AppConfig) -> list[_DuplicateScanCh
         with conn.cursor() as cur:
             cur.execute(
                 f"SELECT chunk_id, content, sensitive_field_ids, "  # noqa: S608
-                f"source, section_path, attachment_name, source_anchor FROM {table}"
+                f"source, section_path, attachment_name, source_anchor FROM {table} "
+                "WHERE dataset_id = %s",
+                (dataset_id,),
             )
             rows = cur.fetchall()
     finally:
@@ -767,17 +778,17 @@ def _fetch_chunks_for_duplicate_scan(config: AppConfig) -> list[_DuplicateScanCh
     ]
 
 
-def _duplicate_sensitive_field_miss_metric(config: AppConfig) -> dict[str, Any]:
+def _duplicate_sensitive_field_miss_metric(config: AppConfig, dataset_id: str) -> dict[str, Any]:
     """Corpus-level scan for sensitive literals duplicated across chunks or inconsistently tagged.
 
     Unlike every other safety metric in this module, this is not
     gold-row-driven. It is computed once per eval run directly against the
-    ingested corpus. Always
+    ingested corpus, scoped to `dataset_id`. Always
     included (never gated behind `if records:`), since `count=0`/`rate=0.0`
     is itself a meaningful "corpus is clean" result, not a "nothing to
     check" case.
     """
-    chunks = _fetch_chunks_for_duplicate_scan(config)
+    chunks = _fetch_chunks_for_duplicate_scan(config, dataset_id)
     findings = find_duplicate_sensitive_occurrences(chunks)
     miss_records = [bool(f.untagged_chunk_ids) for f in findings]
     return {
@@ -1113,7 +1124,22 @@ def evaluate(
             auth=auth_context,
         )
         retrieved_sources = [r.chunk.metadata.source for r in retrieval_results]
-        all_retrieved_sources.append(retrieved_sources)
+        # Recall@K/Hit@K/MRR score primary ranking quality specifically;
+        # relationship-expansion is a separate, already-measured mechanism
+        # (relationship_expansion_contribution_rate/
+        # expanded_context_utilization_rate below), not a ranked result.
+        # Mixing the two here would let expansion fill measured top-K
+        # slots (or, for MRR, contribute at any rank at all, since
+        # reciprocal_rank has no cutoff) whenever the primary pool is
+        # thinner than RETRIEVAL_K, inflating ranking metrics in a way
+        # that wouldn't reflect a vector/hybrid-only baseline. Safety
+        # checks below intentionally keep using the broader
+        # `retrieved_sources` (including expansion), since a leak via
+        # expansion is still a real leak worth catching.
+        primary_retrieved_sources = [
+            r.chunk.metadata.source for r in retrieval_results if r.origin == "retrieved"
+        ]
+        all_retrieved_sources.append(primary_retrieved_sources)
         all_relevant.append(example.relevant_documents)
 
         forbidden_only = _document_only_forbidden(example)
@@ -1836,10 +1862,12 @@ def run(
     Returns
     -------
     dict[str, Any]
-        `evaluate`'s report, plus `generated_at`, `config`, and
-        `corpus_lineage` (dataset_id/corpus_version/document count/chunk
-        count/image count/gold-record count/gold-file digest/corpus
-        digest. See `eval/corpus_lineage.py`) keys.
+        `evaluate`'s report, plus `generated_at`, `config`,
+        `run_metadata` (git commit/branch/dirty state, see
+        `eval/run_metadata.py`), and `corpus_lineage`
+        (dataset_id/corpus_version/document count/chunk count/image
+        count/gold-record count/gold-file digest/corpus digest. See
+        `eval/corpus_lineage.py`) keys.
     """
     config = load_config(config_path) if config_path else load_config()
     vectorstore = build_vectorstore(config)
@@ -1847,7 +1875,7 @@ def run(
     examples = load_gold_jsonl(gold_path)
     result = evaluate(pipeline, examples, dataset_id, run_generation=run_generation, config=config)
     result.setdefault("safety", {})["duplicate_sensitive_field_miss_rate"] = (
-        _duplicate_sensitive_field_miss_metric(config)
+        _duplicate_sensitive_field_miss_metric(config, dataset_id)
     )
     lineage = compute_corpus_lineage(
         vectorstore, dataset_id, corpus_version or "unspecified", gold_path
@@ -1855,6 +1883,7 @@ def run(
     return {
         "generated_at": datetime.now(UTC).isoformat(),
         "config": _config_summary(config),
+        "run_metadata": capture_git_metadata(),
         "corpus_lineage": lineage,
         **result,
     }

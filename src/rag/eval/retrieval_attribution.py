@@ -29,6 +29,7 @@ from rag.eval.gold_schema import (
     source_matches_relevant,
 )
 from rag.eval.metrics import mean_hit_rate_at_k, mean_recall_at_k, mean_reciprocal_rank
+from rag.eval.run_metadata import capture_git_metadata
 from rag.retrieval.pipeline import RetrievalPipeline
 from rag.schemas import SearchResult
 
@@ -412,6 +413,7 @@ def run(gold_path: Path, config_path: str | None, dataset_id: str) -> dict[str, 
     result = evaluate_attribution(pipeline, examples, dataset_id)
     return {
         "generated_at": datetime.now(UTC).isoformat(),
+        "run_metadata": capture_git_metadata(),
         "config": {
             "embedding_model": config.embedding.model_name,
             "rrf_k": config.retrieval.hybrid.rrf_k,

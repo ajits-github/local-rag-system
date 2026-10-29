@@ -49,8 +49,14 @@ def recall_at_k(
     -------
     float
         ``hits / len(relevant_ids)``, or ``0.0`` if `relevant_ids` is empty.
+        `relevant_ids` is deduplicated first (exact string identity), so a
+        gold row's `relevant_documents` listing the same id twice can
+        never shift the denominator or double-count that id's hit; this
+        is the standard definition of Recall@K (over the *set* of
+        relevant items), not an artifact of how many times a label
+        happened to be repeated.
     """
-    relevant_ids = list(relevant_ids)
+    relevant_ids = list(dict.fromkeys(relevant_ids))
     if not relevant_ids:
         return 0.0
     top_k = retrieved_ids[:k]

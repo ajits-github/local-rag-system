@@ -22,6 +22,7 @@ from rag.api.deps import get_config
 from rag.config import AppConfig
 from rag.eval.answer_quality import KeywordOverlapScorer
 from rag.eval.gold_schema import GoldExample, load_gold_jsonl, source_matches_relevant
+from rag.eval.run_metadata import capture_git_metadata
 from rag.factory import build_graph_client
 from rag.graph.pipeline import GraphRAGPipeline
 from rag.graph.retrieval import GraphRetriever
@@ -265,7 +266,12 @@ def compare_strategies(
         }
     finally:
         pipeline.close()
-    return {"dataset_id": dataset_id, "gold_count": len(gold), "results": results}
+    return {
+        "dataset_id": dataset_id,
+        "gold_count": len(gold),
+        "run_metadata": capture_git_metadata(),
+        "results": results,
+    }
 
 
 def main() -> None:

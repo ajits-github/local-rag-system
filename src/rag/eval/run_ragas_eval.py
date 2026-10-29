@@ -27,6 +27,7 @@ from rag.eval.corpus_lineage import compute_corpus_lineage
 from rag.eval.egress_policy import apply_egress_policy
 from rag.eval.gold_schema import GoldExample, load_gold_jsonl
 from rag.eval.run_eval import _config_summary, evaluate
+from rag.eval.run_metadata import capture_git_metadata
 from rag.factory import build_embedder, build_judge_llm, build_vectorstore
 from rag.generation.base import LLM
 from rag.retrieval.pipeline import RetrievalPipeline
@@ -220,6 +221,7 @@ def run_ragas(
     return {
         "generated_at": datetime.now(UTC).isoformat(),
         "config": _config_summary(config),
+        "run_metadata": capture_git_metadata(),
         "corpus_lineage": lineage,
         **base_result,
         "ragas": ragas_result,

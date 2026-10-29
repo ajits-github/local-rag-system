@@ -410,6 +410,90 @@ def test_relationship_expansion_contribution_rate_absent_when_not_applicable():
     assert "relationship_expansion_contribution_rate" not in report
 
 
+class _FakeCursor:
+    """Records the executed SQL text/params; returns no rows."""
+
+    def __init__(self, recorder: list[tuple[str, tuple]]) -> None:
+        self._recorder = recorder
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return False
+
+    def execute(self, sql: str, params: tuple = ()) -> None:
+        self._recorder.append((sql, params))
+
+    def fetchall(self):
+        return []
+
+
+class _FakeConnection:
+    def __init__(self, recorder: list[tuple[str, tuple]]) -> None:
+        self._recorder = recorder
+
+    def cursor(self):
+        return _FakeCursor(self._recorder)
+
+    def close(self):
+        pass
+
+
+def test_duplicate_scan_query_is_scoped_to_dataset_id(monkeypatch):
+    """The corpus-wide duplicate-secret scan must filter by dataset_id.
+
+    Regression for EVAL-010: `_fetch_chunks_for_duplicate_scan` used to
+    issue an unscoped `SELECT ... FROM chunks` with no `WHERE dataset_id`
+    clause at all, so a run against one dataset could blend in findings
+    from an unrelated dataset sharing the same Postgres table.
+    """
+    from rag.eval.run_eval import _fetch_chunks_for_duplicate_scan
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql://rag:rag@localhost:15987/ragdb")
+    recorder: list[tuple[str, tuple]] = []
+    config = load_config()
+    monkeypatch.setattr("rag.eval.run_eval.psycopg2.connect", lambda dsn: _FakeConnection(recorder))
+
+    _fetch_chunks_for_duplicate_scan(config, "my-dataset")
+
+    assert len(recorder) == 1
+    sql, params = recorder[0]
+    assert "WHERE dataset_id = %s" in sql
+    assert params == ("my-dataset",)
+
+
+def test_recall_and_mrr_exclude_expanded_origin_results_from_the_primary_population():
+    """Recall@K/MRR must score primary ranking, never relationship-expanded filler.
+
+    Regression for EVAL-011: when the primary candidate pool is thinner
+    than RETRIEVAL_K, an `origin="expanded"` result used to fill the
+    measured top-K slots and could drive MRR from any rank at all (no
+    cutoff), inflating ranking metrics in a way a vector/hybrid-only
+    baseline (with expansion off) would never produce for the identical
+    primary ranking.
+    """
+    # Primary ranking misses entirely; only an expanded-origin result,
+    # appended after it, actually matches the gold document.
+    primary_miss = _make_result("c1", "unrelated content", source="a.md", score=0.9)
+    expanded_hit = _make_result(
+        "c2", "the relevant passage", source="b.md", score=0.9, origin="expanded"
+    )
+    examples = [GoldExample(question="q1", relevant_documents=["b.md"])]
+
+    report = evaluate(
+        _pipeline([primary_miss, expanded_hit]),
+        examples,
+        dataset_id="test-dataset",
+        run_generation=False,
+    )
+
+    assert report["retrieval"]["recall@5"] == 0.0
+    assert report["retrieval"]["recall@10"] == 0.0
+    assert report["hit_rate"]["hit_rate@10"] == 0.0
+    assert report["mrr"] == 0.0
+
+
 def test_evaluate_reports_token_usage_when_llm_exposes_token_counts():
     """token_usage reads prompt/completion token counts off the LLM (e.g. OllamaLLM)."""
     results = [_make_result("c1", "Alpha content.", source="a.md", score=0.9)]

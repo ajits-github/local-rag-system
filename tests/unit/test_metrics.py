@@ -29,6 +29,17 @@ def test_recall_at_k_no_relevant_returns_zero():
     assert recall_at_k(["a", "b"], set(), k=5) == 0.0
 
 
+def test_recall_at_k_deduplicates_repeated_relevant_ids():
+    """A gold row listing the same relevant id twice must not change the denominator.
+
+    Regression for EVAL-012: retrieved=["a"], relevant=["a", "a", "b"]
+    used to compute 2/3 (duplicate "a" counted twice against an
+    un-deduplicated denominator of 3) instead of the correct 1/2 over
+    the distinct relevant set {"a", "b"}.
+    """
+    assert recall_at_k(["a"], ["a", "a", "b"], k=5) == 0.5
+
+
 def test_reciprocal_rank_first_hit():
     """reciprocal_rank is 1.0 when the first result is relevant."""
     assert reciprocal_rank(["a", "b", "c"], {"a"}) == 1.0
