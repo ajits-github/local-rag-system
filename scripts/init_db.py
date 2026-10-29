@@ -79,6 +79,9 @@ def build_schema_sql(*, documents_table: str, chunks_table: str, dimension: int)
     ALTER TABLE {chunks_table} ADD COLUMN IF NOT EXISTS category TEXT;
     ALTER TABLE {chunks_table} ADD COLUMN IF NOT EXISTS dataset_id TEXT;
     ALTER TABLE {documents_table} ADD COLUMN IF NOT EXISTS dataset_id TEXT;
+    -- Checksum last projected into the graph; NULL or stale means the
+    -- graph projection must be (re)built (see IngestionPipeline.ingest_file).
+    ALTER TABLE {documents_table} ADD COLUMN IF NOT EXISTS graph_checksum TEXT;
 
     -- Migrations for tables created before the structured-content metadata
     -- fields (content_type/section_path/code_language/table_headers/

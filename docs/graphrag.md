@@ -78,7 +78,13 @@ query template uses it yet.
 ## Extraction
 
 The stage runs after the Postgres commit, and a failure in it cannot fail or
-roll back the ingestion.
+roll back the ingestion. A successful write records the document's checksum
+in `documents.graph_checksum`; when that is missing or stale, an otherwise
+unchanged re-ingest re-projects the document from its stored chunks, without
+re-embedding. That covers a graph write that failed while Neo4j was down,
+graph extraction enabled after ingestion, and a graph-only reset
+(`IngestionPipeline.reset_graph`, which deletes the dataset's facts and clears
+its graph checksums).
 
 - **Deterministic.** `extract_and_write_for_document` writes a `Document` node
   keyed on the Postgres `document_id`, a `Category` node with `PART_OF`, and a

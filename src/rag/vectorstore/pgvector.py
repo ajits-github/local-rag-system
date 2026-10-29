@@ -677,6 +677,36 @@ class PgVectorStore(VectorStore):
             )
             return dict(cur.fetchall())
 
+    def get_graph_checksum(self, document_id: str) -> str | None:
+        """See `VectorStore.get_graph_checksum`."""
+        with self._connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                f"SELECT graph_checksum FROM {self._documents_table} WHERE document_id = %s",
+                (document_id,),
+            )
+            row = cur.fetchone()
+        return row[0] if row else None
+
+    def set_graph_checksum(self, document_id: str, checksum: str) -> None:
+        """See `VectorStore.set_graph_checksum`."""
+        with self._connection() as conn:
+            with conn, conn.cursor() as cur:
+                cur.execute(
+                    f"UPDATE {self._documents_table} SET graph_checksum = %s "
+                    "WHERE document_id = %s",
+                    (checksum, document_id),
+                )
+
+    def clear_graph_checksums(self, dataset_id: str) -> None:
+        """See `VectorStore.clear_graph_checksums`."""
+        with self._connection() as conn:
+            with conn, conn.cursor() as cur:
+                cur.execute(
+                    f"UPDATE {self._documents_table} SET graph_checksum = NULL "
+                    "WHERE dataset_id = %s",
+                    (dataset_id,),
+                )
+
     def add_chunks(self, chunks: list[Chunk]) -> None:
         """See `VectorStore.add_chunks`."""
         if not chunks:
