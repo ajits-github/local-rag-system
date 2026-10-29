@@ -12,6 +12,10 @@ behavior, and verification status are in [`docs/graphrag.md`](../graphrag.md).
 
 API reference: [Knowledge Graph / GraphRAG](../reference/graph.md).
 
+![Knowledge Graph and GraphRAG architecture: extraction into Neo4j, graph retrieval, and fusion with vector retrieval](../assets/graphrag-architecture.png)
+
+Ingestion projects closed-schema entities and relationships into Neo4j; `POST /graph/query` and the agent graph tools retrieve authorized facts, which are fused with vector results before Context Engineering and generation. Each fact is revalidated against its source document in Postgres before it becomes evidence.
+
 ## Knowledge Graph and GraphRAG (graphrag milestone)
 
 Adds a Neo4j-backed property graph (entities/relationships derived from the

@@ -22,6 +22,10 @@ subject to the same tenant/role check document-level retrieval uses, and an
 inferred relationship never grants access on its own. See
 [Security](security.md) for the control-by-control breakdown this reuses.
 
+![Ontology and semantic layer: Neo4j property graph alongside RDF/OWL schema, ontology-aware expansion, SPARQL and SHACL](../assets/ontology-semantic-layer.png)
+
+The RDF/OWL layer complements the Neo4j property graph with class hierarchy and inverse/transitive reasoning, SPARQL queries and SHACL validation. It is reachable from the demo script and the ontology evaluation only, not from the API or agent, and never grants access on its own.
+
 ## What RDF adds that the property graph does not
 
 Neo4j's node labels (`Service`, `Database`, `API`, ...) are flat; there is

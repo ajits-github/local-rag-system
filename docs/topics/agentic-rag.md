@@ -11,6 +11,10 @@ Full design writeup: [Agentic RAG](../architecture.md#agentic-rag).
 
 API reference: [Agent](../reference/agent.md).
 
+![Agentic RAG architecture: classify, then classic RAG fast path or the bounded custom agent](../assets/agentic-rag-architecture.png)
+
+A classify step (one bounded LLM routing decision; `agent.enabled: false` always routes classic) sends simple questions to the classic `RetrievalPipeline.answer()` path and multi-hop questions to the bounded agent in `rag.agent.graph`. The LLM only proposes tool calls; argument validation, authorization and dispatch run in application code, within the configured step, tool-call and retry limits.
+
 ## Agentic RAG (agentic-rag milestone)
 
 Adds a small, bounded, production-shaped agentic workflow above the

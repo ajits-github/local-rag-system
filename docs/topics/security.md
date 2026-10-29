@@ -39,6 +39,10 @@ Full design writeups:
 - [Authenticated API Boundary and Security Hardening](../architecture.md#authenticated-api-boundary-and-security-hardening-auth-boundary-milestone)
 - API reference: [Retrieval](../reference/retrieval.md), [API](../reference/api.md)
 
+![Security architecture: authentication, retrieval authorization, freshness and trust, field redaction, injection detection, and business mutation controls](../assets/security-layers.png)
+
+Each layer is an independent, server-side control: JWT authentication, SQL authorization, freshness and trust filtering, field redaction, and injection flagging, plus approval-gated checks on the one business write action. Injection detection is telemetry; authorization and the action controls are what enforce.
+
 ## Authorization, freshness, and trust (safety/freshness milestone)
 
 Adds retrieval-time tenant/role authorization, document-version freshness

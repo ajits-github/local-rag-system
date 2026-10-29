@@ -17,7 +17,7 @@ repos:
         # their original, uncompressed resolution by request. All are
         # excluded by name rather than raising the global --maxkb, which
         # would weaken this check for everything else.
-        exclude: ^(PROJECT_JOURNAL\.md|docs/assets/(architecture-diagram(-detailed)?|agent-tool-architecture|agent-mcp-architecture)\.png)$
+        exclude: ^(PROJECT_JOURNAL\.md|docs/assets/(architecture-diagram(-detailed)?|agent-tool-architecture|agent-mcp-architecture|agentic-rag-architecture|context-engineering-flow|ontology-semantic-layer|retrieval-pipeline|security-layers)\.png)$
       - id: check-merge-conflict
       - id: debug-statements
       - id: mixed-line-ending
