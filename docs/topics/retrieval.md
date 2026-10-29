@@ -37,6 +37,14 @@ Weaviate constant) rather than combining the two `.score` scales directly.
 Fusion dedupes by `chunk.id` and sums `1/(k+rank)` contributions across
 whichever lists a chunk appears in.
 
+**BM25 cost scales with the corpus.** `search_keyword` fetches every chunk
+matching the filters (no SQL `LIMIT`), tokenizes it, and builds a fresh
+in-memory `BM25Okapi` index on each call, so hybrid latency is O(filtered
+corpus) per query, not O(`candidate_k`). That is fine at this corpus size;
+any dense-vs-hybrid latency comparison on a larger corpus measures this
+rebuild, not BM25 itself. A persistent index (Postgres full-text search or
+a cached BM25 per dataset) is the fix if that ever matters.
+
 `RetrievalPipeline.retrieve_attribution` (additive, observability-only,
 `retrieve()`/`answer()` are unaffected by its existence) always fetches
 dense and BM25 independently and fuses them, regardless of

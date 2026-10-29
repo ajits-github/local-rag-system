@@ -598,6 +598,11 @@ class AgentConfig(BaseModel):
         argument, independent of that argument's own Pydantic `le` bound.
         A config change, not just the schema literal, is always the
         true final ceiling.
+    max_evidence_summary_chars : int
+        Ceiling on the total evidence summary rendered into the
+        tool-select and evidence-sufficiency prompts, which are not
+        budgeted by Context Engineering. Items past it are omitted with a
+        visible note in the prompt and a log line.
     max_chunks_per_document_fetch : int
         Final chunk count `get_document`/`get_latest_document` keep after
         relevance-selecting against the current query.
@@ -649,6 +654,7 @@ class AgentConfig(BaseModel):
     max_tool_calls: int = 6
     max_json_parse_retries: int = 1
     max_tool_top_k: int = 20
+    max_evidence_summary_chars: int = Field(default=6000, ge=500)
     max_chunks_per_document_fetch: int = 10
     max_chunks_per_document_fetch_hard_ceiling: int = 50
     classify_prompt_path: str = "src/rag/prompts/templates/agent_classify_v1.yaml"

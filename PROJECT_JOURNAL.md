@@ -11440,3 +11440,28 @@ consider a full-corpus `context-engineering-v1` run (not just the
 for enabling Context Engineering by default, to get real
 utilization/dedup/compression numbers at production scale rather than
 this session's intentionally small smoke-test scale.
+
+## 2026-10-29 (session 26): Fixing the reconciled findings of the two 2026-10-29 pre-experiment audits
+
+### Interview talking points
+- One read-time revalidation query fixed two findings at once: graph facts are now resolved against their source document in Postgres under the caller's resolved auth, which closes the stale-ACL gap (GRAPH-008, open since session 25) and gives graph evidence the governance metadata the egress gate needs (SEC-018).
+- A benchmark report can be stale against its own code: regenerating the Context Engineering report showed the committed one predated the CTX-006 overhead counting. Running the benchmark at `main` in a throwaway worktree separated "report was stale" from "fix changed numbers": the fixes moved only seven compressed-item token counts, by exactly the citation overhead CTX-014 predicted.
+
+### Goal
+Codex (`.claude-prompts/35.9`) and Claude (`35.10`) audited `main` at `64321ed` independently. Verify each finding against the code, fix the eligible ones on `main`, and record everything in `KNOWN_ISSUES.md` following its conventions.
+
+### Changes made
+Five commits, stacked on four local branches off `main` (`c86a5a6`):
+1. `fix/context-budget-accounting` (`3486a88`): compression carries render overhead (CTX-014); infeasible budgets flagged via `budget_deficit_tokens`/`budget_infeasible`, a log line and `rag_context_budget_infeasible_total` (CTX-015); unclamped utilization telemetry plus `rag_context_budget_exceeded_total` (CTX-011 follow-up).
+2. `fix/graph-evidence-governance` (`b14d117`): `VectorStore.get_document_governance`; fusion revalidates and carries governance, fails closed (GRAPH-008, SEC-018); `egress_policy.allow_unclassified`, false in production (SEC-019); seeded-vector seeds filtered and ordered (GRAPH-010); entity ACL write-once behavior documented and pinned (GRAPH-011).
+3. `fix/context-dedup-identity` (`d3cfc40`): fact-specific graph ids, bucket/tenant/dataset-scoped identity pass, history-only hash merges (CTX-016); numeric and negation/polarity conflict guard (CTX-007 follow-up).
+4. `fix/agent-evidence-cap-and-eval-metadata` (`cc77157`, `9b0fbef`): `agent.max_evidence_summary_chars` (CTX-017); `ContextEvalReport.run_metadata` (EVAL-015 follow-up); Neo4j-outage and MCP-transport-failure tests; BM25 rebuild cost documented (RET-006); experiment-branch findings recorded (DIST-006, OPS-015, OPS-016); benchmark regenerated.
+
+### Evaluation results
+Context Engineering synthetic benchmark regenerated at `cc77157` (clean tree). Versus a fresh run of `main`: 7 of 240 rows differ, all `full_pipeline` `packed_token_count` on compressed items (+12 tokens each, one history row -1). Drops, compression counts and overflow are unchanged. The new Postgres integration test (`test_document_governance_lookup.py`) passed against the local container; Neo4j was not running, so graph integration tests were not executed.
+
+### Open problems
+BUG-015/016/017 (structural ingestion consistency) and GRAPH-009 (dead code) remain open. DIST-006 and OPS-015 are open on experiment branches, which were not modified. Experiment branches are 194 commits behind `main` (OPS-016).
+
+### Next recommended step
+Merge the four stacked PRs (#30 to #33) in order, retargeting each to `main` before deleting the branch below it (deleting a stacked PR's base branch closes the PR rather than retargeting it). Then run the graph integration tests with Neo4j up before any graph-mode benchmark.

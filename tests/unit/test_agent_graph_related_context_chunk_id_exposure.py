@@ -183,3 +183,31 @@ def test_full_search_then_get_related_context_flow_using_the_exposed_chunk_id():
     assert related_record.success is True
     assert related_record.result_count > 0
     assert pipeline.expand_calls  # expand_with_relationships was actually reached
+
+
+def test_summarize_evidence_is_bounded_and_says_what_it_omitted(caplog):
+    """Accumulated evidence never grows a decision prompt past the cap (CTX-017).
+
+    Tool-select and evidence-sufficiency prompts are not budgeted by Context
+    Engineering, so an unbounded summary would be silently truncated by a small
+    `num_ctx`. The cap keeps the prompt bounded and the omission visible.
+    """
+    evidence = [SearchResult(chunk=_chunk(f"doc-1_{i}", "x" * 400), score=0.5) for i in range(40)]
+
+    with caplog.at_level("INFO", logger="rag.agent.graph"):
+        summary = _summarize_evidence(evidence, max_chars=2000)
+
+    assert len(summary) <= 2000 + 100
+    assert "more evidence item(s) omitted" in summary
+    assert "chunk_id=doc-1_0" in summary
+    assert any("evidence summary truncated" in r.getMessage() for r in caplog.records)
+
+
+def test_summarize_evidence_under_the_cap_is_unchanged():
+    """A small evidence set renders in full, with no omission note."""
+    evidence = [SearchResult(chunk=_chunk(f"doc-1_{i}", "short"), score=0.5) for i in range(3)]
+
+    summary = _summarize_evidence(evidence, max_chars=6000)
+
+    assert "omitted" not in summary
+    assert summary.count("chunk_id=") == 3
