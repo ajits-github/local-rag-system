@@ -6,10 +6,10 @@ from typing import Any
 
 from fastapi import APIRouter, Depends
 
-from rag.api.deps import get_config, get_graphrag_pipeline, get_llm, get_vectorstore
+from rag.api.deps import get_config, get_graph_client, get_llm, get_vectorstore
 from rag.config import AppConfig
 from rag.generation.base import LLM
-from rag.graph.pipeline import GraphRAGPipeline
+from rag.graph.client import Neo4jClient
 from rag.vectorstore.base import VectorStore
 
 router = APIRouter()
@@ -19,14 +19,16 @@ router = APIRouter()
 def health(
     vectorstore: VectorStore = Depends(get_vectorstore),
     llm: LLM = Depends(get_llm),
-    graph_pipeline: GraphRAGPipeline = Depends(get_graphrag_pipeline),
+    graph_client: Neo4jClient | None = Depends(get_graph_client),
     config: AppConfig = Depends(get_config),
 ) -> dict[str, Any]:
     """Report overall status plus each dependency's individual reachability.
 
-    Graph is a soft dependency, like Ollama. Its `health_check()` returns
-    `True` when `graph.enabled=False`, so the endpoint is not degraded for a
-    disabled graph.
+    Graph is a soft dependency, like Ollama, and is probed through the
+    `Neo4jClient` singleton alone, never through `GraphRAGPipeline`, so a
+    cold `/health` never builds the retrieval pipeline or loads the
+    embedding model. With `graph.enabled=False` there is no client and the
+    graph reads as `"disabled"`, not degraded.
 
     Parameters
     ----------
@@ -34,9 +36,8 @@ def health(
         Injected vector store singleton.
     llm : LLM
         Injected LLM singleton.
-    graph_pipeline : GraphRAGPipeline
-        Injected `GraphRAGPipeline` singleton, used only for its
-        `health_check()`.
+    graph_client : Neo4jClient | None
+        Injected `Neo4jClient` singleton, `None` when graph is disabled.
     config : AppConfig
         Application configuration.
 
@@ -47,7 +48,7 @@ def health(
     """
     db_ok = vectorstore.health_check()
     llm_ok = llm.health_check()
-    graph_ok = graph_pipeline.health_check()
+    graph_ok = graph_client is None or graph_client.health_check()
     return {
         "status": "ok" if (db_ok and llm_ok and graph_ok) else "degraded",
         "dependencies": {

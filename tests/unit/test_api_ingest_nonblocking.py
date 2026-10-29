@@ -28,21 +28,13 @@ import pytest
 
 from rag.api.deps import (
     get_config,
-    get_graphrag_pipeline,
+    get_graph_client,
     get_ingestion_pipeline,
     get_llm,
     get_vectorstore,
 )
 from rag.api.main import app
 from rag.config import load_config
-
-
-class _FakeGraphPipeline:
-    """GraphRAGPipeline double that only answers health checks, instantly."""
-
-    def health_check(self) -> bool:
-        """Report healthy, always, with no real I/O."""
-        return True
 
 
 class _SlowFakePipeline:
@@ -104,9 +96,8 @@ async def test_slow_ingest_does_not_block_a_concurrent_health_request(upload_dir
     app.dependency_overrides[get_ingestion_pipeline] = lambda: pipeline
     app.dependency_overrides[get_vectorstore] = lambda: _FakeVectorStore()
     app.dependency_overrides[get_llm] = lambda: _FakeLLM()
-    # /health also depends on the graph pipeline; without this override it would
-    # build the real retrieval pipeline (loading the embedding model) on first use.
-    app.dependency_overrides[get_graphrag_pipeline] = lambda: _FakeGraphPipeline()
+    # Graph disabled: /health probes only the graph client, which is None here.
+    app.dependency_overrides[get_graph_client] = lambda: None
     # Captured *before* `asyncio.gather` starts either coroutine, so it's a fixed
     # reference point for "wall clock time since the two requests were issued" --
     # not time measured from inside a coroutine that might itself be starved of
@@ -139,7 +130,7 @@ async def test_slow_ingest_does_not_block_a_concurrent_health_request(upload_dir
         app.dependency_overrides.pop(get_ingestion_pipeline, None)
         app.dependency_overrides.pop(get_vectorstore, None)
         app.dependency_overrides.pop(get_llm, None)
-        app.dependency_overrides.pop(get_graphrag_pipeline, None)
+        app.dependency_overrides.pop(get_graph_client, None)
 
     assert ingest_response.status_code == 200
     assert pipeline.calls == [{"path": pipeline.calls[0]["path"], "dataset_id": "test-dataset"}]

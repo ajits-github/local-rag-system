@@ -40,7 +40,6 @@ without basis. Detailed chronological session history remains in
 | AGT-005 | MODERATE | NEEDS VERIFICATION | Agentic RAG | Tool-selection prompt's chunk_id fix is unverified against live tool selection |
 | SEC-007 | MODERATE | NEEDS VERIFICATION | Security | Upload atomicity fix: crash window between DB write and file install unverified |
 | SEC-008 | MINOR | NEEDS VERIFICATION | Security | Cross-tenant upload isolation integration tests were written but never run |
-| OBS-001 | MAJOR | IN PROGRESS | Observability | `/health` depends on a heavy pipeline dependency through a graph check |
 | MULTI-002 | MINOR | ACCEPTED LIMITATION | Multimodal | A working vision provider did not improve answers, because the model was weak |
 | GRAPH-005 | MODERATE | ACCEPTED LIMITATION | GraphRAG | LLM graph extraction worked correctly, but was impractical on a memory-starved host |
 | PROD-001 | MODERATE | ACCEPTED LIMITATION | Infrastructure | Durable workflow state did not make the side effects it triggered durable |
@@ -50,7 +49,6 @@ without basis. Detailed chronological session history remains in
 | BUG-015 | MAJOR | OPEN | Ingestion | A graph write failure after a successful vector commit has no durable retry |
 | BUG-016 | MAJOR | OPEN | Ingestion | Replacing or removing a referenced image does not invalidate the document that references it |
 | BUG-017 | MAJOR | OPEN | Ingestion | A staged upload can resolve vision assets against the wrong document version |
-| GRAPH-009 | MODERATE | OPEN | Ontology | A live-Neo4j ontology query helper has no authorization check at all (currently unreachable) |
 | GRAPH-011 | MINOR | ACCEPTED LIMITATION | GraphRAG | Entity-node ACL properties are frozen at first write (mitigated by read-time revalidation) |
 | RET-006 | MINOR | ACCEPTED LIMITATION | Retrieval | BM25 rebuilds a full in-memory index on every hybrid query |
 | DIST-006 | MAJOR | OPEN | Reliability (experiment branch) | The distributed-state worker claims a full batch every loop, regardless of jobs still running |
@@ -1212,10 +1210,10 @@ Cost is one extra indexed Postgres query per graph retrieval. Entity facts are c
 
 ---
 
-### GRAPH-009: A live-Neo4j ontology query helper has no authorization check at all
+### GRAPH-009: A live-Neo4j ontology query helper had no authorization check at all
 
-**Status:** OPEN
-**Severity:** MODERATE (unreachable today; would be CRITICAL if ever wired into a live endpoint)
+**Status:** FIXED
+**Severity:** MODERATE (unreachable; would have been CRITICAL if wired into a live endpoint)
 **Area:** Ontology / GraphRAG integration
 **Affected code:** `rag.ontology.graphrag_integration.expand_and_query_live_neo4j`
 
@@ -1225,11 +1223,11 @@ This function queries live Neo4j, filtering only by `dataset_id` and label; it h
 **Failure scenario**
 Confirmed dead code today: `grep` across `src/rag/{api,agent,graph,retrieval}` finds zero callers, and the module's own docstring calls it "sketched (written, not executed)." The scenario is latent: if this is ever promoted into a real agent tool or endpoint without adding the same authorization gate every other graph-read path has, it would disclose unauthorized entities outright.
 
-**Why not fixed yet**
-No live caller exists yet to fix a live bug in; adding authorization now to dead code was judged lower priority than the two reachable gaps above.
+**Fix applied**
+The helper now takes a required `auth: AuthorizationContext | None` (keyword-only, no default, so a future caller cannot forget it) and applies the same two layers as every other graph read: `build_graph_authorization_predicate` in the Cypher `WHERE`, and `is_fact_authorized` on every returned node. The query orders by `n.name, n.canonical_id` before `LIMIT`, so results are reproducible. It still has no caller in the API or agent.
 
-**Recommended fix**
-Add `is_entity_authorized` filtering, mirroring `rag.graph.retrieval`'s pattern, before this function is ever wired into anything live. Add a regression test now, preemptively, so the gate exists before the first real caller does. Its query also applies `LIMIT` with no `ORDER BY`, so results are not reproducible; add one at the same time. Both 2026-10-29 audits reconfirmed it has zero callers.
+**Regression test**
+`test_live_neo4j_helper_filters_unauthorized_entities_and_orders_results` in `tests/unit/test_ontology_graphrag_integration.py` (a fake client returns two tenants' nodes; only the caller's survives the re-check).
 
 ---
 
@@ -2066,31 +2064,24 @@ The Context Engineering benchmark (`run_context_eval.ContextEvalReport`, written
 
 ---
 
-### OBS-001: `/health` depends on a heavy pipeline dependency through a graph check
+### OBS-001: `/health` depended on a heavy pipeline dependency through a graph check
 
-**Status:** IN PROGRESS
+**Status:** FIXED
 **Severity:** MAJOR
 **Area:** Observability / health-check design
-**Affected code:** `GET /health`, `get_graphrag_pipeline` → `get_retrieval_pipeline()`
+**Affected code:** `GET /health` (`api/routers/health.py`), `get_graphrag_pipeline` → `get_retrieval_pipeline()`
 
 **Problem**
 After GraphRAG was added, a concurrency test asserting `/health` stays responsive during a slow `/ingest` failed: `/health` took 7.2s against a 0.5s limit.
 
 **Failure scenario**
-The graph health check calls `get_graphrag_pipeline()`, which calls `get_retrieval_pipeline()`, which loads the embedding model on first use. The test had overridden other health dependencies but not this one, so the first `/health` call paid the full model-load cost (~5078ms observed). The event loop itself was not blocked, the test was measuring the wrong thing, but the underlying design issue is real.
+The graph health check called `get_graphrag_pipeline()`, which calls `get_retrieval_pipeline()`, which loads the embedding model on first use. The test had overridden other health dependencies but not this one, so the first `/health` call paid the full model-load cost (~5078ms observed). The event loop itself was not blocked, the test was measuring the wrong thing, but the underlying design issue was real: in production, the first `/health` call loaded the embedding model just to answer a graph check.
 
-**Fix applied (test only)**
-The test now overrides `get_graphrag_pipeline` with a stub; product code is unchanged.
+**Fix applied**
+The test was first fixed by stubbing `get_graphrag_pipeline`. The product fix: `/health` now depends on `get_graph_client()` (the `Neo4jClient` singleton, `None` when `graph.enabled=False`) and probes it directly, so no dependency of the route builds the retrieval or GraphRAG pipeline. The ingest concurrency test no longer needs a pipeline stub.
 
-**What remains open**
-In production, the first real `/health` call still loads the embedding model just to answer a graph check. A health route should depend only on cheap checks; the graph check should not reach through the full retrieval pipeline. **Not fixed yet.**
-
-**Recommended fix**
-Give the graph health check its own lightweight connectivity probe that does not transitively construct the embedding/retrieval singleton.
-
-**Required regression test**
-A `/health` latency assertion against a cold process, with no dependency pre-warmed, to catch this class of cost regression going forward.
-
+**Regression test**
+`test_health_never_depends_on_the_retrieval_or_graphrag_pipeline` in `tests/unit/test_health_graph_check.py` walks the route's full dependency tree and asserts neither pipeline (nor the embedder) is in it, a deterministic stand-in for a cold-process latency check. `test_disabled_graph_reads_as_disabled_not_degraded` and `test_unreachable_neo4j_degrades_health` pin the response.
 ---
 
 ### OBS-002: Shared mutable LLM token counters could leak across concurrent requests
@@ -2602,6 +2593,7 @@ The following issues are resolved, with a concrete fix and regression test cited
 | GRAPH-006 | GraphRAG | A relationship's own ACL was never checked on the dependency-path query |
 | GRAPH-007 | GraphRAG | Neo4j routing/timeout options silently became Cypher query parameters |
 | GRAPH-008 | GraphRAG | A stale graph fact was never revalidated against its source's current Postgres state |
+| GRAPH-009 | Ontology | A live-Neo4j ontology query helper had no authorization check at all |
 | GRAPH-010 | GraphRAG | The graph-seeded neighbor-document lookup ran unauthorized Cypher |
 | ONT-001 | Ontology | A narrow RDFS domain axiom silently reclassified an Application as a Service |
 | ONT-002 | Ontology | SHACL was already subclass-aware, before any inference option was requested |
@@ -2617,6 +2609,7 @@ The following issues are resolved, with a concrete fix and regression test cited
 | EVAL-012 | Evaluation | Duplicate relevant-document ids in gold data inflated Recall@K |
 | EVAL-013 | Evaluation | A graph-strategy comparison could silently relabel every row as vector-only |
 | EVAL-015 | Evaluation | No experiment record captured which git commit produced it |
+| OBS-001 | Observability | `/health` depended on a heavy pipeline dependency through a graph check |
 | OBS-002 | Observability | Shared mutable LLM token counters could leak across concurrent requests |
 | OPS-001 | Deployment | A 504 at the frontend came from the host running out of memory |
 | OPS-002 | Deployment | A frontend panel stayed "unavailable" because the reverse proxy never routed two endpoints |
@@ -2696,3 +2689,5 @@ Performed after restructuring:
 **Postscript (pre-experiment audit, ingestion/graph gaps):** an adversarial audit of the ingestion and graph-consistency paths found three new ingestion-consistency gaps (BUG-015, BUG-016, BUG-017) and two graph-authorization gaps (GRAPH-008, GRAPH-009), all deliberately left OPEN rather than fixed in this pass, each with its own "why not fixed yet" note on its entry; they are structural changes, not local patches. These are not folded into this Report's original counts above. Separately, this pass's own cross-check of section 10's table against the full topical entries found three pre-existing table rows (MULTI-001, MULTI-002, MULTI-003) with no corresponding topical-section entry; all three were real, already-fixed (or, for MULTI-002, already-accepted) findings already described elsewhere in the project (CLAUDE.md, source docstrings), so full entries were added rather than leaving the table's own citation dangling.
 
 **Postscript (2026-10-29 pre-experiment audits):** two independent audits of `main` at `64321ed` (Codex: `.claude-prompts/35.9-...`, Claude: `35.10-...`; both untracked) were reconciled against the code before any fix. Fixed: **CTX-014**, **CTX-015**, **CTX-016**, **CTX-017**, **SEC-018**, **SEC-019**, **GRAPH-008**, **GRAPH-010**, plus follow-ups folded into existing stories (**CTX-007** negation guard, **CTX-011** telemetry clamp, **EVAL-015** Context Engineering report). New accepted limitations: **GRAPH-011**, **RET-006**, **OPS-016**. New open items on experiment branches only: **DIST-006**, **OPS-015**. Re-confirmed still open, not fixed here: **BUG-015**/**BUG-016**/**BUG-017** (structural ingestion-consistency changes; avoid graph-projection failures and image-only edits on any benchmark corpus until they land) and **GRAPH-009** (dead code). Two test-coverage gaps were closed without separate entries: `GraphRetriever.search`'s Neo4j-outage degradation (`tests/unit/test_graph_retrieval_degradation.py`) and an MCP remote-tool transport failure (`test_remote_tool_connection_failure_is_recorded_not_raised`). The Codex report's cited repro script, `experiments/reports/audit_repro_2026_10_29.py`, was never committed and does not exist.
+
+**Follow-up (2026-10-29, after the audit PRs):** **GRAPH-009** and **OBS-001** fixed; see their entries.

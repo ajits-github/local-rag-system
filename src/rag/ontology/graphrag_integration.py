@@ -18,8 +18,9 @@ Both functions operate on this milestone's own RDF mirror of the real
 Neo4j `techfusion_graph_demo` dataset
 (`data/ontology/instances/instances_graph_demo.ttl`), not a live Neo4j connection. See the
 module-level "Why no live Neo4j call" note below for why, and
-`expand_and_query_live_neo4j` for the sketched (written, not executed)
-live-graph integration path.
+`expand_and_query_live_neo4j` for the live-graph integration path (no
+caller in the API or agent; it applies the same graph authorization as
+every other graph read).
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ from dataclasses import dataclass
 
 from rag.ontology.query_expansion import expand_concept
 from rag.ontology.store import RdflibStore
+from rag.retrieval.authorization import AuthorizationContext
 
 _EXACT_TYPE_QUERY = """
 SELECT ?entity ?name WHERE {
@@ -159,11 +161,12 @@ def expand_and_query_live_neo4j(
     class_iri: str,
     *,
     dataset_id: str,
+    auth: AuthorizationContext | None,
     config_path: str | None = None,
     max_depth: int = 2,
     max_results: int = 20,
 ) -> list[dict[str, object]]:
-    """Expand `class_iri` via the ontology, then query live Neo4j for matching entities.
+    """Expand `class_iri` via the ontology, then query live Neo4j for authorized matching entities.
 
     Maps every expanded class (plus `class_iri` itself) back to its
     `rag.graph.schema.EntityType` label via the `tech:neo4jLabel`
@@ -183,6 +186,12 @@ def expand_and_query_live_neo4j(
         The root class to expand from.
     dataset_id : str
         The `rag.graph` dataset to query (e.g. `"techfusion_graph_demo"`).
+    auth : AuthorizationContext | None
+        Caller context, required so no call site can forget it. Applied
+        twice, as on every other graph read: the Cypher predicate
+        (`build_graph_authorization_predicate`) and a Python re-check
+        (`is_fact_authorized`) on every returned node. `None` means
+        unrestricted, matching `GraphRetriever`.
     config_path : str | None, optional
         Passed to `rag.config.load_config`; `None` uses its own default
         (`config/default.yaml`).
@@ -192,8 +201,8 @@ def expand_and_query_live_neo4j(
     Returns
     -------
     list[dict[str, object]]
-        One dict per matched node (`name`, `labels`), bounded by
-        `max_results`.
+        One dict per authorized matched node (`name`, `labels`), ordered
+        by name then canonical id, bounded by `max_results`.
 
     Raises
     ------
@@ -202,6 +211,7 @@ def expand_and_query_live_neo4j(
         (or raised directly here if `health_check()` fails first).
     """
     from rag.config import load_config
+    from rag.graph.authorization import build_graph_authorization_predicate, is_fact_authorized
     from rag.graph.client import GraphUnavailableError, Neo4jClient
 
     expansion = expand_concept(
@@ -212,23 +222,33 @@ def expand_and_query_live_neo4j(
         return []
 
     config = load_config(config_path) if config_path else load_config()
+    support_roles = config.security.authorization.cross_tenant_support_roles
+    auth_clause, auth_params = build_graph_authorization_predicate(
+        auth, node_var="n", cross_tenant_support_roles=support_roles
+    )
+    auth_sql = f" AND {auth_clause}" if auth_clause else ""
     client = Neo4jClient(config)
     try:
         if not client.health_check():
             raise GraphUnavailableError("Neo4j health check failed")
-        cypher = """
+        cypher = f"""
         MATCH (n)
-        WHERE n.dataset_id = $dataset_id AND any(l IN labels(n) WHERE l IN $labels)
-        RETURN n.name AS name, labels(n) AS labels
+        WHERE n.dataset_id = $dataset_id AND any(l IN labels(n) WHERE l IN $labels){auth_sql}
+        RETURN n AS node, labels(n) AS labels
+        ORDER BY n.name, n.canonical_id
         LIMIT $limit
         """
         rows = client.run_read(
             cypher,
-            {"dataset_id": dataset_id, "labels": neo4j_labels, "limit": max_results},
+            {"dataset_id": dataset_id, "labels": neo4j_labels, "limit": max_results, **auth_params},
         )
     finally:
         client.close()
-    return rows
+    return [
+        {"name": dict(row["node"]).get("name"), "labels": row["labels"]}
+        for row in rows
+        if is_fact_authorized(dict(row["node"]), auth, cross_tenant_support_roles=support_roles)
+    ]
 
 
 def _resolve_neo4j_labels(ontology_store: RdflibStore, class_iris: list[str]) -> list[str]:
