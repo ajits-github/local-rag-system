@@ -146,7 +146,7 @@ Tests that prove this include a live authorization scenario set in
 On a Neo4j outage, `search` returns an empty result with `degraded=True`. It
 does not raise.
 
-**Templates** (`rag.graph.queries`): `dependents_of`, `runbooks_for`,
+**Templates** (`rag.graph.queries`): `dependents_of`, `dependencies_of`, `runbooks_for`,
 `owners_of`, `policies_governing`, `impact_of`, and `dependency_path`
 (`shortestPath` with a depth bound).
 

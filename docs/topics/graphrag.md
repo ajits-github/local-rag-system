@@ -56,7 +56,7 @@ reference; this section is the condensed version.
   single-statement, bounded-depth, trusted-`LIMIT` validation for the
   optional LLM-Cypher-generation path, explicitly documented as
   defense-in-depth, not the actual security boundary; see below) +
-  `queries.py` (six hand-written, parameterized, bounded deterministic
+  `queries.py` (seven hand-written, parameterized, bounded deterministic
   Cypher templates) + `extraction.py` (deterministic Document/Category/
   Supersedes facts, plus optional `extra="forbid"`-validated LLM
   extraction against the closed type allowlists) + `upsert.py`
