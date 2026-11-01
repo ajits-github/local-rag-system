@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 
 GraphQueryIntent = Literal[
     "dependents_of",
+    "dependencies_of",
     "runbooks_for",
     "owners_of",
     "policies_governing",
@@ -122,7 +123,15 @@ class GraphRetrievalResult(BaseModel):
 
 # Literal keyword matching, so classification is reproducible. A wrong match
 # only selects a different bounded, authorized query.
-_DEPENDENTS_RE = re.compile(r"\b(depends? on|relies? on|what depends|who depends)\b", re.IGNORECASE)
+_DEPENDENTS_RE = re.compile(
+    r"\b(depends? on|rel(?:y|ies) on|what depends|who depends)\b", re.IGNORECASE
+)
+# Forward phrasing ("what does X depend on"); checked before _DEPENDENTS_RE, which
+# also matches "depend on" but means the opposite direction.
+_DEPENDENCIES_RE = re.compile(
+    r"\b(what|which)\b.+\b(does|do)\b.+\b(depend|rely)\s+on\b|\bdependenc(y|ies)\s+of\b",
+    re.IGNORECASE,
+)
 _RUNBOOK_RE = re.compile(r"\brunbooks?\b", re.IGNORECASE)
 _OWNER_RE = re.compile(r"\b(owns?|owner|ownership)\b", re.IGNORECASE)
 _POLICY_RE = re.compile(r"\bpolic(y|ies)\b", re.IGNORECASE)
@@ -157,6 +166,8 @@ def _classify_intent(query: str) -> GraphQueryIntent:
         return "owners_of"
     if _POLICY_RE.search(query):
         return "policies_governing"
+    if _DEPENDENCIES_RE.search(query):
+        return "dependencies_of"
     if _DEPENDENTS_RE.search(query):
         return "dependents_of"
     return "entity_lookup"
@@ -485,6 +496,7 @@ class GraphRetriever:
         entity = resolved[0]
         template_map = {
             "dependents_of": (queries.dependents_of_query, "dependent"),
+            "dependencies_of": (queries.dependencies_of_query, "dependency"),
             "runbooks_for": (queries.runbooks_for_query, "runbook"),
             "owners_of": (queries.owners_of_query, "owner"),
             "policies_governing": (queries.policies_governing_query, "policy"),
@@ -510,7 +522,7 @@ class GraphRetriever:
         auth: AuthorizationContext | None,
         cfg: Any,
     ) -> GraphRetrievalResult:
-        """Run a one-hop neighbor template (`dependents_of`/`runbooks_for`/`owners_of`/`policies_governing`)."""  # noqa: E501
+        """Run a neighbor template (`dependents_of`/`dependencies_of`/`runbooks_for`/`owners_of`/`policies_governing`)."""  # noqa: E501
         auth_clause, auth_params = build_graph_authorization_predicate(
             auth, node_var=result_var, cross_tenant_support_roles=self._cross_tenant_support_roles
         )
@@ -520,7 +532,7 @@ class GraphRetriever:
             "auth_clause": auth_clause,
             "limit": cfg.max_nodes_returned,
         }
-        if intent == "dependents_of":
+        if intent in ("dependents_of", "dependencies_of"):
             kwargs["max_depth"] = cfg.max_traversal_depth
         cypher, params = builder(**kwargs)
         params.update(auth_params)
@@ -533,19 +545,17 @@ class GraphRetriever:
             ):
                 continue
             neighbor_type = _first_entity_type(row.get(f"{result_var}_labels", []))
+            neighbor = GraphEntityRef(
+                canonical_id=node["canonical_id"], name=node["name"], entity_type=neighbor_type
+            )
             verb = _INTENT_VERBS[intent]
+            forward = intent == "dependencies_of"
+            subject, obj = (entity, neighbor) if forward else (neighbor, entity)
             facts.append(
                 GraphFact(
-                    text=f"{node['name']} {verb} {entity.name}",
+                    text=f"{subject.name} {verb} {obj.name}",
                     fact_type="relationship",
-                    entities=[
-                        GraphEntityRef(
-                            canonical_id=node["canonical_id"],
-                            name=node["name"],
-                            entity_type=neighbor_type,
-                        ),
-                        entity,
-                    ],
+                    entities=[subject, obj],
                     source_document_id=node.get("first_seen_document_id"),
                     dataset_id=dataset_id,
                 )
@@ -812,6 +822,7 @@ class GraphRetriever:
 
 _INTENT_VERBS: dict[GraphQueryIntent, str] = {
     "dependents_of": "depends on",
+    "dependencies_of": "depends on",
     "runbooks_for": "has runbook applicable to",
     "owners_of": "is owned by",
     "policies_governing": "is governed by",

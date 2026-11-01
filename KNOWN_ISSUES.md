@@ -1275,6 +1275,30 @@ Graph evidence no longer trusts the Neo4j ACL alone: every fact is revalidated a
 
 ---
 
+### GRAPH-012: "What does X depend on?" traversed the wrong direction and silently returned nothing
+
+**Status:** FIXED
+**Severity:** MAJOR
+**Area:** GraphRAG / retrieval correctness
+**Affected code:** `rag.graph.retrieval._classify_intent`, `rag.graph.queries`
+
+**Problem**
+Graph intent classification had one dependency intent, `dependents_of` ("what depends on X"), and its keyword cue was "depends on". A forward question such as "What does Document Service depend on?" matched the same cue, so it walked the edges backwards from Document Service and found nothing. Separately, the cue `relies? on` could never match "rely on".
+
+**Failure scenario**
+A `graph_only` request for a service's dependencies returns no evidence and no error, even though the fact is in the graph. It reads exactly like a genuine miss, and no gate catches it because CI has no Neo4j, so every test that needs one is skipped there.
+
+**Fix applied**
+New `dependencies_of` intent and Cypher template that traverse outward from the entity. Forward phrasing is checked before the reverse cue, facts read "X depends on Y", and the reverse cue now matches "rely on".
+
+**Regression test**
+`tests/unit/test_graph_intent_direction.py` (forward and reverse phrasings, the outward traversal, and fact wording; 5 of 8 fail on the old code), which runs in CI. `test_graphrag_pipeline_graph_only_cites_a_real_document_source` in `tests/integration/test_graph_ingestion_and_retrieval.py` found it, and passes against a live Neo4j.
+
+**Notes**
+Found by running the Neo4j integration tests locally for the first time since the graph-evidence revalidation (**GRAPH-008**). All 8 now pass live, which also verifies revalidation against a real graph. On a cold Neo4j on this 8GB host, some graph queries exceed the 5-second `query_timeout_seconds` and degrade as designed, so a first run can show timeout failures that disappear once Neo4j is warm.
+
+---
+
 ### ONT-001: A narrow RDFS domain axiom silently reclassified an Application as a Service
 
 **Status:** FIXED
@@ -2619,6 +2643,7 @@ The following issues are resolved, with a concrete fix and regression test cited
 | GRAPH-008 | GraphRAG | A stale graph fact was never revalidated against its source's current Postgres state |
 | GRAPH-009 | Ontology | A live-Neo4j ontology query helper had no authorization check at all |
 | GRAPH-010 | GraphRAG | The graph-seeded neighbor-document lookup ran unauthorized Cypher |
+| GRAPH-012 | GraphRAG | "What does X depend on?" traversed the wrong direction and silently returned nothing |
 | ONT-001 | Ontology | A narrow RDFS domain axiom silently reclassified an Application as a Service |
 | ONT-002 | Ontology | SHACL was already subclass-aware, before any inference option was requested |
 | AGT-001 | Agentic RAG | Step budgets collided with the happy path, mislabeling most runs as max_steps |
@@ -2717,3 +2742,5 @@ Performed after restructuring:
 **Follow-up (2026-10-29, after the audit PRs):** **GRAPH-009**, **OBS-001**, **BUG-015**, **BUG-016** and **BUG-017** fixed, which also closes the graph-only-reset residual of **GRAPH-004**/**PROD-003**; **DIST-006** fixed on `experiment/distributed-state`; **OPS-015** reclassified as an accepted limitation (a deliberate Helm demo). Still open by nature: **AGT-004**/**AGT-005** (model tool-selection behavior, needs live evaluation runs, not a code change) and **OPS-016** (a merge-strategy decision).
 
 **Follow-up (verification leftovers):** **SEC-008** confirmed (its integration tests run against real Postgres locally and in CI); **SEC-007** verified by fault injection and accepted as bounded and self-healing; **RET-005** removed from the summary table, which lists only non-fixed items.
+
+**Follow-up (live Neo4j verification):** the graph integration tests ran against a live Neo4j, which verified **GRAPH-008**'s revalidation and exposed **GRAPH-012**, now fixed.

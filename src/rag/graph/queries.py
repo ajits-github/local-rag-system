@@ -103,6 +103,30 @@ def dependents_of_query(
     return cypher, {"dataset_id": dataset_id, "entity_id": entity_canonical_id, "limit": limit}
 
 
+def dependencies_of_query(
+    *, dataset_id: str, entity_canonical_id: str, auth_clause: str, max_depth: int, limit: int
+) -> tuple[str, dict[str, Any]]:
+    """Build the "what does X depend on" query, traversing dependency relationships forward.
+
+    Bounded to `max_depth` hops. `auth_clause` must use `node_var="dependency"`.
+
+    Returns
+    -------
+    tuple[str, dict[str, Any]]
+        `(cypher, parameters)`.
+    """
+    cypher = f"""
+    MATCH (source {{canonical_id: $entity_id, dataset_id: $dataset_id}})
+    MATCH path = (source)-[:{_DEPENDENCY_REL_TYPES}*1..{max_depth}]->(dependency)
+    WHERE {_where(auth_clause)}
+    WITH dependency, min(length(path)) AS hops
+    RETURN dependency, labels(dependency) AS dependency_labels, hops
+    ORDER BY hops ASC, dependency.name ASC
+    LIMIT $limit
+    """
+    return cypher, {"dataset_id": dataset_id, "entity_id": entity_canonical_id, "limit": limit}
+
+
 def runbooks_for_query(
     *, dataset_id: str, entity_canonical_id: str, auth_clause: str, limit: int
 ) -> tuple[str, dict[str, Any]]:

@@ -11481,3 +11481,18 @@ Deleting a stacked PR's base branch closes the dependent PR instead of retargeti
 
 ### Open problems
 AGT-004/AGT-005 need live model evaluation runs, not code; OPS-016 is a merge-strategy decision. Graph integration tests were still not run against a live Neo4j.
+
+## 2026-11-01 (session 28): Final diagrams, and the first live Neo4j run since the audit fixes
+
+### Interview talking points
+- A test suite that always skips proves nothing. The Neo4j integration tests self-skip in CI, so "What does X depend on?" walking the graph backwards (GRAPH-012) went unseen; the first local run with Neo4j up found it within minutes.
+- Attribute before fixing: the failure appeared right after my revalidation change, but a stage-by-stage trace showed facts were already empty before revalidation, and `git diff` showed the retriever had not changed since before the audit.
+
+### Changes made
+#39 closed the verification leftovers: SEC-007 by fault injection (accepted as bounded and self-healing), SEC-008 (tests already pass locally and in CI), and RET-005's table row. #40 replaced `architecture-diagram.png`, `agent-mcp-architecture.png` and `multimodal-ingestion-flow.png` as supplied by request, with each page stating where the image differs from the code, and removed the disclaimers for the old images. This session also added the `dependencies_of` intent (GRAPH-012).
+
+### Evaluation results
+All 8 graph integration tests pass against a live Neo4j, which also verifies GRAPH-008's revalidation end to end. A cold Neo4j on this host can exceed the 5-second graph query timeout on a first run.
+
+### Open problems
+BUG-009, AGT-004 and AGT-005 are model-behaviour issues needing live evaluation runs. No graph-mode benchmark has been recorded since these fixes. `architecture-diagram-detailed.png` at the top of `docs/architecture.md` was not part of this replacement and was not re-checked.
