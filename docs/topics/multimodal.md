@@ -17,9 +17,9 @@ Full design writeups:
 - [Layout-Aware Document Ingestion and Vision](../architecture.md#layout-aware-document-ingestion-and-vision)
 - API reference: [Vision](../reference/vision.md), [Loaders](../reference/loaders.md), [Chunkers](../reference/chunkers.md)
 
-![Multimodal and layout-aware ingestion: loaders, normalized structure, typed chunks, optional vision, and relationship expansion](../assets/multimodal-ingestion-flow.png)
+![Multimodal document ingestion pipeline: layout-aware PDF and DOCX extraction, Markdown, HTML and text loading, typed chunks with metadata, optional Ollama vision sibling chunks, Postgres + pgvector storage, and query-time relationship expansion](../assets/multimodal-ingestion-flow.png)
 
-PDF and DOCX loaders serialize their layout into the same Markdown-equivalent structure Markdown files already use, which the chunker splits into typed chunks (prose, table, code/config, chart, image) with structural metadata. Optional local vision adds a description as a sibling chunk, and relationship expansion appends parent/neighbor context at query time.
+Where this diagram differs from the code: a chart chunk is a fenced `text` block with an emphasized caption, never derived from an image. HTML and plain text use the prose chunker, so they produce only prose chunks. "Hybrid" means dense plus BM25 fused by RRF, and is opt-in (metadata filters apply either way). Context Engineering is off by default, and orders by freshness, authority and rank with `begin_end_sandwich` placement, not by section or page.
 
 ## Multimodal ingestion: images, relationships, and gold evaluation
 

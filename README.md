@@ -89,24 +89,18 @@ generated API reference:
 
 ## Architecture
 
-![Local RAG System architecture: users and clients through authentication
-and access control, query processing, routing to classic RAG or the
-bounded agent harness, evidence sources (documents, retrieval stack,
-graph/semantic layer, MCP tools), context engineering, Ollama
-generation, response generation, evaluation/feedback, observability, and
-deployment/infrastructure](docs/assets/architecture-diagram.png)
+![Local RAG System architecture: Web UI, REST API and documentation entry points; classic RAG and bounded agent as alternative runtime paths with three agent tool families; retrieval stack and knowledge graph; context engineering; Ollama generation; cross-cutting security, observability and evaluation; Docker Compose deployment](docs/assets/architecture-diagram.png)
 
-A few pieces of this diagram are ahead of what's implemented today, not
-built capabilities: **OCR for scanned documents** doesn't exist; PDF/DOCX parsing
-extracts existing text/tables/structure, it doesn't read text out of a
-scanned image with no text layer. **Alerting** isn't wired up either,
-Prometheus/Grafana exist, but nothing pages on a threshold today (see
-`docs/metrics.md`). The "Integrations (Confluence, Jira, etc.)" and
-"Custom tools (search, calculators, workflows)" boxes describe the
-*shape* `POST /agent/query`'s tool layer and `API/SDK` access could
-extend to, not systems this project actually connects to; MCP's real
-tools today are the four RAG tools plus a synthetic, in-memory
-customer-support case store (see [MCP](#mcp)).
+Where this diagram differs from the code: prompt-injection detection only flags
+content (telemetry and prompt reinforcement), it filters nothing. Ollama runs
+natively on the host, not in Compose, and Neo4j and monitoring are opt-in Compose
+overlays. The Web UI has no graph explorer. OpenTelemetry carries traces only
+(metrics are Prometheus, logs are structured JSON). Trust and freshness select
+document versions and filter by trust level; they do not validate content. Graph
+tools are search, entity, neighbors and dependency path, with no analytics. The MCP
+business tools use one in-process server and a synthetic, in-memory case store.
+Hybrid retrieval, reranking and Context Engineering are opt-in; the defaults are
+dense retrieval, no reranker, and Context Engineering off.
 
 | Area | Default implementation | Notes |
 |---|---|---|
