@@ -741,19 +741,14 @@ calls and never go through MCP.
 
 ### Architecture
 
-![Agent and MCP architecture: run_agent dispatches the four local RAG
-tools directly in Python to RetrievalPipeline and the knowledge base, and
-the business tools through rag.agent.mcp_client, which mints an internal
-service JWT and calls the /mcp server over Streamable HTTP; the server
-resolves identity, verifies the JWT, and dispatches to
-rag.mcp.business.store](assets/agent-mcp-architecture.png)
+![Agent and MCP architecture: the bounded in-process agent with direct RAG and graph
+tools and business tools through the MCP client; the /mcp server verifying identity
+and dispatching to rag.agent.tools or rag.mcp.business.store; external MCP clients
+calling /mcp directly](assets/agent-mcp-architecture.png)
 
-Reading the diagram against the code: the orchestrator is the custom
-bounded loop in `rag.agent.graph`, not LangGraph (LangGraph exists only
-on the `experiment/langgraph-agent` branch); the vector store is
-Postgres + pgvector only; and an external MCP client (Claude Desktop,
-another agent) calls the `/mcp` server directly, the same endpoint the
-agent's own MCP client reaches, rather than calling `run_agent`.
+One label overstates the code: classify makes a single routing decision (simple or
+complex, with a deterministic override for case-change requests), not an intent,
+domain and safety classification.
 
 `rag.mcp.asgi.build_mcp_asgi_app` wraps the `MCPServer` in a Starlette app
 that `rag.api.main` mounts at `mcp.server.mount_path` (default `/mcp`),
