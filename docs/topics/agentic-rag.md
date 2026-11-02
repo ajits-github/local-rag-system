@@ -278,7 +278,9 @@ against `experiment_032`'s established baseline).
   source path, so it triggers a search first.
 - **Repeat calls.** An identical call is never dispatched twice. A local tool gets
   one corrected proposal, and a repeated case read ends the loop. Templates that
-  do not declare `tool_history` keep their earlier behavior.
+  do not declare `tool_history` keep their earlier behavior. The corrected proposal
+  counts as a step like any other node, and cancellation is checked again just
+  before a tool is dispatched.
 
 | MCP client | Business actions | Graph | Tool-selection template |
 |---|---|---|---|
@@ -303,10 +305,12 @@ plausible one: 2 `get_document`, 2 `get_latest_document`, 2
 `get_case_status`, mixing authorized and denied scenarios), and 4 MCP
 business actions (`update_case_status`: approval required, invalid
 transition, already in status, cross-tenant denial). A live executed
-transition case was deliberately excluded, since that is the one
-outcome that mutates the shared in-memory case store; it is proven only
-deterministically, in `tests/integration/test_specialized_tool_gold_fixtures.py`
-(15 tests, each calling a tool directly with a gold row's exact tenant,
+transition is kept out of this file, since that is the one outcome that
+mutates the in-memory case store. It has its own one-row file,
+`data/eval/specialized_tool_executed_action_gold.jsonl`, run as a separate
+process, and is also proven deterministically, in
+`tests/integration/test_specialized_tool_gold_fixtures.py`
+(16 tests, each calling a tool directly with a gold row's exact tenant,
 role, case id, and source, independent of any LLM). `GoldExample`
 gained five additive fields for this (`requires_specialized_tool`,
 `requires_mcp_business_tool`, `expected_mcp_denial`,

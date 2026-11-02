@@ -126,8 +126,9 @@ the node returned.
    entities. A fact survives only if one derivation's documents all still exist,
    are readable, and still have the checksum the fact was projected from. It
    cites the first of them and carries the strictest classification, roles, trust
-   and status among them. `graph_seeded_vector` filters its seed documents the
-   same way.
+   and status among them. Each document's tenant, classification and trust are also
+   kept, and the egress gate must allow every one. `graph_seeded_vector` filters its
+   seed documents the same way.
 
 Graph evidence then goes through `sanitize_evidence` like every other evidence
 source, so field redaction and injection flagging apply to it too. Its

@@ -11570,3 +11570,39 @@ AGT-004 stays in progress: `get_document` and `get_latest_document` are still un
 
 ### Next recommended step
 Run the larger agent evaluation on the candidate config, and try a stronger local model if memory allows, since tool selection is now the limit and not the contract. Record a graph-mode benchmark after resetting and re-ingesting the graph.
+
+## 2026-11-02 (session 31): Third Codex audit, and a safety counter that skipped the risky rows
+
+### Context
+Codex audit 35.14 reported four residual defects after #42 and #44 and said not ready for final experiments. All four probes reproduced. Checking them against the shipped configs changed two severities and exposed two things the audit missed.
+
+### Where the audit was adjusted
+- SEC-V01 stayed first but moved from CRITICAL to MAJOR. No shipped config combines graph with a hosted judge. It is closer than the audit said, though: `config/production.yaml` already sets the required policy. The same merge also lost a blocked tenant on any later document, which its probe did not cover.
+- AGENT-V01 moved from MAJOR to MODERATE. Its extra tool dispatch only happens at a ceiling of 7, which no config uses. At the shipped 8 the overrun was one evidence check, 9 nodes for 8 steps. It did touch `experiment_041`, which had repeats on 3 of 14 rows.
+- EVAL-V02 could not trigger on the current gold, because no row expects an executed write. That was the larger gap.
+
+### What the audit missed
+- `experiment_041.json` did not store the tool-argument diagnostics cited from it. They lived only in an uncommitted report (EVAL-017 follow-up). Backfilled from that report, after asserting it matched the record's timestamp and correctness.
+- AGT-005's entry still said NEEDS VERIFICATION while the summary table said FIXED.
+
+### What changed
+- SEC-022: multi-source facts carry `support_governance`, and the egress gate checks every entry.
+- AGT-007: the corrective selection counts as a step. Cancellation is also checked just before dispatch on both selection paths, which goes slightly beyond the audit.
+- EVAL-018: the grounding flag is captured at dispatch from the lines the prompt rendered.
+- EVAL-019: executed writes are compared with gold, with separate unexpected, wrong target, wrong transition and unverified counts.
+- The recorder persists diagnostics and the four graph tools, and all reach MLflow.
+- `docs/topics/security.md` still described one egress point at an old path. Corrected to the two real ones.
+
+### A decision reversed while working
+The executed row first went into `specialized_tool_gold.jsonl`. The topic page records that a live executed case was deliberately kept out because it mutates the in-memory store, and adding it would also change the gold hash that matched comparisons rely on. It moved to its own one-row file, and the 14-row file is byte-identical to `main`.
+
+### Verification
+Unit: 1463 passed, 8 skipped. Ruff, scoped mypy and `mkdocs build --strict` pass. `test_specialized_tool_gold_fixtures.py` against live Postgres: 16 passed. The three audit probe groups no longer hold. The agent and egress ones fail their defect assertions; the eval group stops at the changed `_tool_call_record` signature, so unit tests carry that coverage. A live executed-write row on `qwen2.5:3b` ran `update_case_status` on the expected case and status, with 4 steps and 0 wrong mutations.
+
+Not run: the 14-row evaluation with the step fix, any graph service test, or a hosted judge.
+
+### Open problems
+AGT-004 and OPS-019 are unchanged. `experiment_041`'s step counts can read low, so later runs should not be compared with it directly. Gating only the chosen derivation can over-block a fact that has another allowed derivation; this fails closed and was left that way.
+
+### Next recommended step
+Reset and re-ingest the graph, record a graph-mode benchmark, then run the larger agent evaluation on the candidate config as the new baseline.
