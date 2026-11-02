@@ -394,9 +394,10 @@ class IngestionPipeline:
         `retrieval/freshness.py` uses, then delegates to
         `extract_and_write_for_document`. Any exception is logged and
         swallowed, so a graph failure never fails the ingestion. Only a
-        successful write records `checksum` as the document's graph
-        checksum, so a failure leaves it behind and the next unchanged
-        re-ingest retries (see `_repair_graph_projection`).
+        complete projection (`GraphExtractionStats.complete`) records
+        `checksum` as the document's graph checksum, so a failure leaves
+        it behind and the next unchanged re-ingest retries (see
+        `_repair_graph_projection`).
 
         Returns
         -------
@@ -440,7 +441,10 @@ class IngestionPipeline:
                 supersedes_document_id=supersedes_document_id,
                 chunks=chunks,
             )
-            self._vectorstore.set_graph_checksum(document_id, checksum)
+            if stats.complete:
+                self._vectorstore.set_graph_checksum(document_id, checksum)
+            else:
+                logger.warning("Graph projection incomplete for %s", document_id)
             return stats
         except Exception:
             logger.warning("Graph extraction failed for %s", document_id, exc_info=True)

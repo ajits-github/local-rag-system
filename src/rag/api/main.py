@@ -30,6 +30,7 @@ from rag.api.routers import (
 )
 from rag.audit import log_audit_event
 from rag.config import AppConfig
+from rag.context.engine import ContextBudgetExceededError
 from rag.logging_config import configure_logging
 from rag.mcp.asgi import mount_mcp_app
 from rag.observability import metrics as observability_metrics
@@ -433,7 +434,31 @@ def _handle_integrity_error(request: Request, exc: Exception) -> JSONResponse:
     return JSONResponse(status_code=503, content={"detail": "Service temporarily unavailable"})
 
 
+def _handle_context_budget_exceeded(request: Request, exc: Exception) -> JSONResponse:
+    """Return a 413 for a prompt that cannot fit the model window.
+
+    Parameters
+    ----------
+    request : Request
+        The request whose prompt did not fit.
+    exc : Exception
+        The `ContextBudgetExceededError` raised. Typed as the base
+        `Exception` to match `Starlette.add_exception_handler`'s expected
+        handler signature.
+
+    Returns
+    -------
+    JSONResponse
+        A 413 response; no query or prompt text is echoed.
+    """
+    log_audit_event("context_budget_exceeded", path=request.url.path)
+    return JSONResponse(
+        status_code=413, content={"detail": "Request does not fit the model context window"}
+    )
+
+
 app.add_exception_handler(RateLimitExceeded, _handle_rate_limit_exceeded)
+app.add_exception_handler(ContextBudgetExceededError, _handle_context_budget_exceeded)
 app.add_exception_handler(PoolError, _handle_pool_error)
 app.add_exception_handler(psycopg2.errors.IntegrityError, _handle_integrity_error)
 app.add_middleware(SlowAPIMiddleware)

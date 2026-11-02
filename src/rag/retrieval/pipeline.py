@@ -995,6 +995,12 @@ class RetrievalPipeline:
             (possibly shortened) text, in `results`' own original rank
             order (never the render-shuffled order `included_items`
             itself may have been placed in).
+
+        Raises
+        ------
+        ContextBudgetExceededError
+            If the complete prompt cannot fit the model window. Every
+            generation path renders through here, so none reaches the provider.
         """
         if self._context_engine is None:
             return build_context(results), None, results
@@ -1009,6 +1015,7 @@ class RetrievalPipeline:
             history_turns=history_turns,
             tenant_id=tenant_id,
         )
+        self._context_engine.require_prompt_fits(packed)
         packed_results = _results_actually_packed(results, packed.included_items)
         return packed.rendered_context, context_engineering_summary(packed), packed_results
 

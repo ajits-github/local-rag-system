@@ -58,7 +58,9 @@ known limitations); this section is the condensed version.
   - user_query_tokens - framework_overhead_tokens - safety_margin_tokens`,
   floored at 0 (a negative raw value is recorded as `budget_deficit_tokens`
   and surfaced as `budget_infeasible`, logged and counted, never silently
-  treated as an empty-context success), then allocated across four buckets (`document`/
+  treated as an empty-context success; `build_context_text` raises
+  `ContextBudgetExceededError` before any generation call when the complete
+  prompt plus output cannot fit, which the API returns as a 413), then allocated across four buckets (`document`/
   `graph_path`/`mcp_tool`/`conversation_history`) by `SourceBudgetConfig`'s
   four shares (validated to sum to 1.0 at config-load time). `config.
   context.model_limits` is a per-`generation.model_name` context-window
@@ -96,8 +98,9 @@ known limitations); this section is the condensed version.
   then word-shingle Jaccard near-duplicate matching (scoped per
   `source_type`, so a document chunk and a graph fact restating the same
   sentence are never merged across source types; identity is scoped by
-  bucket, tenant and dataset, and a pair whose numbers or negation words
-  differ is treated as a conflict, never merged). Keeps the first
+  bucket, tenant and dataset, and an item is dropped only when its words
+  appear in order within the kept item's and both state the same numbers
+  and negation words). Keeps the first
   occurrence, records the discarded item's id onto the kept item's
   `merged_from`, never silently losing provenance. Two genuinely
   different facts about the same topic are never merged, only

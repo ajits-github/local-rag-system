@@ -879,6 +879,18 @@ class PgVectorStore(VectorStore):
             rows = cur.fetchall()
         return {metadata.document_id: metadata for _, _, metadata in map(_row_to_metadata, rows)}
 
+    def get_document_checksums_by_id(
+        self, document_ids: list[str], dataset_id: str
+    ) -> dict[str, str]:
+        """See `VectorStore.get_document_checksums_by_id`."""
+        with self._connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                f"SELECT document_id::text, checksum FROM {self._documents_table} "
+                "WHERE document_id::text = ANY(%s) AND dataset_id = %s",
+                (sorted(set(document_ids)), dataset_id),
+            )
+            return dict(cur.fetchall())
+
     def get_chunks_by_section(
         self,
         document_id: str,

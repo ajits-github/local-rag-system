@@ -2,8 +2,17 @@
 
 from __future__ import annotations
 
+import pytest
+
 from rag.config import load_config
-from rag.eval.run_context_eval import build_scenarios, evaluate_context_engineering, run_scenario
+from rag.eval.run_context_eval import (
+    ContextEvalReport,
+    Scenario,
+    ScenarioResult,
+    build_scenarios,
+    evaluate_context_engineering,
+    run_scenario,
+)
 
 
 def test_build_scenarios_covers_every_required_category():
@@ -119,3 +128,54 @@ def test_report_carries_git_run_metadata():
 
     assert set(report.run_metadata) >= {"git_commit_sha", "git_branch", "git_dirty"}
     assert "run_metadata" in report.model_dump()
+
+
+def _infeasible_config():
+    config = load_config().model_copy(deep=True)
+    config.context.model_limits.overrides = {}
+    config.context.model_limits.default_context_window_tokens = 1024
+    return config
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"query": "q " * 6000},
+        {"query": "q", "system_prompt_text": "s " * 6000},
+    ],
+    ids=["long-query", "long-system-prompt"],
+)
+def test_mandatory_budget_failure_survives_into_the_report(fields):
+    """A prompt that overflows with no evidence shows up, despite zero evidence overflow."""
+    scenario = Scenario(scenario_id="overflow", category="audit", **fields)
+
+    result = run_scenario(_infeasible_config(), scenario, "full_pipeline", 0)
+    restored = ScenarioResult.model_validate_json(result.model_dump_json())
+
+    assert restored.context_overflow is False
+    assert restored.budget_infeasible is True
+    assert restored.budget_deficit_tokens > 0
+    assert restored.prompt_overflow_tokens > 0
+    report = ContextEvalReport(generated_at="now", results=[restored])
+    summary = report.by_strategy_summary()["full_pipeline"]
+    assert summary["budget_infeasible_run_count"] == 1
+    assert summary["prompt_overflow_run_count"] == 1
+
+
+def test_output_reservation_larger_than_the_window_is_reported():
+    """Output alone can make a request impossible."""
+    config = _infeasible_config()
+    config.generation.max_tokens = 4096
+    scenario = Scenario(scenario_id="overflow", category="audit", query="q")
+
+    assert run_scenario(config, scenario, "full_pipeline", 0).budget_infeasible is True
+
+
+def test_feasible_scenario_reports_no_budget_failure():
+    """The control: a normal request is not flagged."""
+    scenario = Scenario(scenario_id="ok", category="audit", query="q")
+
+    result = run_scenario(load_config().model_copy(deep=True), scenario, "full_pipeline", 0)
+
+    assert result.budget_infeasible is False
+    assert result.prompt_overflow_tokens == 0

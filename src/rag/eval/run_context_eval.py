@@ -67,6 +67,11 @@ class ScenarioResult(BaseModel):
     dropped_item_count: int
     truncated: bool
     build_latency_ms: float
+    # `context_overflow` only compares evidence with its budget. These cover
+    # the complete prompt, which can fail with no evidence at all.
+    budget_infeasible: bool
+    budget_deficit_tokens: int
+    prompt_overflow_tokens: int
 
 
 class ContextEvalReport(BaseModel):
@@ -103,6 +108,8 @@ class ContextEvalReport(BaseModel):
                 "overflow_run_count": sum(1 for r in rows if r.context_overflow),
                 "mean_context_excess_tokens": sum(r.context_excess_tokens for r in rows)
                 / len(rows),
+                "budget_infeasible_run_count": sum(1 for r in rows if r.budget_infeasible),
+                "prompt_overflow_run_count": sum(1 for r in rows if r.prompt_overflow_tokens > 0),
                 "run_count": len(rows),
             }
         return summary
@@ -457,6 +464,9 @@ def run_scenario(
         dropped_item_count=packed.packing_trace.dropped_item_count,
         truncated=packed.truncated,
         build_latency_ms=round(packed.build_latency_ms, 3),
+        budget_infeasible=packed.budget.infeasible,
+        budget_deficit_tokens=packed.budget.budget_deficit_tokens,
+        prompt_overflow_tokens=engine.prompt_overflow_tokens(packed),
     )
 
 

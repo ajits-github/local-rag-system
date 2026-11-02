@@ -122,6 +122,22 @@ def context_engineering_summary(packed: PackedContext) -> dict:
     }
 
 
+class ContextBudgetExceededError(Exception):
+    """The complete prompt plus its output cannot fit the model window.
+
+    Generating anyway would let the provider silently truncate the prompt.
+
+    Attributes
+    ----------
+    overflow_tokens : int
+        Estimated tokens over the window.
+    """
+
+    def __init__(self, overflow_tokens: int) -> None:
+        super().__init__(f"Prompt exceeds the model window by ~{overflow_tokens} tokens")
+        self.overflow_tokens = overflow_tokens
+
+
 class ContextEngine:
     """Assembles a token-budget-aware, deduplicated, prioritized prompt context.
 
@@ -168,6 +184,41 @@ class ContextEngine:
                 "Token counting failed; falling back to a char/4 estimate", exc_info=True
             )
             return max(len(text) // 4, 0)
+
+    def prompt_overflow_tokens(self, packed: PackedContext) -> int:
+        """Estimate how far the complete prompt plus its output exceeds the model window.
+
+        Counts the larger of the configured reservation and
+        `generation.max_tokens`, since the provider may generate up to the
+        latter. Token counts are estimates unless an exact tokenizer is configured.
+
+        Returns
+        -------
+        int
+            The overflow in tokens, or `0` when the prompt fits.
+        """
+        budget = packed.budget
+        output = max(budget.reserved_output_tokens, self._config.generation.max_tokens)
+        total = (
+            budget.system_prompt_tokens
+            + budget.user_query_tokens
+            + budget.framework_overhead_tokens
+            + packed.packed_token_count
+            + output
+        )
+        return max(total - budget.model_context_window, budget.budget_deficit_tokens, 0)
+
+    def require_prompt_fits(self, packed: PackedContext) -> None:
+        """Reject a prompt that cannot fit, before any generation call.
+
+        Raises
+        ------
+        ContextBudgetExceededError
+            If `prompt_overflow_tokens` is above zero.
+        """
+        overflow = self.prompt_overflow_tokens(packed)
+        if overflow > 0:
+            raise ContextBudgetExceededError(overflow)
 
     def build(
         self,

@@ -55,6 +55,7 @@ AuthEventType = Literal[
     "database_pool_exhausted",
     "database_integrity_violation",
     "invalid_filter_field_rejected",
+    "context_budget_exceeded",
 ]
 
 

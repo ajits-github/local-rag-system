@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from rag.context.dedup import _jaccard_overlap, _shingles, deduplicate_items
 from rag.context.types import ContextItem
 
@@ -42,9 +44,56 @@ def test_near_duplicate_text_is_collapsed_above_threshold():
     """Near duplicate text is collapsed above threshold."""
     a = _item("c1", "The webhook delivery timeout is thirty seconds for all retries.")
     b = _item("c2", "The webhook delivery timeout is thirty seconds for all retries today.")
-    kept, stats = deduplicate_items([a, b], overlap_threshold=0.7)
+    kept, stats = deduplicate_items([b, a], overlap_threshold=0.7)
     assert len(kept) == 1
     assert stats.near_duplicates_removed == 1
+
+
+_SHARED_PROSE = (
+    "The ingestion service reads documents from the configured storage bucket and "
+    "writes chunks to the database after validation. Operators should monitor the "
+    "queue depth during peak hours and escalate to the platform team when alerts fire. "
+)
+
+
+@pytest.mark.parametrize(
+    ("stale", "current"),
+    [
+        ("Retention is 30 days.", "Retention is 30 hours."),
+        ("Owner is Alice.", "Owner is Bob."),
+        ("Read timeout 30. Write timeout 60.", "Read timeout 60. Write timeout 30."),
+        ("Alice owns billing. Bob owns search.", "Bob owns billing. Alice owns search."),
+        (
+            "Uploads are not allowed for guests but allowed for staff.",
+            "Uploads are allowed for guests but not allowed for staff.",
+        ),
+        ("Uploads are allowed.", "Uploads are not allowed."),
+    ],
+    ids=["unit", "name", "swapped-values", "swapped-subjects", "moved-negation", "added-negation"],
+)
+@pytest.mark.parametrize("prefix_words", [0, 100], ids=["paragraph", "long-boilerplate"])
+def test_conflicting_statements_with_equal_keyword_sets_are_never_merged(
+    stale, current, prefix_words
+):
+    """Overlap and matching number or polarity sets do not make two statements equal (CTX-007)."""
+    prefix = _SHARED_PROSE + " ".join(f"word{i}" for i in range(prefix_words)) + ". "
+    items = [_item("old", prefix + stale), _item("new", prefix + current)]
+
+    kept, stats = deduplicate_items(items, overlap_threshold=0.5)
+
+    assert [i.source_id for i in kept] == ["old", "new"]
+    assert stats.near_duplicates_removed == 0
+
+
+def test_later_item_that_adds_words_is_kept():
+    """Merging keeps the first item, so a later item with more to say must survive."""
+    short = _item("c1", _SHARED_PROSE + "Owner is Alice.")
+    longer = _item("c2", _SHARED_PROSE + "Owner is Alice and Bob.")
+
+    kept, stats = deduplicate_items([short, longer], overlap_threshold=0.5)
+
+    assert len(kept) == 2
+    assert stats.near_duplicates_removed == 0
 
 
 def test_different_facts_about_the_same_topic_are_never_merged():

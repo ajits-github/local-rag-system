@@ -20,7 +20,11 @@ from pydantic import BaseModel, Field
 from rag.config import AppConfig
 from rag.generation.base import LLM
 from rag.graph import queries
-from rag.graph.authorization import build_graph_authorization_predicate, is_fact_authorized
+from rag.graph.authorization import (
+    build_graph_authorization_predicate,
+    build_graph_path_authorization_predicate,
+    is_fact_authorized,
+)
 from rag.graph.client import GraphUnavailableError, Neo4jClient
 from rag.graph.cypher_guard import CypherValidationError, validate_generated_cypher
 from rag.graph.schema import ENTITY_TYPES, RELATIONSHIP_TYPES
@@ -53,6 +57,13 @@ class GraphEntityRef(BaseModel):
     entity_type: str
 
 
+class GraphFactSource(BaseModel):
+    """One document behind a fact, with the checksum it had when the fact was projected."""
+
+    document_id: str | None
+    document_checksum: str | None = None
+
+
 class GraphFact(BaseModel):
     """One normalized graph-derived fact: a fully human-readable, cited statement.
 
@@ -73,6 +84,10 @@ class GraphFact(BaseModel):
         Provenance, from the underlying relationship/node's own properties
         (`None` only for a fact with no single owning document, which
         should not occur for anything this codebase writes).
+    support_sets : list[list[GraphFactSource]]
+        Alternative derivations of a relationship or path fact, shortest
+        first. One derivation needs every document it lists. Empty for a
+        fact about a node alone, which `source_document_id` then supports.
     dataset_id : str
         The dataset this fact was resolved within.
     confidence : float
@@ -87,6 +102,7 @@ class GraphFact(BaseModel):
     entities: list[GraphEntityRef] = Field(default_factory=list)
     source_document_id: str | None = None
     source_chunk_id: str | None = None
+    support_sets: list[list[GraphFactSource]] = Field(default_factory=list)
     dataset_id: str
     confidence: float = 1.0
     extraction_method: str = "deterministic"
@@ -197,6 +213,19 @@ class GraphRetriever:
             self._cypher_gen_template = load_prompt_template(
                 str(config.agent_prompt_template_path(config.graph.cypher_generation.prompt_path))
             )
+
+    def _path_auth_clause(self, auth: AuthorizationContext | None) -> str:
+        """Require every node and relationship on Cypher variable `path` to be authorized."""
+        return build_graph_path_authorization_predicate(
+            auth, path_var="path", cross_tenant_support_roles=self._cross_tenant_support_roles
+        )
+
+    def _edge_auth_clause(self, auth: AuthorizationContext | None) -> str:
+        """Require the one-hop relationship in Cypher variable `r` to be authorized."""
+        clause, _ = build_graph_authorization_predicate(
+            auth, node_var="r", cross_tenant_support_roles=self._cross_tenant_support_roles
+        )
+        return clause
 
     def resolve_entities(
         self,
@@ -347,12 +376,13 @@ class GraphRetriever:
         auth_clause, auth_params = build_graph_authorization_predicate(
             auth, node_var="neighbor", cross_tenant_support_roles=self._cross_tenant_support_roles
         )
+        where = " AND ".join(filter(None, [auth_clause, self._path_auth_clause(auth)])) or "true"
         cypher = f"""
         MATCH (e {{canonical_id: $entity_id, dataset_id: $dataset_id}})
         MATCH path = (e)-[{rel_filter}*1..{bounded_hops}]-(neighbor)
-        WHERE {auth_clause or "true"}
-        WITH DISTINCT neighbor, labels(neighbor) AS neighbor_labels, min(length(path)) AS hops
-        RETURN neighbor, neighbor_labels, hops
+        WHERE {where}
+        {queries.path_support_with("neighbor")}
+        RETURN neighbor, labels(neighbor) AS neighbor_labels, hops, support_sets
         ORDER BY hops ASC, neighbor.name ASC
         LIMIT $limit
         """
@@ -387,7 +417,7 @@ class GraphRetriever:
                             entity_type=_first_entity_type(row["neighbor_labels"]),
                         ),
                     ],
-                    source_document_id=neighbor.get("first_seen_document_id"),
+                    **_fact_provenance(row, neighbor),
                     dataset_id=dataset_id,
                 )
             )
@@ -534,6 +564,9 @@ class GraphRetriever:
         }
         if intent in ("dependents_of", "dependencies_of"):
             kwargs["max_depth"] = cfg.max_traversal_depth
+            kwargs["path_auth_clause"] = self._path_auth_clause(auth)
+        else:
+            kwargs["edge_auth_clause"] = self._edge_auth_clause(auth)
         cypher, params = builder(**kwargs)
         params.update(auth_params)
         rows = self._client.run_read(cypher, params)
@@ -556,7 +589,7 @@ class GraphRetriever:
                     text=f"{subject.name} {verb} {obj.name}",
                     fact_type="relationship",
                     entities=[subject, obj],
-                    source_document_id=node.get("first_seen_document_id"),
+                    **_fact_provenance(row, node),
                     dataset_id=dataset_id,
                 )
             )
@@ -585,6 +618,7 @@ class GraphRetriever:
             dataset_id=dataset_id,
             entity_canonical_id=entity.canonical_id,
             auth_clause=auth_clause,
+            path_auth_clause=self._path_auth_clause(auth),
             max_depth=cfg.max_traversal_depth,
             limit=cfg.max_nodes_returned,
         )
@@ -619,7 +653,7 @@ class GraphRetriever:
                         ),
                         entity,
                     ],
-                    source_document_id=node.get("first_seen_document_id"),
+                    **_fact_provenance(row, node),
                     dataset_id=dataset_id,
                 )
             )
@@ -649,8 +683,13 @@ class GraphRetriever:
             dataset_id=dataset_id,
             source_canonical_id=entity_a.canonical_id,
             target_canonical_id=entity_b.canonical_id,
+            path_auth_clause=self._path_auth_clause(auth),
             max_depth=cfg.max_traversal_depth,
         )
+        _, auth_params = build_graph_authorization_predicate(
+            auth, node_var="path_node", cross_tenant_support_roles=self._cross_tenant_support_roles
+        )
+        params.update(auth_params)
         rows = self._client.run_read(cypher, params)
         if not rows:
             return GraphRetrievalResult(
@@ -676,7 +715,14 @@ class GraphRetriever:
             return GraphRetrievalResult(
                 intent="dependency_path", resolved_entities=[entity_a, entity_b]
             )
-        chain = " -> ".join(n["name"] for n, _labels in path_entries)
+        chain = _render_path_chain(path_entries, rows[0].get("edge_starts"))
+        support = [
+            GraphFactSource(
+                document_id=r.get("source_document_id"),
+                document_checksum=r.get("document_checksum"),
+            )
+            for r in path_relationship_props
+        ]
         fact = GraphFact(
             text=f"Dependency path: {chain}",
             fact_type="path",
@@ -688,7 +734,8 @@ class GraphRetriever:
                 )
                 for n, labels in path_entries
             ],
-            source_document_id=path_entries[0][0].get("first_seen_document_id"),
+            source_document_id=support[0].document_id if support else None,
+            support_sets=[support] if support else [],
             dataset_id=dataset_id,
         )
         return GraphRetrievalResult(
@@ -707,12 +754,16 @@ class GraphRetriever:
         auth_clause, auth_params = build_graph_authorization_predicate(
             auth, node_var="neighbor", cross_tenant_support_roles=self._cross_tenant_support_roles
         )
+        where = " AND ".join(filter(None, [auth_clause, self._edge_auth_clause(auth)])) or "true"
         cypher = f"""
         MATCH (e {{canonical_id: $entity_id, dataset_id: $dataset_id}})
         MATCH (e)-[r]-(neighbor)
-        WHERE {auth_clause or "true"}
-        RETURN type(r) AS rel_type, startNode(r) = e AS outgoing, neighbor,
-            labels(neighbor) AS neighbor_labels
+        WHERE {where}
+        WITH type(r) AS rel_type, startNode(r) = e AS outgoing, neighbor, r
+        ORDER BY r.source_document_id ASC
+        WITH rel_type, outgoing, neighbor, {queries.EDGE_SUPPORT_SETS} AS support_sets
+        RETURN rel_type, outgoing, neighbor, labels(neighbor) AS neighbor_labels, support_sets
+        ORDER BY neighbor.name ASC, rel_type ASC
         LIMIT $limit
         """
         params = {
@@ -749,7 +800,7 @@ class GraphRetriever:
                             entity_type=_first_entity_type(row.get("neighbor_labels", [])),
                         ),
                     ],
-                    source_document_id=neighbor.get("first_seen_document_id"),
+                    **_fact_provenance(row, neighbor),
                     dataset_id=dataset_id,
                 )
             )
@@ -827,6 +878,33 @@ _INTENT_VERBS: dict[GraphQueryIntent, str] = {
     "owners_of": "is owned by",
     "policies_governing": "is governed by",
 }
+
+
+def _fact_provenance(row: dict[str, Any], node: dict[str, Any]) -> dict[str, Any]:
+    """Build a fact's provenance fields from a row's `support_sets`.
+
+    A row with no support (a fact about `node` alone) falls back to the
+    document that first mentioned the node.
+    """
+    support_sets = [
+        [GraphFactSource(document_id=doc, document_checksum=checksum) for doc, checksum in sources]
+        for sources in row.get("support_sets") or []
+    ]
+    source_document_id = (
+        support_sets[0][0].document_id if support_sets else node.get("first_seen_document_id")
+    )
+    return {"source_document_id": source_document_id, "support_sets": support_sets}
+
+
+def _render_path_chain(
+    entries: list[tuple[dict[str, Any], list[str]]], edge_starts: list[str] | None
+) -> str:
+    """Render path nodes in order, with each arrow showing that relationship's direction."""
+    chain = entries[0][0]["name"]
+    for index, (node, _labels) in enumerate(entries[1:]):
+        backward = edge_starts is not None and edge_starts[index] == node["canonical_id"]
+        chain += f" {'<-' if backward else '->'} {node['name']}"
+    return chain
 
 
 def _first_entity_type(labels: list[str]) -> str:

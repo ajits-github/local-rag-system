@@ -192,11 +192,11 @@ class GraphRAGPipeline:
         under the resolved `auth` (see `rag.graph.fusion`).
         """
         assert self._retriever is not None
-        result = self._retriever.search(query, dataset_id=dataset_id, auth=auth)
+        effective_auth = self._retrieval_pipeline.resolve_auth(auth, {"dataset_id": dataset_id})
+        result = self._retriever.search(query, dataset_id=dataset_id, auth=effective_auth)
         if result.degraded:
             observability_metrics.observe_graph_retrieval_failure("neo4j_unavailable")
         facts = result.facts[: self._config.graph.fusion.max_graph_evidence_items]
-        effective_auth = self._retrieval_pipeline.resolve_auth(auth, {"dataset_id": dataset_id})
         search_results = graph_facts_to_search_results(
             facts,
             vectorstore=self._retrieval_pipeline.vectorstore,
@@ -302,10 +302,11 @@ class GraphRAGPipeline:
         """
         assert self._retriever is not None and self._client is not None
         t0 = time.perf_counter()
+        effective_auth = self._retrieval_pipeline.resolve_auth(auth, {"dataset_id": dataset_id})
         entities = self._retriever.resolve_entities(
             query,
             dataset_id=dataset_id,
-            auth=auth,
+            auth=effective_auth,
             limit=self._config.graph.fusion.graph_seed_top_k,
         )
         if not entities:
@@ -327,7 +328,6 @@ class GraphRAGPipeline:
             linked_ids.update(row["document_id"] for row in neighbors)
         # Keep only documents the caller can read in Postgres now, so the seed
         # set never carries an id that Neo4j's ACL copy alone would allow.
-        effective_auth = self._retrieval_pipeline.resolve_auth(auth, {"dataset_id": dataset_id})
         document_ids = set(
             self._retrieval_pipeline.vectorstore.get_document_governance(
                 sorted(linked_ids), dataset_id, effective_auth

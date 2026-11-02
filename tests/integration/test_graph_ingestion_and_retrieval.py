@@ -52,7 +52,13 @@ def _write_doc(tmp_path: Path, name: str, frontmatter: dict, body: str) -> Path:
 
 
 def _seed_relationship(
-    client: Neo4jClient, dataset_id: str, document_id: str, subject: str, rel_type: str, obj: str
+    client: Neo4jClient,
+    dataset_id: str,
+    document_id: str,
+    subject: str,
+    rel_type: str,
+    obj: str,
+    checksum: str = "test-checksum",
 ) -> None:
     """Write one hand-constructed relationship directly, bypassing LLM extraction."""
     writer = GraphWriter(client)
@@ -62,7 +68,7 @@ def _seed_relationship(
         dataset_id=dataset_id,
         extraction_method="deterministic",
         confidence=1.0,
-        document_checksum="test-checksum",
+        document_checksum=checksum,
     )
     writer.upsert_relationship(
         GraphRelationship(
@@ -202,8 +208,25 @@ def test_graphrag_pipeline_graph_only_cites_a_real_document_source(
         pipeline = IngestionPipeline(graphed, graph_client=client)
         path = _write_doc(tmp_path, "doc.md", {}, "A document about Document Service.")
         result = pipeline.ingest_file(path, ns)
+        checksum = pipeline._vectorstore.get_document_checksums(ns)[str(path)]
         _seed_relationship(
-            client, ns, result["document_id"], "Document Service", "DEPENDS_ON", "PostgreSQL"
+            client,
+            ns,
+            result["document_id"],
+            "Document Service",
+            "DEPENDS_ON",
+            "PostgreSQL",
+            checksum=checksum,
+        )
+        # A fact projected from an older version of the document is not evidence.
+        _seed_relationship(
+            client,
+            ns,
+            result["document_id"],
+            "Document Service",
+            "RUNS_ON",
+            "Stale Host",
+            checksum="older-version",
         )
 
         retrieval_pipeline = RetrievalPipeline(graphed)
@@ -219,6 +242,7 @@ def test_graphrag_pipeline_graph_only_cites_a_real_document_source(
         assert answer["sources"]
         assert all(s["origin"] == "graph" for s in answer["sources"])
         assert any(s["source"] == str(path) for s in answer["sources"])
+        assert not any("Stale Host" in s["content"] for s in answer["sources"])
         graphrag.close()
     finally:
         client.run_write("MATCH (n) WHERE n.dataset_id = $ds DETACH DELETE n", {"ds": ns})

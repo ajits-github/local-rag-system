@@ -2,9 +2,11 @@
 
 Each builder returns `(cypher, parameters)`. Caller-supplied values are
 always query parameters. The only interpolated values are relationship
-types and depth bounds, which come from code-controlled constants. Templates
-that take an `auth_clause` AND it into their `WHERE` clause. The
-`dependency_path` template takes none, and its results are checked in Python.
+types, depth bounds and support limits, which come from code-controlled
+constants. Templates AND their `auth_clause` (the returned node) and
+`path_auth_clause`/`edge_auth_clause` (everything traversed) into `WHERE`.
+Each returns `support_sets`: the `[document_id, checksum]` pairs of the
+relationships behind a fact, one list per derivation, shortest first.
 """
 
 from __future__ import annotations
@@ -12,6 +14,12 @@ from __future__ import annotations
 from typing import Any
 
 _DEPENDENCY_REL_TYPES = "DEPENDS_ON|RUNS_ON|CONNECTS_TO"
+_MAX_SUPPORT_SETS = 5
+_PATH_SUPPORT = "[rel IN relationships(path) | [rel.source_document_id, rel.document_checksum]]"
+_PATH_ORDER = "length(path) ASC, [rel IN relationships(path) | rel.source_document_id] ASC"
+EDGE_SUPPORT_SETS = (
+    f"collect(DISTINCT [[r.source_document_id, r.document_checksum]])[..{_MAX_SUPPORT_SETS}]"
+)
 
 
 def _where(*clauses: str) -> str:
@@ -79,12 +87,35 @@ def resolve_entities_query(
     return cypher, parameters
 
 
+def path_support_with(result_var: str) -> str:
+    """Build the `WITH` clauses aggregating `path` into `hops` and `support_sets` for `result_var`.
+
+    `result_var` must be a hardcoded literal.
+    """
+    return f"""WITH {result_var}, path ORDER BY {_PATH_ORDER}
+    WITH {result_var}, min(length(path)) AS hops,
+        collect({_PATH_SUPPORT})[..{_MAX_SUPPORT_SETS}] AS support_sets"""
+
+
+def _edge_support_with(result_var: str) -> str:
+    """Build the `WITH` clauses aggregating one-hop edge `r` into `support_sets`."""
+    return f"""WITH {result_var}, r ORDER BY r.source_document_id ASC
+    WITH {result_var}, {EDGE_SUPPORT_SETS} AS support_sets"""
+
+
 def dependents_of_query(
-    *, dataset_id: str, entity_canonical_id: str, auth_clause: str, max_depth: int, limit: int
+    *,
+    dataset_id: str,
+    entity_canonical_id: str,
+    auth_clause: str,
+    path_auth_clause: str,
+    max_depth: int,
+    limit: int,
 ) -> tuple[str, dict[str, Any]]:
     """Build the "what depends on X" query, traversing dependency relationships in reverse.
 
-    Bounded to `max_depth` hops. `auth_clause` must use `node_var="dependent"`.
+    Bounded to `max_depth` hops. `auth_clause` must use `node_var="dependent"`,
+    and `path_auth_clause` must use `path_var="path"`.
 
     Returns
     -------
@@ -94,9 +125,9 @@ def dependents_of_query(
     cypher = f"""
     MATCH (target {{canonical_id: $entity_id, dataset_id: $dataset_id}})
     MATCH path = (dependent)-[:{_DEPENDENCY_REL_TYPES}*1..{max_depth}]->(target)
-    WHERE {_where(auth_clause)}
-    WITH dependent, min(length(path)) AS hops
-    RETURN dependent, labels(dependent) AS dependent_labels, hops
+    WHERE {_where(auth_clause, path_auth_clause)}
+    {path_support_with("dependent")}
+    RETURN dependent, labels(dependent) AS dependent_labels, hops, support_sets
     ORDER BY hops ASC, dependent.name ASC
     LIMIT $limit
     """
@@ -104,11 +135,18 @@ def dependents_of_query(
 
 
 def dependencies_of_query(
-    *, dataset_id: str, entity_canonical_id: str, auth_clause: str, max_depth: int, limit: int
+    *,
+    dataset_id: str,
+    entity_canonical_id: str,
+    auth_clause: str,
+    path_auth_clause: str,
+    max_depth: int,
+    limit: int,
 ) -> tuple[str, dict[str, Any]]:
     """Build the "what does X depend on" query, traversing dependency relationships forward.
 
-    Bounded to `max_depth` hops. `auth_clause` must use `node_var="dependency"`.
+    Bounded to `max_depth` hops. `auth_clause` must use `node_var="dependency"`,
+    and `path_auth_clause` must use `path_var="path"`.
 
     Returns
     -------
@@ -118,9 +156,9 @@ def dependencies_of_query(
     cypher = f"""
     MATCH (source {{canonical_id: $entity_id, dataset_id: $dataset_id}})
     MATCH path = (source)-[:{_DEPENDENCY_REL_TYPES}*1..{max_depth}]->(dependency)
-    WHERE {_where(auth_clause)}
-    WITH dependency, min(length(path)) AS hops
-    RETURN dependency, labels(dependency) AS dependency_labels, hops
+    WHERE {_where(auth_clause, path_auth_clause)}
+    {path_support_with("dependency")}
+    RETURN dependency, labels(dependency) AS dependency_labels, hops, support_sets
     ORDER BY hops ASC, dependency.name ASC
     LIMIT $limit
     """
@@ -128,17 +166,24 @@ def dependencies_of_query(
 
 
 def runbooks_for_query(
-    *, dataset_id: str, entity_canonical_id: str, auth_clause: str, limit: int
+    *,
+    dataset_id: str,
+    entity_canonical_id: str,
+    auth_clause: str,
+    edge_auth_clause: str,
+    limit: int,
 ) -> tuple[str, dict[str, Any]]:
     """Build the "which runbooks apply to X" query (`HAS_RUNBOOK`, either direction).
 
-    `auth_clause` must be built with `node_var="runbook"`.
+    `auth_clause` must be built with `node_var="runbook"`, and `edge_auth_clause`
+    with `node_var="r"`.
     """
     cypher = f"""
     MATCH (target {{canonical_id: $entity_id, dataset_id: $dataset_id}})
-    MATCH (target)-[:HAS_RUNBOOK]-(runbook:Runbook)
-    WHERE {_where(auth_clause)}
-    RETURN DISTINCT runbook, labels(runbook) AS runbook_labels
+    MATCH (target)-[r:HAS_RUNBOOK]-(runbook:Runbook)
+    WHERE {_where(auth_clause, edge_auth_clause)}
+    {_edge_support_with("runbook")}
+    RETURN runbook, labels(runbook) AS runbook_labels, support_sets
     ORDER BY runbook.name ASC
     LIMIT $limit
     """
@@ -146,17 +191,24 @@ def runbooks_for_query(
 
 
 def owners_of_query(
-    *, dataset_id: str, entity_canonical_id: str, auth_clause: str, limit: int
+    *,
+    dataset_id: str,
+    entity_canonical_id: str,
+    auth_clause: str,
+    edge_auth_clause: str,
+    limit: int,
 ) -> tuple[str, dict[str, Any]]:
     """Build the "which team/system owns X" query (`OWNED_BY`).
 
-    `auth_clause` must be built with `node_var="owner"`.
+    `auth_clause` must be built with `node_var="owner"`, and `edge_auth_clause`
+    with `node_var="r"`.
     """
     cypher = f"""
     MATCH (target {{canonical_id: $entity_id, dataset_id: $dataset_id}})
-    MATCH (target)-[:OWNED_BY]->(owner)
-    WHERE {_where(auth_clause)}
-    RETURN DISTINCT owner, labels(owner) AS owner_labels
+    MATCH (target)-[r:OWNED_BY]->(owner)
+    WHERE {_where(auth_clause, edge_auth_clause)}
+    {_edge_support_with("owner")}
+    RETURN owner, labels(owner) AS owner_labels, support_sets
     ORDER BY owner.name ASC
     LIMIT $limit
     """
@@ -164,17 +216,24 @@ def owners_of_query(
 
 
 def policies_governing_query(
-    *, dataset_id: str, entity_canonical_id: str, auth_clause: str, limit: int
+    *,
+    dataset_id: str,
+    entity_canonical_id: str,
+    auth_clause: str,
+    edge_auth_clause: str,
+    limit: int,
 ) -> tuple[str, dict[str, Any]]:
     """Build the "which policy governs X" query (`GOVERNED_BY`/`HAS_POLICY`, either direction).
 
-    `auth_clause` must be built with `node_var="policy"`.
+    `auth_clause` must be built with `node_var="policy"`, and `edge_auth_clause`
+    with `node_var="r"`.
     """
     cypher = f"""
     MATCH (target {{canonical_id: $entity_id, dataset_id: $dataset_id}})
-    MATCH (target)-[:GOVERNED_BY|HAS_POLICY]-(policy:Policy)
-    WHERE {_where(auth_clause)}
-    RETURN DISTINCT policy, labels(policy) AS policy_labels
+    MATCH (target)-[r:GOVERNED_BY|HAS_POLICY]-(policy:Policy)
+    WHERE {_where(auth_clause, edge_auth_clause)}
+    {_edge_support_with("policy")}
+    RETURN policy, labels(policy) AS policy_labels, support_sets
     ORDER BY policy.name ASC
     LIMIT $limit
     """
@@ -182,30 +241,40 @@ def policies_governing_query(
 
 
 def impact_of_query(
-    *, dataset_id: str, entity_canonical_id: str, auth_clause: str, max_depth: int, limit: int
+    *,
+    dataset_id: str,
+    entity_canonical_id: str,
+    auth_clause: str,
+    path_auth_clause: str,
+    max_depth: int,
+    limit: int,
 ) -> tuple[str, dict[str, Any]]:
     """Build the "what is impacted if X fails" query.
 
     Returns the reverse dependency chain, bounded to `max_depth`, together
-    with the target and any `Incident` nodes that `AFFECTS` the target.
-    `auth_clause` must use `node_var="impacted_candidate"`.
+    with the target. `auth_clause` must use `node_var="impacted_candidate"`,
+    and `path_auth_clause` must use `path_var="path"`.
 
     Returns
     -------
     tuple[str, dict[str, Any]]
-        `(cypher, parameters)`.
+        `(cypher, parameters)`. The target's own row has empty `support_sets`.
     """
     cypher = f"""
     MATCH (target {{canonical_id: $entity_id, dataset_id: $dataset_id}})
-    OPTIONAL MATCH depPath = (dependent)-[:{_DEPENDENCY_REL_TYPES}*1..{max_depth}]->(target)
-    WITH target, collect(DISTINCT dependent) AS dependents
-    OPTIONAL MATCH (incident:Incident)-[:AFFECTS]->(target)
-    WITH target, dependents, collect(DISTINCT incident) AS direct_incidents
-    UNWIND (dependents + [target]) AS impacted_candidate
-    WITH impacted_candidate, direct_incidents
+    OPTIONAL MATCH path = (dependent)-[:{_DEPENDENCY_REL_TYPES}*1..{max_depth}]->(target)
+    WHERE {_where(path_auth_clause)}
+    WITH target, dependent, path ORDER BY {_PATH_ORDER}
+    WITH target, dependent, collect({_PATH_SUPPORT})[..{_MAX_SUPPORT_SETS}] AS support_sets
+    WITH target, collect(
+        CASE WHEN dependent IS NULL THEN null
+        ELSE {{node: dependent, support_sets: support_sets}} END
+    ) AS entries
+    UNWIND entries + [{{node: target, support_sets: []}}] AS entry
+    WITH entry.node AS impacted_candidate, entry.support_sets AS support_sets
     WHERE {_where(auth_clause)}
-    RETURN DISTINCT impacted_candidate AS impacted, labels(impacted_candidate) AS impacted_labels,
-        direct_incidents
+    RETURN impacted_candidate AS impacted, labels(impacted_candidate) AS impacted_labels,
+        support_sets
     ORDER BY impacted.name ASC
     LIMIT $limit
     """
@@ -213,18 +282,24 @@ def impact_of_query(
 
 
 def dependency_path_query(
-    *, dataset_id: str, source_canonical_id: str, target_canonical_id: str, max_depth: int
+    *,
+    dataset_id: str,
+    source_canonical_id: str,
+    target_canonical_id: str,
+    path_auth_clause: str,
+    max_depth: int,
 ) -> tuple[str, dict[str, Any]]:
     """Build the shortest-path query between two entities, bounded by `max_depth`.
 
-    No `auth_clause` is taken. The caller resolves both endpoints with
-    authorization applied first, and every node on the returned path is
-    re-checked in Python before it is used.
+    Searches in both directions. `path_auth_clause` must use `path_var="path"`,
+    so a restricted path never hides an authorized longer one. The caller also
+    re-checks every node and relationship on the returned path in Python.
 
     Returns
     -------
     tuple[str, dict[str, Any]]
-        `(cypher, parameters)`.
+        `(cypher, parameters)`. `edge_starts` holds each relationship's start
+        node id, which gives its direction.
     """
     cypher = f"""
     MATCH (source {{canonical_id: $source_id, dataset_id: $dataset_id}})
@@ -232,7 +307,8 @@ def dependency_path_query(
     MATCH path = shortestPath(
         (source)-[:{_DEPENDENCY_REL_TYPES}*1..{max_depth}]-(destination)
     )
-    RETURN path
+    WHERE {_where(path_auth_clause)}
+    RETURN path, [rel IN relationships(path) | startNode(rel).canonical_id] AS edge_starts
     LIMIT 1
     """
     return cypher, {
