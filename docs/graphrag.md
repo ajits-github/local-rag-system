@@ -112,16 +112,22 @@ Graph authorization applies the same rule as the SQL predicate in
    relationship, regardless of what the query's own `WHERE` clause did. This is
    the real boundary for LLM-generated Cypher.
 
-A path is returned only when every node on it is authorized. A single
-unauthorized hop removes the whole path.
+A path is used only when every node and relationship on it is authorized, and
+the Cypher enforces this during traversal, so a restricted route never hides an
+authorized longer one. Seeing two entities does not grant seeing that they are
+connected: neighbor, impact and lookup queries check the relationship as well as
+the node returned.
 
 3. **Postgres revalidation** (`rag.graph.fusion.graph_facts_to_search_results`).
    The Neo4j ACL is a copy written at ingestion time, so before a fact becomes
-   evidence its source document is resolved in Postgres under the caller's
-   resolved `AuthorizationContext`. A fact whose document was deleted, narrowed,
-   or superseded is dropped, and the surviving fact carries the document's
-   current tenant, roles, classification and trust. `graph_seeded_vector` filters
-   its seed documents the same way.
+   evidence the documents that state it are resolved in Postgres under the
+   caller's resolved `AuthorizationContext`. For a relationship or path those are
+   the source documents of its edges, not the documents that first mentioned its
+   entities. A fact survives only if one derivation's documents all still exist,
+   are readable, and still have the checksum the fact was projected from. It
+   cites the first of them and carries the strictest classification, roles, trust
+   and status among them. `graph_seeded_vector` filters its seed documents the
+   same way.
 
 Graph evidence then goes through `sanitize_evidence` like every other evidence
 source, so field redaction and injection flagging apply to it too. Its

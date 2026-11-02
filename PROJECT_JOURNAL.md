@@ -11496,3 +11496,20 @@ All 8 graph integration tests pass against a live Neo4j, which also verifies GRA
 
 ### Open problems
 BUG-009, AGT-004 and AGT-005 are model-behaviour issues needing live evaluation runs. No graph-mode benchmark has been recorded since these fixes. `architecture-diagram-detailed.png` at the top of `docs/architecture.md` was not part of this replacement and was not re-checked.
+
+## 2026-11-01 (session 29): Second Codex audit, and fixes that only worked against their own mocks
+
+### Interview talking points
+- A mock encodes your assumption. The BUG-015 retry test passed because its mock raised on an outage; the real extractor returns normally, so the retry never ran and the checksum falsely certified missing work.
+- A security check on the wrong object looks identical to a working one. GRAPH-008 revalidated every fact, against a document that had never stated it.
+- Follow a suggested fix before applying it. Passing resolved auth to the retriever, as the audit proposed, would have emptied every graph query in a dataset with a superseded document (GRAPH-013), because `NOT (null IN list)` is null in Cypher.
+- Reproduce a finding on realistic input. The audit's swapped-numbers dedup case needed 100 words of filler; unit and name changes merged on a normal paragraph. Its infeasible-prompt case was unreachable on stock config, so it was downgraded.
+
+### Changes made
+Reviewed `.claude-prompts/35.12` in `35.13`. Fixed DATA-N01 (BUG-015 corrected), SEC-N01 (SEC-020), SEC-N02 (SEC-021), the exclusion predicate (GRAPH-013), CTX-N01 (CTX-007 corrected), CTX-N02 (CTX-015 corrected), EVAL-N01 (EVAL-016) and DIST-N01 (DIST-006 corrected, on its branch).
+
+### Evaluation results
+Graph authorization, ingestion and governance integration tests ran against a live Neo4j and Postgres. No graph-mode benchmark has been recorded, and the committed context benchmark predates the new report fields and the stricter dedup rule.
+
+### Open problems
+CI still has no Neo4j, so the Cypher guarantees are only proven locally. BUG-009, AGT-004 and AGT-005 still need live evaluation runs. Reset and re-ingest any existing graph before final runs.

@@ -299,10 +299,12 @@ Ingest while Neo4j is unavailable, restore Neo4j, then re-ingest the identical f
 A nullable `documents.graph_checksum` column (added idempotently by `scripts/init_db.py`) records the checksum of the last *successful* graph projection; `_run_graph_extraction` sets it only after `extract_and_write_for_document` returns. On the unchanged-document path, `_repair_graph_projection` compares it with the current checksum and, when it is missing or stale, re-projects from the document's stored chunks (no re-embedding; extraction already deletes a document's facts before rewriting, so the retry is idempotent). The check is defensive: a not-yet-migrated database logs a warning and never fails the ingest. No outbox or background worker is needed, because every re-ingest is the retry.
 
 **Regression test**
-`test_failed_graph_write_is_retried_on_the_next_unchanged_ingest`, `test_current_projection_is_not_rebuilt` in `tests/unit/test_graph_projection_retry.py`; `test_graph_checksum_set_read_and_clear` in `tests/integration/test_graph_checksum_tracking.py` (real Postgres, CI-safe).
+`tests/unit/test_graph_projection_retry.py`, which keeps the real extractor and fakes only the services: a failed health check, a write lost mid-document, a failed relationship write, and an LLM outage each leave the checksum unset and are repaired by the next unchanged ingest; malformed model output does not block; `test_current_projection_is_not_rebuilt`; `test_graph_checksum_set_read_and_clear` in `tests/integration/test_graph_checksum_tracking.py` (real Postgres, CI-safe).
 
 **Notes**
 Recovery still needs a re-ingest to run; nothing retries on its own in the background. Turning graph extraction on for an already-ingested dataset now projects every document on the next ingest run, by the same mechanism.
+
+The first version of this fix did not work against a real outage. It set the checksum whenever extraction returned, but the real extractor returns normally on a failed health check or a lost write, and `extract_llm_facts` swallowed LLM failures, so a missed projection was recorded as complete and the retry never ran. Its test passed because the mock raised where the real code returns. `GraphExtractionStats.complete` now gates the checksum. Model output that cannot be parsed stays non-blocking, because retrying the same chunk would fail the same way on every ingest. Codex audit `DATA-N01` (2026-11-01). A dataset ingested during an outage under the first version can hold a false checksum, so reset and re-ingest its graph before relying on it.
 
 ---
 
@@ -776,6 +778,54 @@ New `security.egress_policy.allow_unclassified` knob. `true` in `config/default.
 
 ---
 
+### SEC-020: Neighbor and traversal queries disclosed relationships the caller could not read
+
+**Status:** FIXED
+**Severity:** CRITICAL (for runs with graph and authorization enabled)
+**Area:** Security / GraphRAG authorization
+**Affected code:** `rag.graph.queries`, `GraphRetriever._run_neighbor_template`, `_run_impact_of`, `_entity_lookup_result`, `get_neighbors`, `build_graph_path_authorization_predicate`
+
+**Problem**
+Every graph query except `find_path` filtered only the returned node. Edges carry their own ACL, copied from the document that states them, and intermediate nodes on a traversal have theirs too, but neither was checked, and the rows returned no edge properties for Python to check.
+
+**Failure scenario**
+A public document mentions Alpha and Beta, so both nodes are viewer-visible. Only an admin-only document says Alpha depends on Beta. On a live Neo4j, a viewer asking the forward, reverse, impact or lookup question got that relationship, and a traversal also passed through a restricted intermediate node. The leak is between roles within a tenant: canonical ids are scoped by tenant, so an edge cannot join two tenants' nodes.
+
+**Fix applied**
+Traversal templates now require every node and relationship on the path to be authorized, enforced in Cypher during traversal. One-hop templates and entity lookup check the edge. `find_path` gets the same clause, so a restricted shortest route no longer hides an authorized longer one, and keeps its Python re-check.
+
+**Regression test**
+`tests/integration/test_graph_authorization_isolation.py` (live Neo4j: restricted edge, restricted hop, permitted alternative route, each with an admin control proving the denial is not a broken query); `tests/unit/test_graph_fact_provenance.py` asserts the clauses reach every query shape in CI.
+
+**Notes**
+Codex audit `SEC-N01` (2026-11-01). CI has no Neo4j, so only the unit tests guard this there. Graph and authorization are both off by default.
+
+---
+
+### SEC-021: Graph facts were revalidated and cited against a document that never stated them
+
+**Status:** FIXED
+**Severity:** CRITICAL (wrong citations occur with authorization off too)
+**Area:** Security / GraphRAG provenance / provider egress
+**Affected code:** `GraphRetriever`, `GraphFact.support_sets`, `rag.graph.fusion`, `VectorStore.get_document_checksums_by_id`, `GraphRAGPipeline`, the agent graph tools
+
+**Problem**
+A relationship fact recorded its neighbor's `first_seen_document_id`, and a path fact its first node's. The edge's own source document and checksum were discarded, so **GRAPH-008**'s revalidation and **SEC-018**'s governance copy both looked at a document unrelated to the fact.
+
+**Failure scenario**
+A fact stated only in a confidential document, about entities first mentioned in a public one, was asked of Postgres as `public-doc`, then cited and classified as public, so the egress gate let it through. Revoking or deleting the real source changed nothing. Conversely, deleting an entity's first document dropped valid facts stated elsewhere. A document replaced while its projection failed kept asserting its old facts.
+
+**Fix applied**
+Each fact carries `support_sets`: the source document and projection checksum of every edge, per derivation, shortest first and capped at five. Fusion keeps a fact only if one derivation's documents all exist, are readable under current auth, and match their current checksum, and it merges their governance to the strictest values. The retriever now receives `resolve_auth`'s resolved context, so Neo4j itself applies freshness exclusions (which required **GRAPH-013**).
+
+**Regression test**
+`tests/unit/test_graph_fact_provenance.py` (real retriever normalization through fusion: revoked edge document, deleted first mention, stale checksum, second derivation, multihop governance through the egress gate); `test_fact_support_carries_the_projection_checksum` in `tests/integration/test_graph_authorization_isolation.py`; `test_graphrag_pipeline_graph_only_cites_a_real_document_source` drops a stale-checksum fact end to end.
+
+**Notes**
+Codex audit `SEC-N02` (2026-11-01). Earlier fusion tests started from hand-written `GraphFact`s with correct provenance, so they could not see provenance lost by the real retriever. A fact about a node alone still revalidates against the node's first document. Citation comes from the first document of the chosen derivation only.
+
+---
+
 ## 3. Reliability and Distributed Systems
 
 ### DIST-001: Reading a request-scoped context variable inside a stream would have raced its middleware
@@ -888,7 +938,7 @@ The queue read is now bounded by a short poll timeout (`_DISCONNECT_POLL_SECONDS
 **Status:** FIXED (on `experiment/distributed-state`)
 **Severity:** MAJOR (experiment branch only)
 **Area:** Reliability / job queue
-**Affected code:** `experiment/distributed-state`: `distributed_state_experiment/job_queue/worker.py`, `Worker.run_forever`
+**Affected code:** `experiment/distributed-state`: `distributed_state_experiment/job_queue/worker.py`, `Worker.run_forever`, `_maybe_reclaim`, `queue.py`
 
 **Problem**
 Each loop calls `queue.claim(count=max_concurrency)` and submits every claimed job to a `ThreadPoolExecutor(max_workers=max_concurrency)`, without subtracting futures still running or queued. The class docstring promises a worker "never claims more than `max_concurrency` un-acked jobs at a time"; the loop does not enforce it.
@@ -899,8 +949,10 @@ Under sustained load, claimed-but-unstarted jobs pile up in the executor's queue
 **Fix applied**
 On `experiment/distributed-state` (PR #37): the loop prunes finished futures first, claims only `max_concurrency - in_flight` jobs, and waits for a slot (`concurrent.futures.wait(..., FIRST_COMPLETED)`, bounded by `claim_block_ms`) when the pool is full.
 
+That covered new claims only. `_maybe_reclaim` still took up to ten stale jobs regardless of capacity and did not track them, so recovery could again exceed the limit, and a job outliving `reclaim_idle_ms` still looked crashed. Reclaims now take only free slots and share the same future registry, and running jobs are renewed at a third of the visibility timeout (`IngestionJobQueue.renew`). Codex audit `DIST-N01` (2026-11-01).
+
 **Regression test**
-`distributed_state_experiment/tests/test_worker_bounded_claims.py` on that branch: with both slots blocked, the old loop issued `[2, 2, 2, ...]` claims; the fixed loop issues `[2]`. The branch has no CI, so the test was run locally.
+`distributed_state_experiment/tests/test_worker_bounded_claims.py` on that branch: with both slots blocked, the old loop issued `[2, 2, 2, ...]` claims; the fixed loop issues `[2]`. Ten stale entries reach a two-slot worker as a reclaim of 2, and renewal is checked against the real stream commands on `fakeredis`. The branch has no CI, so the tests were run locally.
 
 ---
 
@@ -1208,7 +1260,7 @@ Every graph fact is now revalidated before it becomes evidence. `graph_facts_to_
 `test_fact_whose_source_is_gone_or_unauthorized_is_dropped` in `tests/unit/test_graph_fusion_governance.py`; `test_governance_lookup_returns_current_metadata_and_respects_auth` in `tests/integration/test_document_governance_lookup.py` (real Postgres, CI-safe synthetic dataset: other tenant excluded, wrong dataset excluded, deleted document excluded).
 
 **Notes**
-Cost is one extra indexed Postgres query per graph retrieval. Entity facts are checked at document level (their `first_seen_document_id`), since an entity has no single source chunk. Confirmed still open by both 2026-10-29 audits before this fix (Codex `SEC-R02`).
+Cost is one extra indexed Postgres query per graph retrieval. Entity facts are checked at document level (their `first_seen_document_id`), since an entity has no single source chunk. Confirmed still open by both 2026-10-29 audits before this fix (Codex `SEC-R02`). This fix checked the wrong document for relationship and path facts until **SEC-021**.
 
 ---
 
@@ -1296,6 +1348,30 @@ New `dependencies_of` intent and Cypher template that traverse outward from the 
 
 **Notes**
 Found by running the Neo4j integration tests locally for the first time since the graph-evidence revalidation (**GRAPH-008**). All 8 now pass live, which also verifies revalidation against a real graph. On a cold Neo4j on this 8GB host, some graph queries exceed the 5-second `query_timeout_seconds` and degrade as designed, so a first run can show timeout failures that disappear once Neo4j is warm.
+
+---
+
+### GRAPH-013: Any superseded document would have emptied every graph query
+
+**Status:** FIXED
+**Severity:** MAJOR
+**Area:** GraphRAG / freshness
+**Affected code:** `rag.graph.authorization.build_graph_authorization_predicate`, `is_fact_authorized`
+
+**Problem**
+The freshness clause was `NOT (x.source_document_id IN $excluded)`, but only relationships have that property. On a node the test is `NOT (null IN list)`, which is null, so `WHERE` drops the row. No caller hit it, because every retriever call passed unresolved auth, which also meant Neo4j applied no freshness filter at all.
+
+**Failure scenario**
+On a live Neo4j, one unrelated excluded document returned no facts for a public query. Passing resolved auth to the retriever, the natural fix for **SEC-021**, would have emptied graph retrieval for any authorized caller in a dataset with a superseded document. It reads as a retrieval miss.
+
+**Fix applied**
+The clause is null-safe and reads `coalesce(source_document_id, document_id)`, so it applies to relationships and `Document` nodes and leaves entity nodes alone. The Python re-check reads the same two properties.
+
+**Regression test**
+`test_superseded_document_is_excluded_without_emptying_other_queries` in `tests/integration/test_graph_authorization_isolation.py` (live Neo4j); `test_exclusion_predicate_is_null_safe_for_nodes_without_a_source_document`, `test_python_recheck_excludes_a_superseded_document_node` in `tests/unit/test_graph_fact_provenance.py`.
+
+**Notes**
+Found while verifying Codex audit `SEC-N02`, which suggested the change that would have triggered it. `dependency_path_query` searches in both directions, so `find_path` also now renders each hop's real direction (`A -> B <- C`) rather than a `->` for every hop.
 
 ---
 
@@ -1504,7 +1580,7 @@ The numeric guard alone left two gaps: it fired only when *both* texts contained
 `test_near_duplicate_paragraphs_with_a_conflicting_number_are_never_merged`, `test_exact_content_hash_duplicate_across_tenants_is_never_merged`, `test_near_duplicate_across_tenants_is_never_merged`, `test_exact_content_hash_matching_finds_the_right_tenants_entry_among_several`, `test_near_duplicates_differing_only_by_negation_are_never_merged`, `test_near_duplicates_differing_only_by_polarity_word_are_never_merged`, `test_near_duplicate_where_only_one_side_has_a_number_is_never_merged` in `tests/unit/test_context_dedup.py`.
 
 **Notes**
-The polarity guard is a word list, not semantic equivalence: a paraphrased contradiction with no listed word can still merge. It errs toward keeping both items, which costs tokens, not correctness.
+The set guards still merged conflicting statements: `30 days` vs `30 hours`, `Owner is Alice` vs `Owner is Bob`, swapped values and moved negation all kept equal number and polarity sets, and the first item won before freshness ordering. An item is now dropped only when its words appear in order within the kept item's, on top of both guards, so nothing it says is lost (`test_conflicting_statements_with_equal_keyword_sets_are_never_merged`, `test_later_item_that_adds_words_is_kept`). This keeps harmless rewordings, which costs tokens, not correctness, and packing can still drop them. Codex audit `CTX-N01` (2026-11-01).
 
 ---
 
@@ -1651,10 +1727,12 @@ When the system prompt, query, output reservation, framework overhead and safety
 Lowering `num_ctx` (via `model_limits.overrides`) for latency, with a long system prompt and `max_tokens` reservation, makes every request answer with no evidence and no error, flag, or metric distinguishing it from a retrieval miss.
 
 **Fix applied**
-`ContextBudget` gained `budget_deficit_tokens` and an `infeasible` property. `ContextEngine.build` logs a warning when the budget is infeasible, counts it in `rag_context_budget_infeasible_total`, and `context_engineering_summary()` exposes `budget_infeasible` on API responses and eval records. The request is still served (the engine's never-raise contract is unchanged); the condition is now visible instead of silent.
+`ContextBudget` gained `budget_deficit_tokens` and an `infeasible` property. `ContextEngine.build` logs a warning when the budget is infeasible, counts it in `rag_context_budget_infeasible_total`, and `context_engineering_summary()` exposes `budget_infeasible` on API responses and eval records. `ContextEngine.build` itself still never raises.
+
+Visibility alone still sent the prompt to the provider, which could truncate it. `RetrievalPipeline.build_context_text`, which every generation path renders through, now raises `ContextBudgetExceededError` when the complete prompt plus output exceeds the window, counting the larger of the reservation and `generation.max_tokens`. The API returns a 413. Not reachable on stock config, where the longest accepted query leaves 31,374 tokens available; it needs a lowered `num_ctx`. Does not apply when `context.enabled` is false, since no budget is computed. Token counts are estimates unless an exact tokenizer is configured. Codex audit `CTX-N02` (2026-11-01).
 
 **Regression test**
-`test_budget_records_the_deficit_when_fixed_costs_exceed_the_window`, `test_feasible_budget_has_no_deficit` in `tests/unit/test_context_planner.py`; `test_infeasible_budget_is_flagged_in_the_summary_and_metrics` in `tests/unit/test_context_engine.py`.
+`test_budget_records_the_deficit_when_fixed_costs_exceed_the_window`, `test_feasible_budget_has_no_deficit` in `tests/unit/test_context_planner.py`; `test_infeasible_budget_is_flagged_in_the_summary_and_metrics` in `tests/unit/test_context_engine.py`; `tests/unit/test_context_budget_guard.py` (no provider call on the classic, graph and agent paths).
 
 ---
 
@@ -2087,6 +2165,30 @@ The Context Engineering benchmark (`run_context_eval.ContextEvalReport`, written
 
 **Regression test**
 `tests/unit/test_run_metadata.py` (a real-repo check plus a simulated git-unavailable degrade); `test_report_carries_git_run_metadata` in `tests/unit/test_run_context_eval.py`.
+
+---
+
+### EVAL-016: The context benchmark could not report a prompt that overflowed with no evidence
+
+**Status:** FIXED
+**Severity:** MINOR
+**Area:** Evaluation / Context Engineering
+**Affected code:** `rag.eval.run_context_eval.ScenarioResult`, `run_scenario`, `by_strategy_summary`
+
+**Problem**
+`context_overflow` compares packed evidence with its budget. When mandatory costs alone exceed the window, both are zero, so an impossible prompt recorded `context_overflow: false`, zero utilization and no excess, and the engine's infeasible flag never reached the report.
+
+**Failure scenario**
+A sweep over a small window with a long system prompt reads as a clean run, so any conclusion about complete-prompt safety from `overflow_run_count` would be wrong. No stock scenario is claimed to trigger this.
+
+**Fix applied**
+Each result now records `budget_infeasible`, `budget_deficit_tokens` and `prompt_overflow_tokens`, which survive a JSON round trip, and the summary adds `budget_infeasible_run_count` and `prompt_overflow_run_count`, kept separate from evidence overflow.
+
+**Regression test**
+`test_mandatory_budget_failure_survives_into_the_report`, `test_output_reservation_larger_than_the_window_is_reported`, `test_feasible_scenario_reports_no_budget_failure` in `tests/unit/test_run_context_eval.py`.
+
+**Notes**
+Codex audit `EVAL-N01` (2026-11-01).
 
 ---
 
@@ -2625,6 +2727,8 @@ The following issues are resolved, with a concrete fix and regression test cited
 | SEC-017 | Security | A same-named upload could silently replace another tenant's document |
 | SEC-018 | Security | Graph-derived evidence carried no governance metadata, so the egress gate could not block it |
 | SEC-019 | Security | A source with no classification egressed silently, even under the production config |
+| SEC-020 | Security | Neighbor and traversal queries disclosed relationships the caller could not read |
+| SEC-021 | Security | Graph facts were revalidated and cited against a document that never stated them |
 | SEC-008 | Security | Cross-tenant upload isolation integration tests were written but never run (now run, locally and in CI) |
 | DIST-001 | Reliability | Reading a request-scoped context variable inside a stream would have raced its middleware |
 | DIST-002 | Reliability | A LangGraph join node ran twice, because its parallel branches had unequal lengths |
@@ -2644,6 +2748,7 @@ The following issues are resolved, with a concrete fix and regression test cited
 | GRAPH-009 | Ontology | A live-Neo4j ontology query helper had no authorization check at all |
 | GRAPH-010 | GraphRAG | The graph-seeded neighbor-document lookup ran unauthorized Cypher |
 | GRAPH-012 | GraphRAG | "What does X depend on?" traversed the wrong direction and silently returned nothing |
+| GRAPH-013 | GraphRAG | Any superseded document would have emptied every graph query |
 | ONT-001 | Ontology | A narrow RDFS domain axiom silently reclassified an Application as a Service |
 | ONT-002 | Ontology | SHACL was already subclass-aware, before any inference option was requested |
 | AGT-001 | Agentic RAG | Step budgets collided with the happy path, mislabeling most runs as max_steps |
@@ -2658,6 +2763,7 @@ The following issues are resolved, with a concrete fix and regression test cited
 | EVAL-012 | Evaluation | Duplicate relevant-document ids in gold data inflated Recall@K |
 | EVAL-013 | Evaluation | A graph-strategy comparison could silently relabel every row as vector-only |
 | EVAL-015 | Evaluation | No experiment record captured which git commit produced it |
+| EVAL-016 | Evaluation | The context benchmark could not report a prompt that overflowed with no evidence |
 | OBS-001 | Observability | `/health` depended on a heavy pipeline dependency through a graph check |
 | OBS-002 | Observability | Shared mutable LLM token counters could leak across concurrent requests |
 | OPS-001 | Deployment | A 504 at the frontend came from the host running out of memory |
@@ -2744,3 +2850,5 @@ Performed after restructuring:
 **Follow-up (verification leftovers):** **SEC-008** confirmed (its integration tests run against real Postgres locally and in CI); **SEC-007** verified by fault injection and accepted as bounded and self-healing; **RET-005** removed from the summary table, which lists only non-fixed items.
 
 **Follow-up (live Neo4j verification):** the graph integration tests ran against a live Neo4j, which verified **GRAPH-008**'s revalidation and exposed **GRAPH-012**, now fixed.
+
+**Follow-up (Codex audit, 2026-11-01):** **SEC-020**, **SEC-021**, **GRAPH-013** and **EVAL-016** fixed; **BUG-015**, **GRAPH-008**, **CTX-007**, **CTX-015** and **DIST-006** corrected, since each earlier fix was incomplete. Reset and re-ingest any graph built under the first **BUG-015** fix before final runs.

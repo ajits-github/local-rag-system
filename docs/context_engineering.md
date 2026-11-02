@@ -255,9 +255,11 @@ Three passes, in order, over items in priority order (`rag.context.dedup`):
 3. **Near-duplicate overlap**: word-shingle (3-gram) Jaccard similarity
    above `overlap_threshold` (default 0.85), scoped per `source_type` so
    a document chunk and a graph fact that happen to restate the same
-   sentence are never merged across source types by accident. A pair is
-   never merged when its numbers or its negation/polarity words differ
-   (`"allowed"` vs `"not allowed"`, `"enabled"` vs `"disabled"`).
+   sentence are never merged across source types by accident. An item is
+   dropped only when it adds nothing to the kept one: its words appear in
+   order within the kept item's, and both state the same numbers and
+   negation/polarity words. High overlap alone is not enough, because
+   `"30 days"` vs `"30 hours"` differ by one word.
 
 Each merge keeps the *first* occurrence (callers hand candidates in
 priority order, so "first" already means "best" for ties) and records
