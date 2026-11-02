@@ -637,11 +637,16 @@ class AgentConfig(BaseModel):
         `tool_select_mcp_prompt_path`.
     tool_select_graph_prompt_path : str
         Path to the `select_tool` decision point's `PromptTemplate` YAML
-        used instead when `graph.enabled=True` and neither MCP variant
-        applies (offers the 4 local RAG tools plus the 4 graph tools:
+        used instead when `graph.enabled=True` and `mcp.client.enabled=False`
+        (offers the 4 local RAG tools plus the 4 graph tools:
         `search_knowledge_graph`/`get_entity`/`get_neighbors`/
         `find_dependency_path`). See `rag.agent.graph._load_templates`
-        for the full precedence order.
+        for the full selection matrix.
+    tool_select_mcp_graph_prompt_path : str
+        Template used when `mcp.client.enabled=True` and `graph.enabled=True`
+        with business actions off.
+    tool_select_mcp_actions_graph_prompt_path : str
+        Template used when MCP client, business actions, and graph are all on.
     evidence_sufficiency_prompt_path : str
         Path to the `evidence_sufficiency` decision point's `PromptTemplate` YAML.
     synthesize_prompt_path : str
@@ -665,6 +670,12 @@ class AgentConfig(BaseModel):
         "src/rag/prompts/templates/agent_tool_select_v5_mcp_actions.yaml"
     )
     tool_select_graph_prompt_path: str = "src/rag/prompts/templates/agent_tool_select_v6_graph.yaml"
+    tool_select_mcp_graph_prompt_path: str = (
+        "src/rag/prompts/templates/agent_tool_select_v11_mcp_graph.yaml"
+    )
+    tool_select_mcp_actions_graph_prompt_path: str = (
+        "src/rag/prompts/templates/agent_tool_select_v12_mcp_actions_graph.yaml"
+    )
     evidence_sufficiency_prompt_path: str = (
         "src/rag/prompts/templates/agent_evidence_sufficiency_v1.yaml"
     )

@@ -105,6 +105,28 @@ def search_knowledge_base(
     )
 
 
+def _fetch_by_source(
+    vectorstore: VectorStore,
+    source: str,
+    dataset_id: str,
+    auth: AuthorizationContext | None,
+    limit: int,
+) -> list[Chunk]:
+    """Fetch a source's chunks, retrying a miss with the other path separator.
+
+    Evidence shows sources with forward slashes, while a Windows ingestion
+    stores backslashes. Only the separator differs, so this never widens the
+    match, and `auth` still applies to both lookups.
+    """
+    chunks = vectorstore.get_chunks_by_source(source, dataset_id, auth=auth, limit=limit)
+    if chunks:
+        return chunks
+    alternate = source.replace("/", "\\") if "/" in source else source.replace("\\", "/")
+    if alternate == source:
+        return chunks
+    return vectorstore.get_chunks_by_source(alternate, dataset_id, auth=auth, limit=limit)
+
+
 def get_document(
     args: GetDocumentArgs,
     pipeline: RetrievalPipeline,
@@ -144,8 +166,8 @@ def get_document(
     if not dataset_id:
         raise ToolExecutionError("get_document requires a dataset_id filter")
     effective_auth = pipeline.resolve_auth(auth, {"dataset_id": dataset_id}, versions=versions)
-    chunks = vectorstore.get_chunks_by_source(
-        args.source, dataset_id, auth=effective_auth, limit=max_chunks_hard_ceiling
+    chunks = _fetch_by_source(
+        vectorstore, args.source, dataset_id, effective_auth, max_chunks_hard_ceiling
     )
     return _select_relevant_chunks(chunks, current_query, embedder, max_chunks)
 
@@ -188,8 +210,8 @@ def get_latest_document(
     effective_auth = pipeline.resolve_auth(
         auth, {"dataset_id": dataset_id}, versions=resolved_versions
     )
-    chunks = vectorstore.get_chunks_by_source(
-        resolved_source, dataset_id, auth=effective_auth, limit=max_chunks_hard_ceiling
+    chunks = _fetch_by_source(
+        vectorstore, resolved_source, dataset_id, effective_auth, max_chunks_hard_ceiling
     )
     return _select_relevant_chunks(chunks, current_query, embedder, max_chunks)
 

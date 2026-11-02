@@ -183,8 +183,9 @@ falls back to `vector_only`.
 
 The four agent tools are offered only when `graph.enabled`. A graph-tool decision
 made while the graph is disabled fails in `_execute_tool`, the same way a
-disabled MCP tool does. If MCP client tools and graph tools are both enabled,
-the MCP tool-selection prompt is used, and graph tools are not offered.
+disabled MCP tool does. Each combination of MCP client, business actions, and
+graph has its own tool-selection template, so enabling both offers both tool
+families (see `rag.agent.graph._load_templates`).
 
 ## Updates and failure behavior
 
