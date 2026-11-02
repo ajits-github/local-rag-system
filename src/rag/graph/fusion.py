@@ -17,7 +17,7 @@ from rag.audit import log_audit_event
 from rag.graph.retrieval import GraphFact, GraphFactSource
 from rag.retrieval.authorization import AuthorizationContext
 from rag.retrieval.field_policy import detect_sensitive_field_ids
-from rag.schemas import Chunk, ChunkMetadata, SearchResult
+from rag.schemas import Chunk, ChunkMetadata, SearchResult, SupportGovernance
 from rag.vectorstore.base import VectorStore
 
 # Least to most restrictive. An unranked label sorts above all of these.
@@ -27,8 +27,8 @@ _CLASSIFICATION_RANK = {"public": 0, None: 1, "internal": 2, "confidential": 3, 
 def _combined_governance(sources: list[ChunkMetadata]) -> ChunkMetadata:
     """Merge a derivation's documents into metadata that satisfies the strictest of them.
 
-    Citation fields come from the first document. A fact stated across several
-    documents must not egress under the most permissive one's policy.
+    Citation fields come from the first document. One merged label cannot express every
+    egress policy, so `support_governance` keeps each document's own values for the gate.
     """
     if len(sources) == 1:
         return sources[0]
@@ -48,6 +48,14 @@ def _combined_governance(sources: list[ChunkMetadata]) -> ChunkMetadata:
                 "authoritative",
             ),
             "status": next((s.status for s in sources if s.status != "active"), "active"),
+            "support_governance": [
+                SupportGovernance(
+                    tenant_id=s.tenant_id,
+                    classification=s.classification,
+                    trust_level=s.trust_level,
+                )
+                for s in sources
+            ],
         }
     )
 
@@ -131,6 +139,7 @@ def graph_fact_to_search_result(
         effective_from=source_metadata.effective_from,
         trust_level=source_metadata.trust_level,
         doc_source_type=source_metadata.doc_source_type,
+        support_governance=source_metadata.support_governance,
     )
     return SearchResult(
         chunk=Chunk(id=chunk_id, content=fact.text, metadata=metadata),
