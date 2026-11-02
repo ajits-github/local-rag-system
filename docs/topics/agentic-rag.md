@@ -263,6 +263,37 @@ for the re-run agentic evaluation this fix motivated
 (`config/experiments/agentic-rag-baseline-v3-chunk-id-fix.yaml`, diffed
 against `experiment_032`'s established baseline).
 
+### Prompt contracts and the final candidate
+
+`config/experiments/agentic-rag-final-candidate-v1.yaml` pins these versions.
+`config/default.yaml` keeps the earlier ones until a larger run validates them.
+
+- **Routing (`agent_classify_v3`).** `simple` means one ordinary retrieval and
+  generation pass is enough. `complex` means agent required, even for one tool
+  call, and says nothing about difficulty.
+- **Decomposition (`agent_decompose_v2`).** A one-shot request stays one unchanged
+  item. Only genuinely dependent subproblems are split.
+- **Tool selection (`v7` to `v12`).** An explicit decision order, with the original
+  question and the tools already called in the prompt. A title is not an exact
+  source path, so it triggers a search first.
+- **Repeat calls.** An identical call is never dispatched twice. A local tool gets
+  one corrected proposal, and a repeated case read ends the loop. Templates that
+  do not declare `tool_history` keep their earlier behavior.
+
+| MCP client | Business actions | Graph | Tool-selection template |
+|---|---|---|---|
+| off | any | off | `agent_tool_select_v7` |
+| on | off | off | `agent_tool_select_v8_mcp` |
+| on | on | off | `agent_tool_select_v9_mcp_actions` |
+| off | any | on | `agent_tool_select_v10_graph` |
+| on | off | on | `agent_tool_select_v11_mcp_graph` |
+| on | on | on | `agent_tool_select_v12_mcp_actions_graph` |
+
+The table lists the candidate config's paths. A disabled tool fails closed in
+`_execute_tool` even if the model proposes it. Live status is in `KNOWN_ISSUES.md`
+(AGT-004, AGT-005, AGT-006); the graph and combined templates have only had
+single-decision live checks, not a full evaluation.
+
 ### Specialized-tool evaluation and the case-mutation routing fix
 
 `data/eval/specialized_tool_gold.jsonl` (14 questions) isolates each of

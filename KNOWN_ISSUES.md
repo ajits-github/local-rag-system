@@ -36,7 +36,9 @@ without basis. Detailed chronological session history remains in
 | EVAL-007 | MODERATE | ACCEPTED LIMITATION | Evaluation | A keyword-overlap answer metric penalized correct refusals |
 | EVAL-009 | MINOR | ACCEPTED LIMITATION | Evaluation | Generation dominated latency, and the latency A/B could not be trusted |
 | AGT-004 | MAJOR | IN PROGRESS | Agentic RAG | The tool worked, but the agent rarely chose it (specialized-tool selection) |
-| AGT-005 | MODERATE | NEEDS VERIFICATION | Agentic RAG | Tool-selection prompt's chunk_id fix is unverified against live tool selection |
+| AGT-005 | MODERATE | FIXED | Agentic RAG | Tool-selection prompt's chunk_id fix was unverified against live tool selection |
+| AGT-006 | MAJOR | FIXED | Agentic RAG | Specialized tools were unreachable for reasons the prompts could not fix |
+| OPS-019 | MINOR | OPEN | Operations | Postgres crashed and recovered during a live eval on the 8GB box |
 | SEC-007 | MODERATE | ACCEPTED LIMITATION | Security | Upload atomicity: a crash between the DB write and the file install leaves the database one step ahead (verified, self-healing on retry) |
 | MULTI-002 | MINOR | ACCEPTED LIMITATION | Multimodal | A working vision provider did not improve answers, because the model was weak |
 | GRAPH-005 | MODERATE | ACCEPTED LIMITATION | GraphRAG | LLM graph extraction worked correctly, but was impractical on a memory-starved host |
@@ -1887,16 +1889,16 @@ A 14-question subset, each requiring exactly one specific tool, found that indiv
 A routing decision gating a security-relevant write path (`update_case_status`) depended on prompt compliance alone; a tool that is correct in isolation is useless if the model never selects it.
 
 **Fix applied (routing sub-issue only)**
-A deterministic regex check (`_looks_like_case_mutation_request`) now force-overrides the LLM's classification to `complex` for case-mutation-shaped queries, regardless of what the model itself decided.
+A deterministic regex check (`_looks_like_case_mutation_request`) now force-overrides the LLM's classification to `complex` for case-mutation-shaped queries, regardless of what the model itself decided. The contract and harness problems behind the remaining gap are in **AGT-006**.
 
 **Result of fix applied**
 `routing_accuracy` 0.857→1.000 (14/14); `update_case_status` reachability 0.5→0.75; `case_action_outcome_accuracy` 0.333→0.667; `denial_leakage_rate` 0.0 before and after; `tool_success_rate` 1.0 across 22 dispatches.
 
 **What remains open**
-The three local tools' 0.0 reachability was explicitly **not changed** by this fix. The model still prefers generic search over `get_document`/`get_latest_document`/`get_related_context` once correctly routed to the agent path. One denial row's argument mismatch also remains unconfirmed (raw tool arguments are not recorded in this eval).
+On `qwen2.5:3b`, with a fair gold contract and the fixes in **AGT-006** (`experiment_041`): `get_related_context` reachability is 0.5, while `get_document` and `get_latest_document` stay at 0.0. Offered both, the model still prefers a second search. Two live contract tests record this as expected failures. The miss has a real cost: row 2's answer omits the 30-minute impersonation limit that a document fetch would have covered. It is not always a miss: authorization freshness already excludes the superseded v1 files, so a search alone correctly answers both `get_latest_document` rows. Those rows make that tool useful but not necessary.
 
 **Required regression test**
-A live re-run of the same 14-question subset measuring `get_document`/`get_latest_document`/`get_related_context` reachability specifically; currently no evidence this has moved off 0.0.
+`tests/integration/test_agent_prompt_contracts_live.py`, and a re-run of `data/eval/specialized_tool_gold.jsonl`, on any stronger model.
 
 **Notes**
 "The tool works when called" and "the model calls it when it should" are separate claims requiring separate tests, this entry is the canonical example in this codebase.
@@ -1919,11 +1921,82 @@ The model had to invent a `chunk_id`; an invented id resolves to nothing, and th
 **Fix applied**
 The evidence summary now includes `chunk_id=<id>` on each line; a new prompt version tells the model to copy that value verbatim, never the bracketed display index.
 
-**What needs verification**
-A unit test runs a full agent flow and confirms the id *shown* to the model is the id *dispatched*, proving the mechanism works. However, the live 18-question re-run did not happen to select the local tools at all, so there is no live evidence this fix actually changes model behavior in practice, only that the plumbing is correct when exercised directly.
+**Result of fix applied**
+`experiment_041`: the model selected `get_related_context` live and copied the real chunk id verbatim (`related_context_chunk_id_from_evidence` 1 of 1), and the tool returned a result. One live selection is thin evidence for "always copies", but it is the claim this entry waited on, and the eval now records it on every run.
 
-**Required verification**
-A live run where the model actually selects `get_related_context`, confirming it copies the shown `chunk_id` rather than inventing one. The verification run recorded as `experiments/results/agentic/experiment_040.json` still reports `agent_tool_selection_accuracy: 0.0`, so the fix has not yet moved live tool selection (see **AGT-004**).
+---
+
+### EVAL-017: The experiment record named a tool prompt that never ran
+
+**Status:** FIXED
+**Severity:** MODERATE
+**Area:** Evaluation / experiment lineage
+**Affected code:** `scripts/record_agent_experiment.py`, `tool_select_prompt_path`
+
+**Problem**
+Recording `experiment_041` stored `agent_tool_select_v7` and its checksum, although that run used `v9_mcp_actions`. The same script wrote config snapshots to `experiments/configs`, a directory renamed to `experiments/config_snapshots` earlier.
+
+**Diagnosis**
+The script read `agent.tool_select_prompt_path`, which is only the fallback for when MCP and graph are off. The real choice lived inside `_load_templates`.
+
+**Fix applied**
+The selection is now one function, `tool_select_prompt_path`, used by both the runtime and the recorder. The snapshot path is corrected.
+
+**Result of fix applied**
+`experiment_041` names and checksums the prompt that ran. Records up to `experiment_040` have MCP and graph off, so their fallback path was the one used and they stay correct.
+
+**Interview takeaway**
+Lineage has to come from the code path that made the choice. A second copy of the logic can name the wrong prompt, with a valid checksum, and nothing fails.
+
+---
+
+### OPS-019: Postgres crashed and recovered during a live eval on the 8GB box
+
+**Status:** OPEN
+**Severity:** MINOR
+**Area:** Operations / resource limits
+**Affected code:** none identified
+
+**Problem**
+During one specialized-tool run, a `get_related_context` call failed with an execution error, right after the model had copied the correct chunk id. It looked like a tool bug.
+
+**Diagnosis**
+The same call succeeded when run directly. Postgres logs show the database in recovery at that moment ("was not properly shut down"), and neighboring requests stalled for up to 10 minutes. Docker reports no OOM kill and no container restart, and the logs name no cause. The host had 1.6GB of 7.8GB free shortly afterward, with the 3B model loaded, which fits memory pressure but does not prove it.
+
+**Fix applied**
+None. The run was discarded and repeated, and the repeat had no crash and full tool success. Live evals now avoid running other heavy work at the same time.
+
+**Interview takeaway**
+Check the infrastructure before filing a tool bug: one row of a green-looking report can be a database restart. A report that hides the error text behind a safe label also needs a log line to find the cause.
+
+---
+
+### AGT-006: Specialized tools were unreachable for reasons the prompts could not fix
+
+**Status:** FIXED (the harness and contract defects; the model's remaining preference for search is **AGT-004**)
+**Severity:** MAJOR
+**Area:** Agentic RAG / harness and evaluation contract
+**Affected code:** `_summarize_evidence`, `_select_tool`, `_fetch_by_source`, `agent_classify_v3`, `agent_decompose_v2`, `agent_evidence_sufficiency_v2`, `specialized_tool_gold.jsonl`
+
+**Problem**
+Local specialized tools sat at 0.0 reachability, which read as a weak model. Rewriting the prompts alone left them at 0.0.
+
+**Diagnosis**
+Recording validated arguments and inspecting every row found contract defects no prompt wording could fix:
+1. On a Windows-ingested corpus, stored sources contain backslashes. A correct copy of `data\knowledge_base\...` is invalid JSON (`\k` is not an escape), so the decision could never parse.
+2. After a retry, the harness replaced the question with the reformulated search string, so tool selection saw "postgres troubleshooting wal" rather than a request for two sections of one runbook.
+3. Tool selection could not see which tools had already run, and an identical search was dispatched again.
+4. The gold set required a direct `get_document` from a document title, which the prompt correctly forbids.
+5. Classification equated "agent" with "multi-hop", and decomposition split one-shot requests into up to four invented subquestions.
+
+**Fix applied**
+Evidence shows forward slashes and a fetch miss retries the other separator, under the same authorization. Selection prompts now show the original question and tool history. An identical call is never dispatched twice: a local tool gets one corrected proposal, and a repeated case read ends the loop. Only templates declaring `tool_history` get this, so historical configs keep their recorded behavior. Gold rows naming a title now search first, with expected answers unchanged. The eval records validated tool arguments through a field allowlist.
+
+**Result of fix applied**
+Same 14 rows on `qwen2.5:3b`, old prompts on the same code versus `experiment_041`: keyword answer correctness 0.228 to 0.511; fixed low-confidence answers 7 to 2; `max_steps` terminations 9 to 3; mean tool calls 1.71 to 1.21; `get_customer_case` reachability 0.5 to 1.0; MCP grounding 0.8 to 1.0; `get_related_context` 0.0 to 0.5. Routing was already 1.0. Argument errors, denial leakage and wrong mutations stayed at 0. Citation support reads 1.0 to 0.2, because the old prompts mostly refused and the metric then scored 3 answers rather than 5. The answered rows cite an extra irrelevant source, which remains a real gap.
+
+**Interview takeaway**
+"The model never picks the tool" was partly the harness making the tool impossible to pick. Record the arguments and read the rows before blaming the model.
 
 ---
 
@@ -2764,6 +2837,7 @@ The following issues are resolved, with a concrete fix and regression test cited
 | EVAL-013 | Evaluation | A graph-strategy comparison could silently relabel every row as vector-only |
 | EVAL-015 | Evaluation | No experiment record captured which git commit produced it |
 | EVAL-016 | Evaluation | The context benchmark could not report a prompt that overflowed with no evidence |
+| EVAL-017 | MODERATE | FIXED | Evaluation | The experiment record named a tool prompt that never ran |
 | OBS-001 | Observability | `/health` depended on a heavy pipeline dependency through a graph check |
 | OBS-002 | Observability | Shared mutable LLM token counters could leak across concurrent requests |
 | OPS-001 | Deployment | A 504 at the frontend came from the host running out of memory |
@@ -2844,6 +2918,8 @@ Performed after restructuring:
 **Postscript (pre-experiment audit, ingestion/graph gaps):** an adversarial audit of the ingestion and graph-consistency paths found three new ingestion-consistency gaps (BUG-015, BUG-016, BUG-017) and two graph-authorization gaps (GRAPH-008, GRAPH-009), all deliberately left OPEN rather than fixed in this pass, each with its own "why not fixed yet" note on its entry; they are structural changes, not local patches. These are not folded into this Report's original counts above. Separately, this pass's own cross-check of section 10's table against the full topical entries found three pre-existing table rows (MULTI-001, MULTI-002, MULTI-003) with no corresponding topical-section entry; all three were real, already-fixed (or, for MULTI-002, already-accepted) findings already described elsewhere in the project (CLAUDE.md, source docstrings), so full entries were added rather than leaving the table's own citation dangling.
 
 **Postscript (2026-10-29 pre-experiment audits):** two independent audits of `main` at `64321ed` (Codex: `.claude-prompts/35.9-...`, Claude: `35.10-...`; both untracked) were reconciled against the code before any fix. Fixed: **CTX-014**, **CTX-015**, **CTX-016**, **CTX-017**, **SEC-018**, **SEC-019**, **GRAPH-008**, **GRAPH-010**, plus follow-ups folded into existing stories (**CTX-007** negation guard, **CTX-011** telemetry clamp, **EVAL-015** Context Engineering report). New accepted limitations: **GRAPH-011**, **RET-006**, **OPS-016**. New open items on experiment branches only: **DIST-006**, **OPS-015**. Re-confirmed still open, not fixed here: **BUG-015**/**BUG-016**/**BUG-017** (structural ingestion-consistency changes; avoid graph-projection failures and image-only edits on any benchmark corpus until they land) and **GRAPH-009** (dead code). Two test-coverage gaps were closed without separate entries: `GraphRetriever.search`'s Neo4j-outage degradation (`tests/unit/test_graph_retrieval_degradation.py`) and an MCP remote-tool transport failure (`test_remote_tool_connection_failure_is_recorded_not_raised`). The Codex report's cited repro script, `experiments/reports/audit_repro_2026_10_29.py`, was never committed and does not exist.
+
+**Follow-up (2026-11-02, after the 36.2 agent contracts):** **AGT-005** fixed with live evidence and **AGT-006** added. **AGT-004** stays in progress, with `get_document` and `get_latest_document` still unreached on `qwen2.5:3b`. **OPS-019** is open because its cause is not proven.
 
 **Follow-up (2026-10-29, after the audit PRs):** **GRAPH-009**, **OBS-001**, **BUG-015**, **BUG-016** and **BUG-017** fixed, which also closes the graph-only-reset residual of **GRAPH-004**/**PROD-003**; **DIST-006** fixed on `experiment/distributed-state`; **OPS-015** reclassified as an accepted limitation (a deliberate Helm demo). Still open by nature: **AGT-004**/**AGT-005** (model tool-selection behavior, needs live evaluation runs, not a code change) and **OPS-016** (a merge-strategy decision).
 
