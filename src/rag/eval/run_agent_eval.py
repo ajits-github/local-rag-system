@@ -26,8 +26,8 @@ from typing import Any
 import anyio
 
 from rag.agent.graph import AgentRunResult, run_agent
-from rag.agent.state import AgentState
-from rag.agent.tool_schemas import REMOTE_MCP_TOOL_NAMES
+from rag.agent.state import AgentState, ToolCallRecord
+from rag.agent.tool_schemas import REMOTE_MCP_TOOL_NAMES, TOOL_ARG_MODELS
 from rag.config import AppConfig, load_config
 from rag.embedders.base import Embedder
 from rag.eval.answer_quality import KeywordOverlapScorer
@@ -35,13 +35,22 @@ from rag.eval.corpus_lineage import compute_corpus_lineage
 from rag.eval.gold_schema import GoldExample, load_gold_jsonl, source_matches_relevant
 from rag.eval.run_eval import _build_authorization_context
 from rag.eval.run_metadata import capture_git_metadata
-from rag.factory import build_embedder, build_llm, build_vectorstore
+from rag.factory import build_embedder, build_graph_client, build_llm, build_vectorstore
 from rag.generation.base import LLM
+from rag.graph.client import Neo4jClient
+from rag.graph.retrieval import GraphRetriever
 from rag.retrieval.pipeline import RetrievalPipeline, source_dict
 from rag.vectorstore.base import VectorStore
 
 _BOUND_TERMINATIONS = {"max_steps", "max_retrieval_attempts", "max_tool_calls"}
 _answer_quality_scorer = KeywordOverlapScorer()
+# Fixed labels rag.agent.graph._execute_tool records; any other error text is free-form.
+_BOUNDED_TOOL_ERRORS = {
+    "invalid_arguments",
+    "mcp_client_disabled",
+    "business_actions_disabled",
+    "graph_disabled",
+}
 
 # AgentState.termination_reason's fixed Literal vocabulary (rag.agent.state).
 # Hardcoded rather than introspected, so a new termination reason needs an
@@ -225,6 +234,33 @@ def _render_case_action_outcome(evidence_text: str) -> str | None:
     return None
 
 
+def _safe_tool_args(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Keep only the tool's declared LLM-writable fields, so no credential can reach a report."""
+    allowed = TOOL_ARG_MODELS[tool_name].model_fields
+    return {key: value for key, value in args.items() if key in allowed}
+
+
+def _error_category(error: str | None) -> str | None:
+    """Map a tool error to a bounded label, since free-form error text can echo tool input."""
+    if error is None:
+        return None
+    return error if error in _BOUNDED_TOOL_ERRORS else "execution_error"
+
+
+def _tool_call_record(record: ToolCallRecord, evidence_chunk_ids: set[str]) -> dict[str, Any]:
+    """Render one tool call for the eval report, using only safe fields."""
+    rendered: dict[str, Any] = {
+        "tool_name": record.tool_name,
+        "tool_args": _safe_tool_args(record.tool_name, record.args),
+        "success": record.success,
+        "result_count": record.result_count,
+        "error_category": _error_category(record.error),
+    }
+    if record.tool_name == "get_related_context":
+        rendered["chunk_id_from_evidence"] = record.args.get("chunk_id") in evidence_chunk_ids
+    return rendered
+
+
 def _record_for_example(
     example: GoldExample,
     *,
@@ -236,6 +272,8 @@ def _record_for_example(
     dataset_id: str,
     include_evidence: bool = False,
     mcp_app: Any | None = None,
+    graph_retriever: GraphRetriever | None = None,
+    graph_client: Neo4jClient | None = None,
 ) -> dict[str, Any]:
     """Run one gold example through the agent graph and capture a scoring-ready record.
 
@@ -261,6 +299,8 @@ def _record_for_example(
         llm=llm,
         config=config,
         mcp_app=mcp_app,
+        graph_retriever=graph_retriever,
+        graph_client=graph_client,
     )
     final_state = result.state
     tool_names = [record.tool_name for record in final_state.tool_call_history]
@@ -274,6 +314,7 @@ def _record_for_example(
     mcp_evidence_texts = [
         r.chunk.content for r in final_state.retrieved_evidence if r.origin == "mcp_remote"
     ]
+    evidence_chunk_ids = {r.chunk.metadata.chunk_id for r in final_state.retrieved_evidence}
     record = {
         "question": example.question,
         "agentic_category": example.agentic_category,
@@ -283,9 +324,13 @@ def _record_for_example(
         "steps": final_state.step_count,
         "tool_calls": tool_names,
         "tool_call_records": [
-            {"tool_name": r.tool_name, "success": r.success, "result_count": r.result_count}
-            for r in final_state.tool_call_history
+            _tool_call_record(r, evidence_chunk_ids) for r in final_state.tool_call_history
         ],
+        "subquestions": final_state.subquestions,
+        "evidence_sufficient": final_state.evidence_sufficient,
+        "evidence_origins": sorted({r.origin for r in final_state.retrieved_evidence}),
+        "tool_selection_parse_failures": final_state.tool_selection_parse_failures,
+        "repeated_tool_proposals": final_state.repeated_tool_proposals,
         "retrieval_attempts": final_state.retrieval_attempts,
         "final_answer": final_state.final_answer,
         "citations": citation_sources,
@@ -300,6 +345,7 @@ def _record_for_example(
         "llm_call_count": result.llm_call_count,
         "node_token_usage": result.node_token_usage,
         "expected_tool_sequence": example.expected_tool_sequence,
+        "expected_tool_args": example.expected_tool_args,
         "expects_insufficient_evidence_retry": example.expects_insufficient_evidence_retry,
         "expects_max_step_termination": example.expects_max_step_termination,
         "tool_not_needed": example.tool_not_needed,
@@ -697,6 +743,62 @@ def _specialized_tool_reachability_metrics(records: list[dict[str, Any]]) -> dic
     return {"per_tool_reachability": by_tool}
 
 
+def _argument_matches(name: str, actual: Any, expected: str | list[str]) -> bool:
+    """Compare one tool argument with its gold value, by path suffix for `source`."""
+    options = expected if isinstance(expected, list) else [expected]
+    if name == "source":
+        return isinstance(actual, str) and any(source_matches_relevant(actual, o) for o in options)
+    return actual in options
+
+
+def _tool_argument_diagnostics(records: list[dict[str, Any]]) -> dict[str, Any]:
+    """Separate a wrong argument from a wrong tool, plus related selection failure counts."""
+    correct = wrong_argument = tool_not_called = 0
+    for r in records:
+        for tool_name, expected in r.get("expected_tool_args", {}).items():
+            calls = [c for c in r["tool_call_records"] if c["tool_name"] == tool_name]
+            if not calls:
+                tool_not_called += 1
+            elif any(
+                all(_argument_matches(k, c["tool_args"].get(k), v) for k, v in expected.items())
+                for c in calls
+            ):
+                correct += 1
+            else:
+                wrong_argument += 1
+    all_calls = [c for r in records for c in r["tool_call_records"]]
+    related = [c for c in all_calls if c["tool_name"] == "get_related_context"]
+    mcp_rows = [r for r in records if r.get("requires_mcp_business_tool")]
+    executed = [
+        r
+        for r in records
+        if r.get("expected_case_action_outcome") != "executed"
+        and _render_case_action_outcome(" ".join(r.get("mcp_evidence_texts", []))) == "executed"
+    ]
+    return {
+        "tool_argument_diagnostics": {
+            "correct_tool_correct_args": correct,
+            "correct_tool_wrong_args": wrong_argument,
+            "expected_tool_not_called": tool_not_called,
+            "argument_validation_errors": sum(
+                1 for c in all_calls if c["error_category"] == "invalid_arguments"
+            ),
+            "tool_selection_parse_failures": sum(
+                r.get("tool_selection_parse_failures", 0) for r in records
+            ),
+            "repeated_tool_proposals": sum(r.get("repeated_tool_proposals", 0) for r in records),
+            "related_context_calls": len(related),
+            "related_context_chunk_id_from_evidence": sum(
+                1 for c in related if c.get("chunk_id_from_evidence")
+            ),
+            "kb_search_on_case_rows": sum(
+                1 for r in mcp_rows if "search_knowledge_base" in r["tool_calls"]
+            ),
+            "wrong_mutation_executions": len(executed),
+        }
+    }
+
+
 def _mcp_authorization_metrics(records: list[dict[str, Any]]) -> dict[str, Any]:
     """MCP-business-tool-specific authorization/grounding signals.
 
@@ -807,6 +909,8 @@ def evaluate_agent(
     verbose: bool = False,
     include_evidence: bool = False,
     mcp_app: Any | None = None,
+    graph_retriever: GraphRetriever | None = None,
+    graph_client: Neo4jClient | None = None,
 ) -> dict[str, Any]:
     """Run every example through the agent graph and compute agent-specific metrics.
 
@@ -838,6 +942,9 @@ def evaluate_agent(
         lifespan must already be entered by the caller (see `run()`);
         `None` when `mcp.client.enabled=False`, matching every other
         caller of `run_agent()`.
+    graph_retriever, graph_client : GraphRetriever | None, Neo4jClient | None, optional
+        Forwarded to `run_agent()` so graph tools are reachable when
+        `config.graph.enabled=True`. A graph tool fails closed without them.
 
     Returns
     -------
@@ -856,6 +963,8 @@ def evaluate_agent(
             dataset_id=dataset_id,
             include_evidence=include_evidence,
             mcp_app=mcp_app,
+            graph_retriever=graph_retriever,
+            graph_client=graph_client,
         )
         for example in examples
     ]
@@ -871,6 +980,7 @@ def evaluate_agent(
         **_tool_metrics(records),
         **_tool_selection_coverage_metrics(records),
         **_specialized_tool_reachability_metrics(records),
+        **_tool_argument_diagnostics(records),
         **_mcp_authorization_metrics(records),
         **_case_action_outcome_metrics(records),
         **_evidence_and_retry_metrics(records),
@@ -913,6 +1023,10 @@ def run(
     llm = build_llm(config)
     pipeline = RetrievalPipeline(config, vectorstore=vectorstore, embedder=embedder, llm=llm)
     examples = load_gold_jsonl(gold_path)
+    graph_client = build_graph_client(config)
+    graph_retriever = (
+        GraphRetriever(config, graph_client, llm=llm) if graph_client is not None else None
+    )
 
     def _run_eval(mcp_app: Any | None = None) -> dict[str, Any]:
         return evaluate_agent(
@@ -925,6 +1039,8 @@ def run(
             config,
             verbose=True,
             mcp_app=mcp_app,
+            graph_retriever=graph_retriever,
+            graph_client=graph_client,
         )
 
     if config.mcp.client.enabled:

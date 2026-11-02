@@ -106,6 +106,9 @@ class GoldExample(BaseModel):
         Whether a tool's output (not the original query) carries a
         prompt-injection payload. Tests that tool output stays evidence,
         never becomes an instruction.
+    expected_tool_args : dict[str, dict[str, str | list[str]]]
+        Per tool name, the argument values a correct call uses. A list means
+        any of its values. `source` values match by path suffix, others exactly.
     expected_tool_sequence : list[str]
         The expected ordered tool names for `tool_selection_accuracy`
         scoring.
@@ -268,6 +271,7 @@ class GoldExample(BaseModel):
     expects_max_step_termination: bool = False
     adversarial_tool_instruction: bool = False
     expected_tool_sequence: list[str] = Field(default_factory=list)
+    expected_tool_args: dict[str, dict[str, str | list[str]]] = Field(default_factory=dict)
     agentic_category: str | None = None
     agentic_rationale: str | None = None
     expected_subquestions: list[str] = Field(default_factory=list)
