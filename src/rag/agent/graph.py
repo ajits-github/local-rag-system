@@ -159,29 +159,34 @@ def _load_template(path: str) -> PromptTemplate:
     return load_prompt_template(path)
 
 
-def _load_templates(config: AppConfig) -> dict[str, PromptTemplate]:
-    """Load the five agent prompt templates, choosing the `tool_select` variant from config.
+def tool_select_prompt_path(config: AppConfig) -> str:
+    """Return the tool-selection template path these toggles actually use.
 
     Each combination of MCP client, business actions, and graph has its own
     static template, so the model is offered exactly the enabled tools.
     """
     agent_cfg = config.agent
     if config.mcp.client.enabled and config.mcp.business_actions.enabled:
-        tool_select_path = (
+        return (
             agent_cfg.tool_select_mcp_actions_graph_prompt_path
             if config.graph.enabled
             else agent_cfg.tool_select_mcp_actions_prompt_path
         )
-    elif config.mcp.client.enabled:
-        tool_select_path = (
+    if config.mcp.client.enabled:
+        return (
             agent_cfg.tool_select_mcp_graph_prompt_path
             if config.graph.enabled
             else agent_cfg.tool_select_mcp_prompt_path
         )
-    elif config.graph.enabled:
-        tool_select_path = agent_cfg.tool_select_graph_prompt_path
-    else:
-        tool_select_path = agent_cfg.tool_select_prompt_path
+    if config.graph.enabled:
+        return agent_cfg.tool_select_graph_prompt_path
+    return agent_cfg.tool_select_prompt_path
+
+
+def _load_templates(config: AppConfig) -> dict[str, PromptTemplate]:
+    """Load the five agent prompt templates, choosing the `tool_select` variant from config."""
+    agent_cfg = config.agent
+    tool_select_path = tool_select_prompt_path(config)
     return {
         "classify": _load_template(
             str(config.agent_prompt_template_path(agent_cfg.classify_prompt_path))
