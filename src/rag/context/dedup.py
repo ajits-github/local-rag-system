@@ -28,21 +28,14 @@ expected to hand candidates in priority order, so "first" already means
 "best" for ties) and records the discarded item's `source_id` onto the
 kept item's `merged_from`, never dropping provenance silently.
 
-Never merges two items just because they are about the same *topic*;
-only byte-identical or near-byte-identical text triggers a merge, so two
-genuinely different facts about the same entity (e.g. "timeout = 30s" vs
-"timeout = 60s") are never accidentally collapsed into one. The exact-
-content-hash pass can never hit this case by construction (byte-identical
-text has byte-identical numbers); the near-duplicate pass explicitly
-refuses to merge two otherwise-near-identical passages whose *numbers*
-differ (CTX-007), since a near-duplicate paragraph restating an
-old value alongside a current, authoritative one is exactly the
-"different-but-highly-overlapping" case this pass would otherwise merge,
-silently discarding whichever value lost the merge regardless of which
-one was actually current. The same pass also refuses a merge when the
-two texts differ in negation or polarity words ("allowed" vs "not
-allowed", "enabled" vs "disabled"), which change meaning without changing
-any number.
+Never merges two items just because they are about the same *topic*. High
+overlap alone proves nothing: "retention is 30 days" and "retention is 30
+hours" share almost every word of a long paragraph, and merging keeps whichever
+came first regardless of which is current. So the near-duplicate pass drops an
+item only when it adds nothing: its words must appear, in order, within the
+kept item's, and both must state the same numbers and negation or polarity
+words. That also refuses swapped values, changed names and moved negation, at
+the cost of keeping some harmless rewordings, which packing can still drop.
 
 Both the exact-content-hash and near-duplicate passes additionally
 require matching `tenant_id` before merging (CTX-007): a single
@@ -104,6 +97,17 @@ def _polarity(text: str) -> set[str]:
     return words & _POLARITY_WORDS
 
 
+def _words(text: str) -> list[str]:
+    """Lowercased word tokens of `text`, in order."""
+    return _WORD_RE.findall(text.lower())
+
+
+def _adds_nothing(candidate: list[str], kept: list[str]) -> bool:
+    """Whether `candidate` is an in-order subsequence of `kept`, so dropping it loses no words."""
+    remaining = iter(kept)
+    return all(word in remaining for word in candidate)
+
+
 def _identity_key(item: ContextItem) -> tuple[str, str | None, str | None, str]:
     """Key for the exact-identity pass: bucket, tenant and dataset scope the id."""
     return (bucket_for_item(item), item.tenant_id, item.dataset_id, item.source_id)
@@ -127,7 +131,7 @@ def _tenant_matches(a: ContextItem, b: ContextItem) -> bool:
 
 def _shingles(text: str, size: int = 3) -> set[tuple[str, ...]]:
     """Word-level shingles (overlapping n-grams) of `text`, lowercased, for Jaccard overlap."""
-    words = _WORD_RE.findall(text.lower())
+    words = _words(text)
     if len(words) < size:
         return {tuple(words)} if words else set()
     return {tuple(words[i : i + size]) for i in range(len(words) - size + 1)}
@@ -208,6 +212,7 @@ def deduplicate_items(
         item_shingles = _shingles(item.content)
         item_numbers = _numbers(item.content)
         item_polarity = _polarity(item.content)
+        item_words = _words(item.content)
         merged_into_existing = False
         for idx, existing in enumerate(kept):
             if existing.source_type != item.source_type:
@@ -219,12 +224,11 @@ def deduplicate_items(
             if (
                 _numbers(existing.content) != item_numbers
                 or _polarity(existing.content) != item_polarity
+                or not _adds_nothing(item_words, _words(existing.content))
             ):
-                # High text overlap but a different number, or a negation/
-                # polarity change: likely a conflicting or updated fact
-                # (e.g. "timeout = 30s" vs "timeout = 60s", "allowed" vs
-                # "not allowed"), not a true duplicate. Never merge; let
-                # freshness/authority ordering decide which one to prioritize.
+                # High text overlap but possibly a conflicting or updated fact.
+                # Never merge; let freshness/authority ordering decide which
+                # one to prioritize.
                 continue
             kept[idx] = existing.model_copy(
                 update={"merged_from": [*existing.merged_from, item.source_id]}
