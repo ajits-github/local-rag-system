@@ -86,8 +86,13 @@ class GraphExtractionStats(BaseModel):
     Attributes
     ----------
     llm_extraction_errors : int
-        Chunks whose LLM call or parsing failed. Failures are counted here
-        and never raised, so graph extraction cannot fail the ingestion.
+        Chunks whose LLM call or parsing failed, plus relationships that
+        failed to write. Failures are counted here and never raised, so
+        graph extraction cannot fail the ingestion.
+    complete : bool
+        Whether the projection finished. `False` after a Neo4j or LLM
+        failure, which a retry can repair. An unparsable or invalid model
+        output stays `True`: retrying the same chunk would fail the same way.
     """
 
     deterministic_facts_written: int = 0
@@ -95,6 +100,7 @@ class GraphExtractionStats(BaseModel):
     llm_relationships_written: int = 0
     llm_relationships_discarded_low_confidence: int = 0
     llm_extraction_errors: int = 0
+    complete: bool = True
 
 
 _JSON_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
@@ -124,10 +130,10 @@ def _parse_llm_extraction(raw: str) -> LLMExtractionResult:
         raise ValueError(f"LLM extraction response failed schema validation: {exc}") from exc
 
 
-def extract_llm_facts(llm: LLM, template: PromptTemplate, chunk_text: str) -> LLMExtractionResult:
+def extract_llm_facts(
+    llm: LLM, template: PromptTemplate, chunk_text: str
+) -> LLMExtractionResult | None:
     """Run one LLM extraction call over `chunk_text`. Makes a single attempt, with no retry.
-
-    A malformed response is discarded and an empty result is returned.
 
     Parameters
     ----------
@@ -140,20 +146,26 @@ def extract_llm_facts(llm: LLM, template: PromptTemplate, chunk_text: str) -> LL
 
     Returns
     -------
-    LLMExtractionResult
-        The validated result, or an empty one if the call/parse failed.
+    LLMExtractionResult | None
+        The validated result, or `None` if the response was malformed.
+
+    Raises
+    ------
+    Exception
+        Whatever `llm.generate` raises; a failed call is retryable, unlike
+        a malformed response.
     """
     system, user = template.render(
         entity_types=", ".join(sorted(ENTITY_TYPES)),
         relationship_types=", ".join(sorted(RELATIONSHIP_TYPES)),
         chunk_text=chunk_text,
     )
+    raw = llm.generate(system, user)
     try:
-        raw = llm.generate(system, user)
         return _parse_llm_extraction(raw)
-    except Exception:
-        logger.warning("LLM graph extraction failed for one chunk", exc_info=True)
-        return LLMExtractionResult()
+    except ValueError:
+        logger.warning("Discarded a malformed LLM graph extraction response", exc_info=True)
+        return None
 
 
 def extract_and_write_for_document(
@@ -219,6 +231,7 @@ def extract_and_write_for_document(
     stats = GraphExtractionStats()
     if not client.health_check():
         logger.warning("Graph extraction skipped for %s: Neo4j unavailable", document_id)
+        stats.complete = False
         return stats
 
     try:
@@ -256,6 +269,7 @@ def extract_and_write_for_document(
             stats.deterministic_facts_written += 1
     except GraphUnavailableError:
         logger.warning("Deterministic graph extraction failed for %s", document_id, exc_info=True)
+        stats.complete = False
         return stats
 
     extraction_cfg = config.graph.extraction
@@ -266,6 +280,11 @@ def extract_and_write_for_document(
         try:
             result = extract_llm_facts(llm, template, chunk.content)
         except Exception:
+            logger.warning("LLM graph extraction failed for %s", document_id, exc_info=True)
+            stats.llm_extraction_errors += 1
+            stats.complete = False
+            continue
+        if result is None:
             stats.llm_extraction_errors += 1
             continue
         stats.llm_chunks_processed += 1
@@ -300,9 +319,16 @@ def extract_and_write_for_document(
                 )
                 accepted += 1
                 stats.llm_relationships_written += 1
+            except ValueError:
+                # Invalid model output (schema violation); a retry would fail the same way.
+                logger.warning(
+                    "Discarded an invalid extracted relationship for %s", document_id, exc_info=True
+                )
+                stats.llm_extraction_errors += 1
             except Exception:
                 logger.warning(
                     "Failed to write extracted relationship for %s", document_id, exc_info=True
                 )
                 stats.llm_extraction_errors += 1
+                stats.complete = False
     return stats

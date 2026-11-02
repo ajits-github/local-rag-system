@@ -90,12 +90,21 @@ class _FakeTemplate:
         return "system", "user"
 
 
-def test_extract_llm_facts_returns_empty_result_on_malformed_response_never_raises():
-    """A malformed model response degrades to an empty result, not an exception."""
+def test_extract_llm_facts_returns_none_on_malformed_response():
+    """A malformed model response is discarded, not raised."""
     llm = _FixedLLM("not json at all")
-    result = extract_llm_facts(llm, _FakeTemplate(), "some chunk text")
-    assert result.entities == []
-    assert result.relationships == []
+    assert extract_llm_facts(llm, _FakeTemplate(), "some chunk text") is None
+
+
+def test_extract_llm_facts_propagates_a_failed_llm_call():
+    """A failed call is retryable, so it must stay distinguishable from a malformed response."""
+
+    class _DownLLM(_FixedLLM):
+        def generate(self, system: str, user: str) -> str:
+            raise ConnectionError("Ollama unavailable")
+
+    with pytest.raises(ConnectionError):
+        extract_llm_facts(_DownLLM(""), _FakeTemplate(), "some chunk text")
 
 
 def test_extract_llm_facts_returns_parsed_result_on_valid_response():

@@ -1,9 +1,9 @@
 """Durable graph-projection retry (BUG-015).
 
-A graph write that failed after the vector commit used to be permanent: the
-unchanged-checksum shortcut returned before graph extraction on every later
-re-ingest. `documents.graph_checksum` now records the last successful
-projection, and an unchanged re-ingest repairs a missing or stale one.
+`documents.graph_checksum` records the last complete projection, and an
+unchanged re-ingest repairs a missing or stale one. These tests keep the real
+`extract_and_write_for_document` and fake only the external services, because
+the real extractor returns normally on an outage rather than raising.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from rag.config import load_config
-from rag.ingestion import pipeline as pipeline_module
+from rag.graph.client import GraphUnavailableError
 from rag.ingestion.pipeline import IngestionPipeline
 from rag.schemas import Chunk
 
@@ -62,82 +62,164 @@ class _Embedder:
 
 
 class _GraphClient:
-    """Stand-in `Neo4jClient`; extraction itself is replaced by `_Extraction`."""
-
-    def run_write(self, *args, **kwargs):
-        return {}
-
-
-class _Extraction:
-    """Replaces `extract_and_write_for_document`; fails while `neo4j_down` is set."""
+    """Fake `Neo4jClient`; the real writer and extractor run against it."""
 
     def __init__(self) -> None:
-        self.neo4j_down = False
-        self.calls: list[int] = []
+        self.healthy = True
+        self.fail_write_matching: str | None = None
+        self.writes: list[str] = []
 
-    def __call__(self, *args, chunks, **kwargs):
-        self.calls.append(len(chunks))
-        if self.neo4j_down:
-            raise ConnectionError("Neo4j unavailable")
-        return None
+    def health_check(self) -> bool:
+        return self.healthy
+
+    def run_write(self, cypher, params=None):
+        if self.fail_write_matching and self.fail_write_matching in cypher:
+            raise GraphUnavailableError("connection lost mid-write")
+        self.writes.append(cypher)
+        return {"relationships_deleted": 0, "nodes_deleted": 0}
+
+    def projection_runs(self) -> int:
+        return sum("n.first_seen_document_id = $document_id" in c for c in self.writes)
 
 
-def _pipeline(monkeypatch):
+class _LLM:
+    """Scripted extraction LLM: raises while `down`, else returns `response`."""
+
+    def __init__(self, response: str) -> None:
+        self.down = False
+        self.response = response
+
+    def generate(self, system, user):
+        if self.down:
+            raise ConnectionError("Ollama unavailable")
+        return self.response
+
+
+class _Template:
+    def render(self, **_):
+        return "system", "user"
+
+
+_RELATIONSHIP_JSON = (
+    '{"entities": [], "relationships": [{"subject_type": "Service", '
+    '"subject_name": "Document Service", "relationship_type": "DEPENDS_ON", '
+    '"object_type": "Database", "object_name": "PostgreSQL", "confidence": 0.9}]}'
+)
+
+
+def _pipeline(llm: _LLM | None = None):
     config = load_config().model_copy(deep=True)
     config.graph.enabled = True
     config.graph.extraction.enabled = True
-    config.graph.extraction.llm_extraction_enabled = False
-    extraction = _Extraction()
-    monkeypatch.setattr(pipeline_module, "extract_and_write_for_document", extraction)
+    config.graph.extraction.llm_extraction_enabled = llm is not None
     store = _VectorStore()
+    client = _GraphClient()
     pipeline = IngestionPipeline(
-        config, vectorstore=store, embedder=_Embedder(), graph_client=_GraphClient()
+        config, vectorstore=store, embedder=_Embedder(), graph_client=client
     )
-    return pipeline, store, extraction
+    if llm is not None:
+        pipeline._graph_llm = llm
+        pipeline._graph_extraction_template = _Template()
+    return pipeline, store, client
 
 
-def test_failed_graph_write_is_retried_on_the_next_unchanged_ingest(tmp_path: Path, monkeypatch):
-    """Neo4j down at first ingest; the identical re-ingest repairs the projection."""
+def _doc(tmp_path: Path) -> Path:
     doc = tmp_path / "doc.md"
     doc.write_text("Document Service depends on PostgreSQL.", encoding="utf-8")
-    pipeline, store, extraction = _pipeline(monkeypatch)
+    return doc
 
-    extraction.neo4j_down = True
+
+def _assert_incomplete_then_repaired(pipeline, store, client, doc, restore) -> None:
     first = pipeline.ingest_file(doc, "ds")
     assert first["changed"] is True
     assert store.get_graph_checksum(first["document_id"]) is None
 
-    extraction.neo4j_down = False
+    runs_before = client.projection_runs()
+    restore()
     second = pipeline.ingest_file(doc, "ds")
     assert second["changed"] is False
     assert second["chunks_written"] == 0
-    assert len(extraction.calls) == 2
-    assert extraction.calls[1] > 0  # repaired from the stored chunks
+    assert client.projection_runs() == runs_before + 1
     assert store.get_graph_checksum(first["document_id"]) is not None
 
 
-def test_current_projection_is_not_rebuilt(tmp_path: Path, monkeypatch):
+def test_failed_health_check_is_retried_on_the_next_unchanged_ingest(tmp_path: Path):
+    """Neo4j down at first ingest: nothing is certified, and the identical re-ingest repairs it."""
+    pipeline, store, client = _pipeline()
+    client.healthy = False
+
+    def restore():
+        client.healthy = True
+
+    _assert_incomplete_then_repaired(pipeline, store, client, _doc(tmp_path), restore)
+
+
+def test_write_lost_during_deterministic_facts_is_retried(tmp_path: Path):
+    """A connection lost after the health check leaves the projection uncertified."""
+    pipeline, store, client = _pipeline()
+    client.fail_write_matching = "MERGE (d:Document"
+
+    def restore():
+        client.fail_write_matching = None
+
+    _assert_incomplete_then_repaired(pipeline, store, client, _doc(tmp_path), restore)
+
+
+def test_failed_relationship_write_is_retried(tmp_path: Path):
+    """Deterministic facts landing is not enough; a lost LLM relationship also blocks."""
+    pipeline, store, client = _pipeline(_LLM(_RELATIONSHIP_JSON))
+    client.fail_write_matching = "DEPENDS_ON"
+
+    def restore():
+        client.fail_write_matching = None
+
+    _assert_incomplete_then_repaired(pipeline, store, client, _doc(tmp_path), restore)
+
+
+def test_llm_outage_is_retried(tmp_path: Path):
+    """An LLM outage must not certify a document as fully projected."""
+    llm = _LLM(_RELATIONSHIP_JSON)
+    llm.down = True
+    pipeline, store, client = _pipeline(llm)
+
+    def restore():
+        llm.down = False
+
+    _assert_incomplete_then_repaired(pipeline, store, client, _doc(tmp_path), restore)
+
+
+def test_malformed_llm_output_does_not_block_the_projection(tmp_path: Path):
+    """A chunk the model cannot parse would fail every retry, so it is not re-extracted forever."""
+    pipeline, store, client = _pipeline(_LLM("not json"))
+    doc = _doc(tmp_path)
+
+    result = pipeline.ingest_file(doc, "ds")
+    assert store.get_graph_checksum(result["document_id"]) is not None
+
+    runs = client.projection_runs()
+    pipeline.ingest_file(doc, "ds")
+    assert client.projection_runs() == runs
+
+
+def test_current_projection_is_not_rebuilt(tmp_path: Path):
     """Once the graph checksum matches, an unchanged re-ingest does no graph work."""
-    doc = tmp_path / "doc.md"
-    doc.write_text("Document Service depends on PostgreSQL.", encoding="utf-8")
-    pipeline, _, extraction = _pipeline(monkeypatch)
+    pipeline, _, client = _pipeline()
+    doc = _doc(tmp_path)
 
     pipeline.ingest_file(doc, "ds")
     pipeline.ingest_file(doc, "ds")
 
-    assert len(extraction.calls) == 1
+    assert client.projection_runs() == 1
 
 
-def test_graph_only_reset_is_rebuilt_on_the_next_ingest(tmp_path: Path, monkeypatch):
+def test_graph_only_reset_is_rebuilt_on_the_next_ingest(tmp_path: Path):
     """`reset_graph` clears the recorded projection, so re-ingest rebuilds it (GRAPH-004)."""
-    doc = tmp_path / "doc.md"
-    doc.write_text("Document Service depends on PostgreSQL.", encoding="utf-8")
-    pipeline, _, extraction = _pipeline(monkeypatch)
-    monkeypatch.setattr(pipeline._graph_writer, "delete_facts_by_dataset", lambda ds: {})
+    pipeline, _, client = _pipeline()
+    doc = _doc(tmp_path)
 
     pipeline.ingest_file(doc, "ds")
     pipeline.reset_graph("ds")
     result = pipeline.ingest_file(doc, "ds")
 
     assert result["changed"] is False
-    assert len(extraction.calls) == 2
+    assert client.projection_runs() == 2
