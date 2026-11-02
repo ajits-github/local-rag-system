@@ -560,10 +560,10 @@ HTTP request
   adjustment (architectural role-separation isn't confounded with a
   prompt-wording change in the same A/B). A v4 evaluation is a separate,
   optional follow-up.
-- **Provider-egress policy** (`src/rag/eval/egress_policy.py`): gates the
-  **one** confirmed hosted-egress point in this codebase,
-  `run_ragas_eval.py`'s context-building step (`config.judge.provider` in
-  `{openai, anthropic}`). Production `answer()` never calls a hosted LLM
+- **Provider-egress policy** (`src/rag/retrieval/egress_policy.py`): gates the
+  two confirmed hosted-egress points in this codebase: the RAGAS context-building
+  steps (`config.judge.provider` in `{openai, anthropic}`) and the hosted reranker
+  call. Production `answer()` never calls a hosted LLM
   (`config.generation.provider` is `Literal["ollama"]` only), so no other
   call site needs this gate. `apply_egress_policy(source, config)` checks,
   in order: `blocked_tenant_ids`; `classification_policy` (a dict mapping
@@ -575,8 +575,9 @@ HTTP request
   so unclassified content fails closed);
   `require_authoritative_trust`; and `block_unredacted_sensitive_fields`
   (a tagged sensitive field not fully covered by `redacted_field_ids` is
-  blocked outright, regardless of why it wasn't redacted). `enabled:
-  false` by default, a true no-op.
+  blocked outright, regardless of why it wasn't redacted). A multi-source
+  graph fact also has its tenant, classification and trust checked per
+  supporting document. `enabled: false` by default, a true no-op.
 - **Input size / DoS limits** (`DoSLimitsConfig`): `max_query_length`
   (2000)/`max_top_k` (20)/`max_filters_bytes` (4096) enforced as explicit
   router-level checks (`request_auth.enforce_dos_limits`, shared by

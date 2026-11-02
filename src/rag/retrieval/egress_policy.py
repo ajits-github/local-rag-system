@@ -26,7 +26,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from rag.config import AppConfig
+from rag.config import AppConfig, EgressPolicyConfig
 
 
 class EgressDecision(BaseModel):
@@ -35,6 +35,24 @@ class EgressDecision(BaseModel):
     allowed: bool
     redacted_context: str
     blocked_reason: str | None = None
+
+
+def _governance_block_reason(governance: dict[str, Any], policy: EgressPolicyConfig) -> str | None:
+    """Return why one source's tenant, classification or trust forbids egress, if any."""
+    tenant_id = governance.get("tenant_id")
+    if tenant_id is not None and tenant_id in policy.blocked_tenant_ids:
+        return "blocked_tenant"
+
+    classification = governance.get("classification")
+    if classification is None:
+        if not policy.allow_unclassified:
+            return "unclassified"
+    elif not policy.classification_policy.get(classification, False):
+        return "classification"
+
+    if policy.require_authoritative_trust and governance.get("trust_level") != "authoritative":
+        return "trust_level"
+    return None
 
 
 def apply_egress_policy(source: dict[str, Any], config: AppConfig) -> EgressDecision:
@@ -59,6 +77,9 @@ def apply_egress_policy(source: dict[str, Any], config: AppConfig) -> EgressDeci
        actually redacted for this particular retrieval) is blocked
        outright, regardless of why it wasn't redacted.
 
+    Checks 1 to 3 also run on each `source["support_governance"]` entry, so a
+    multi-source graph fact egresses only if every document it depends on may.
+
     Parameters
     ----------
     source : dict[str, Any]
@@ -66,7 +87,7 @@ def apply_egress_policy(source: dict[str, Any], config: AppConfig) -> EgressDeci
         (or the dense/bm25/fused lists from `retrieve_attribution`, or a
         pre-rerank candidate rendered via `source_dict()`); reads
         `content`/`tenant_id`/`classification`/`trust_level`/
-        `sensitive_field_ids`/`redacted_field_ids`.
+        `sensitive_field_ids`/`redacted_field_ids`/`support_governance`.
     config : AppConfig
         Application configuration.
 
@@ -82,19 +103,10 @@ def apply_egress_policy(source: dict[str, Any], config: AppConfig) -> EgressDeci
     if not policy.enabled:
         return EgressDecision(allowed=True, redacted_context=content)
 
-    tenant_id = source.get("tenant_id")
-    if tenant_id is not None and tenant_id in policy.blocked_tenant_ids:
-        return EgressDecision(allowed=False, redacted_context="", blocked_reason="blocked_tenant")
-
-    classification = source.get("classification")
-    if classification is None:
-        if not policy.allow_unclassified:
-            return EgressDecision(allowed=False, redacted_context="", blocked_reason="unclassified")
-    elif not policy.classification_policy.get(classification, False):
-        return EgressDecision(allowed=False, redacted_context="", blocked_reason="classification")
-
-    if policy.require_authoritative_trust and source.get("trust_level") != "authoritative":
-        return EgressDecision(allowed=False, redacted_context="", blocked_reason="trust_level")
+    for governance in (source, *(source.get("support_governance") or ())):
+        reason = _governance_block_reason(governance, policy)
+        if reason is not None:
+            return EgressDecision(allowed=False, redacted_context="", blocked_reason=reason)
 
     if policy.block_unredacted_sensitive_fields:
         sensitive_ids = set(source.get("sensitive_field_ids") or [])

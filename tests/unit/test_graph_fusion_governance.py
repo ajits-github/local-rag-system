@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from rag.config import load_config
 from rag.graph.fusion import graph_facts_to_search_results
 from rag.graph.pipeline import GraphRAGPipeline
-from rag.graph.retrieval import GraphEntityRef, GraphFact
+from rag.graph.retrieval import GraphEntityRef, GraphFact, GraphFactSource
 from rag.retrieval.egress_policy import apply_egress_policy
 from rag.retrieval.pipeline import source_dict
 from rag.schemas import ChunkMetadata
@@ -214,3 +214,95 @@ def test_two_facts_from_one_chunk_get_distinct_ids_distinct_from_the_chunk():
 
     assert len(set(ids)) == 2
     assert all(i.startswith("graph:doc-a_3:") for i in ids)
+
+
+class _FakeStoreWithChecksums(_FakeVectorStore):
+    def get_document_checksums_by_id(self, document_ids, dataset_id):
+        return dict.fromkeys(document_ids, "current")
+
+
+def _two_source_decision(first: ChunkMetadata, second: ChunkMetadata, **policy):
+    """Fuse one fact from two documents, then run the result through the real egress gate."""
+    config = load_config().model_copy(deep=True)
+    config.security.egress_policy.enabled = True
+    for name, value in policy.items():
+        setattr(config.security.egress_policy, name, value)
+    store = _FakeStoreWithChecksums({m.document_id: m for m in (first, second)})
+    fact = GraphFact(
+        text="A DEPENDS_ON C",
+        fact_type="path",
+        dataset_id="ds",
+        support_sets=[
+            [
+                GraphFactSource(document_id=m.document_id, document_checksum="current")
+                for m in (first, second)
+            ]
+        ],
+    )
+    [result] = graph_facts_to_search_results([fact], vectorstore=store, dataset_id="ds", auth=None)
+    return apply_egress_policy(source_dict(result), config)
+
+
+def test_unclassified_support_blocks_a_fact_merged_with_an_internal_source():
+    """A denied source stays denied though the merged label alone would be allowed."""
+    decision = _two_source_decision(
+        _metadata("doc-a"),
+        _metadata("doc-b", classification="internal"),
+        allow_unclassified=False,
+    )
+    assert decision.allowed is False
+    assert decision.blocked_reason == "unclassified"
+    assert decision.redacted_context == ""
+
+
+def test_non_monotonic_policy_is_enforced_per_source():
+    """A policy allowing `restricted` but not `internal` still blocks the internal source."""
+    decision = _two_source_decision(
+        _metadata("doc-a", classification="internal"),
+        _metadata("doc-b", classification="restricted"),
+        classification_policy={"internal": False, "restricted": True},
+    )
+    assert decision.allowed is False
+    assert decision.blocked_reason == "classification"
+
+
+def test_blocked_tenant_on_a_later_source_blocks_the_fact():
+    """Citation metadata comes from the first document, but every tenant is checked."""
+    decision = _two_source_decision(
+        _metadata("doc-a", tenant_id="t-ok", classification="internal"),
+        _metadata("doc-b", tenant_id="t-blocked", classification="internal"),
+        blocked_tenant_ids=["t-blocked"],
+    )
+    assert decision.allowed is False
+    assert decision.blocked_reason == "blocked_tenant"
+
+
+def test_non_authoritative_later_source_blocks_when_trust_is_required():
+    """Check: non authoritative later source blocks when trust is required."""
+    decision = _two_source_decision(
+        _metadata("doc-a", classification="internal", trust_level="authoritative"),
+        _metadata("doc-b", classification="internal", trust_level="community"),
+        require_authoritative_trust=True,
+    )
+    assert decision.allowed is False
+    assert decision.blocked_reason == "trust_level"
+
+
+def test_fact_whose_sources_are_all_allowed_still_egresses():
+    """The control: a wholly allowed derivation is not over-blocked."""
+    decision = _two_source_decision(
+        _metadata("doc-a", classification="public"),
+        _metadata("doc-b", classification="internal"),
+        allow_unclassified=False,
+    )
+    assert decision.allowed is True
+    assert decision.redacted_context == "A DEPENDS_ON C"
+
+
+def test_single_source_fact_carries_no_support_governance():
+    """Only a merged fact needs per-source entries; its own fields already are the source's."""
+    store = _FakeVectorStore({"doc-a": _metadata("doc-a")})
+    [result] = graph_facts_to_search_results(
+        [_fact("doc-a")], vectorstore=store, dataset_id="ds", auth=None
+    )
+    assert source_dict(result)["support_governance"] is None

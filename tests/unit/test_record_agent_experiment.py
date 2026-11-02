@@ -19,6 +19,7 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 from record_agent_experiment import build_agent_experiment_record  # noqa: E402
 
 from rag.config import load_config  # noqa: E402
+from rag.eval.mlflow_logger import _METRIC_FIELDS  # noqa: E402
 
 
 def _agent_report(**overrides: Any) -> dict[str, Any]:
@@ -144,3 +145,26 @@ def test_record_names_the_tool_prompt_the_toggles_actually_select():
 def _sha256_of(path: Path) -> str:
     """Hash a prompt file the way the record script does."""
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def test_record_persists_tool_argument_diagnostics():
+    """Figures a report cites must be in the committed record, not only the raw eval output."""
+    report = _agent_report(
+        tool_argument_diagnostics={"correct_tool_correct_args": 8, "repeated_tool_proposals": 5}
+    )
+    record = build_agent_experiment_record(report, None, load_config(), "experiment_x", "label")
+
+    assert record["agent_tool_args_correct_tool_correct_args"] == 8
+    assert record["agent_tool_args_repeated_tool_proposals"] == 5
+    assert record["agent_tool_args_wrong_mutation_executions"] is None
+
+
+def test_record_fields_for_diagnostics_and_graph_tools_all_reach_mlflow():
+    """A recorded field missing from the metric list would silently never reach MLflow."""
+    record = build_agent_experiment_record(
+        _agent_report(), None, load_config(), "experiment_x", "label"
+    )
+    names = [n for n in record if n.startswith(("agent_tool_args_", "agent_tool_usage_"))]
+
+    assert "agent_tool_usage_find_dependency_path_count" in names
+    assert set(names) <= set(_METRIC_FIELDS)

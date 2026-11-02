@@ -136,6 +136,11 @@ def source_dict(result: SearchResult) -> dict[str, Any]:
         "injection_suspected": result.injection_suspected,
         "redacted_field_ids": result.redacted_field_ids,
         "sensitive_field_ids": result.chunk.metadata.sensitive_field_ids,
+        "support_governance": (
+            [g.model_dump() for g in result.chunk.metadata.support_governance]
+            if result.chunk.metadata.support_governance
+            else None
+        ),
     }
 
 

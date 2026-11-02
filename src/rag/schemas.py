@@ -122,6 +122,14 @@ class ChunkSpan(BaseModel):
     page: int | None = None
 
 
+class SupportGovernance(BaseModel):
+    """The egress-relevant governance of one document supporting a multi-source fact."""
+
+    tenant_id: str | None = None
+    classification: str | None = None
+    trust_level: str | None = None
+
+
 class ChunkMetadata(BaseModel):
     """Represent metadata stored alongside a chunk's embedding in the vector store.
 
@@ -177,6 +185,9 @@ class ChunkMetadata(BaseModel):
     page : int or None
         1-indexed source page number, from the originating `ChunkSpan`.
         `None` for source types with no fixed pagination.
+    support_governance : list[SupportGovernance] or None
+        One entry per document a multi-source graph fact depends on. The egress
+        gate must allow every entry. `None` for anything with a single source.
 
     Notes
     -----
@@ -217,6 +228,7 @@ class ChunkMetadata(BaseModel):
     doc_source_type: str | None = None
     supersedes_source: str | None = None
     page: int | None = None
+    support_governance: list[SupportGovernance] | None = None
 
 
 class Chunk(BaseModel):

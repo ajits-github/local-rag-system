@@ -38,6 +38,7 @@ without basis. Detailed chronological session history remains in
 | AGT-004 | MAJOR | IN PROGRESS | Agentic RAG | The tool worked, but the agent rarely chose it (specialized-tool selection) |
 | AGT-005 | MODERATE | FIXED | Agentic RAG | Tool-selection prompt's chunk_id fix was unverified against live tool selection |
 | AGT-006 | MAJOR | FIXED | Agentic RAG | Specialized tools were unreachable for reasons the prompts could not fix |
+| AGT-007 | MODERATE | FIXED | Agentic RAG | The corrective tool selection ran outside the step budget |
 | OPS-019 | MINOR | OPEN | Operations | Postgres crashed and recovered during a live eval on the 8GB box |
 | SEC-007 | MODERATE | ACCEPTED LIMITATION | Security | Upload atomicity: a crash between the DB write and the file install leaves the database one step ahead (verified, self-healing on retry) |
 | MULTI-002 | MINOR | ACCEPTED LIMITATION | Multimodal | A working vision provider did not improve answers, because the model was weak |
@@ -824,7 +825,37 @@ Each fact carries `support_sets`: the source document and projection checksum of
 `tests/unit/test_graph_fact_provenance.py` (real retriever normalization through fusion: revoked edge document, deleted first mention, stale checksum, second derivation, multihop governance through the egress gate); `test_fact_support_carries_the_projection_checksum` in `tests/integration/test_graph_authorization_isolation.py`; `test_graphrag_pipeline_graph_only_cites_a_real_document_source` drops a stale-checksum fact end to end.
 
 **Notes**
-Codex audit `SEC-N02` (2026-11-01). Earlier fusion tests started from hand-written `GraphFact`s with correct provenance, so they could not see provenance lost by the real retriever. A fact about a node alone still revalidates against the node's first document. Citation comes from the first document of the chosen derivation only.
+Codex audit `SEC-N02` (2026-11-01). Earlier fusion tests started from hand-written `GraphFact`s with correct provenance, so they could not see provenance lost by the real retriever. A fact about a node alone still revalidates against the node's first document. Citation comes from the first document of the chosen derivation only. Merging to one strictest label was incomplete; see **SEC-022**.
+
+---
+
+### SEC-022: A multi-source graph fact could egress although one required source was denied
+
+**Status:** FIXED
+**Severity:** MAJOR
+**Area:** Security / GraphRAG provenance / provider egress
+**Affected code:** `rag.graph.fusion._combined_governance`, `ChunkMetadata.support_governance`, `source_dict`, `apply_egress_policy`
+
+**Problem**
+Fusion replaced a derivation's documents with one merged label chosen by a fixed sensitivity rank, which placed unclassified below internal. The egress policy is not a rank: `allow_unclassified: false` denies unclassified evidence while allowing internal, and `classification_policy` is an arbitrary map. The merged metadata also kept only the first document's tenant.
+
+**Failure scenario**
+`config/production.yaml` sets egress on and `allow_unclassified: false`. A path fact needing one unclassified and one internal document was labeled internal, so the gate allowed the fact while denying the unclassified document alone. A blocked tenant on any document after the first was missed the same way.
+
+**Fix applied**
+The merged metadata now also carries `support_governance`, one entry per document, and `apply_egress_policy` checks tenant, classification and trust on every entry. Merged labels remain for citation and display. Only the chosen derivation is checked, so a fact with another, fully allowed derivation is blocked rather than switched, which fails closed.
+
+**Regression test**
+`tests/unit/test_graph_fusion_governance.py` runs real fusion through `source_dict` and the real gate: unclassified with internal, a non-monotonic policy, a blocked later tenant, a non-authoritative later source, and a wholly allowed control.
+
+**Result of fix applied**
+The audit's probe went from `combined_allowed=true` to blocked with reason `unclassified`. No shipped config combines graph with a hosted judge, and no recorded run sent graph evidence externally, so no result needs correcting.
+
+**Interview takeaway**
+Do not reduce a configurable policy to a sort order. Keep the inputs the policy reads, and evaluate it on each one.
+
+**Notes**
+Codex audit `SEC-V01` (2026-11-02), rated CRITICAL there. Rated MAJOR here because nothing reachable from a shipped config sent data, but it was fixed first because the planned graph benchmark could reach it.
 
 ---
 
@@ -1905,9 +1936,9 @@ On `qwen2.5:3b`, with a fair gold contract and the fixes in **AGT-006** (`experi
 
 ---
 
-### AGT-005: Tool-selection prompt's chunk_id fix is unverified against live tool selection
+### AGT-005: Tool-selection prompt's chunk_id fix was unverified against live tool selection
 
-**Status:** NEEDS VERIFICATION
+**Status:** FIXED
 **Severity:** MODERATE
 **Area:** Agentic RAG / tool-selection prompt correctness
 **Affected code:** `_summarize_evidence`, tool-select prompt template
@@ -1922,7 +1953,7 @@ The model had to invent a `chunk_id`; an invented id resolves to nothing, and th
 The evidence summary now includes `chunk_id=<id>` on each line; a new prompt version tells the model to copy that value verbatim, never the bracketed display index.
 
 **Result of fix applied**
-`experiment_041`: the model selected `get_related_context` live and copied the real chunk id verbatim (`related_context_chunk_id_from_evidence` 1 of 1), and the tool returned a result. One live selection is thin evidence for "always copies", but it is the claim this entry waited on, and the eval now records it on every run.
+`experiment_041`: the model selected `get_related_context` live and copied the real chunk id verbatim (`related_context_chunk_id_from_evidence` 1 of 1), and the tool returned a result. One live selection is thin evidence for "always copies", but it is the claim this entry waited on, and the eval now records it on every run. That 1 of 1 came from the flag **EVAL-018** later corrected. It still holds, since the id was a full UUID and the only earlier tool call was the search that returned it, but whether it fell inside the summary cap was not recorded then.
 
 ---
 
@@ -1948,6 +1979,57 @@ The selection is now one function, `tool_select_prompt_path`, used by both the r
 **Interview takeaway**
 Lineage has to come from the code path that made the choice. A second copy of the logic can name the wrong prompt, with a valid checksum, and nothing fails.
 
+**Follow-up**
+The record also dropped `tool_argument_diagnostics`, so figures cited from `experiment_041` existed only in an uncommitted report. The recorder now writes them as `agent_tool_args_*`, adds the four graph tools to the usage fields, and sends both to MLflow. `experiment_041` was backfilled from the report that produced it.
+
+---
+
+### EVAL-018: The argument-grounding flag used evidence from later in the run
+
+**Status:** FIXED
+**Severity:** MODERATE
+**Area:** Evaluation / agent diagnostics
+**Affected code:** `_tool_call_record`, `_fitting_evidence_lines`, `ToolCallRecord.chunk_id_shown_in_evidence`
+
+**Problem**
+`chunk_id_from_evidence` checked each call's id against all evidence at the end of the run. It could credit an id that appeared only later, or one held in state but cut from the bounded summary the model saw. A rejected call with no arguments read as a confirmed negative.
+
+**Fix applied**
+`_execute_tool` records the flag at dispatch, from the same lines the decision prompt rendered. A rejected call stays `None`, and diagnostics count it separately as `related_context_chunk_id_provenance_missing`.
+
+**Regression test**
+`tests/unit/test_agent_repeat_tool_calls.py` drives `run_agent`: an id shown earlier, an id appearing only later, an id beyond the summary cap, and rejected arguments.
+
+**Result of fix applied**
+The metric now means what its prompt contract claims. `experiment_041`'s single case stands; see **AGT-005**.
+
+**Interview takeaway**
+A question about what was known at a decision must be answered at that decision. Final state cannot reconstruct it.
+
+---
+
+### EVAL-019: A write to the wrong case did not count as a wrong mutation
+
+**Status:** FIXED
+**Severity:** MODERATE
+**Area:** Evaluation / mutation safety
+**Affected code:** `_executed_mutation_problem`, `_tool_argument_diagnostics`, `data/eval/specialized_tool_executed_action_gold.jsonl`
+
+**Problem**
+`wrong_mutation_executions` only counted executed writes on rows that expected no execution. On a row expecting one, closing the wrong case still reported zero. `specialized_tool_gold.jsonl` also has no row where a write succeeds, so that path had no live evaluation at all.
+
+**Fix applied**
+Each executed write is compared with the row's expected case and status. `wrong_mutation_executions` is now the sum of `unexpected_mutation_executions`, `wrong_target_mutations` and `wrong_transition_mutations`. A write that gold cannot check counts as `unverified_mutation_executions`, not as wrong. A separate one-row gold file holds a write that really executes, so the mutation stays out of the 14-row benchmark's process and that file's hash is unchanged.
+
+**Regression test**
+`tests/unit/test_agent_eval_tool_args.py`: correct write, wrong case, wrong status, denied write, unexpected write, and missing gold.
+
+**Result of fix applied**
+`experiment_041` is unaffected: its four write attempts used the expected arguments and none executed. A live run of the new row on `qwen2.5:3b` executed the write on the expected case with `wrong_mutation_executions` 0. That is one row on one run.
+
+**Interview takeaway**
+Check what a safety counter's name promises against what it filters on. A zero from a filter that skips the risky rows looks like evidence of safety.
+
 ---
 
 ### OPS-019: Postgres crashed and recovered during a live eval on the 8GB box
@@ -1968,6 +2050,36 @@ None. The run was discarded and repeated, and the repeat had no crash and full t
 
 **Interview takeaway**
 Check the infrastructure before filing a tool bug: one row of a green-looking report can be a database restart. A report that hides the error text behind a safe label also needs a log line to find the cause.
+
+---
+
+### AGT-007: The corrective tool selection ran outside the step budget
+
+**Status:** FIXED
+**Severity:** MODERATE
+**Area:** Agentic RAG / bounding
+**Affected code:** `run_agent`'s corrective selection
+
+**Problem**
+After a rejected repeat, the second `tool_select` node ran without `_step_or_stop`, so `step_count` under-reported the work done and the bound could be passed by one node each time.
+
+**Failure scenario**
+At the shipped ceiling of 8, a scripted run took 9 nodes and reported 8 steps, the extra one being an evidence check. At a ceiling of 7, which no config uses, the corrected tool itself was dispatched as an eighth node.
+
+**Fix applied**
+The corrective selection counts like any other node, and the bound is checked before its result is used. Cancellation is also checked just before dispatch, for both selection paths, because a tool can have side effects and a caller may have left during selection.
+
+**Regression test**
+`tests/unit/test_agent_repeat_tool_calls.py`: the ceiling itself, the default ceiling, spare budget, a second repeat at the ceiling, and cancellation during the corrective selection.
+
+**Result of fix applied**
+At ceiling 8 the same script takes 8 nodes and reports 8 steps. `experiment_041` had repeated proposals on 3 of 14 rows, so its step counts can read low and its repeat rows can behave differently now. Later runs should not be compared with it directly.
+
+**Interview takeaway**
+Every path into a bounded loop's work needs the same accounting, including the path added later as a correction.
+
+**Notes**
+Codex audit `AGENT-V01` (2026-11-02), rated MAJOR there. Rated MODERATE here because `max_tool_calls` always applied and the shipped ceiling never dispatched an extra tool.
 
 ---
 
@@ -2802,6 +2914,7 @@ The following issues are resolved, with a concrete fix and regression test cited
 | SEC-019 | Security | A source with no classification egressed silently, even under the production config |
 | SEC-020 | Security | Neighbor and traversal queries disclosed relationships the caller could not read |
 | SEC-021 | Security | Graph facts were revalidated and cited against a document that never stated them |
+| SEC-022 | Security | A multi-source graph fact could egress although one required source was denied |
 | SEC-008 | Security | Cross-tenant upload isolation integration tests were written but never run (now run, locally and in CI) |
 | DIST-001 | Reliability | Reading a request-scoped context variable inside a stream would have raced its middleware |
 | DIST-002 | Reliability | A LangGraph join node ran twice, because its parallel branches had unequal lengths |
@@ -2838,6 +2951,8 @@ The following issues are resolved, with a concrete fix and regression test cited
 | EVAL-015 | Evaluation | No experiment record captured which git commit produced it |
 | EVAL-016 | Evaluation | The context benchmark could not report a prompt that overflowed with no evidence |
 | EVAL-017 | MODERATE | FIXED | Evaluation | The experiment record named a tool prompt that never ran |
+| EVAL-018 | MODERATE | FIXED | Evaluation | The argument-grounding flag used evidence from later in the run |
+| EVAL-019 | MODERATE | FIXED | Evaluation | A write to the wrong case did not count as a wrong mutation |
 | OBS-001 | Observability | `/health` depended on a heavy pipeline dependency through a graph check |
 | OBS-002 | Observability | Shared mutable LLM token counters could leak across concurrent requests |
 | OPS-001 | Deployment | A 504 at the frontend came from the host running out of memory |
@@ -2920,6 +3035,8 @@ Performed after restructuring:
 **Postscript (2026-10-29 pre-experiment audits):** two independent audits of `main` at `64321ed` (Codex: `.claude-prompts/35.9-...`, Claude: `35.10-...`; both untracked) were reconciled against the code before any fix. Fixed: **CTX-014**, **CTX-015**, **CTX-016**, **CTX-017**, **SEC-018**, **SEC-019**, **GRAPH-008**, **GRAPH-010**, plus follow-ups folded into existing stories (**CTX-007** negation guard, **CTX-011** telemetry clamp, **EVAL-015** Context Engineering report). New accepted limitations: **GRAPH-011**, **RET-006**, **OPS-016**. New open items on experiment branches only: **DIST-006**, **OPS-015**. Re-confirmed still open, not fixed here: **BUG-015**/**BUG-016**/**BUG-017** (structural ingestion-consistency changes; avoid graph-projection failures and image-only edits on any benchmark corpus until they land) and **GRAPH-009** (dead code). Two test-coverage gaps were closed without separate entries: `GraphRetriever.search`'s Neo4j-outage degradation (`tests/unit/test_graph_retrieval_degradation.py`) and an MCP remote-tool transport failure (`test_remote_tool_connection_failure_is_recorded_not_raised`). The Codex report's cited repro script, `experiments/reports/audit_repro_2026_10_29.py`, was never committed and does not exist.
 
 **Follow-up (2026-11-02, after the 36.2 agent contracts):** **AGT-005** fixed with live evidence and **AGT-006** added. **AGT-004** stays in progress, with `get_document` and `get_latest_document` still unreached on `qwen2.5:3b`. **OPS-019** is open because its cause is not proven.
+
+**Follow-up (Codex audit, 2026-11-02):** **SEC-022**, **AGT-007**, **EVAL-018** and **EVAL-019** fixed; **SEC-021**, **AGT-005** and **EVAL-017** corrected.
 
 **Follow-up (2026-10-29, after the audit PRs):** **GRAPH-009**, **OBS-001**, **BUG-015**, **BUG-016** and **BUG-017** fixed, which also closes the graph-only-reset residual of **GRAPH-004**/**PROD-003**; **DIST-006** fixed on `experiment/distributed-state`; **OPS-015** reclassified as an accepted limitation (a deliberate Helm demo). Still open by nature: **AGT-004**/**AGT-005** (model tool-selection behavior, needs live evaluation runs, not a code change) and **OPS-016** (a merge-strategy decision).
 

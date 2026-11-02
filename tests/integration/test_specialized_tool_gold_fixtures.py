@@ -17,7 +17,8 @@ Two independent groups:
   `_reset_case_store` fixture (`tests/conftest.py`) restores the
   in-memory `_SYNTHETIC_CASES` dict after every test, matching
   `test_mcp_business_case_actions.py`'s established pattern -- this suite
-  adds no new mutation risk beyond what that file already accepts.
+  adds no new mutation risk beyond what that file already accepts. The one
+  row in `specialized_tool_executed_action_gold.jsonl` is proven here too.
 - Local specialized-tool scenarios (the six `specialized_get_document`/
   `specialized_get_latest_document`/`specialized_get_related_context`
   gold rows): call `rag.agent.tools` directly against the real, already
@@ -173,6 +174,17 @@ def test_gold_update_case_status_already_in_status_case_1001_tenant_alpha_operat
     assert outcome is not None
     assert outcome.outcome == "already_in_status"
     assert business_store._SYNTHETIC_CASES["CASE-1001"].status == "in_progress"
+
+
+def test_gold_update_case_status_executed_case_2002_tenant_beta_operator():
+    """Executed-action file: open -> in_progress on CASE-2002 needs no approval and applies."""
+    identity = _identity("tenant_beta", ["tenant_beta_operator"])
+    outcome = business_store.update_case_status(
+        "CASE-2002", "in_progress", identity, _SUPPORT_ROLES
+    )
+    assert outcome is not None
+    assert outcome.outcome == "executed"
+    assert business_store._SYNTHETIC_CASES["CASE-2002"].status == "in_progress"
 
 
 def test_gold_update_case_status_denied_case_2001_cross_tenant_tenant_alpha_operator():
