@@ -2,9 +2,10 @@
 
 Each `GraphFact` becomes a `SearchResult` with `origin="graph"`. Its source
 path and governance metadata (tenant, roles, classification, trust, status)
-come from the fact's source document in Postgres, the authoritative store,
-not from the ACL copy written into Neo4j. A fact whose source document is
-deleted, outside the dataset, or no longer visible to the caller is dropped.
+come from the documents that state the fact, read from Postgres, the
+authoritative store, not from the ACL copy written into Neo4j. A fact is
+dropped unless one derivation's documents all still exist in the dataset, are
+visible to the caller, and still have the checksum the fact was projected from.
 """
 
 from __future__ import annotations
@@ -13,11 +14,65 @@ import hashlib
 from datetime import UTC, datetime
 
 from rag.audit import log_audit_event
-from rag.graph.retrieval import GraphFact
+from rag.graph.retrieval import GraphFact, GraphFactSource
 from rag.retrieval.authorization import AuthorizationContext
 from rag.retrieval.field_policy import detect_sensitive_field_ids
 from rag.schemas import Chunk, ChunkMetadata, SearchResult
 from rag.vectorstore.base import VectorStore
+
+# Least to most restrictive. An unranked label sorts above all of these.
+_CLASSIFICATION_RANK = {"public": 0, None: 1, "internal": 2, "confidential": 3, "restricted": 4}
+
+
+def _combined_governance(sources: list[ChunkMetadata]) -> ChunkMetadata:
+    """Merge a derivation's documents into metadata that satisfies the strictest of them.
+
+    Citation fields come from the first document. A fact stated across several
+    documents must not egress under the most permissive one's policy.
+    """
+    if len(sources) == 1:
+        return sources[0]
+    classification = max(
+        (s.classification for s in sources),
+        key=lambda label: _CLASSIFICATION_RANK.get(label, len(_CLASSIFICATION_RANK)),
+    )
+    restricted = [set(s.allowed_roles) for s in sources if s.allowed_roles]
+    roles = sorted(set.intersection(*restricted)) if restricted else None
+    return sources[0].model_copy(
+        update={
+            "classification": classification,
+            # An empty intersection must stay a restriction: `[]` reads as unrestricted.
+            "allowed_roles": roles or (sources[0].allowed_roles if restricted else None),
+            "trust_level": next(
+                (s.trust_level for s in sources if s.trust_level != "authoritative"),
+                "authoritative",
+            ),
+            "status": next((s.status for s in sources if s.status != "active"), "active"),
+        }
+    )
+
+
+def _derivations(fact: GraphFact) -> list[list[GraphFactSource]]:
+    """Return a fact's alternative derivations; a node-only fact's is its source document."""
+    if fact.support_sets:
+        return fact.support_sets
+    return [[GraphFactSource(document_id=fact.source_document_id)]]
+
+
+def _resolve_sources(
+    fact: GraphFact, governance: dict[str, ChunkMetadata], checksums: dict[str, str]
+) -> list[ChunkMetadata] | None:
+    """Return the metadata of the first derivation that is still valid, or `None`."""
+    for sources in _derivations(fact):
+        resolved = [governance.get(s.document_id or "") for s in sources]
+        stale = any(
+            s.document_checksum is not None
+            and checksums.get(s.document_id or "") != s.document_checksum
+            for s in sources
+        )
+        if sources and not stale and all(resolved):
+            return [m for m in resolved if m is not None]
+    return None
 
 
 def graph_fact_to_search_result(
@@ -30,7 +85,7 @@ def graph_fact_to_search_result(
     fact : GraphFact
         The normalized graph fact to wrap.
     source_metadata : ChunkMetadata
-        Current Postgres metadata of the fact's source document (see
+        Current Postgres metadata of the fact's source documents (see
         `VectorStore.get_document_governance`); supplies the citeable path
         and every governance field the egress and redaction checks read.
     score : float, optional
@@ -91,7 +146,7 @@ def graph_facts_to_search_results(
     dataset_id: str,
     auth: AuthorizationContext | None,
 ) -> list[SearchResult]:
-    """Batch-convert `GraphFact`s, revalidating each against its source document in Postgres.
+    """Batch-convert `GraphFact`s, revalidating each against its source documents in Postgres.
 
     Parameters
     ----------
@@ -110,18 +165,21 @@ def graph_facts_to_search_results(
     Returns
     -------
     list[SearchResult]
-        One `SearchResult` per fact whose source document `auth` can still
-        read, same order. Facts with no resolvable source are dropped
-        (fail closed) and the drop count is audit-logged.
+        One `SearchResult` per fact with a still-valid derivation (see the
+        module docstring), same order. Other facts are dropped (fail closed)
+        and the drop count is audit-logged.
     """
     if not facts:
         return []
-    document_ids = [f.source_document_id for f in facts if f.source_document_id]
+    sources = [s for fact in facts for derivation in _derivations(fact) for s in derivation]
+    document_ids = [s.document_id for s in sources if s.document_id]
     governance = vectorstore.get_document_governance(document_ids, dataset_id, auth)
+    pinned = [s.document_id for s in sources if s.document_id and s.document_checksum]
+    checksums = vectorstore.get_document_checksums_by_id(pinned, dataset_id) if pinned else {}
     results = [
-        graph_fact_to_search_result(fact, source_metadata=source_metadata)
+        graph_fact_to_search_result(fact, source_metadata=_combined_governance(resolved))
         for fact in facts
-        if (source_metadata := governance.get(fact.source_document_id or "")) is not None
+        if (resolved := _resolve_sources(fact, governance, checksums)) is not None
     ]
     dropped = len(facts) - len(results)
     if dropped:

@@ -261,10 +261,9 @@ def _revalidated_graph_results(
     facts: list[GraphFact],
     pipeline: RetrievalPipeline,
     dataset_id: str,
-    auth: AuthorizationContext | None,
+    effective_auth: AuthorizationContext | None,
 ) -> list[SearchResult]:
-    """Convert facts to results, revalidated against Postgres under the resolved `auth`."""
-    effective_auth = pipeline.resolve_auth(auth, {"dataset_id": dataset_id})
+    """Convert facts to results, revalidated against Postgres under the resolved auth."""
     return graph_facts_to_search_results(
         facts, vectorstore=pipeline.vectorstore, dataset_id=dataset_id, auth=effective_auth
     )
@@ -291,8 +290,9 @@ def search_knowledge_graph(
     """
     if not dataset_id:
         raise ToolExecutionError("search_knowledge_graph requires a dataset_id filter")
-    result = graph_retriever.search(args.query, dataset_id=dataset_id, auth=auth)
-    return _revalidated_graph_results(result.facts, pipeline, dataset_id, auth)
+    effective_auth = pipeline.resolve_auth(auth, {"dataset_id": dataset_id})
+    result = graph_retriever.search(args.query, dataset_id=dataset_id, auth=effective_auth)
+    return _revalidated_graph_results(result.facts, pipeline, dataset_id, effective_auth)
 
 
 def get_entity(
@@ -311,10 +311,11 @@ def get_entity(
     """
     if not dataset_id:
         raise ToolExecutionError("get_entity requires a dataset_id filter")
+    effective_auth = pipeline.resolve_auth(auth, {"dataset_id": dataset_id})
     result = graph_retriever.get_entity(
-        args.name, dataset_id=dataset_id, auth=auth, entity_type=args.entity_type
+        args.name, dataset_id=dataset_id, auth=effective_auth, entity_type=args.entity_type
     )
-    return _revalidated_graph_results(result.facts, pipeline, dataset_id, auth)
+    return _revalidated_graph_results(result.facts, pipeline, dataset_id, effective_auth)
 
 
 def get_neighbors(
@@ -333,14 +334,15 @@ def get_neighbors(
     """
     if not dataset_id:
         raise ToolExecutionError("get_neighbors requires a dataset_id filter")
+    effective_auth = pipeline.resolve_auth(auth, {"dataset_id": dataset_id})
     result = graph_retriever.get_neighbors(
         args.entity_name,
         dataset_id=dataset_id,
-        auth=auth,
+        auth=effective_auth,
         relationship_type=args.relationship_type,
         max_hops=args.max_hops,
     )
-    return _revalidated_graph_results(result.facts, pipeline, dataset_id, auth)
+    return _revalidated_graph_results(result.facts, pipeline, dataset_id, effective_auth)
 
 
 def find_dependency_path(
@@ -359,7 +361,8 @@ def find_dependency_path(
     """
     if not dataset_id:
         raise ToolExecutionError("find_dependency_path requires a dataset_id filter")
+    effective_auth = pipeline.resolve_auth(auth, {"dataset_id": dataset_id})
     result = graph_retriever.find_path(
-        args.source_entity_name, args.target_entity_name, dataset_id=dataset_id, auth=auth
+        args.source_entity_name, args.target_entity_name, dataset_id=dataset_id, auth=effective_auth
     )
-    return _revalidated_graph_results(result.facts, pipeline, dataset_id, auth)
+    return _revalidated_graph_results(result.facts, pipeline, dataset_id, effective_auth)

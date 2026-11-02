@@ -523,6 +523,20 @@ class VectorStore(ABC):
         """
 
     @abstractmethod
+    def get_document_checksums_by_id(
+        self, document_ids: list[str], dataset_id: str
+    ) -> dict[str, str]:
+        """Return the current content checksum of each given document in `dataset_id`.
+
+        Not filtered by authorization, so callers must not surface these values.
+
+        Returns
+        -------
+        dict[str, str]
+            `{document_id: checksum}`; unknown or deleted ids are absent.
+        """
+
+    @abstractmethod
     def get_chunks_by_section(
         self,
         document_id: str,

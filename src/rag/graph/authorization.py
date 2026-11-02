@@ -2,10 +2,12 @@
 
 Implements the same rule as `vectorstore.pgvector.build_authorization_where_clause`,
 expressed for Cypher (`build_graph_authorization_predicate`) and as a Python
-re-check (`is_fact_authorized`). Query templates that take an auth clause
-apply the Cypher predicate. Every returned fact, including the shortest-path
-template, then passes the Python re-check. The caller's `AuthorizationContext`
-must be resolved before this module is used.
+re-check (`is_fact_authorized`). Query templates apply the Cypher predicate to
+the returned node and to every node and relationship they traverse
+(`build_graph_path_authorization_predicate`), since permission to see two
+entities does not grant permission to know they are connected. Returned nodes
+then pass the Python re-check. The caller's `AuthorizationContext` must be
+resolved before this module is used.
 """
 
 from __future__ import annotations
@@ -74,7 +76,10 @@ def build_graph_authorization_predicate(
     }
 
     if auth.resolved_excluded_document_ids:
-        clauses.append(f"NOT ({node_var}.source_document_id IN $_auth_excluded_document_ids)")
+        # Only relationships and Document nodes belong to one document. The null
+        # check matters: `NOT (null IN list)` is null, which drops every entity node.
+        source = f"coalesce({node_var}.source_document_id, {node_var}.document_id)"
+        clauses.append(f"({source} IS NULL OR NOT {source} IN $_auth_excluded_document_ids)")
         parameters["_auth_excluded_document_ids"] = auth.resolved_excluded_document_ids
 
     if auth.require_trust_level:
@@ -84,6 +89,41 @@ def build_graph_authorization_predicate(
         parameters["_auth_trust_level"] = auth.require_trust_level
 
     return " AND ".join(clauses), parameters
+
+
+def build_graph_path_authorization_predicate(
+    auth: AuthorizationContext | None, *, path_var: str, cross_tenant_support_roles: list[str]
+) -> str:
+    """Build a `WHERE` fragment requiring every node and relationship on a path to be authorized.
+
+    Uses the `_auth_*` parameters from `build_graph_authorization_predicate`.
+
+    Parameters
+    ----------
+    auth : AuthorizationContext | None
+        `None` produces an empty (unrestricted) fragment.
+    path_var : str
+        The Cypher path variable. Must be a hardcoded literal, never caller input.
+    cross_tenant_support_roles : list[str]
+        See `build_graph_authorization_predicate`.
+
+    Returns
+    -------
+    str
+        The fragment, or `""` when `auth` is `None`.
+    """
+    if auth is None:
+        return ""
+    node_clause, _ = build_graph_authorization_predicate(
+        auth, node_var="path_node", cross_tenant_support_roles=cross_tenant_support_roles
+    )
+    rel_clause, _ = build_graph_authorization_predicate(
+        auth, node_var="path_rel", cross_tenant_support_roles=cross_tenant_support_roles
+    )
+    return (
+        f"all(path_node IN nodes({path_var}) WHERE {node_clause})"
+        f" AND all(path_rel IN relationships({path_var}) WHERE {rel_clause})"
+    )
 
 
 def is_fact_authorized(
@@ -119,7 +159,7 @@ def is_fact_authorized(
     tenant_id = properties.get("tenant_id")
     allowed_roles = properties.get("allowed_roles")
     trust_level = properties.get("trust_level")
-    source_document_id = properties.get("source_document_id")
+    source_document_id = properties.get("source_document_id") or properties.get("document_id")
 
     caller_support_roles = {role for role in auth.roles if role in cross_tenant_support_roles}
     tenant_ok = (
