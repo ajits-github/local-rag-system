@@ -88,6 +88,27 @@ _TOOL_NAMES = [
     "get_customer_case",
     "get_case_status",
     "update_case_status",
+    "search_knowledge_graph",
+    "get_entity",
+    "get_neighbors",
+    "find_dependency_path",
+]
+_TOOL_ARGUMENT_DIAGNOSTICS = [
+    "correct_tool_correct_args",
+    "correct_tool_wrong_args",
+    "expected_tool_not_called",
+    "argument_validation_errors",
+    "tool_selection_parse_failures",
+    "repeated_tool_proposals",
+    "related_context_calls",
+    "related_context_chunk_id_from_evidence",
+    "related_context_chunk_id_provenance_missing",
+    "kb_search_on_case_rows",
+    "wrong_mutation_executions",
+    "unexpected_mutation_executions",
+    "wrong_target_mutations",
+    "wrong_transition_mutations",
+    "unverified_mutation_executions",
 ]
 
 
@@ -163,6 +184,11 @@ def build_agent_experiment_record(
         entry = tool_usage_by_tool.get(name, {})
         tool_usage_fields[f"agent_tool_usage_{name}_count"] = entry.get("count")
         tool_usage_fields[f"agent_tool_usage_{name}_rate"] = entry.get("rate")
+    tool_argument_diagnostics = agent_report.get("tool_argument_diagnostics", {})
+    tool_argument_fields = {
+        f"agent_tool_args_{name}": tool_argument_diagnostics.get(name)
+        for name in _TOOL_ARGUMENT_DIAGNOSTICS
+    }
     prompt_checksums = {
         f"agent_{name}_prompt_checksum": _checksum(
             str(config.agent_prompt_template_path(_agent_prompt_path(config, name, field)))
@@ -249,6 +275,7 @@ def build_agent_experiment_record(
         **node_latency_fields,
         **termination_reason_fields,
         **tool_usage_fields,
+        **tool_argument_fields,
     }
 
     if ragas_report is not None:

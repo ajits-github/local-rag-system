@@ -90,5 +90,15 @@
   "agent_tool_usage_get_case_status_count": 2,
   "agent_tool_usage_get_case_status_rate": 0.11764705882352941,
   "agent_tool_usage_update_case_status_count": 4,
-  "agent_tool_usage_update_case_status_rate": 0.23529411764705882
+  "agent_tool_usage_update_case_status_rate": 0.23529411764705882,
+  "agent_tool_args_correct_tool_correct_args": 8,
+  "agent_tool_args_correct_tool_wrong_args": 0,
+  "agent_tool_args_expected_tool_not_called": 4,
+  "agent_tool_args_argument_validation_errors": 0,
+  "agent_tool_args_tool_selection_parse_failures": 0,
+  "agent_tool_args_repeated_tool_proposals": 5,
+  "agent_tool_args_related_context_calls": 1,
+  "agent_tool_args_related_context_chunk_id_from_evidence": 1,
+  "agent_tool_args_kb_search_on_case_rows": 1,
+  "agent_tool_args_wrong_mutation_executions": 0
 }
