@@ -484,7 +484,9 @@ only reasonable design.
 many entries one `claim()` call requests and the size of the
 `ThreadPoolExecutor` each worker dispatches into. A worker never has
 more than `max_concurrency` jobs in flight at once, regardless of how
-deep the backlog is.
+deep the backlog is. Reclaimed jobs count against the same limit, and
+running jobs are renewed at a third of `reclaim_idle_ms`, so a long job
+is not mistaken for a crashed one.
 
 **Backpressure**: `submit(..., max_queue_depth=N)` checks
 `backlog_depth()` (see the real gotcha below) before adding to the
