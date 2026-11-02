@@ -247,7 +247,7 @@ def _error_category(error: str | None) -> str | None:
     return error if error in _BOUNDED_TOOL_ERRORS else "execution_error"
 
 
-def _tool_call_record(record: ToolCallRecord, evidence_chunk_ids: set[str]) -> dict[str, Any]:
+def _tool_call_record(record: ToolCallRecord) -> dict[str, Any]:
     """Render one tool call for the eval report, using only safe fields."""
     rendered: dict[str, Any] = {
         "tool_name": record.tool_name,
@@ -257,7 +257,7 @@ def _tool_call_record(record: ToolCallRecord, evidence_chunk_ids: set[str]) -> d
         "error_category": _error_category(record.error),
     }
     if record.tool_name == "get_related_context":
-        rendered["chunk_id_from_evidence"] = record.args.get("chunk_id") in evidence_chunk_ids
+        rendered["chunk_id_from_evidence"] = record.chunk_id_shown_in_evidence
     return rendered
 
 
@@ -314,7 +314,6 @@ def _record_for_example(
     mcp_evidence_texts = [
         r.chunk.content for r in final_state.retrieved_evidence if r.origin == "mcp_remote"
     ]
-    evidence_chunk_ids = {r.chunk.metadata.chunk_id for r in final_state.retrieved_evidence}
     record = {
         "question": example.question,
         "agentic_category": example.agentic_category,
@@ -323,9 +322,7 @@ def _record_for_example(
         "termination_reason": final_state.termination_reason,
         "steps": final_state.step_count,
         "tool_calls": tool_names,
-        "tool_call_records": [
-            _tool_call_record(r, evidence_chunk_ids) for r in final_state.tool_call_history
-        ],
+        "tool_call_records": [_tool_call_record(r) for r in final_state.tool_call_history],
         "subquestions": final_state.subquestions,
         "evidence_sufficient": final_state.evidence_sufficient,
         "evidence_origins": sorted({r.origin for r in final_state.retrieved_evidence}),
@@ -751,6 +748,26 @@ def _argument_matches(name: str, actual: Any, expected: str | list[str]) -> bool
     return actual in options
 
 
+def _executed_mutation_problem(record: dict[str, Any]) -> str | None:
+    """Classify a row's executed write against gold; `None` means correct or nothing executed."""
+    outcome = _render_case_action_outcome(" ".join(record.get("mcp_evidence_texts", [])))
+    if outcome != "executed":
+        return None
+    if record.get("expected_case_action_outcome") != "executed":
+        return "unexpected"
+    expected = record.get("expected_tool_args", {}).get("update_case_status")
+    calls = [c for c in record["tool_call_records"] if c["tool_name"] == "update_case_status"]
+    if not expected or "case_id" not in expected or "new_status" not in expected or not calls:
+        return "unverified"
+    # A write is always a run's last tool call, so the last record is the one that executed.
+    actual = calls[-1]["tool_args"]
+    if not _argument_matches("case_id", actual.get("case_id"), expected["case_id"]):
+        return "wrong_target"
+    if not _argument_matches("new_status", actual.get("new_status"), expected["new_status"]):
+        return "wrong_transition"
+    return None
+
+
 def _tool_argument_diagnostics(records: list[dict[str, Any]]) -> dict[str, Any]:
     """Separate a wrong argument from a wrong tool, plus related selection failure counts."""
     correct = wrong_argument = tool_not_called = 0
@@ -769,12 +786,7 @@ def _tool_argument_diagnostics(records: list[dict[str, Any]]) -> dict[str, Any]:
     all_calls = [c for r in records for c in r["tool_call_records"]]
     related = [c for c in all_calls if c["tool_name"] == "get_related_context"]
     mcp_rows = [r for r in records if r.get("requires_mcp_business_tool")]
-    executed = [
-        r
-        for r in records
-        if r.get("expected_case_action_outcome") != "executed"
-        and _render_case_action_outcome(" ".join(r.get("mcp_evidence_texts", []))) == "executed"
-    ]
+    problems = [_executed_mutation_problem(r) for r in records]
     return {
         "tool_argument_diagnostics": {
             "correct_tool_correct_args": correct,
@@ -791,10 +803,19 @@ def _tool_argument_diagnostics(records: list[dict[str, Any]]) -> dict[str, Any]:
             "related_context_chunk_id_from_evidence": sum(
                 1 for c in related if c.get("chunk_id_from_evidence")
             ),
+            "related_context_chunk_id_provenance_missing": sum(
+                1 for c in related if c.get("chunk_id_from_evidence") is None
+            ),
             "kb_search_on_case_rows": sum(
                 1 for r in mcp_rows if "search_knowledge_base" in r["tool_calls"]
             ),
-            "wrong_mutation_executions": len(executed),
+            "wrong_mutation_executions": sum(
+                problems.count(kind) for kind in ("unexpected", "wrong_target", "wrong_transition")
+            ),
+            "unexpected_mutation_executions": problems.count("unexpected"),
+            "wrong_target_mutations": problems.count("wrong_target"),
+            "wrong_transition_mutations": problems.count("wrong_transition"),
+            "unverified_mutation_executions": problems.count("unverified"),
         }
     }
 
