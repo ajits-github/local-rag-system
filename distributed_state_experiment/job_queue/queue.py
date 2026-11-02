@@ -262,6 +262,29 @@ class IngestionJobQueue:
         response = [(self.stream_name, claimed_raw)]
         return self._to_claimed_jobs(response, redelivered=True)
 
+    def renew(self, consumer_name: str, entry_ids: list[str]) -> None:
+        """Reset the idle time of entries this consumer is still running.
+
+        Keeps a job longer than the visibility timeout from looking crashed.
+        `justid` leaves the delivery count alone.
+
+        Parameters
+        ----------
+        consumer_name : str
+            The consumer running these entries.
+        entry_ids : list[str]
+            The entries to renew; empty is a no-op.
+        """
+        if entry_ids:
+            self._client.xclaim(
+                self.stream_name,
+                self.group_name,
+                consumer_name,
+                min_idle_time=0,
+                message_ids=entry_ids,
+                justid=True,
+            )
+
     def _to_claimed_jobs(self, xread_response: list, redelivered: bool) -> list[ClaimedJob]:
         """Resolve raw `XREADGROUP`/`XCLAIM` entries into `ClaimedJob`s, marking each `PROCESSING`."""
         claimed: list[ClaimedJob] = []

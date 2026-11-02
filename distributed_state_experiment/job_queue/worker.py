@@ -169,6 +169,7 @@ class IngestionWorker:
         self._shutdown = threading.Event()
         self._executor = ThreadPoolExecutor(max_workers=config.max_concurrency)
         self._last_reclaim = 0.0
+        self._last_renewal = 0.0
 
     def request_shutdown(self, *_args: object) -> None:
         """Signal handler / manual trigger: stop claiming new work after the current batch."""
@@ -195,23 +196,27 @@ class IngestionWorker:
         a hard process kill (`kill -9` / `taskkill /F`), which is exactly
         what experiment 4 uses to prove `reclaim_stale()` recovers it.
 
-        Claims only as many jobs as there are free slots (`max_concurrency`
-        minus jobs still running or queued in the pool), so a claimed job
-        never waits in the executor long enough to age past
-        `reclaim_idle_ms` and be reclaimed by another worker.
+        Reclaims and claims only as many jobs as there are free slots
+        (`max_concurrency` minus jobs still running or queued in the pool),
+        so a job never waits in the executor long enough to age past
+        `reclaim_idle_ms`. Running jobs are renewed, so a long one is not
+        reclaimed by another worker either.
         """
-        futures: list[Future] = []
+        futures: dict[Future, ClaimedJob] = {}
         while not self._shutdown.is_set():
             self.queue.heartbeat(self.config.consumer_name)
             metrics.ACTIVE_WORKERS.set(self.queue.active_worker_count())
-            self._maybe_reclaim()
+            futures = {f: job for f, job in futures.items() if not f.done()}
+            self._maybe_renew(futures)
+            futures.update(self._maybe_reclaim(self.config.max_concurrency - len(futures)))
             self.queue.promote_due_retries()
             metrics.QUEUE_DEPTH.set(self.queue.backlog_depth())
             metrics.DEAD_LETTER_DEPTH.set(self.queue.dead_letter_depth())
-            futures = [f for f in futures if not f.done()]
             free_slots = self.config.max_concurrency - len(futures)
             if free_slots <= 0:
-                wait(futures, timeout=self.config.claim_block_ms / 1000, return_when=FIRST_COMPLETED)
+                wait(
+                    futures, timeout=self.config.claim_block_ms / 1000, return_when=FIRST_COMPLETED
+                )
                 continue
             claimed = self.queue.claim(
                 self.config.consumer_name,
@@ -221,7 +226,7 @@ class IngestionWorker:
             for job in claimed:
                 if job.redelivered:
                     metrics.JOBS_DUPLICATE_DELIVERIES_TOTAL.inc()
-                futures.append(self._executor.submit(self._process_one, job))
+                futures[self._executor.submit(self._process_one, job)] = job
         self._executor.shutdown(wait=True)
         logger.info("worker %s: drained, exiting", self.config.consumer_name)
 
@@ -245,31 +250,54 @@ class IngestionWorker:
         processed = 0
         empty_streak = 0
         while empty_streak < idle_polls:
-            self._maybe_reclaim()
+            futures = list(self._maybe_reclaim(self.config.max_concurrency))
             self.queue.promote_due_retries()
-            claimed = self.queue.claim(
-                self.config.consumer_name, count=self.config.max_concurrency, block_ms=200
+            free_slots = self.config.max_concurrency - len(futures)
+            claimed = (
+                self.queue.claim(self.config.consumer_name, count=free_slots, block_ms=200)
+                if free_slots > 0
+                else []
             )
-            if not claimed:
+            if not claimed and not futures:
                 empty_streak += 1
                 continue
             empty_streak = 0
-            futures = [self._executor.submit(self._process_one, job) for job in claimed]
+            futures.extend(self._executor.submit(self._process_one, job) for job in claimed)
             for f in futures:
                 f.result()
-            processed += len(claimed)
+            processed += len(futures)
         return processed
 
-    def _maybe_reclaim(self) -> None:
-        """Run `reclaim_stale()` at most once per `reclaim_interval_s`."""
+    def _maybe_renew(self, futures: dict[Future, ClaimedJob]) -> None:
+        """Renew running jobs at a third of the visibility timeout."""
         now = time.monotonic()
-        if now - self._last_reclaim < self.config.reclaim_interval_s:
+        if now - self._last_renewal < self.config.reclaim_idle_ms / 3000:
             return
+        self._last_renewal = now
+        self.queue.renew(self.config.consumer_name, [job.entry_id for job in futures.values()])
+
+    def _maybe_reclaim(self, free_slots: int) -> dict[Future, ClaimedJob]:
+        """Run `reclaim_stale()` for up to `free_slots` jobs, at most once per `reclaim_interval_s`.
+
+        Stale entries stay pending, for this or another worker, while no slot is free.
+
+        Returns
+        -------
+        dict[Future, ClaimedJob]
+            The submitted jobs, which count against `max_concurrency`.
+        """
+        now = time.monotonic()
+        if free_slots <= 0 or now - self._last_reclaim < self.config.reclaim_interval_s:
+            return {}
         self._last_reclaim = now
-        reclaimed = self.queue.reclaim_stale(self.config.consumer_name, self.config.reclaim_idle_ms)
+        reclaimed = self.queue.reclaim_stale(
+            self.config.consumer_name, self.config.reclaim_idle_ms, count=free_slots
+        )
+        submitted: dict[Future, ClaimedJob] = {}
         for job in reclaimed:
             metrics.JOBS_DUPLICATE_DELIVERIES_TOTAL.inc()
-            self._executor.submit(self._process_one, job)
+            submitted[self._executor.submit(self._process_one, job)] = job
+        return submitted
 
     def _process_one(self, job: ClaimedJob) -> None:
         """Run `process_fn` for one claimed job and ack/fail it, recording metrics."""
