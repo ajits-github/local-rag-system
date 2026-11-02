@@ -11513,3 +11513,60 @@ Graph authorization, ingestion and governance integration tests ran against a li
 
 ### Open problems
 CI still has no Neo4j, so the Cypher guarantees are only proven locally. BUG-009, AGT-004 and AGT-005 still need live evaluation runs. Reset and re-ingest any existing graph before final runs.
+
+## 2026-11-02 (session 30): Merged the audit fixes, then the agent prompt and tool contracts (36.2)
+
+### Context
+#42 and #43 merged the 35.12 audit fixes. 36.0 and 36.1 are a file map and an audit, and 36.2 is the task built on them: remove prompt and eval contract mismatches before expensive experiments.
+
+### What 36.2 got wrong or left out, checked against the code
+- The MCP diagram it asks to redraw is now the supplied image, which already shows minting, then ClientSession, then /mcp. Not redrawn.
+- It did not know that backslash paths from a Windows ingestion are invalid inside the model's JSON. That alone made a correct `get_document` call unparsable.
+- `run_agent_eval` never passed a graph retriever, so graph tools could not be evaluated. Now wired.
+- MCP with graph: chose explicit combined templates over failing fast, because `graph.enabled` also drives ingestion and graph queries, and failing fast would have broken a working deployment shape.
+
+### How it was debugged
+Three live iterations, reading every row each time. Round 1 fixed routing and case tools, but local tools stayed at 0.0 and the stricter sufficiency prompt produced fixed refusals. Reading arguments showed the harness had replaced the question with a search string. Round 2 passed the original question and tool history, and refusals dropped, but the model repeated identical searches. Round 3 stopped dispatching identical calls.
+
+A failed `get_related_context` on the round 3 run looked like a tool bug. The same call worked directly, and Postgres logs showed a crash and recovery at that moment (OPS-019), so that run was discarded and repeated.
+
+### Evaluation results
+`experiment_041`, `qwen2.5:3b`, 14 rows, compared with the old prompts on the same code and corrected gold:
+
+| Metric | Old prompts | Candidate |
+|---|---|---|
+| Routing accuracy | 1.0 | 1.0 |
+| Keyword answer correctness | 0.228 | 0.511 |
+| Fixed low-confidence answers | 7 | 2 |
+| `max_steps` terminations | 9 | 3 |
+| Mean tool calls | 1.71 | 1.21 |
+| Required-tool coverage | 0.679 | 0.821 |
+| Unexpected-tool rate | 0.214 | 0.071 |
+| `get_customer_case` reachability | 0.5 | 1.0 |
+| `get_case_status`, `update_case_status` reachability | 1.0 | 1.0 |
+| `get_related_context` reachability | 0.0 | 0.5 |
+| `get_document`, `get_latest_document` reachability | 0.0 | 0.0 |
+| Tool arguments correct, of those scored | 7 of 7 | 8 of 8 |
+| MCP grounding | 0.8 | 1.0 |
+| Denial leakage, wrong mutations, validation errors | 0 | 0 |
+| Citation support | 1.0 of 3 | 0.2 of 5 |
+
+Citation support fell because the old prompts mostly refused, so it scored fewer answers, and the candidate's answers cite an extra irrelevant source. That is a real remaining gap. Live contract tests: 20 passed, 2 failed, both tool selection preferring search, now marked as expected failures.
+
+`rag_answer_v5` was not promoted. The candidate keeps v3 so this comparison changes only agent prompts, and the 2026-08-22 A/B results were mixed, with the marker leak solved by the sanitizer rather than by v5.
+
+### Interview talking points
+- A tool can be unreachable because of the harness. Backslashes in JSON made a correct answer unparsable, however good the prompt was.
+- A stricter sufficiency prompt can look more careful and answer worse, because hitting the bound turns into a fixed refusal.
+- Few-shot examples use identifiers absent from the gold files, so the preflight tests the contract and not memorization.
+
+### Also found
+Reviewing the new record showed that `record_agent_experiment.py` named the unused fallback prompt and wrote snapshots to a renamed directory (EVAL-017). Both fixed before `experiment_041` was recorded again.
+
+The context benchmark was regenerated with the new budget fields. Its metrics match the earlier report, and only build timings moved.
+
+### Open problems
+AGT-004 stays in progress: `get_document` and `get_latest_document` are still unreached on this model, and row 2 lost a fact as a result. Row 6 reached a fixed low-confidence answer even with good evidence. A case denial can still lead to a second tool call, including one knowledge-base search (no leakage). The graph and combined templates have not had a full live evaluation. OPS-019's cause is unproven.
+
+### Next recommended step
+Run the larger agent evaluation on the candidate config, and try a stronger local model if memory allows, since tool selection is now the limit and not the contract. Record a graph-mode benchmark after resetting and re-ingesting the graph.

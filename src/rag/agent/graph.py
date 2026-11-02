@@ -51,6 +51,11 @@ logger = logging.getLogger(__name__)
 
 _MAX_SUBQUESTIONS = 4
 _EVIDENCE_SUMMARY_CHARS = 400
+_TOOL_HISTORY_ARG_CHARS = 120
+_REPEAT_REJECTED_NOTE = (
+    "Your last proposal repeated one of these calls exactly and was rejected, because it "
+    "cannot return anything new. Choose a different tool or different arguments."
+)
 _INSUFFICIENT_EVIDENCE_ANSWER = (
     "I don't have enough authorized, retrieved evidence to answer this question confidently."
 )
@@ -154,22 +159,34 @@ def _load_template(path: str) -> PromptTemplate:
     return load_prompt_template(path)
 
 
-def _load_templates(config: AppConfig) -> dict[str, PromptTemplate]:
-    """Load the five agent prompt templates, choosing the `tool_select` variant from config.
+def tool_select_prompt_path(config: AppConfig) -> str:
+    """Return the tool-selection template path these toggles actually use.
 
-    The MCP variants take precedence over the graph variant. If MCP client
-    tools and graph tools are both enabled, the MCP variant is used and graph
-    tools are not offered.
+    Each combination of MCP client, business actions, and graph has its own
+    static template, so the model is offered exactly the enabled tools.
     """
     agent_cfg = config.agent
     if config.mcp.client.enabled and config.mcp.business_actions.enabled:
-        tool_select_path = agent_cfg.tool_select_mcp_actions_prompt_path
-    elif config.mcp.client.enabled:
-        tool_select_path = agent_cfg.tool_select_mcp_prompt_path
-    elif config.graph.enabled:
-        tool_select_path = agent_cfg.tool_select_graph_prompt_path
-    else:
-        tool_select_path = agent_cfg.tool_select_prompt_path
+        return (
+            agent_cfg.tool_select_mcp_actions_graph_prompt_path
+            if config.graph.enabled
+            else agent_cfg.tool_select_mcp_actions_prompt_path
+        )
+    if config.mcp.client.enabled:
+        return (
+            agent_cfg.tool_select_mcp_graph_prompt_path
+            if config.graph.enabled
+            else agent_cfg.tool_select_mcp_prompt_path
+        )
+    if config.graph.enabled:
+        return agent_cfg.tool_select_graph_prompt_path
+    return agent_cfg.tool_select_prompt_path
+
+
+def _load_templates(config: AppConfig) -> dict[str, PromptTemplate]:
+    """Load the five agent prompt templates, choosing the `tool_select` variant from config."""
+    agent_cfg = config.agent
+    tool_select_path = tool_select_prompt_path(config)
     return {
         "classify": _load_template(
             str(config.agent_prompt_template_path(agent_cfg.classify_prompt_path))
@@ -190,8 +207,10 @@ def _load_templates(config: AppConfig) -> dict[str, PromptTemplate]:
 def _summarize_evidence(evidence: list[SearchResult], max_chars: int = 6000) -> str:
     """Render a short, source-labeled summary of gathered evidence for a decision prompt.
 
-    Exposes `chunk_id` alongside `source` so `get_related_context` can be
-    given a real chunk id to look up. No other internal metadata, such as
+    Exposes `chunk_id` and `source` so a specialized tool can be given a real
+    identifier, plus `origin`, `content_type`, and `trust` for the decision.
+    Sources render with forward slashes because a backslash path is invalid
+    inside the model's JSON reply. No other internal metadata, such as
     document_id, dataset_id, tenant_id, or sensitive_field_ids, is exposed
     here. Items that would push the summary past `max_chars` are omitted,
     with a note in the summary and a log line, so a decision prompt cannot
@@ -202,8 +221,12 @@ def _summarize_evidence(evidence: list[SearchResult], max_chars: int = 6000) -> 
     lines: list[str] = []
     used = 0
     for i, r in enumerate(evidence, start=1):
+        metadata = r.chunk.metadata
+        source = metadata.source.replace("\\", "/")
         line = (
-            f"[{i}] chunk_id={r.chunk.metadata.chunk_id} source={r.chunk.metadata.source}: "
+            f"[{i}] chunk_id={metadata.chunk_id} source={source} "
+            f"origin={r.origin} content_type={metadata.content_type or 'unset'} "
+            f"trust={metadata.trust_level or 'unset'}: "
             f"{r.chunk.content[:_EVIDENCE_SUMMARY_CHARS]}"
         )
         if lines and used + len(line) > max_chars:
@@ -217,6 +240,22 @@ def _summarize_evidence(evidence: list[SearchResult], max_chars: int = 6000) -> 
         lines.append(line)
         used += len(line) + 2
     return "\n\n".join(lines)
+
+
+def _summarize_tool_history(history: list[ToolCallRecord]) -> str:
+    """Render the tools already called this run, with validated arguments and result counts."""
+    if not history:
+        return "(no tools called yet)"
+    lines = []
+    for record in history:
+        args = ", ".join(
+            f"{name}={str(value)[:_TOOL_HISTORY_ARG_CHARS]}"
+            for name, value in record.args.items()
+            if value is not None
+        )
+        outcome = f"returned {record.result_count} result(s)" if record.success else "failed"
+        lines.append(f"- {record.tool_name}({args}): {outcome}")
+    return "\n".join(lines)
 
 
 def _accumulate_tokens(state: AgentState, llm: LLM, node: str) -> None:
@@ -471,16 +510,40 @@ def _select_tool(
     template: PromptTemplate,
     max_retries: int,
     max_summary_chars: int = 6000,
+    repeat_rejected: bool = False,
 ) -> ToolSelectionDecision | None:
-    """`select_tool` node: decide which tool to dispatch next, and with what raw arguments."""
+    """`select_tool` node: decide which tool to dispatch next, and with what raw arguments.
+
+    `current_query` can be a bare reformulated search string, so a template may
+    also declare `original_query` and `tool_history`. Older templates declare
+    neither and render unchanged. `repeat_rejected` tells the model its last
+    proposal duplicated an earlier call.
+    """
+    tool_history = _summarize_tool_history(state.tool_call_history)
+    if repeat_rejected:
+        tool_history += f"\n{_REPEAT_REJECTED_NOTE}"
+    variables = {
+        "query": state.current_query or state.original_query,
+        "evidence_summary": _summarize_evidence(state.retrieved_evidence, max_summary_chars),
+        "original_query": state.original_query,
+        "tool_history": tool_history,
+    }
     return run_decision(
         llm,
         template,
         ToolSelectionDecision,
         max_retries,
-        query=state.current_query,
-        evidence_summary=_summarize_evidence(state.retrieved_evidence, max_summary_chars),
+        **{name: variables[name] for name in template.required_variables},
     )
+
+
+def _repeats_earlier_call(decision: ToolSelectionDecision, history: list[ToolCallRecord]) -> bool:
+    """Return whether `decision` validates to the same arguments as an earlier call."""
+    try:
+        args = TOOL_ARG_MODELS[decision.tool_name].model_validate(decision.tool_args).model_dump()
+    except ValidationError:
+        return False
+    return any(r.tool_name == decision.tool_name and r.args == args for r in history)
 
 
 #: Tools that query `VectorStore` directly and resolve `auth` themselves.
@@ -1224,7 +1287,38 @@ def run_agent(
         if _step_or_stop(state, agent_cfg):
             break
         if decision is None:
+            state.tool_selection_parse_failures += 1
             break
+        # An identical call cannot return new evidence, so it is never dispatched twice. A
+        # local tool gets one corrected proposal; a remote case read cannot answer differently.
+        # Templates without tool history predate this rule and keep their recorded behavior.
+        if "tool_history" in templates["tool_select"].required_variables and _repeats_earlier_call(
+            decision, state.tool_call_history
+        ):
+            state.repeated_tool_proposals += 1
+            if decision.tool_name in REMOTE_MCP_TOOL_NAMES:
+                break
+            decision = _call_node(
+                "tool_select",
+                state,
+                partial(
+                    _select_tool,
+                    state,
+                    timed_llm,
+                    templates["tool_select"],
+                    agent_cfg.max_json_parse_retries,
+                    agent_cfg.max_evidence_summary_chars,
+                    repeat_rejected=True,
+                ),
+                timed_llm=timed_llm,
+            )
+            _accumulate_tokens(state, timed_llm, "tool_select")
+            if decision is None:
+                state.tool_selection_parse_failures += 1
+                break
+            if _repeats_earlier_call(decision, state.tool_call_history):
+                state.repeated_tool_proposals += 1
+                break
         _emit_event(on_event, "tool_selected", state, t_start=t_start, tool_name=decision.tool_name)
 
         state = _call_node(

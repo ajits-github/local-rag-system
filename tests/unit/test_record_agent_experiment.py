@@ -8,6 +8,7 @@ onto sys.path so it can import record_agent_experiment directly.
 
 from __future__ import annotations
 
+import hashlib
 import sys
 from pathlib import Path
 from typing import Any
@@ -127,3 +128,19 @@ def test_build_agent_experiment_record_handles_missing_breakdown_sections_gracef
     assert record["agent_guardrail_termination_count"] is None
     assert record["agent_guardrail_termination_rate"] is None
     assert record["agent_tool_usage_search_knowledge_base_count"] is None
+
+
+def test_record_names_the_tool_prompt_the_toggles_actually_select():
+    """With MCP on, the record names the MCP template and not the unused local fallback."""
+    config = load_config("config/experiments/agentic-rag-final-candidate-v1.yaml")
+    record = build_agent_experiment_record(_agent_report(), None, config, "experiment_x", "label")
+
+    assert record["agent_tool_select_prompt_path"].endswith("agent_tool_select_v9_mcp_actions.yaml")
+    assert record["agent_tool_select_prompt_checksum"] == _sha256_of(
+        config.agent_prompt_template_path(config.agent.tool_select_mcp_actions_prompt_path)
+    )
+
+
+def _sha256_of(path: Path) -> str:
+    """Hash a prompt file the way the record script does."""
+    return hashlib.sha256(path.read_bytes()).hexdigest()

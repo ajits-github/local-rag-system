@@ -44,11 +44,12 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from rag.agent.graph import tool_select_prompt_path  # noqa: E402
 from rag.config import DEFAULT_CONFIG_PATH, AppConfig, load_config  # noqa: E402
 from rag.eval.mlflow_logger import log_experiment  # noqa: E402
 
 RESULTS_DIR = Path(__file__).resolve().parents[1] / "experiments" / "results" / "agentic"
-CONFIGS_DIR = Path(__file__).resolve().parents[1] / "experiments" / "configs"
+CONFIGS_DIR = Path(__file__).resolve().parents[1] / "experiments" / "config_snapshots"
 
 _AGENT_PROMPT_FIELDS = [
     ("classify", "classify_prompt_path"),
@@ -88,6 +89,13 @@ _TOOL_NAMES = [
     "get_case_status",
     "update_case_status",
 ]
+
+
+def _agent_prompt_path(config: AppConfig, name: str, field: str) -> str:
+    """Return the prompt path a run used, resolving `tool_select` through the toggles."""
+    return (
+        tool_select_prompt_path(config) if name == "tool_select" else getattr(config.agent, field)
+    )
 
 
 def _checksum(path: str) -> str:
@@ -157,12 +165,12 @@ def build_agent_experiment_record(
         tool_usage_fields[f"agent_tool_usage_{name}_rate"] = entry.get("rate")
     prompt_checksums = {
         f"agent_{name}_prompt_checksum": _checksum(
-            str(config.agent_prompt_template_path(getattr(config.agent, field)))
+            str(config.agent_prompt_template_path(_agent_prompt_path(config, name, field)))
         )
         for name, field in _AGENT_PROMPT_FIELDS
     }
     prompt_paths = {
-        f"agent_{name}_prompt_path": getattr(config.agent, field)
+        f"agent_{name}_prompt_path": _agent_prompt_path(config, name, field)
         for name, field in _AGENT_PROMPT_FIELDS
     }
 

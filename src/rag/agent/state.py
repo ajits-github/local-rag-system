@@ -98,6 +98,11 @@ class AgentState(BaseModel):
 
     Attributes
     ----------
+    tool_selection_parse_failures : int
+        Tool-select decisions that stayed unparsable after every retry. Each
+        one ends the tool loop, so no `ToolCallRecord` exists for it.
+    repeated_tool_proposals : int
+        Tool proposals rejected for exactly repeating an earlier call this run.
     original_query : str
         The user's original question, unmodified.
     authorization_context : AuthorizationContext | None
@@ -197,6 +202,8 @@ class AgentState(BaseModel):
     tool_call_history: list[ToolCallRecord] = Field(default_factory=list)
     retrieval_attempts: int = 0
     tool_call_count: int = 0
+    tool_selection_parse_failures: int = 0
+    repeated_tool_proposals: int = 0
     step_count: int = 0
     prompt_tokens: int = 0
     completion_tokens: int = 0
