@@ -71,6 +71,8 @@ class ToolCallRecord(BaseModel):
     `args` holds only the validated, LLM-writable fields actually passed
     to the tool (see `rag.agent.tool_schemas`). Never `auth`/`tenant_id`/
     `roles`, which are never LLM-writable in the first place.
+    `chunk_id_shown_in_evidence` is set for a validated `get_related_context`
+    call, from the evidence summary the model saw when it chose that id.
     """
 
     tool_name: Literal[
@@ -91,6 +93,7 @@ class ToolCallRecord(BaseModel):
     latency_ms: float = 0.0
     success: bool = True
     error: str | None = None
+    chunk_id_shown_in_evidence: bool | None = None
 
 
 class AgentState(BaseModel):

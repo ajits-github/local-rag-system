@@ -204,6 +204,26 @@ def _load_templates(config: AppConfig) -> dict[str, PromptTemplate]:
     }
 
 
+def _fitting_evidence_lines(evidence: list[SearchResult], max_chars: int) -> list[tuple[str, str]]:
+    """Return `(chunk_id, rendered line)` for each evidence item that fits the decision prompt."""
+    lines: list[tuple[str, str]] = []
+    used = 0
+    for i, r in enumerate(evidence, start=1):
+        metadata = r.chunk.metadata
+        source = metadata.source.replace("\\", "/")
+        line = (
+            f"[{i}] chunk_id={metadata.chunk_id} source={source} "
+            f"origin={r.origin} content_type={metadata.content_type or 'unset'} "
+            f"trust={metadata.trust_level or 'unset'}: "
+            f"{r.chunk.content[:_EVIDENCE_SUMMARY_CHARS]}"
+        )
+        if lines and used + len(line) > max_chars:
+            break
+        lines.append((metadata.chunk_id, line))
+        used += len(line) + 2
+    return lines
+
+
 def _summarize_evidence(evidence: list[SearchResult], max_chars: int = 6000) -> str:
     """Render a short, source-labeled summary of gathered evidence for a decision prompt.
 
@@ -218,27 +238,14 @@ def _summarize_evidence(evidence: list[SearchResult], max_chars: int = 6000) -> 
     """
     if not evidence:
         return "(no evidence gathered yet)"
-    lines: list[str] = []
-    used = 0
-    for i, r in enumerate(evidence, start=1):
-        metadata = r.chunk.metadata
-        source = metadata.source.replace("\\", "/")
-        line = (
-            f"[{i}] chunk_id={metadata.chunk_id} source={source} "
-            f"origin={r.origin} content_type={metadata.content_type or 'unset'} "
-            f"trust={metadata.trust_level or 'unset'}: "
-            f"{r.chunk.content[:_EVIDENCE_SUMMARY_CHARS]}"
+    lines = [line for _, line in _fitting_evidence_lines(evidence, max_chars)]
+    omitted = len(evidence) - len(lines)
+    if omitted:
+        logger.info(
+            "Agent evidence summary truncated",
+            extra={"shown_items": len(lines), "omitted_items": omitted},
         )
-        if lines and used + len(line) > max_chars:
-            omitted = len(evidence) - len(lines)
-            logger.info(
-                "Agent evidence summary truncated",
-                extra={"shown_items": len(lines), "omitted_items": omitted},
-            )
-            lines.append(f"({omitted} more evidence item(s) omitted to fit the prompt)")
-            break
-        lines.append(line)
-        used += len(line) + 2
+        lines.append(f"({omitted} more evidence item(s) omitted to fit the prompt)")
     return "\n\n".join(lines)
 
 
@@ -716,6 +723,16 @@ def _execute_tool(
         )
         return state
 
+    # Evidence has not changed since selection, so this is what the model was shown.
+    chunk_id_shown: bool | None = None
+    if decision.tool_name == "get_related_context":
+        chunk_id_shown = args.model_dump()["chunk_id"] in {
+            chunk_id
+            for chunk_id, _ in _fitting_evidence_lines(
+                state.retrieved_evidence, agent_cfg.max_evidence_summary_chars
+            )
+        }
+
     is_remote_tool = decision.tool_name in REMOTE_MCP_TOOL_NAMES
     is_write_action = decision.tool_name in WRITE_ACTION_TOOL_NAMES
     is_graph_tool = decision.tool_name in GRAPH_TOOL_NAMES
@@ -810,6 +827,7 @@ def _execute_tool(
                 latency_ms=latency_ms,
                 success=False,
                 error=str(exc)[:200],
+                chunk_id_shown_in_evidence=chunk_id_shown,
             )
         )
         state.tool_call_count += 1
@@ -844,6 +862,7 @@ def _execute_tool(
             result_count=len(sanitized),
             latency_ms=latency_ms,
             success=True,
+            chunk_id_shown_in_evidence=chunk_id_shown,
         )
     )
     observability_metrics.observe_tool_call(decision.tool_name, True, latency_ms / 1000)
@@ -1313,12 +1332,18 @@ def run_agent(
                 timed_llm=timed_llm,
             )
             _accumulate_tokens(state, timed_llm, "tool_select")
+            if _step_or_stop(state, agent_cfg):
+                break
             if decision is None:
                 state.tool_selection_parse_failures += 1
                 break
             if _repeats_earlier_call(decision, state.tool_call_history):
                 state.repeated_tool_proposals += 1
                 break
+        if cancel_event is not None and cancel_event.is_set():
+            # A tool can have side effects, so a selection that outlived the caller is not run.
+            state.termination_reason = "cancelled"
+            break
         _emit_event(on_event, "tool_selected", state, t_start=t_start, tool_name=decision.tool_name)
 
         state = _call_node(
