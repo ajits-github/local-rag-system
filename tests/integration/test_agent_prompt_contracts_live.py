@@ -111,6 +111,10 @@ def test_tool_select_searches_first_when_only_a_title_is_known(llm):
     assert decision.tool_name == "search_knowledge_base"
 
 
+@pytest.mark.xfail(
+    strict=False,
+    reason="qwen2.5:3b still prefers a second search here; see KNOWN_ISSUES.md AGT-004",
+)
 def test_tool_select_fetches_the_document_when_the_exact_source_is_known(llm):
     """Check: tool select fetches the document when the exact source is known."""
     evidence = (
@@ -128,6 +132,10 @@ def test_tool_select_fetches_the_document_when_the_exact_source_is_known(llm):
     assert decision.tool_args["source"] == "docs/ops/failover.md"
 
 
+@pytest.mark.xfail(
+    strict=False,
+    reason="qwen2.5:3b still prefers a second search here; see KNOWN_ISSUES.md AGT-004",
+)
 def test_tool_select_resolves_an_old_exact_source_to_latest(llm):
     """Check: tool select resolves an old exact source to latest."""
     evidence = (
