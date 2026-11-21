@@ -1320,7 +1320,7 @@ class HistoryConfig(BaseModel):
 
 
 class ContextCacheConfig(BaseModel):
-    """In-process, request-scoped safe caching. See `rag.context.caching`.
+    """In-process token-count caching that persists across requests. See `rag.context.caching`.
 
     Attributes
     ----------
@@ -1332,9 +1332,11 @@ class ContextCacheConfig(BaseModel):
         project's established "no infrastructure without a demonstrated
         requirement now" convention. When enabled, caches only
         per-text token counts (never raw evidence, never a full
-        assembled context) in a small in-process LRU, keyed by a hash of
-        `(tenant_id, text)` so no cache entry can ever cross a tenant
-        boundary.
+        assembled context) in a small LRU owned by the process-wide
+        `ContextEngine`, so entries are shared by every request that
+        process serves. The key is `tenant_id`, the counter's strategy
+        name and a sha256 hash of the text, so no entry crosses a tenant
+        boundary or a change of counting strategy.
     max_entries : int
         LRU size cap.
     """
