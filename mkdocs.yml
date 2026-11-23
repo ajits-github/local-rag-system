@@ -97,6 +97,7 @@ nav:
   - Milestones & History: milestones.md
   - Ingestion & Chunking: topics/ingestion.md
   - Retrieval: topics/retrieval.md
+  - Freshness & Document Lifecycle: topics/freshness-lifecycle.md
   - Context Engineering: topics/context-engineering.md
   - Multimodal & Layout: topics/multimodal.md
   - Security:

@@ -126,8 +126,13 @@ documented limitations), this section is the condensed version.
   `effective_from <= as_of`. Never "make every version eligible and let
   the LLM guess", a documented, narrower limitation instead (a family
   with no active/dated member degrades to "nothing excluded," never a
-  wrong guess). Resolved once per query, scoped by `filters["dataset_id"]`,
+  wrong guess). Resolved once per query, scoped by `filters["dataset_id"]`
+  (every dataset, separately, when a request names none),
   and folded into `AuthorizationContext.resolved_excluded_document_ids`.
+  It runs for every query by default, adding no tenant, role, or trust
+  filter where authorization is off
+  (`retrieval.freshness.apply_without_authorization`); see
+  [Freshness & Document Lifecycle](freshness-lifecycle.md).
 - **Trust** (`trust_level`): stored/filterable but not a default hard
   gate, an untrusted document stays retrievable so "was it correctly
   identified as untrusted" remains testable.

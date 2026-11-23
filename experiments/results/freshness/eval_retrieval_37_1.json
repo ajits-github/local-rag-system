@@ -1,0 +1,260 @@
+{
+  "description": "run_eval --skip-generation on data/eval/techfusion_gold.jsonl (126 questions), dataset techfusion. before = branch before the 37.1 changes; after = full 37.1 branch; *_compat = 37.1 retrieval code with retrieval.freshness.apply_without_authorization=false, isolating the keyword-ranking change (ab = both keyword rules, a = zero-score rule only). ret014_* = full branch after RET-014 (version_scope), with the two comparison rows in the local gold file set to version_scope=history.",
+  "configs": {
+    "default": "config/default.yaml",
+    "hybrid": "config/experiments/hybrid-retrieval.yaml",
+    "secure": "config/experiments/secure-rag-baseline-v1.yaml"
+  },
+  "runs": {
+    "before_default": {
+      "recall@5": 0.8412698412698413,
+      "recall@10": 0.8888888888888888,
+      "hit@5": 0.8650793650793651,
+      "hit@10": 0.8968253968253969,
+      "mrr": 0.7257369614512471,
+      "safety_rates": {
+        "document_unauthorized_retrieval_rate": 0.9411764705882353,
+        "cross_tenant_leakage_rate": 1.0,
+        "stale_document_error_rate": 0.07692307692307693,
+        "current_document_retrieval_accuracy": 1.0,
+        "unauthorized_metadata_leakage_rate": 0.7619047619047619,
+        "forged_role_acceptance_rate": 0.0,
+        "duplicate_sensitive_field_miss_rate": 0.0
+      },
+      "git": {
+        "git_commit_sha": "cff0af843048602a7ea52ecc1738e9f0efc971b7",
+        "git_branch": "feat/freshness-lifecycle-ingestion",
+        "git_dirty": true
+      }
+    },
+    "after_default": {
+      "recall@5": 0.8425925925925927,
+      "recall@10": 0.8783068783068784,
+      "hit@5": 0.873015873015873,
+      "hit@10": 0.8968253968253969,
+      "mrr": 0.7318783068783069,
+      "safety_rates": {
+        "document_unauthorized_retrieval_rate": 0.5882352941176471,
+        "cross_tenant_leakage_rate": 1.0,
+        "stale_document_error_rate": 0.07692307692307693,
+        "current_document_retrieval_accuracy": 1.0,
+        "unauthorized_metadata_leakage_rate": 0.47619047619047616,
+        "forged_role_acceptance_rate": 0.0,
+        "duplicate_sensitive_field_miss_rate": 0.0
+      },
+      "git": {
+        "git_commit_sha": "cff0af843048602a7ea52ecc1738e9f0efc971b7",
+        "git_branch": "feat/freshness-lifecycle-ingestion",
+        "git_dirty": true
+      }
+    },
+    "before_hybrid": {
+      "recall@5": 0.8611111111111112,
+      "recall@10": 0.9206349206349206,
+      "hit@5": 0.8809523809523809,
+      "hit@10": 0.9285714285714286,
+      "mrr": 0.766931216931217,
+      "safety_rates": {
+        "document_unauthorized_retrieval_rate": 0.9411764705882353,
+        "cross_tenant_leakage_rate": 1.0,
+        "stale_document_error_rate": 0.07692307692307693,
+        "current_document_retrieval_accuracy": 1.0,
+        "unauthorized_metadata_leakage_rate": 0.7619047619047619,
+        "forged_role_acceptance_rate": 0.0,
+        "duplicate_sensitive_field_miss_rate": 0.0
+      },
+      "git": {
+        "git_commit_sha": "cff0af843048602a7ea52ecc1738e9f0efc971b7",
+        "git_branch": "feat/freshness-lifecycle-ingestion",
+        "git_dirty": true
+      }
+    },
+    "after_hybrid": {
+      "recall@5": 0.8505291005291006,
+      "recall@10": 0.917989417989418,
+      "hit@5": 0.8809523809523809,
+      "hit@10": 0.9365079365079365,
+      "mrr": 0.7787792894935752,
+      "safety_rates": {
+        "document_unauthorized_retrieval_rate": 0.5882352941176471,
+        "cross_tenant_leakage_rate": 1.0,
+        "stale_document_error_rate": 0.07692307692307693,
+        "current_document_retrieval_accuracy": 1.0,
+        "unauthorized_metadata_leakage_rate": 0.47619047619047616,
+        "forged_role_acceptance_rate": 0.0,
+        "duplicate_sensitive_field_miss_rate": 0.0
+      },
+      "git": {
+        "git_commit_sha": "cff0af843048602a7ea52ecc1738e9f0efc971b7",
+        "git_branch": "feat/freshness-lifecycle-ingestion",
+        "git_dirty": true
+      }
+    },
+    "after_hybrid_compat_ab": {
+      "recall@5": 0.8611111111111112,
+      "recall@10": 0.9206349206349206,
+      "hit@5": 0.8809523809523809,
+      "hit@10": 0.9285714285714286,
+      "mrr": 0.766931216931217,
+      "safety_rates": {
+        "document_unauthorized_retrieval_rate": 0.9411764705882353,
+        "cross_tenant_leakage_rate": 1.0,
+        "stale_document_error_rate": 0.07692307692307693,
+        "current_document_retrieval_accuracy": 1.0,
+        "unauthorized_metadata_leakage_rate": 0.7619047619047619,
+        "forged_role_acceptance_rate": 0.0,
+        "duplicate_sensitive_field_miss_rate": 0.0
+      },
+      "git": {
+        "git_commit_sha": "cff0af843048602a7ea52ecc1738e9f0efc971b7",
+        "git_branch": "feat/freshness-lifecycle-ingestion",
+        "git_dirty": true
+      }
+    },
+    "after_hybrid_compat_a": {
+      "recall@5": 0.8611111111111112,
+      "recall@10": 0.9206349206349206,
+      "hit@5": 0.8809523809523809,
+      "hit@10": 0.9285714285714286,
+      "mrr": 0.766931216931217,
+      "safety_rates": {
+        "document_unauthorized_retrieval_rate": 0.9411764705882353,
+        "cross_tenant_leakage_rate": 1.0,
+        "stale_document_error_rate": 0.07692307692307693,
+        "current_document_retrieval_accuracy": 1.0,
+        "unauthorized_metadata_leakage_rate": 0.7619047619047619,
+        "forged_role_acceptance_rate": 0.0,
+        "duplicate_sensitive_field_miss_rate": 0.0
+      },
+      "git": {
+        "git_commit_sha": "cff0af843048602a7ea52ecc1738e9f0efc971b7",
+        "git_branch": "feat/freshness-lifecycle-ingestion",
+        "git_dirty": true
+      }
+    },
+    "before_secure": {
+      "recall@5": 0.7883597883597884,
+      "recall@10": 0.832010582010582,
+      "hit@5": 0.8333333333333334,
+      "hit@10": 0.8650793650793651,
+      "mrr": 0.7534391534391535,
+      "safety_rates": {
+        "document_unauthorized_retrieval_rate": 0.11764705882352941,
+        "cross_tenant_leakage_rate": 0.0,
+        "stale_document_error_rate": 0.0,
+        "current_document_retrieval_accuracy": 1.0,
+        "unauthorized_metadata_leakage_rate": 0.09523809523809523,
+        "forged_role_acceptance_rate": 0.0,
+        "duplicate_sensitive_field_miss_rate": 0.0
+      },
+      "git": {
+        "git_commit_sha": "cff0af843048602a7ea52ecc1738e9f0efc971b7",
+        "git_branch": "feat/freshness-lifecycle-ingestion",
+        "git_dirty": true
+      }
+    },
+    "after_secure": {
+      "recall@5": 0.7883597883597884,
+      "recall@10": 0.832010582010582,
+      "hit@5": 0.8333333333333334,
+      "hit@10": 0.8650793650793651,
+      "mrr": 0.7552343159486016,
+      "safety_rates": {
+        "document_unauthorized_retrieval_rate": 0.11764705882352941,
+        "cross_tenant_leakage_rate": 0.0,
+        "stale_document_error_rate": 0.0,
+        "current_document_retrieval_accuracy": 1.0,
+        "unauthorized_metadata_leakage_rate": 0.09523809523809523,
+        "forged_role_acceptance_rate": 0.0,
+        "duplicate_sensitive_field_miss_rate": 0.0
+      },
+      "git": {
+        "git_commit_sha": "cff0af843048602a7ea52ecc1738e9f0efc971b7",
+        "git_branch": "feat/freshness-lifecycle-ingestion",
+        "git_dirty": true
+      }
+    },
+    "ret014_default": {
+      "recall@5": 0.8505291005291006,
+      "recall@10": 0.8862433862433863,
+      "hit@5": 0.873015873015873,
+      "hit@10": 0.8968253968253969,
+      "mrr": 0.7358465608465609,
+      "safety_rates": {
+        "document_unauthorized_retrieval_rate": 0.5882352941176471,
+        "cross_tenant_leakage_rate": 1.0,
+        "stale_document_error_rate": 0.07692307692307693,
+        "current_document_retrieval_accuracy": 1.0,
+        "unauthorized_metadata_leakage_rate": 0.47619047619047616,
+        "forged_role_acceptance_rate": 0.0,
+        "duplicate_sensitive_field_miss_rate": 0.0
+      },
+      "git": {
+        "git_commit_sha": "cff0af843048602a7ea52ecc1738e9f0efc971b7",
+        "git_branch": "feat/freshness-lifecycle-ingestion",
+        "git_dirty": true
+      }
+    },
+    "ret014_hybrid": {
+      "recall@5": 0.8584656084656085,
+      "recall@10": 0.9259259259259259,
+      "hit@5": 0.8809523809523809,
+      "hit@10": 0.9365079365079365,
+      "mrr": 0.7787792894935752,
+      "safety_rates": {
+        "document_unauthorized_retrieval_rate": 0.5882352941176471,
+        "cross_tenant_leakage_rate": 1.0,
+        "stale_document_error_rate": 0.07692307692307693,
+        "current_document_retrieval_accuracy": 1.0,
+        "unauthorized_metadata_leakage_rate": 0.47619047619047616,
+        "forged_role_acceptance_rate": 0.0,
+        "duplicate_sensitive_field_miss_rate": 0.0
+      },
+      "git": {
+        "git_commit_sha": "cff0af843048602a7ea52ecc1738e9f0efc971b7",
+        "git_branch": "feat/freshness-lifecycle-ingestion",
+        "git_dirty": true
+      }
+    },
+    "ret014_secure": {
+      "recall@5": 0.7962962962962963,
+      "recall@10": 0.8399470899470899,
+      "hit@5": 0.8333333333333334,
+      "hit@10": 0.8650793650793651,
+      "mrr": 0.7552343159486016,
+      "safety_rates": {
+        "document_unauthorized_retrieval_rate": 0.11764705882352941,
+        "cross_tenant_leakage_rate": 0.0,
+        "stale_document_error_rate": 0.0,
+        "current_document_retrieval_accuracy": 1.0,
+        "unauthorized_metadata_leakage_rate": 0.09523809523809523,
+        "forged_role_acceptance_rate": 0.0,
+        "duplicate_sensitive_field_miss_rate": 0.0
+      },
+      "git": {
+        "git_commit_sha": "cff0af843048602a7ea52ecc1738e9f0efc971b7",
+        "git_branch": "feat/freshness-lifecycle-ingestion",
+        "git_dirty": true
+      }
+    }
+  },
+  "changed_examples": {
+    "default": {
+      "only_superseded_v1_removed": 55,
+      "other_membership_change": 3
+    },
+    "hybrid": {
+      "only_superseded_v1_removed": 51,
+      "order_only": 12,
+      "other_membership_change": 8,
+      "v1_and_other_removed": 5
+    },
+    "secure": {
+      "only_superseded_v1_removed": 21,
+      "order_only": 10,
+      "other_membership_change": 5,
+      "v1_and_other_removed": 4
+    },
+    "note": "Other membership changes in the default config are the three as_of questions, now resolved to v1. Two version-comparison questions without as_of lose v1 (RET-014)."
+  }
+}
