@@ -50,6 +50,7 @@ from rag.api.deps import (
 from rag.api.request_auth import (
     build_authorization_context,
     enforce_case_approval_limits,
+    enforce_dataset_scope,
     enforce_dos_limits,
     enforce_history_limits,
     resolve_case_approvals,
@@ -331,16 +332,22 @@ def _build_validated_agent_state(
     if not config.observability.live_events.enabled:
         raise HTTPException(status_code=404, detail="Live agent events are disabled")
     enforce_dos_limits(body.query, None, body.filters, config)
+    filters = enforce_dataset_scope(body.filters, config)
     enforce_case_approval_limits(body.case_approvals, config)
     enforce_history_limits(body.conversation_history, config)
     auth = build_authorization_context(
-        identity, body.tenant_id, body.roles, body.as_of, body.require_trust_level
+        identity,
+        body.tenant_id,
+        body.roles,
+        body.as_of,
+        body.require_trust_level,
+        body.version_scope,
     )
     case_approvals = resolve_case_approvals(identity, body.case_approvals, config)
     return AgentState(
         original_query=body.query,
         authorization_context=auth,
-        filters=body.filters,
+        filters=filters,
         case_approvals=case_approvals,
         conversation_history=body.conversation_history or [],
     )

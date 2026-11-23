@@ -301,7 +301,11 @@ def test_get_related_context_tool_cannot_reach_an_unauthorized_seed_chunk(
             tenant_id="tenant_alpha", roles=["tenant_alpha_operator"]
         )
         related = get_related_context(
-            GetRelatedContextArgs(chunk_id=real_chunk_id), pipeline, vectorstore, wrong_tenant_auth
+            GetRelatedContextArgs(chunk_id=real_chunk_id),
+            pipeline,
+            vectorstore,
+            wrong_tenant_auth,
+            ns,
         )
         assert related == []
     finally:
@@ -386,6 +390,7 @@ def test_direct_fetch_tools_ignore_caller_auth_when_authorization_disabled(
             pipeline,
             vectorstore,
             wrong_tenant_auth,
+            ns,
         )
         assert any("Open-access content" in c.content for c in related)
     finally:

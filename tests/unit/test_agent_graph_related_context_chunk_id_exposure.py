@@ -98,6 +98,10 @@ class FakePipeline:
         """Return `auth` unchanged; authorization resolution is outside this file's scope."""
         return auth
 
+    def resolves_freshness(self, auth):
+        """No version prefetch; freshness is outside this file's scope."""
+        return False
+
     def expand_with_relationships(self, results, auth=None):
         """Record the call and append one fixed related chunk."""
         self.expand_calls.append({"results": results, "auth": auth})
@@ -118,7 +122,7 @@ class FakePipeline:
 class FakeVectorStore:
     """get_chunks_by_ids() resolves only the known seed chunk_id "doc-1_0"."""
 
-    def get_chunks_by_ids(self, chunk_ids, auth=None):
+    def get_chunks_by_ids(self, chunk_ids, dataset_id=None, auth=None):
         """Return the seed chunk when asked for it, else nothing."""
         return [_chunk("doc-1_0", "alpha seed content")] if "doc-1_0" in chunk_ids else []
 
@@ -161,7 +165,7 @@ def test_full_search_then_get_related_context_flow_using_the_exposed_chunk_id():
         ]
     )
     pipeline = FakePipeline()
-    state = AgentState(original_query="a question")
+    state = AgentState(original_query="a question", filters={"dataset_id": "test-dataset"})
 
     result = run_agent(
         state,

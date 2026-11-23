@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 from datetime import date
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import HTTPException
 
@@ -19,6 +19,7 @@ from rag.config import AppConfig
 from rag.context.types import ConversationTurn
 from rag.mcp.business.schemas import CaseApproval
 from rag.retrieval.authorization import AuthorizationContext
+from rag.retrieval.scope import DatasetScopeError, scope_filters
 from rag.vectorstore.base import ALLOWED_FILTER_FIELDS
 
 
@@ -28,6 +29,7 @@ def build_authorization_context(
     roles: list[str] | None,
     as_of: date | None,
     require_trust_level: str | None,
+    version_scope: Literal["current", "history"] = "current",
 ) -> AuthorizationContext | None:
     """Build the `AuthorizationContext` for one request.
 
@@ -53,6 +55,9 @@ def build_authorization_context(
         not an identity claim).
     require_trust_level : str | None
         Required trust level; always honored, same reasoning as `as_of`.
+    version_scope : {"current", "history"}, optional
+        Version selection; always honored, same reasoning as `as_of`. It
+        never relaxes tenant, role, or trust enforcement.
 
     Returns
     -------
@@ -74,10 +79,15 @@ def build_authorization_context(
             roles=identity.roles,
             as_of=as_of,
             require_trust_level=require_trust_level,
+            version_scope=version_scope,
         )
 
     has_auth_fields = (
-        tenant_id is not None or roles or as_of is not None or require_trust_level is not None
+        tenant_id is not None
+        or roles
+        or as_of is not None
+        or require_trust_level is not None
+        or version_scope != "current"
     )
     return (
         AuthorizationContext(
@@ -85,6 +95,7 @@ def build_authorization_context(
             roles=roles or [],
             as_of=as_of,
             require_trust_level=require_trust_level,
+            version_scope=version_scope,
         )
         if has_auth_fields
         else None
@@ -188,6 +199,36 @@ def enforce_dos_limits(
                 status_code=422,
                 detail=f"Unknown filter field(s): {', '.join(unknown_keys)}",
             )
+
+
+def enforce_dataset_scope(
+    filters: dict[str, Any] | None, config: AppConfig
+) -> dict[str, Any] | None:
+    """Return `filters` scoped per `retrieval.dataset_scope`, or reject with a 422.
+
+    Parameters
+    ----------
+    filters : dict[str, Any] | None
+        The request's `filters`, already checked by `enforce_dos_limits`.
+    config : AppConfig
+        Application configuration.
+
+    Returns
+    -------
+    dict[str, Any] | None
+        `filters` with the configured default `dataset_id` filled in when
+        the request named none; unchanged otherwise.
+
+    Raises
+    ------
+    HTTPException
+        422, when no `dataset_id` is named or configured and
+        `missing_dataset_policy` is `reject`.
+    """
+    try:
+        return scope_filters(filters, config)
+    except DatasetScopeError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
 
 
 def enforce_history_limits(

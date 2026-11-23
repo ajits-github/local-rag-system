@@ -15,7 +15,11 @@ from pydantic import BaseModel
 
 from rag.api.auth import VerifiedIdentity
 from rag.api.deps import get_config, get_current_identity, get_graphrag_pipeline, get_rate_limiter
-from rag.api.request_auth import build_authorization_context, enforce_dos_limits
+from rag.api.request_auth import (
+    build_authorization_context,
+    enforce_dataset_scope,
+    enforce_dos_limits,
+)
 from rag.config import AppConfig
 from rag.graph.pipeline import GraphRAGPipeline
 from rag.logging_config import get_request_id
@@ -45,6 +49,7 @@ class GraphQueryRequest(BaseModel):
     roles: list[str] | None = None
     as_of: date | None = None
     require_trust_level: str | None = None
+    version_scope: Literal["current", "history"] = "current"
 
 
 class GraphQueryResponse(BaseModel):
@@ -108,12 +113,18 @@ def graph_query(
     if not config.graph.enabled:
         raise HTTPException(status_code=404, detail="Not Found")
     enforce_dos_limits(body.query, None, body.filters, config)
+    filters = enforce_dataset_scope(body.filters, config)
     auth = build_authorization_context(
-        identity, body.tenant_id, body.roles, body.as_of, body.require_trust_level
+        identity,
+        body.tenant_id,
+        body.roles,
+        body.as_of,
+        body.require_trust_level,
+        body.version_scope,
     )
     strategy_used = body.strategy or config.graph.fusion.strategy
     result = pipeline.answer(
-        body.query, filters=body.filters, auth=auth, strategy_override=body.strategy
+        body.query, filters=filters, auth=auth, strategy_override=body.strategy
     )
     logger.info(
         "agent_request_completed",

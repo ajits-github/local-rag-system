@@ -31,6 +31,7 @@ AuthEventType = Literal[
     "field_redaction_applied",
     "trust_policy_rejection",
     "freshness_version_selected",
+    "freshness_version_history_requested",
     "injection_flagged",
     "forged_claim_attempt",
     "rate_limit_exceeded",

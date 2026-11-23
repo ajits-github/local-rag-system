@@ -188,7 +188,9 @@ def get_latest_document(
 
     If `args.source` names a superseded version, the current version's content
     is returned instead. `auth` is resolved through `pipeline.resolve_auth`,
-    as in `get_document`.
+    as in `get_document`, and the resolved context's `as_of`/
+    `include_superseded` select the version, so the redirect always agrees
+    with the exclusions applied to the fetch.
 
     Parameters
     ----------
@@ -206,9 +208,17 @@ def get_latest_document(
     resolved_versions = (
         versions if versions is not None else vectorstore.list_document_versions(dataset_id)
     )
-    resolved_source = resolve_current_document_source(args.source, resolved_versions)
     effective_auth = pipeline.resolve_auth(
         auth, {"dataset_id": dataset_id}, versions=resolved_versions
+    )
+    resolved_source = resolve_current_document_source(
+        args.source,
+        resolved_versions,
+        as_of=effective_auth.as_of if effective_auth else None,
+        include_superseded=effective_auth.include_superseded if effective_auth else False,
+        tenant_id=effective_auth.tenant_id
+        if effective_auth and effective_auth.acl_enforced
+        else None,
     )
     chunks = _fetch_by_source(
         vectorstore, resolved_source, dataset_id, effective_auth, max_chunks_hard_ceiling
@@ -249,10 +259,8 @@ def get_related_context(
     auth : AuthorizationContext | None
         Caller authorization context, resolved before use.
     dataset_id : str | None, optional
-        The current query's dataset, when known. Enables freshness-
-        exclusion resolution in `resolve_auth`, matching
-        `get_document`/`get_latest_document`; when omitted, tenant/role
-        enforcement still applies, just without freshness resolution.
+        The current query's dataset. Required: the seed chunk and its
+        related chunks are looked up only within it.
     versions : list[DocumentVersionInfo] | None, optional
         Pre-fetched `dataset_id` document versions, passed straight
         through to `pipeline.resolve_auth`. Lets a caller that resolves
@@ -268,10 +276,18 @@ def get_related_context(
     list[Chunk]
         Related chunks (`origin == "expanded"` results only); empty if
         the seed chunk doesn't resolve or has no related content.
+
+    Raises
+    ------
+    ToolExecutionError
+        If `dataset_id` is missing, as for the other direct-fetch tools.
     """
-    filters = {"dataset_id": dataset_id} if dataset_id else None
-    effective_auth = pipeline.resolve_auth(auth, filters, versions=versions)
-    seed_chunks = vectorstore.get_chunks_by_ids([args.chunk_id], auth=effective_auth)
+    if not dataset_id:
+        raise ToolExecutionError("get_related_context requires a dataset_id filter")
+    effective_auth = pipeline.resolve_auth(auth, {"dataset_id": dataset_id}, versions=versions)
+    seed_chunks = vectorstore.get_chunks_by_ids(
+        [args.chunk_id], dataset_id=dataset_id, auth=effective_auth
+    )
     if not seed_chunks:
         return []
     seed_result = SearchResult(chunk=seed_chunks[0], score=1.0, origin="tool_fetched")

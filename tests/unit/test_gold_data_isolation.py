@@ -44,6 +44,10 @@ class FakeVectorStore:
         """Report healthy, always."""
         return True
 
+    def list_document_versions(self, dataset_id):
+        """No version families in this fixture."""
+        return []
+
     def get_or_create_document_id(self, source: str, checksum: str, dataset_id: str):
         """Unused by evaluate(); not exercised by these tests."""
         raise NotImplementedError

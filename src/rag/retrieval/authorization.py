@@ -9,6 +9,7 @@ callers.
 from __future__ import annotations
 
 from datetime import date
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -33,6 +34,17 @@ class AuthorizationContext(BaseModel):
         entirely.
     require_trust_level : str or None
         Required document trust level, if any.
+    version_scope : {"current", "history"}
+        `"current"` returns one version per family. `"history"` returns
+        every version effective on or before `as_of` (all of them without
+        a date), for questions comparing versions; tenant, role, and trust
+        rules apply unchanged.
+    acl_enforced : bool
+        `False` marks a freshness-only context built by
+        `RetrievalPipeline.resolve_auth`: tenant, role, and trust predicates
+        are skipped and only `resolved_excluded_document_ids` applies. Such a
+        context is only produced where retrieval would otherwise be
+        unrestricted, so it can only narrow results.
 
     Notes
     -----
@@ -45,6 +57,8 @@ class AuthorizationContext(BaseModel):
     as_of: date | None = None
     include_superseded: bool = False
     require_trust_level: str | None = None
+    version_scope: Literal["current", "history"] = "current"
     # Populated by RetrievalPipeline after freshness resolution; callers
-    # should not set this field directly.
+    # should not set these fields directly.
     resolved_excluded_document_ids: list[str] = Field(default_factory=list)
+    acl_enforced: bool = True

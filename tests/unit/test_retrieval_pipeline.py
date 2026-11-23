@@ -418,7 +418,8 @@ def test_retrieve_dense_provider_calls_search_with_configured_candidate_k():
     """Dense provider's search() uses config.retrieval.candidate_k and passes filters through."""
     results = [_make_result("c1", "Alpha content.", source="a.md", score=0.9)]
     vectorstore = FakeVectorStore(results)
-    config = load_config()
+    config = load_config().model_copy(deep=True)
+    config.retrieval.freshness.apply_without_authorization = False
     pipeline = RetrievalPipeline(
         config, vectorstore=vectorstore, embedder=FakeEmbedder(), reranker=FakeReranker()
     )
@@ -444,6 +445,7 @@ def test_retrieve_hybrid_provider_calls_both_search_methods():
     vectorstore = FakeVectorStore(dense_results, keyword_results)
     config = load_config().model_copy(deep=True)
     config.retrieval.provider = "hybrid"
+    config.retrieval.freshness.apply_without_authorization = False
     pipeline = RetrievalPipeline(
         config, vectorstore=vectorstore, embedder=FakeEmbedder(), reranker=FakeReranker()
     )
@@ -771,28 +773,31 @@ def test_hosted_reranker_never_receives_egress_blocked_candidates():
 
 
 def test_authorization_disabled_by_default_ignores_caller_supplied_auth():
-    """config.security.authorization.enabled=False: search() always receives auth=None.
+    """authorization.enabled=False: the caller's tenant and roles never reach search().
 
-    This is the hard kill-switch: a caller-constructed AuthorizationContext
-    is never even passed down to the vectorstore unless the config flag is
-    explicitly True. so this milestone is byte-identical-behavior for
-    every pre-existing config/experiment that doesn't opt in.
+    With the default freshness setting the store receives a freshness-only
+    context (no ACL terms); with the compatibility setting it receives
+    `None`, exactly as before freshness was decoupled.
     """
     from rag.retrieval.authorization import AuthorizationContext
 
+    caller = AuthorizationContext(tenant_id="tenant_alpha", roles=["operator"])
     results = [_make_result("c1", "Alpha content.", source="a.md", score=0.9)]
-    vectorstore = FakeVectorStore(results)
-    config = load_config()
-    assert config.security.authorization.enabled is False
-    pipeline = RetrievalPipeline(
-        config, vectorstore=vectorstore, embedder=FakeEmbedder(), reranker=FakeReranker()
-    )
-
-    pipeline.retrieve(
-        "What is alpha?", auth=AuthorizationContext(tenant_id="tenant_alpha", roles=["operator"])
-    )
-
-    assert vectorstore.calls[0][1]["auth"] is None
+    for freshness_on in (True, False):
+        vectorstore = FakeVectorStore(results)
+        config = load_config().model_copy(deep=True)
+        assert config.security.authorization.enabled is False
+        config.retrieval.freshness.apply_without_authorization = freshness_on
+        pipeline = RetrievalPipeline(
+            config, vectorstore=vectorstore, embedder=FakeEmbedder(), reranker=FakeReranker()
+        )
+        pipeline.retrieve("What is alpha?", auth=caller)
+        passed = vectorstore.calls[0][1]["auth"]
+        if freshness_on:
+            assert passed.acl_enforced is False
+            assert (passed.tenant_id, passed.roles) == (None, [])
+        else:
+            assert passed is None
 
 
 def test_authorization_enabled_passes_auth_context_through_to_search():

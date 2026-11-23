@@ -255,26 +255,25 @@ class VectorStore(ABC):
         """
 
     @abstractmethod
-    def list_document_versions(self, dataset_id: str) -> list[DocumentVersionInfo]:
+    def list_document_versions(self, dataset_id: str | None) -> list[DocumentVersionInfo]:
         """List one governance-metadata row per document within a dataset.
 
         Used by `retrieval/freshness.py` to resolve document-version
         families. Governance fields (`status`/`document_version`/
         `effective_from`/`supersedes_source`) are uniform across every
-        chunk of a document (see `ingestion/writer.py`), so this is a
-        `SELECT DISTINCT` over the chunks table, not a new document-level
-        table.
+        chunk of a document (see `ingestion/writer.py`), so they are read
+        from the chunks table, not a separate document-level table.
 
         Parameters
         ----------
-        dataset_id : str
-            The dataset namespace to list.
+        dataset_id : str | None
+            The dataset namespace to list; `None` lists every dataset, with
+            each row's `dataset_id` set so families stay per dataset.
 
         Returns
         -------
         list[DocumentVersionInfo]
-            One entry per document_id that has at least one chunk in this
-            dataset.
+            One entry per document_id that has at least one chunk in scope.
         """
 
     @abstractmethod
@@ -473,27 +472,30 @@ class VectorStore(ABC):
 
     @abstractmethod
     def get_chunks_by_ids(
-        self, chunk_ids: list[str], auth: AuthorizationContext | None = None
+        self,
+        chunk_ids: list[str],
+        dataset_id: str | None,
+        auth: AuthorizationContext | None = None,
     ) -> list[Chunk]:
-        """Fetch chunks by primary key, e.g. to resolve a `parent_chunk_id` reference.
+        """Fetch chunks by primary key within one dataset, under the authorization predicate.
 
-        Used by relationship expansion. Callers pass ids sourced from an
-        already dataset-filtered result, such as a `parent_chunk_id` from
-        chunk metadata. `auth` is applied defensively so an expansion lookup
-        cannot bypass the same authorization predicate used by search.
+        Used by relationship expansion and `get_related_context`. A chunk id
+        from another dataset, or one `auth` excludes, is not returned.
 
         Parameters
         ----------
         chunk_ids : list[str]
             Chunk ids to fetch.
+        dataset_id : str | None
+            Dataset the chunks must belong to; `None` matches only chunks
+            stored without a dataset.
         auth : AuthorizationContext | None, optional
             See `search`'s `auth` parameter.
 
         Returns
         -------
         list[Chunk]
-            Matching chunks, in no particular order; ids with no matching
-            row (or excluded by `auth`) are silently omitted.
+            Matching chunks, in no particular order; other ids are omitted.
         """
 
     @abstractmethod
@@ -541,15 +543,15 @@ class VectorStore(ABC):
         self,
         document_id: str,
         section_path: str | None,
+        dataset_id: str | None,
         auth: AuthorizationContext | None = None,
     ) -> list[Chunk]:
         """Fetch every chunk of one document's section, ordered by `chunk_index`.
 
         Used by relationship expansion to compute a retrieved chunk's
         immediate neighbors (previous/next by `chunk_index`) within the
-        same section. `document_id` already uniquely scopes to one
-        dataset, so this cannot cross a `dataset_id` boundary. `auth` is
-        applied defensively (see `get_chunks_by_ids`).
+        same section. Scoped by `dataset_id` and `auth` like
+        `get_chunks_by_ids`.
 
         Parameters
         ----------
@@ -558,6 +560,8 @@ class VectorStore(ABC):
         section_path : str | None
             The `section_path` value to match exactly (including `None`,
             for chunks with no section context).
+        dataset_id : str | None
+            Dataset the chunks must belong to (see `get_chunks_by_ids`).
         auth : AuthorizationContext | None, optional
             See `search`'s `auth` parameter.
 

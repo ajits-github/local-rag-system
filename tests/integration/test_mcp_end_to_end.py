@@ -67,6 +67,9 @@ class _FakePipeline:
         # no list_document_versions to exercise anyway.
         self.authorization_enabled = False
 
+    def resolves_freshness(self, auth):
+        return False
+
     def retrieve(self, query, filters=None, candidate_k=None, auth=None):
         self.retrieve_calls.append(
             {"query": query, "filters": filters, "candidate_k": candidate_k, "auth": auth}
@@ -123,8 +126,10 @@ class _FakeVectorStore:
         )
         return list(self.chunks_by_source.get((source, dataset_id), []))
 
-    def get_chunks_by_ids(self, chunk_ids, auth=None):
-        self.get_chunks_by_ids_calls.append({"chunk_ids": chunk_ids, "auth": auth})
+    def get_chunks_by_ids(self, chunk_ids, dataset_id=None, auth=None):
+        self.get_chunks_by_ids_calls.append(
+            {"chunk_ids": chunk_ids, "dataset_id": dataset_id, "auth": auth}
+        )
         return [self.chunks_by_id[c] for c in chunk_ids if c in self.chunks_by_id]
 
     def list_document_versions(self, dataset_id):
@@ -463,7 +468,7 @@ async def test_get_document_output_is_authorized_and_not_redacted_for_an_admin_r
 
 @pytest.mark.asyncio
 async def test_get_related_context_dispatches_by_chunk_id():
-    """get_related_context resolves its seed chunk via VectorStore.get_chunks_by_ids."""
+    """get_related_context resolves its seed chunk within the named dataset; unscoped is refused."""
     config = _mcp_config(auth_enabled=False)
     pipeline = _FakePipeline()
     vectorstore = _FakeVectorStore()
@@ -471,10 +476,15 @@ async def test_get_related_context_dispatches_by_chunk_id():
     app = build_mcp_asgi_app(config, pipeline, vectorstore, _FakeEmbedder())
 
     with _serve(app) as base_url:
-        result = await _call_tool(base_url, None, "get_related_context", {"chunk_id": "c1"})
+        unscoped = await _call_tool(base_url, None, "get_related_context", {"chunk_id": "c1"})
+        result = await _call_tool(
+            base_url, None, "get_related_context", {"chunk_id": "c1", "dataset_id": "ds1"}
+        )
 
+    assert unscoped.is_error is True
     assert result.is_error is False
     assert vectorstore.get_chunks_by_ids_calls[0]["chunk_ids"] == ["c1"]
+    assert vectorstore.get_chunks_by_ids_calls[0]["dataset_id"] == "ds1"
 
 
 @pytest.mark.asyncio
@@ -721,3 +731,42 @@ async def test_get_customer_case_rejects_unknown_argument():
         )
 
     assert result.is_error is True
+
+
+def _scoped_config(default=None, policy="all_datasets"):
+    config = _mcp_config(auth_enabled=False)
+    config = config.model_copy(deep=True)
+    config.retrieval.dataset_scope.default_dataset_id = default
+    config.retrieval.dataset_scope.missing_dataset_policy = policy
+    return config
+
+
+@pytest.mark.asyncio
+async def test_unscoped_tool_call_is_rejected_under_the_reject_policy():
+    """`missing_dataset_policy: reject` turns an unscoped MCP search into a tool error."""
+    pipeline = _FakePipeline()
+    app = build_mcp_asgi_app(
+        _scoped_config(policy="reject"), pipeline, _FakeVectorStore(), _FakeEmbedder()
+    )
+    with _serve(app) as base_url:
+        rejected = await _call_tool(base_url, None, "search_knowledge_base", {"query": "hi"})
+        scoped = await _call_tool(
+            base_url, None, "search_knowledge_base", {"query": "hi", "dataset_id": "ds1"}
+        )
+    assert rejected.is_error is True
+    assert scoped.is_error is False
+    assert [c["filters"] for c in pipeline.retrieve_calls] == [{"dataset_id": "ds1"}]
+
+
+@pytest.mark.asyncio
+async def test_unscoped_tool_call_uses_the_single_dataset_default():
+    """A configured default reaches both search filters and the post-dispatch resolution."""
+    pipeline = _FakePipeline()
+    app = build_mcp_asgi_app(
+        _scoped_config(default="techfusion"), pipeline, _FakeVectorStore(), _FakeEmbedder()
+    )
+    with _serve(app) as base_url:
+        result = await _call_tool(base_url, None, "search_knowledge_base", {"query": "hi"})
+    assert result.is_error is False
+    assert pipeline.retrieve_calls[0]["filters"] == {"dataset_id": "techfusion"}
+    assert pipeline.resolve_auth_calls[-1]["filters"] == {"dataset_id": "techfusion"}

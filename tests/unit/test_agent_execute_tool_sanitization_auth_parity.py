@@ -70,12 +70,12 @@ class FakeVectorStore:
         """Return the one fixed chunk, ignoring source/dataset_id/limit."""
         return [_chunk()]
 
-    def get_chunks_by_ids(self, chunk_ids, auth=None):
+    def get_chunks_by_ids(self, chunk_ids, dataset_id=None, auth=None):
         """Record the call and return the fixed chunk when its id is requested."""
         self.get_chunks_by_ids_calls.append({"chunk_ids": chunk_ids, "auth": auth})
         return [_chunk()] if _CHUNK_ID in chunk_ids else []
 
-    def get_chunks_by_section(self, document_id, section_path, auth=None):
+    def get_chunks_by_section(self, document_id, section_path, dataset_id=None, auth=None):
         """No siblings; only get_related_context's seed-fetch/dispatch success is probed here."""
         return []
 

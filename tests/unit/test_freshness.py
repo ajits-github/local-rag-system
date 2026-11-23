@@ -280,7 +280,7 @@ def test_as_of_tie_on_effective_from_breaks_deterministically_by_document_id():
 
 
 def test_multiple_simultaneously_active_members_logs_a_warning(caplog):
-    """Two family members both status=active logs a data-integrity warning, doesn't raise."""
+    """Two active members: the superseding one is kept, and the conflict is logged."""
     versions = [
         _v("d1", "policy-v1.md", status="active"),
         _v("d2", "policy-v2.md", status="active", supersedes_source="policy-v1.md"),
@@ -288,8 +288,8 @@ def test_multiple_simultaneously_active_members_logs_a_warning(caplog):
     with caplog.at_level(logging.WARNING, logger="rag.retrieval.freshness"):
         excluded = resolve_excluded_document_ids(versions, as_of=None, include_superseded=False)
 
-    # Both stay retrievable -- the function never guesses which one to exclude.
-    assert excluded == set()
+    # v2's `supersedes` link decides; see test_freshness_lifecycle_rules.py.
+    assert excluded == {"d1"}
     assert any(
         "freshness_multiple_active_family_members" in record.getMessage()
         for record in caplog.records

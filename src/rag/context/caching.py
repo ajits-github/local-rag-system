@@ -21,10 +21,10 @@ another. A token count has no such dependency: it is a pure function of
   future, more context-dependent counting strategy), and (b) switching
   `context.token_counting.strategy` can never silently reuse a stale
   estimate computed by a different estimator.
-- **Invalidation**: none needed beyond LRU eviction. The underlying
-  text a `chunk_id` maps to never changes in place (re-ingestion assigns
-  a new `chunk_id`, see `CLAUDE.md`'s "Document identity" section), so a
-  cached token count never goes stale.
+- **Invalidation**: none needed beyond LRU eviction. Entries are keyed
+  by a hash of the text itself, not by `chunk_id` (which re-ingestion of
+  an edited document reuses for new text), so a cached token count never
+  goes stale.
 - **TTL**: none. A pure function's cached result does not expire; the
   LRU's `max_entries` bound is the only lifetime control, which bounds
   memory, not staleness.

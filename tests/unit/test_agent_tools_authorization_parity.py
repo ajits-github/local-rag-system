@@ -69,12 +69,12 @@ class RecordingVectorStore:
         )
         return list(self._chunks)
 
-    def get_chunks_by_ids(self, chunk_ids, auth=None):
+    def get_chunks_by_ids(self, chunk_ids, dataset_id=None, auth=None):
         """Record the call and return the fixed chunks, ignoring chunk_ids."""
         self.get_chunks_by_ids_calls.append({"chunk_ids": chunk_ids, "auth": auth})
         return list(self._chunks)
 
-    def get_chunks_by_section(self, document_id, section_path, auth=None):
+    def get_chunks_by_section(self, document_id, section_path, dataset_id=None, auth=None):
         """No siblings; only the seed-fetch auth matters for these tests."""
         return []
 
@@ -98,6 +98,13 @@ def _config(authorization_enabled: bool):
     return config
 
 
+def _acl_dropped(auth) -> bool:
+    """Whether the store received no ACL: `None`, or a freshness-only context without identity."""
+    return auth is None or (
+        auth.acl_enforced is False and auth.tenant_id is None and auth.roles == []
+    )
+
+
 def test_get_document_ignores_caller_auth_when_authorization_disabled():
     """authorization.enabled=False: get_document's VectorStore call always receives auth=None."""
     vectorstore = RecordingVectorStore([_chunk("doc-1_0")])
@@ -116,7 +123,7 @@ def test_get_document_ignores_caller_auth_when_authorization_disabled():
         max_chunks_hard_ceiling=50,
     )
 
-    assert vectorstore.get_chunks_by_source_calls[0]["auth"] is None
+    assert _acl_dropped(vectorstore.get_chunks_by_source_calls[0]["auth"])
 
 
 def test_get_latest_document_ignores_caller_auth_when_authorization_disabled():
@@ -137,7 +144,7 @@ def test_get_latest_document_ignores_caller_auth_when_authorization_disabled():
         max_chunks_hard_ceiling=50,
     )
 
-    assert vectorstore.get_chunks_by_source_calls[0]["auth"] is None
+    assert _acl_dropped(vectorstore.get_chunks_by_source_calls[0]["auth"])
 
 
 def test_get_related_context_ignores_caller_auth_when_authorization_disabled():
@@ -147,10 +154,10 @@ def test_get_related_context_ignores_caller_auth_when_authorization_disabled():
     caller_auth = AuthorizationContext(tenant_id="tenant_alpha", roles=["operator"])
 
     get_related_context(
-        GetRelatedContextArgs(chunk_id="doc-1_0"), pipeline, vectorstore, caller_auth
+        GetRelatedContextArgs(chunk_id="doc-1_0"), pipeline, vectorstore, caller_auth, "ds1"
     )
 
-    assert vectorstore.get_chunks_by_ids_calls[0]["auth"] is None
+    assert _acl_dropped(vectorstore.get_chunks_by_ids_calls[0]["auth"])
 
 
 def test_search_knowledge_base_already_ignores_caller_auth_when_authorization_disabled():
@@ -181,7 +188,7 @@ def test_search_knowledge_base_already_ignores_caller_auth_when_authorization_di
         SearchKnowledgeBaseArgs(query="hello"), pipeline, {"dataset_id": "ds1"}, caller_auth
     )
 
-    assert vectorstore.search_calls[0]["auth"] is None
+    assert _acl_dropped(vectorstore.search_calls[0]["auth"])
 
 
 def test_get_document_preserves_tenant_and_role_when_authorization_enabled():
@@ -264,7 +271,7 @@ def test_get_related_context_preserves_tenant_and_role_when_authorization_enable
     caller_auth = AuthorizationContext(tenant_id="tenant_alpha", roles=["operator"])
 
     get_related_context(
-        GetRelatedContextArgs(chunk_id="doc-1_0"), pipeline, vectorstore, caller_auth
+        GetRelatedContextArgs(chunk_id="doc-1_0"), pipeline, vectorstore, caller_auth, "ds1"
     )
 
     passed_auth = vectorstore.get_chunks_by_ids_calls[0]["auth"]
