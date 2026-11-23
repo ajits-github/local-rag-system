@@ -9,9 +9,12 @@ from __future__ import annotations
 import argparse
 import hashlib
 import logging
+import os
 import re
+import sys
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from rag.chunkers.registry import get_chunker
 from rag.cleaners.default_cleaner import DefaultCleaner
@@ -44,6 +47,135 @@ logger = logging.getLogger(__name__)
 
 # A Markdown image reference's target, as the structured chunker reads it.
 _IMAGE_REFERENCE_RE = re.compile(r"!\[[^\]\[]*\]\(([^()\s]+)\)")
+
+
+# Editor swap/backup files, Office lock files, and partial downloads.
+_IGNORED_PREFIXES = ("~$", ".#")
+_IGNORED_SUFFIXES = ("~", ".tmp", ".swp", ".swx", ".part", ".crdownload")
+
+
+class DiscoveredFiles(NamedTuple):
+    """Result of walking one ingestion root.
+
+    Attributes
+    ----------
+    files : list[Path]
+        Eligible files, as `root / relative_path`, in sorted walk order.
+    errors : list[str]
+        Directories the walk could not read; any entry makes the walk
+        incomplete, so deletion reconciliation must not run.
+    ignored : int
+        Hidden, temporary, or lock files skipped.
+    """
+
+    files: list[Path]
+    errors: list[str]
+    ignored: int
+
+
+def is_ignored_name(name: str) -> bool:
+    """Whether `name` is a hidden, temporary, or editor/Office lock file."""
+    return (
+        name.startswith(".")
+        or name.startswith(_IGNORED_PREFIXES)
+        or name.lower().endswith(_IGNORED_SUFFIXES)
+    )
+
+
+def discover_files(root: Path, extensions: Iterable[str]) -> DiscoveredFiles:
+    """Walk `root` for files with one of `extensions` (case-insensitive), recording errors.
+
+    Hidden directories and `is_ignored_name` files are skipped. Unlike
+    `Path.rglob`, an unreadable directory is reported in `errors` rather
+    than silently skipped.
+
+    Parameters
+    ----------
+    root : Path
+        Directory to walk.
+    extensions : Iterable[str]
+        Extensions to include, with the leading dot.
+
+    Returns
+    -------
+    DiscoveredFiles
+        Eligible files, walk errors, and the ignored-file count.
+    """
+    wanted = {ext.lower() for ext in extensions}
+    files: list[Path] = []
+    errors: list[str] = []
+    ignored = 0
+
+    def on_error(exc: OSError) -> None:
+        errors.append(f"{type(exc).__name__}: {exc.filename}")
+
+    for dirpath, dirnames, filenames in os.walk(root, onerror=on_error):
+        dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
+        for name in sorted(filenames):
+            if is_ignored_name(name):
+                ignored += 1
+            elif Path(name).suffix.lower() in wanted:
+                files.append(root / (Path(dirpath) / name).relative_to(root))
+    return DiscoveredFiles(files, errors, ignored)
+
+
+def file_category(root: Path, file_path: Path) -> str | None:
+    """Folder path of `file_path` relative to `root`, or `None` at the root itself."""
+    relative_dir = file_path.relative_to(root).parent
+    return None if relative_dir == Path(".") else relative_dir.as_posix()
+
+
+def deletion_blocked_reason(
+    enumeration_errors: list[str],
+    present: int,
+    existing: int,
+    missing: int,
+    max_delete_fraction: float,
+    allow_mass_delete: bool = False,
+) -> str | None:
+    """Return why deleting `missing` stored documents must be withheld, or `None`.
+
+    An incomplete walk always blocks deletion. Otherwise a walk that found
+    no files, or one that would delete more than `max_delete_fraction` of
+    the `existing` documents, blocks it unless `allow_mass_delete` is set.
+
+    Parameters
+    ----------
+    enumeration_errors : list[str]
+        Walk errors (see `discover_files`).
+    present, existing, missing : int
+        Files found, stored documents under the root, and stored documents
+        whose files were not found.
+    max_delete_fraction : float
+        Largest share of `existing` one run may delete.
+    allow_mass_delete : bool, optional
+        Explicit operator override for the last two guards.
+
+    Returns
+    -------
+    str | None
+        `enumeration_incomplete`, `no_files_found`,
+        `delete_fraction_exceeded`, or `None`.
+    """
+    if not missing:
+        return None
+    if enumeration_errors:
+        return "enumeration_incomplete"
+    if allow_mass_delete:
+        return None
+    if not present:
+        return "no_files_found"
+    if missing / existing > max_delete_fraction:
+        return "delete_fraction_exceeded"
+    return None
+
+
+def resolved_source_path(source: str) -> str | None:
+    """Resolve a persisted or discovered source path for spelling-insensitive comparison."""
+    try:
+        return str(Path(source.replace("\\", "/")).resolve())
+    except OSError:
+        return None
 
 
 def _source_is_under_root(source: str, root: Path) -> bool:
@@ -135,6 +267,11 @@ class IngestionPipeline:
                     )
                 )
             )
+
+    @property
+    def vectorstore(self) -> VectorStore:
+        """The `VectorStore` this pipeline writes to."""
+        return self._vectorstore
 
     def reset_graph(self, dataset_id: str) -> None:
         """Clear only the graph side of `dataset_id`, so the next ingest re-projects it.
@@ -450,16 +587,20 @@ class IngestionPipeline:
             logger.warning("Graph extraction failed for %s", document_id, exc_info=True)
             return None
 
-    def ingest_path(self, path: Path, dataset_id: str) -> IngestionStats:
+    def ingest_path(
+        self, path: Path, dataset_id: str, *, allow_mass_delete: bool = False
+    ) -> IngestionStats:
         """Ingest a single file, or recursively ingest a directory tree.
 
         Every chunk is tagged with `dataset_id`; walking a directory also
         tags each chunk's `category` from the file's path relative to
-        `path`.
+        `path` (see `discover_files` for which files are included).
 
-        For a directory target only, also detects documents removed since
-        the last ingestion of this root (see `_source_is_under_root`) and
-        deletes them via `delete_documents_by_source`.
+        For a directory target only, also deletes stored documents under
+        this root whose files are gone (see `_source_is_under_root`), unless
+        `deletion_blocked_reason` withholds it: the walk had errors, found
+        no files, or would delete more than
+        `ingestion.max_delete_fraction` of the root's documents.
 
         Parameters
         ----------
@@ -467,13 +608,16 @@ class IngestionPipeline:
             A single file, or a directory to walk recursively.
         dataset_id : str
             Namespace tag stored on every chunk.
+        allow_mass_delete : bool, optional
+            Delete even when the walk found no files or the fraction is
+            exceeded. An incomplete walk still never deletes.
 
         Returns
         -------
         IngestionStats
             Aggregate counts plus one `ingest_file`-shaped entry (with an
             added `"status"` key: `"new"`/`"changed"`/`"unchanged"`) per
-            file processed, in `.results`.
+            file processed, in `.results`, and any withheld deletion.
         """
         path = Path(path)
         existing_sources = set(self._vectorstore.list_document_sources(dataset_id))
@@ -485,20 +629,104 @@ class IngestionPipeline:
                 [result], discovered, dataset_id, existing_sources, detect_deletions=False
             )
 
-        results = []
-        discovered = []
-        for ext in self._config.ingestion.supported_extensions:
-            for file_path in sorted(path.rglob(f"*{ext}")):
-                relative_dir = file_path.relative_to(path).parent
-                category = None if relative_dir == Path(".") else relative_dir.as_posix()
-                results.append(self.ingest_file(file_path, dataset_id, category=category))
-                discovered.append(str(file_path))
+        discovery = discover_files(path, self._config.ingestion.supported_extensions)
         scoped_existing_sources = {
             source for source in existing_sources if _source_is_under_root(source, path)
         }
-        return self._aggregate_ingestion_stats(
-            results, discovered, dataset_id, scoped_existing_sources, detect_deletions=True
+        # Reuse an earlier spelling of the same file (relative vs absolute,
+        # either separator), so its document_id never churns.
+        spelling_by_resolved = {resolved_source_path(s): s for s in scoped_existing_sources}
+        results = []
+        discovered = []
+        for file_path in discovery.files:
+            persisted = spelling_by_resolved.get(
+                resolved_source_path(str(file_path)), str(file_path)
+            )
+            results.append(
+                self.ingest_file(
+                    file_path,
+                    dataset_id,
+                    category=file_category(path, file_path),
+                    source_override=persisted if persisted != str(file_path) else None,
+                )
+            )
+            discovered.append(persisted)
+        missing = scoped_existing_sources - set(discovered)
+        blocked = deletion_blocked_reason(
+            discovery.errors,
+            len(discovered),
+            len(scoped_existing_sources),
+            len(missing),
+            self._config.ingestion.max_delete_fraction,
+            allow_mass_delete,
         )
+        if blocked is not None:
+            logger.warning(
+                "ingest_deletion_withheld",
+                extra={"dataset_id": dataset_id, "candidates": len(missing), "reason": blocked},
+            )
+        stats = self._aggregate_ingestion_stats(
+            results,
+            discovered,
+            dataset_id,
+            scoped_existing_sources,
+            detect_deletions=blocked is None,
+        )
+        return stats.model_copy(
+            update={
+                "deletion_candidates": len(missing),
+                "deletion_blocked_reason": blocked,
+                "enumeration_errors": discovery.errors,
+            }
+        )
+
+    def delete_sources(self, dataset_id: str, sources: set[str]) -> int:
+        """Hard-delete the documents at `sources` (chunks cascade) and their graph facts.
+
+        Graph cleanup failures are logged, never raised; the Postgres delete
+        has already removed the document from every retrieval path.
+
+        Parameters
+        ----------
+        dataset_id : str
+            Dataset the sources belong to.
+        sources : set[str]
+            Persisted `source` values to delete.
+
+        Returns
+        -------
+        int
+            Number of `documents` rows deleted.
+        """
+        if not sources:
+            return 0
+        deleted_document_ids: list[str] = []
+        if self._graph_writer is not None:
+            # Resolved before the Postgres delete, which returns only a count.
+            versions = self._vectorstore.list_document_versions(dataset_id)
+            deleted_document_ids = [v.document_id for v in versions if v.source in sources]
+        deleted_count = self._vectorstore.delete_documents_by_source(dataset_id, sorted(sources))
+        if self._graph_writer is not None:
+            for document_id in deleted_document_ids:
+                try:
+                    self._graph_writer.delete_facts_by_document(document_id)
+                except Exception:
+                    logger.warning(
+                        "Failed to delete graph facts for removed document %s",
+                        document_id,
+                        exc_info=True,
+                    )
+        return deleted_count
+
+    @property
+    def checksum_is_file_digest(self) -> bool:
+        """Whether a document's stored checksum is exactly the sha256 of its file bytes.
+
+        True when no vision provider folds image digests into the checksum
+        and no graph projection could need repair, so an unchanged file can
+        be skipped without loading it.
+        """
+        return self._writer.vision_provider is None and not self._graph_extraction_active()
 
     def _aggregate_ingestion_stats(
         self,
@@ -511,28 +739,11 @@ class IngestionPipeline:
         """Classify each file's status, delete removed documents, and total chunk counts."""
         deleted_count = 0
         if detect_deletions:
-            deleted_sources = existing_sources_before - set(discovered_sources)
-            if deleted_sources:
-                deleted_document_ids: list[str] = []
-                if self._graph_writer is not None:
-                    # Resolved before the Postgres delete, which returns only a count.
-                    versions = self._vectorstore.list_document_versions(dataset_id)
-                    deleted_document_ids = [
-                        v.document_id for v in versions if v.source in deleted_sources
-                    ]
-                deleted_count = self._vectorstore.delete_documents_by_source(
-                    dataset_id, sorted(deleted_sources)
-                )
-                if self._graph_writer is not None:
-                    for document_id in deleted_document_ids:
-                        try:
-                            self._graph_writer.delete_facts_by_document(document_id)
-                        except Exception:
-                            logger.warning(
-                                "Failed to delete graph facts for removed document %s",
-                                document_id,
-                                exc_info=True,
-                            )
+            # A file may have reappeared since the walk.
+            missing = existing_sources_before - set(discovered_sources)
+            deleted_count = self.delete_sources(
+                dataset_id, {s for s in missing if not Path(s.replace("\\", "/")).exists()}
+            )
 
         new_count = changed_count = unchanged_count = 0
         chunks_embedded = 0
@@ -588,6 +799,12 @@ def main() -> None:
         action="store_true",
         help="Delete every existing document/chunk tagged with --dataset-id before ingesting.",
     )
+    parser.add_argument(
+        "--allow-mass-delete",
+        action="store_true",
+        help="Delete documents whose files are gone even if the directory is empty or more "
+        "than ingestion.max_delete_fraction of them would go. An incomplete walk never deletes.",
+    )
     args = parser.parse_args()
 
     config = load_config(args.config) if args.config else load_config()
@@ -597,7 +814,9 @@ def main() -> None:
     if args.clear:
         pipeline.clear_dataset(args.dataset_id)
         print(f"Cleared dataset '{args.dataset_id}'")
-    stats = pipeline.ingest_path(Path(args.path), args.dataset_id)
+    stats = pipeline.ingest_path(
+        Path(args.path), args.dataset_id, allow_mass_delete=args.allow_mass_delete
+    )
     for result in stats.results:
         print(result)
     print(
@@ -612,6 +831,16 @@ def main() -> None:
             f"vision: images_processed={v.images_processed} cache_hits={v.cache_hits} "
             f"cache_misses={v.cache_misses} avg_call_latency_ms={avg_ms:.1f}"
         )
+    for error in stats.enumeration_errors:
+        print(f"walk error: {error}", file=sys.stderr)
+    if stats.deletion_blocked_reason is not None:
+        print(
+            f"deletion withheld ({stats.deletion_blocked_reason}): "
+            f"{stats.deletion_candidates} stored document(s) have no file. "
+            "Re-run with --allow-mass-delete to delete them.",
+            file=sys.stderr,
+        )
+        sys.exit(3)
 
 
 if __name__ == "__main__":

@@ -394,6 +394,10 @@ python -m rag.ingestion.pipeline data/sample_docs --dataset-id sample_docs
 Any file or directory can be ingested. Use a different `DATASET_ID` /
 `--dataset-id` when you ingest a separate corpus. Re-running ingestion on
 unchanged files is a no-op; edited files are detected and re-chunked.
+Documents whose files are gone are deleted, except when the directory is
+empty, unreadable in part, or more than half of its documents would go: the
+command then deletes nothing and exits with code 3. Re-run with
+`--allow-mass-delete` (`make ingest ... ALLOW_MASS_DELETE=1`) to confirm.
 
 Start the API natively:
 

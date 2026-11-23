@@ -15,8 +15,9 @@ down:
 
 # Ingest a file or directory: make ingest FILE=data/sample_docs DATASET_ID=sample_docs
 # Add CLEAR=1 to wipe that dataset_id's existing documents/chunks first.
+# Add ALLOW_MASS_DELETE=1 to confirm a deletion the guard withheld (exit code 3).
 ingest:
-	python -m rag.ingestion.pipeline $(FILE) --dataset-id $(DATASET_ID) $(if $(CLEAR),--clear,)
+	python -m rag.ingestion.pipeline $(FILE) --dataset-id $(DATASET_ID) $(if $(CLEAR),--clear,) $(if $(ALLOW_MASS_DELETE),--allow-mass-delete,)
 
 # Query the running API: make query Q="what is pgvector?"
 query:

@@ -30,6 +30,7 @@ mlruns/
 mlartifacts/
 mlflow.db
 data/uploads/*
+data/ingestion_state/
 data/knowledge_base/
 data/eval/techfusion_gold.jsonl
 data/eval/techfusion_gold_old.jsonl
