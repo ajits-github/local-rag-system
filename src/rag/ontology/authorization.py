@@ -24,12 +24,8 @@ itself, grants access to instance data about X.
 
 from __future__ import annotations
 
-from typing import cast
-
-from rdflib.query import ResultRow
-
 from rag.graph.authorization import is_fact_authorized
-from rag.ontology.store import RdflibStore
+from rag.ontology.store import RdflibStore, select_rows
 from rag.retrieval.authorization import AuthorizationContext
 
 _PROPERTIES_QUERY = """
@@ -74,10 +70,7 @@ def fetch_entity_auth_properties(store: RdflibStore, entity_iri: str) -> dict[st
     """
     from rdflib import URIRef
 
-    rows = cast(
-        "list[ResultRow]",
-        list(store.query(_PROPERTIES_QUERY, init_bindings={"entity": URIRef(entity_iri)})),
-    )
+    rows = select_rows(store.query(_PROPERTIES_QUERY, init_bindings={"entity": URIRef(entity_iri)}))
     tenant_id: str | None = None
     trust_level: str | None = None
     source_document_id: str | None = None

@@ -29,12 +29,10 @@ in data/ontology/instances/reasoning_fixtures.ttl).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import cast
 
 from owlrl import DeductiveClosure, OWLRL_Semantics, RDFS_Semantics
-from rdflib.query import ResultRow
 
-from rag.ontology.store import RdflibStore
+from rag.ontology.store import RdflibStore, select_rows
 
 DISJOINT_VIOLATION_QUERY = """
 PREFIX owl: <http://www.w3.org/2002/07/owl#>
@@ -157,5 +155,5 @@ def find_disjoint_class_violations(store: RdflibStore) -> list[tuple[str, str, s
     """
     return [
         (str(row.individual), str(row.classA), str(row.classB))
-        for row in cast("list[ResultRow]", list(store.query(DISJOINT_VIOLATION_QUERY)))
+        for row in select_rows(store.query(DISJOINT_VIOLATION_QUERY))
     ]

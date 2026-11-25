@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from rag.ontology.store import RdflibStore
+from rag.ontology.store import RdflibStore, select_rows
 
 
 def load_query_text(path: str | Path) -> str:
@@ -49,13 +49,9 @@ def run_query_file(store: RdflibStore, path: str | Path) -> list[dict[str, str |
         (without the leading `?`), values stringified (`None` for an
         unbound `OPTIONAL` variable).
     """
-    from typing import cast
-
-    from rdflib.query import ResultRow
-
     sparql = load_query_text(path)
     result = store.query(sparql)
-    result_rows = cast("list[ResultRow]", list(result))
+    result_rows = select_rows(result)
     rows: list[dict[str, str | None]] = []
     for row in result_rows:
         row_dict: dict[str, str | None] = {}
