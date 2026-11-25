@@ -28,7 +28,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from rag.ontology.query_expansion import expand_concept
-from rag.ontology.store import RdflibStore
+from rag.ontology.store import RdflibStore, select_rows
 from rag.retrieval.authorization import AuthorizationContext
 
 _EXACT_TYPE_QUERY = """
@@ -130,15 +130,9 @@ def ontology_aware_type_match(
 
 def _entities_of_exact_type(store: RdflibStore, class_iri: str) -> list[str]:
     """Return every entity with an exact `rdf:type class_iri` triple, by IRI."""
-    from typing import cast
-
     from rdflib import URIRef
-    from rdflib.query import ResultRow
 
-    rows = cast(
-        "list[ResultRow]",
-        list(store.query(_EXACT_TYPE_QUERY, init_bindings={"type": URIRef(class_iri)})),
-    )
+    rows = select_rows(store.query(_EXACT_TYPE_QUERY, init_bindings={"type": URIRef(class_iri)}))
     return [str(row.entity) for row in rows]
 
 
@@ -253,22 +247,16 @@ def expand_and_query_live_neo4j(
 
 def _resolve_neo4j_labels(ontology_store: RdflibStore, class_iris: list[str]) -> list[str]:
     """Map ontology class IRIs to their real `tech:neo4jLabel` values, skipping any with none."""
-    from typing import cast
-
     from rdflib import URIRef
-    from rdflib.query import ResultRow
 
     neo4j_label_property = URIRef("http://techfusion.example/ontology/v1#neo4jLabel")
     labels: list[str] = []
     for class_iri in class_iris:
-        rows = cast(
-            "list[ResultRow]",
-            list(
-                ontology_store.query(
-                    "SELECT ?label WHERE { ?cls ?prop ?label }",
-                    init_bindings={"cls": URIRef(class_iri), "prop": neo4j_label_property},
-                )
-            ),
+        rows = select_rows(
+            ontology_store.query(
+                "SELECT ?label WHERE { ?cls ?prop ?label }",
+                init_bindings={"cls": URIRef(class_iri), "prop": neo4j_label_property},
+            )
         )
         for row in rows:
             first_word = str(row.label).split()[0]

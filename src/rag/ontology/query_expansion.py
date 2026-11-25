@@ -15,11 +15,8 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass
-from typing import cast
 
-from rdflib.query import ResultRow
-
-from rag.ontology.store import RdflibStore
+from rag.ontology.store import RdflibStore, select_rows
 
 _SUBCLASSES_OF_QUERY = """
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
@@ -122,9 +119,7 @@ def expand_concept(
 
 def _direct_subclasses(store: RdflibStore, parent) -> list:
     """Return every class with an `rdfs:subClassOf parent` triple."""
-    rows = cast(
-        "list[ResultRow]", list(store.query(_SUBCLASSES_OF_QUERY, init_bindings={"parent": parent}))
-    )
+    rows = select_rows(store.query(_SUBCLASSES_OF_QUERY, init_bindings={"parent": parent}))
     return [row.sub for row in rows]
 
 

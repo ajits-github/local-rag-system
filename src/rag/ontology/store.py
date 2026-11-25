@@ -30,10 +30,10 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from rdflib import Graph
-from rdflib.query import Result
+from rdflib.query import Result, ResultRow
 from rdflib.term import Identifier
 
 
@@ -168,3 +168,12 @@ def load_store(paths: Iterable[str | Path]) -> RdflibStore:
     store = RdflibStore()
     store.load_many(paths)
     return store
+
+
+def select_rows(result: Iterable[Any]) -> list[ResultRow]:
+    """Return a SPARQL SELECT result as a list of rows.
+
+    Types the rows without `cast`, which mypy flags as redundant when
+    rdflib is not installed and needs when it is.
+    """
+    return list(result)

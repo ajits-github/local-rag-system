@@ -21,11 +21,8 @@ different kinds of mapping triple:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import cast
 
-from rdflib.query import ResultRow
-
-from rag.ontology.store import RdflibStore
+from rag.ontology.store import RdflibStore, select_rows
 
 _EQUIVALENT_CLASSES_QUERY = """
 PREFIX owl: <http://www.w3.org/2002/07/owl#>
@@ -117,7 +114,7 @@ def find_equivalent_external_classes(store: RdflibStore) -> list[ClassMapping]:
     list[ClassMapping]
         Every external-to-canonical class mapping found.
     """
-    rows = cast("list[ResultRow]", list(store.query(_EQUIVALENT_CLASSES_QUERY)))
+    rows = select_rows(store.query(_EQUIVALENT_CLASSES_QUERY))
     return [
         ClassMapping(external_class=str(row.externalClass), canonical_class=str(row.canonicalClass))
         for row in rows
@@ -137,7 +134,7 @@ def summarize_entity_resolution(store: RdflibStore) -> list[EntityResolutionLink
     list[EntityResolutionLink]
         Confirmed links first, then proposed ones, in query order.
     """
-    confirmed_rows = cast("list[ResultRow]", list(store.query(_CONFIRMED_SAME_AS_QUERY)))
+    confirmed_rows = select_rows(store.query(_CONFIRMED_SAME_AS_QUERY))
     confirmed = [
         EntityResolutionLink(
             canonical_entity=str(row.canonical),
@@ -149,7 +146,7 @@ def summarize_entity_resolution(store: RdflibStore) -> list[EntityResolutionLink
         )
         for row in confirmed_rows
     ]
-    proposed_rows = cast("list[ResultRow]", list(store.query(_CANDIDATE_SAME_AS_QUERY)))
+    proposed_rows = select_rows(store.query(_CANDIDATE_SAME_AS_QUERY))
     proposed = [
         EntityResolutionLink(
             canonical_entity=str(row.canonical),
