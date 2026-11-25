@@ -92,6 +92,17 @@ def test_first_round_ingests_new_files_with_folder_category(root, tmp_path):
     assert categories == {"a.md": None, "b.md": "policies"}
 
 
+def test_zero_settle_window_ingests_a_file_whose_mtime_is_ahead_of_the_clock(root, tmp_path):
+    """With `settle_seconds=0`, an mtime slightly ahead of `clock()` does not defer the file."""
+    pipeline = FakePipeline()
+    newest = max(p.stat().st_mtime for p in root.rglob("*.md"))
+    source = ScanSourceConfig(path=str(root), dataset_id="ds")
+    report = scan_source(
+        pipeline, source, _config(tmp_path), _EXTS, clock=lambda: newest - 0.000001
+    )
+    assert (report.new, report.deferred) == (2, 0)
+
+
 def test_unchanged_files_are_skipped_without_loading(root, tmp_path):
     """Second round: stat + manifest + stored checksum agree, so nothing is ingested."""
     pipeline = FakePipeline()

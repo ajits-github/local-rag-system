@@ -386,7 +386,8 @@ def _process_file(
 ) -> tuple[str, FileState | None]:
     """Classify and, when needed, ingest one file; returns its outcome and new state."""
     stat = file_path.stat()
-    if clock() - stat.st_mtime < scan_config.settle_seconds:
+    # `settle_seconds == 0` disables the window; a fresh mtime can sit just ahead of `clock()`.
+    if scan_config.settle_seconds > 0 and clock() - stat.st_mtime < scan_config.settle_seconds:
         return "deferred", None
     stored = db_checksums.get(persisted_source)
     hint = manifest.get(persisted_source)
