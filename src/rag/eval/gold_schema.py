@@ -68,6 +68,9 @@ class GoldExample(BaseModel):
         Expected effective date of the resolved version.
     query_as_of : str or None
         Simulated `as_of` date for freshness resolution.
+    version_scope : {"current", "history"}
+        `"history"` for questions comparing versions (see
+        `AuthorizationContext.version_scope`).
     injection_present : bool
         Whether the scenario includes an embedded prompt-injection attempt.
     injection_source : str or None
@@ -256,6 +259,7 @@ class GoldExample(BaseModel):
     expected_document_version: str | None = None
     expected_effective_date: str | None = None
     query_as_of: str | None = None
+    version_scope: Literal["current", "history"] = "current"
     injection_present: bool = False
     injection_source: str | None = None
     sensitive_data_present: bool = False

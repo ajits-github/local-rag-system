@@ -13,6 +13,7 @@ from rag.api.auth import VerifiedIdentity
 from rag.api.deps import get_config, get_current_identity, get_rate_limiter, get_retrieval_pipeline
 from rag.api.request_auth import (
     build_authorization_context,
+    enforce_dataset_scope,
     enforce_dos_limits,
     enforce_history_limits,
 )
@@ -36,9 +37,11 @@ class QueryRequest(BaseModel):
     `security.auth.insecure_dev_mode` is explicitly `True` and no JWT was
     supplied. Whenever a verified `Authorization: Bearer <jwt>` identity is
     present, these two fields are ignored for authorization; the verified
-    JWT claims are used instead. `as_of` and `require_trust_level` are
-    caller-supplied query parameters rather than identity claims, so they
-    are honored either way.
+    JWT claims are used instead. `as_of`, `require_trust_level`, and
+    `version_scope` are caller-supplied query parameters rather than
+    identity claims, so they are honored either way. `version_scope:
+    "history"` returns every version effective on or before `as_of`, for
+    questions comparing versions; it never relaxes tenant or role checks.
 
     `conversation_history` is caller-supplied, oldest first; this system
     has no server-side session store (see `rag.context.history`'s module
@@ -55,6 +58,7 @@ class QueryRequest(BaseModel):
     roles: list[str] | None = None
     as_of: date | None = None
     require_trust_level: str | None = None
+    version_scope: Literal["current", "history"] = "current"
     conversation_history: list[ConversationTurn] | None = None
 
 
@@ -125,7 +129,12 @@ def _build_authorization_context(
     behavior.
     """
     return build_authorization_context(
-        identity, body.tenant_id, body.roles, body.as_of, body.require_trust_level
+        identity,
+        body.tenant_id,
+        body.roles,
+        body.as_of,
+        body.require_trust_level,
+        body.version_scope,
     )
 
 
@@ -177,11 +186,12 @@ def query(
         The generated answer, its sources, and stage timings.
     """
     _enforce_dos_limits(body, config)
+    filters = enforce_dataset_scope(body.filters, config)
     enforce_history_limits(body.conversation_history, config)
     auth = _build_authorization_context(body, identity, config)
     result = pipeline.answer(
         body.query,
-        filters=body.filters,
+        filters=filters,
         candidate_k=body.top_k,
         auth=auth,
         history_turns=body.conversation_history,

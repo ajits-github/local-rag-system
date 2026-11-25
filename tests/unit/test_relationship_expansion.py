@@ -62,6 +62,7 @@ class FakeVectorStore:
         self._chunks_by_id = chunks_by_id or {}
         self._sections = sections or {}
         self.get_chunks_by_ids_calls: list[list[str]] = []
+        self.dataset_ids_seen: list[str | None] = []
         self.get_chunks_by_ids_auth_calls: list[object] = []
         self.get_chunks_by_section_calls: list[tuple[str, str | None]] = []
 
@@ -93,17 +94,19 @@ class FakeVectorStore:
         """Return no keyword results. these tests only exercise dense retrieval."""
         return []
 
-    def get_chunks_by_ids(self, chunk_ids: list[str], auth=None) -> list[Chunk]:
+    def get_chunks_by_ids(self, chunk_ids: list[str], dataset_id=None, auth=None) -> list[Chunk]:
         """Record the call and return whichever scripted chunks match."""
         self.get_chunks_by_ids_calls.append(list(chunk_ids))
+        self.dataset_ids_seen.append(dataset_id)
         self.get_chunks_by_ids_auth_calls.append(auth)
         return [self._chunks_by_id[cid] for cid in chunk_ids if cid in self._chunks_by_id]
 
     def get_chunks_by_section(
-        self, document_id: str, section_path: str | None, auth=None
+        self, document_id: str, section_path: str | None, dataset_id=None, auth=None
     ) -> list[Chunk]:
         """Record the call and return the scripted, chunk_index-ordered section."""
         self.get_chunks_by_section_calls.append((document_id, section_path))
+        self.dataset_ids_seen.append(dataset_id)
         return self._sections.get((document_id, section_path), [])
 
     def list_document_versions(self, dataset_id: str):

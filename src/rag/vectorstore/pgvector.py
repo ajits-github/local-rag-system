@@ -195,7 +195,9 @@ def build_authorization_where_clause(
     `allowed_roles` is set at all, the caller must hold at least one of
     them. This is what still subjects a same-tenant request to role
     checks. `resolved_excluded_document_ids` and `require_trust_level`
-    (when set) are ANDed in as further, independent exclusions.
+    (when set) are ANDed in as further, independent exclusions. A
+    freshness-only context (`auth.acl_enforced` is `False`) contributes
+    only the document exclusions.
 
     Parameters
     ----------
@@ -216,9 +218,12 @@ def build_authorization_where_clause(
     if auth is None:
         return "", []
 
-    caller_support_roles = [role for role in auth.roles if role in cross_tenant_support_roles]
-    clauses = [
-        """(
+    clauses: list[str] = []
+    params: list[Any] = []
+    if auth.acl_enforced:
+        caller_support_roles = [role for role in auth.roles if role in cross_tenant_support_roles]
+        clauses.append(
+            """(
             tenant_id IS NULL
             OR tenant_id = %s
             OR (allowed_roles IS NOT NULL AND allowed_roles && %s::text[])
@@ -227,14 +232,14 @@ def build_authorization_where_clause(
             allowed_roles IS NULL
             OR allowed_roles && %s::text[]
         )"""
-    ]
-    params: list[Any] = [auth.tenant_id, caller_support_roles, auth.roles]
+        )
+        params.extend([auth.tenant_id, caller_support_roles, auth.roles])
 
     if auth.resolved_excluded_document_ids:
         clauses.append("NOT (document_id::text = ANY(%s))")
         params.append(auth.resolved_excluded_document_ids)
 
-    if auth.require_trust_level:
+    if auth.acl_enforced and auth.require_trust_level:
         clauses.append("(trust_level IS NULL OR trust_level = %s)")
         params.append(auth.require_trust_level)
 
@@ -360,6 +365,46 @@ def _tokenize(text: str) -> list[str]:
         Lowercase word tokens, in order.
     """
     return _TOKEN_RE.findall(text.lower())
+
+
+def rank_keyword_matches(
+    tokenized_corpus: list[list[str]], query_tokens: list[str], chunk_ids: list[str]
+) -> list[tuple[int, float]]:
+    """Rank corpus rows by BM25, keeping only rows that genuinely match the query.
+
+    A row is kept only if it contains at least one query term, so a row with
+    no match never earns a reciprocal-rank-fusion rank. When the query has a
+    term that occurs in at most half the rows, a row must contain one of
+    those terms: matches only on words common to most of the corpus carry no
+    signal. The BM25 score only orders the kept rows (it can be negative in
+    a tiny corpus where a term is in every row). Ties break by `chunk_id`,
+    matching dense search's `ORDER BY embedding <=> ..., chunk_id ASC`.
+
+    Parameters
+    ----------
+    tokenized_corpus : list[list[str]]
+        Tokens of each row, in row order.
+    query_tokens : list[str]
+        Query tokens.
+    chunk_ids : list[str]
+        Each row's `chunk_id`, for deterministic tie-breaking.
+
+    Returns
+    -------
+    list[tuple[int, float]]
+        `(row_index, score)` pairs, best first.
+    """
+    if not tokenized_corpus or not query_tokens:
+        return []
+    scores = BM25Okapi(tokenized_corpus).get_scores(query_tokens)
+    token_sets = [set(tokens) for tokens in tokenized_corpus]
+    terms = set(query_tokens)
+    half = len(token_sets) / 2
+    specific = {term for term in terms if sum(term in ts for ts in token_sets) <= half}
+    required = specific or terms
+    eligible = [i for i in range(len(token_sets)) if token_sets[i] & required]
+    eligible.sort(key=lambda i: (-scores[i], chunk_ids[i]))
+    return [(i, float(scores[i])) for i in eligible]
 
 
 class PgVectorStore(VectorStore):
@@ -626,15 +671,21 @@ class PgVectorStore(VectorStore):
             )
             return {str(document_id): count for document_id, count in cur.fetchall()}
 
-    def list_document_versions(self, dataset_id: str) -> list[DocumentVersionInfo]:
-        """See `VectorStore.list_document_versions`."""
+    def list_document_versions(self, dataset_id: str | None) -> list[DocumentVersionInfo]:
+        """See `VectorStore.list_document_versions`.
+
+        Reads only each document's first chunk: every chunk of a document is
+        written from one `RawDocument` in one transaction, so they share
+        these fields, and this avoids de-duplicating every chunk row.
+        """
+        scope_sql, params = ("AND dataset_id = %s", (dataset_id,)) if dataset_id else ("", ())
         with self._connection() as conn, conn.cursor() as cur:
             cur.execute(
-                f"""SELECT DISTINCT document_id, source, status, document_version,
-                        effective_from, supersedes_source, tenant_id
+                f"""SELECT document_id, source, status, document_version,
+                        effective_from, supersedes_source, tenant_id, dataset_id
                     FROM {self._chunks_table}
-                    WHERE dataset_id = %s""",
-                (dataset_id,),
+                    WHERE chunk_index = 0 {scope_sql}""",
+                params,
             )
             rows = cur.fetchall()
         return [
@@ -646,6 +697,7 @@ class PgVectorStore(VectorStore):
                 effective_from=effective_from,
                 supersedes_source=supersedes_source,
                 tenant_id=tenant_id,
+                dataset_id=row_dataset_id,
             )
             for (
                 document_id,
@@ -655,6 +707,7 @@ class PgVectorStore(VectorStore):
                 effective_from,
                 supersedes_source,
                 tenant_id,
+                row_dataset_id,
             ) in rows
         ]
 
@@ -795,21 +848,16 @@ class PgVectorStore(VectorStore):
             return []
 
         unpacked = [_row_to_metadata(row) for row in rows]
-        tokenized_corpus = [_tokenize(content) for _, content, _ in unpacked]
-        bm25 = BM25Okapi(tokenized_corpus)
-        scores = bm25.get_scores(_tokenize(query))
-
-        # Explicit chunk_id tie-break, not just reliance on the fetch's own
-        # ORDER BY: a tied score's rank must never depend on incidental
-        # input order alone. Score descending (negated, since this sorts
-        # ascending overall), chunk_id ascending for ties, matching dense
-        # search's own `ORDER BY embedding <=> ..., chunk_id ASC`.
-        ranked_indices = sorted(range(len(unpacked)), key=lambda i: (-scores[i], unpacked[i][0]))
+        ranked = rank_keyword_matches(
+            [_tokenize(content) for _, content, _ in unpacked],
+            _tokenize(query),
+            [chunk_id for chunk_id, _, _ in unpacked],
+        )
         results = []
-        for i in ranked_indices[:top_k]:
+        for i, score in ranked[:top_k]:
             chunk_id, content, metadata = unpacked[i]
             chunk = Chunk(id=chunk_id, content=content, metadata=metadata)
-            results.append(SearchResult(chunk=chunk, score=float(scores[i])))
+            results.append(SearchResult(chunk=chunk, score=score))
         return results
 
     def count_excluded_by_authorization(
@@ -840,7 +888,10 @@ class PgVectorStore(VectorStore):
         return max(unrestricted_count - restricted_count, 0)
 
     def get_chunks_by_ids(
-        self, chunk_ids: list[str], auth: AuthorizationContext | None = None
+        self,
+        chunk_ids: list[str],
+        dataset_id: str | None,
+        auth: AuthorizationContext | None = None,
     ) -> list[Chunk]:
         """See `VectorStore.get_chunks_by_ids`."""
         if not chunk_ids:
@@ -848,10 +899,12 @@ class PgVectorStore(VectorStore):
         auth_sql, auth_params = build_authorization_where_clause(
             auth, self._cross_tenant_support_roles
         )
-        where_sql = _combine_where_clauses("WHERE chunk_id = ANY(%s)", auth_sql)
+        where_sql = _combine_where_clauses(
+            "WHERE chunk_id = ANY(%s) AND dataset_id IS NOT DISTINCT FROM %s", auth_sql
+        )
         sql = f"SELECT {_METADATA_COLUMNS} FROM {self._chunks_table} {where_sql}"
         with self._connection() as conn, conn.cursor() as cur:
-            cur.execute(sql, [chunk_ids, *auth_params])
+            cur.execute(sql, [chunk_ids, dataset_id, *auth_params])
             rows = cur.fetchall()
         return [
             Chunk(id=chunk_id, content=content, metadata=metadata)
@@ -895,11 +948,12 @@ class PgVectorStore(VectorStore):
         self,
         document_id: str,
         section_path: str | None,
+        dataset_id: str | None,
         auth: AuthorizationContext | None = None,
     ) -> list[Chunk]:
         """See `VectorStore.get_chunks_by_section`."""
         section_clause = "section_path = %s" if section_path is not None else "section_path IS NULL"
-        base_sql = f"document_id = %s AND {section_clause}"
+        base_sql = f"document_id = %s AND {section_clause} AND dataset_id IS NOT DISTINCT FROM %s"
         auth_sql, auth_params = build_authorization_where_clause(
             auth, self._cross_tenant_support_roles
         )
@@ -910,6 +964,7 @@ class PgVectorStore(VectorStore):
         params: list[Any] = (
             [document_id, section_path] if section_path is not None else [document_id]
         )
+        params.append(dataset_id)
         params.extend(auth_params)
         with self._connection() as conn, conn.cursor() as cur:
             cur.execute(sql, params)

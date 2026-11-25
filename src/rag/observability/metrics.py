@@ -251,6 +251,25 @@ FEEDBACK_SUBMISSION_LATENCY_SECONDS = Histogram(
     registry=REGISTRY,
 )
 
+INGESTION_SCAN_RUNS_TOTAL = Counter(
+    "rag_ingestion_scan_runs_total",
+    "Scheduled directory scan rounds per source, by final status.",
+    ["status"],
+    registry=REGISTRY,
+)
+INGESTION_SCAN_DURATION_SECONDS = Histogram(
+    "rag_ingestion_scan_duration_seconds",
+    "Scheduled directory scan duration per source, in seconds.",
+    buckets=_LATENCY_BUCKETS_SECONDS,
+    registry=REGISTRY,
+)
+INGESTION_SCAN_FILES_TOTAL = Counter(
+    "rag_ingestion_scan_files_total",
+    "Files handled by scheduled directory scans, by outcome.",
+    ["outcome"],
+    registry=REGISTRY,
+)
+
 _F = TypeVar("_F", bound=Callable[..., None])
 
 
@@ -461,6 +480,16 @@ def render_metrics() -> bytes:
     return generate_latest(REGISTRY)
 
 
+@_defensive
+def observe_ingestion_scan(status: str, duration_seconds: float, counts: dict[str, int]) -> None:
+    """Record one scheduled scan round for one source."""
+    INGESTION_SCAN_RUNS_TOTAL.labels(status=status).inc()
+    INGESTION_SCAN_DURATION_SECONDS.observe(duration_seconds)
+    for outcome, count in counts.items():
+        if count:
+            INGESTION_SCAN_FILES_TOTAL.labels(outcome=outcome).inc(count)
+
+
 __all__ = [
     "CONTENT_TYPE_LATEST",
     "REGISTRY",
@@ -475,6 +504,7 @@ __all__ = [
     "observe_graph_retrieval_failure",
     "observe_graphrag_route",
     "observe_http_request",
+    "observe_ingestion_scan",
     "observe_node_latency",
     "observe_retrieval_latency",
     "observe_termination_reason",

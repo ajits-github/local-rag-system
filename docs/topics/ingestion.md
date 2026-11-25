@@ -11,7 +11,10 @@ structural metadata (`content_type`, `section_path`, `page`,
 Ingestion is incremental and idempotent: re-ingesting an unchanged file is
 a no-op (checksum-based), an edited file is re-chunked under its existing
 `document_id`, and documents removed from a directory target are detected
-and deleted from the vector store on the next run.
+and deleted from the vector store on the next run. An opt-in scheduler
+(`python -m rag.ingestion.scheduler`) repeats this on a timer with guards
+against empty or unreadable directories; see
+[Freshness & Document Lifecycle](freshness-lifecycle.md#scheduled-directory-ingestion).
 
 For the full design (element model, relationship linkage between a table/
 image and its nearest preceding prose, layout-aware PDF/DOCX extraction),

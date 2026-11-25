@@ -782,15 +782,14 @@ def _execute_tool(
         )
         return state
 
-    # Fetch versions once for both `resolve_auth` calls. Skipped when the
-    # authorization kill-switch is off, since `resolve_auth` then makes no query.
+    # Fetch versions once for both `resolve_auth` calls. Skipped when
+    # `resolve_auth` would make no query for this caller.
     versions: list[DocumentVersionInfo] | None = None
     if (
         not is_remote_tool
         and decision.tool_name in DIRECT_FETCH_TOOL_NAMES
         and dataset_id
-        and state.authorization_context is not None
-        and pipeline.authorization_enabled
+        and pipeline.resolves_freshness(state.authorization_context)
     ):
         versions = vectorstore.list_document_versions(dataset_id)
 

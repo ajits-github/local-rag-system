@@ -36,18 +36,20 @@ without basis. Detailed chronological session history remains in
 | EVAL-007 | MODERATE | ACCEPTED LIMITATION | Evaluation | A keyword-overlap answer metric penalized correct refusals |
 | EVAL-009 | MINOR | ACCEPTED LIMITATION | Evaluation | Generation dominated latency, and the latency A/B could not be trusted |
 | AGT-004 | MAJOR | IN PROGRESS | Agentic RAG | The tool worked, but the agent rarely chose it (specialized-tool selection) |
-| AGT-005 | MODERATE | FIXED | Agentic RAG | Tool-selection prompt's chunk_id fix was unverified against live tool selection |
-| AGT-006 | MAJOR | FIXED | Agentic RAG | Specialized tools were unreachable for reasons the prompts could not fix |
-| AGT-007 | MODERATE | FIXED | Agentic RAG | The corrective tool selection ran outside the step budget |
 | OPS-019 | MINOR | OPEN | Operations | Postgres crashed and recovered during a live eval on the 8GB box |
 | SEC-007 | MODERATE | ACCEPTED LIMITATION | Security | Upload atomicity: a crash between the DB write and the file install leaves the database one step ahead (verified, self-healing on retry) |
 | MULTI-002 | MINOR | ACCEPTED LIMITATION | Multimodal | A working vision provider did not improve answers, because the model was weak |
 | GRAPH-005 | MODERATE | ACCEPTED LIMITATION | GraphRAG | LLM graph extraction worked correctly, but was impractical on a memory-starved host |
 | PROD-001 | MODERATE | ACCEPTED LIMITATION | Infrastructure | Durable workflow state did not make the side effects it triggered durable |
-| PROD-002 | MINOR | ACCEPTED LIMITATION | Data | Re-spelling the same ingestion root churns document identity |
 | CTX-004 | MINOR | ACCEPTED LIMITATION | Context Engineering | Extractive compression needs sentence boundaries; graph-path hops are a best-effort text parse |
 | GRAPH-011 | MINOR | ACCEPTED LIMITATION | GraphRAG | Entity-node ACL properties are frozen at first write (mitigated by read-time revalidation) |
 | RET-006 | MINOR | ACCEPTED LIMITATION | Retrieval | BM25 rebuilds a full in-memory index on every hybrid query |
+| RET-009 | MINOR | ACCEPTED LIMITATION | Retrieval | Version metadata is rebuilt from chunk rows on every query |
+| RET-010 | MODERATE | ACCEPTED LIMITATION | Retrieval | Version metadata without an active member keeps every candidate visible |
+| PROD-004 | MODERATE | ACCEPTED LIMITATION | Data | Deletion is a hard delete, and version publication is atomic per file only |
+| PROD-006 | MINOR | ACCEPTED LIMITATION | Ingestion | Scheduled directory ingestion is single-host and best effort |
+| PROD-007 | MINOR | ACCEPTED LIMITATION | Ingestion | Source registry and external connectors are designed, not implemented |
+| OPS-020 | MINOR | ACCEPTED LIMITATION | Benchmarking | From the Windows host, any SQL statement over about 16 KB cost an extra 44 ms |
 | OPS-015 | MODERATE | ACCEPTED LIMITATION | Deployment (experiment branch) | The Helm chart's default values make both PodDisruptionBudgets unsatisfiable (deliberate demo) |
 | OPS-016 | MAJOR | ACCEPTED LIMITATION | CI / merge risk | The experiment branches have diverged too far from main to merge mechanically |
 
@@ -1123,6 +1125,203 @@ At the current corpus size the cost is small next to generation latency (**EVAL-
 
 ---
 
+### RET-007: Freshness family resolution compared every pair of documents on every query
+
+**Status:** FIXED
+**Severity:** MAJOR
+**Area:** Retrieval / freshness performance
+**Affected code:** `retrieval/freshness.py:_build_families`
+
+**Problem**
+Version families were built by testing `_links_to` for every ordered pair of documents in the dataset, on every query that resolved freshness: O(N²).
+
+**Evidence**
+In-process, synthetic chains: 1,138 ms at 1,000 documents and 151.6 s for one call at 10,000. In the `rag-api` container at 1,000 documents, the resolution stage took 891 ms of an 898 ms dense retrieval; dense search itself took 7.2 ms.
+
+**Fix applied**
+Each `source` is indexed by every trailing path suffix, and each `supersedes_source` is looked up in that index; the link rule (`_links_to`, including the cross-tenant guard) is unchanged.
+
+**Result**
+Same families as the pairwise version at 100, 1,000, and 10,000 documents. 11.1 ms at 1,000, 148 ms at 10,000, 1.8 s at 100,000 (in-process). Container, 1,000 documents: resolution stage 891 ms to 31 ms. Scale run in the container: 134 ms / 1.32 s / 2.25 s p50 at 10,000 / 50,000 / 100,000 documents against 166 s measured for the pairwise version at 10,000 (about 4,160 s and 16,640 s projected beyond). Resolution is CPU-bound under the GIL, so 8 concurrent requests at 100,000 documents wait 20 s p50 for 0.39 resolutions per second. See `experiments/reports/freshness_benchmark.md`.
+
+**Regression test**
+`test_indexed_families_match_the_pairwise_reference` (25 random corpora with nested paths, backslashes, null tenants, and name collisions) in `tests/unit/test_freshness_policy.py`.
+
+---
+
+### RET-008: Superseded versions were excluded only when authorization was on
+
+**Status:** FIXED
+**Severity:** MAJOR
+**Area:** Retrieval / freshness scope
+**Affected code:** `RetrievalPipeline.resolve_auth`, `config.retrieval.freshness`, `config.retrieval.dataset_scope`, `rag/retrieval/scope.py`
+
+**Problem**
+`resolve_auth` returned `None` (unrestricted, no freshness) when `security.authorization.enabled` was false or the request had no authorization context, and skipped freshness when the filters had no `dataset_id`. With the default config every query could retrieve a superseded version.
+
+**Evidence**
+Retrieval-only evaluation on `techfusion_gold.jsonl` (126 questions) with `config/default.yaml`: `stale_document_error_rate` 0.0769 (1 of 13 freshness questions).
+
+**Fix applied**
+- `retrieval.freshness.apply_without_authorization` now defaults to `true`. Where retrieval would otherwise be unrestricted, `resolve_auth` returns a freshness-only context (`AuthorizationContext.acl_enforced=False`); the SQL and Cypher builders emit only the exclusion for it, never a tenant, role, or trust term, and it never produces `authorization_denied`. With authorization on, a caller's context is always forced to `acl_enforced=True`. `false` restores the earlier behavior.
+- A missing `dataset_id` no longer skips freshness: versions of every dataset are resolved, and links never cross datasets (`DocumentVersionInfo.dataset_id`).
+- `retrieval.dataset_scope` defines the boundary behavior: `default_dataset_id` for single-dataset deployments; `missing_dataset_policy: all_datasets` (default) or `reject` (HTTP 422, MCP tool error) for multi-dataset ones. Applied in all four query routers and the MCP server.
+
+**Result**
+Same evaluation after the change, default config: `document_unauthorized_retrieval_rate` 0.9412 to 0.5882 and `unauthorized_metadata_leakage_rate` 0.7619 to 0.4762, because 6 gold rows list superseded v1 files as forbidden and those are no longer retrieved; the three `as_of` questions now retrieve the version effective on their date. `stale_document_error_rate` stays 0.0769: its one remaining case is `untrusted-operations-notes.md`, an unverified document outside any version family that only trust filtering (authorization on) removes. Of the 58 questions whose retrieved sources changed, 55 only lost superseded v1 files. Experiment configs inherit the new default; reproduce pre-2026-11-22 runs with `apply_without_authorization: false`. Version-comparison questions lost their v1 evidence (**RET-014**).
+
+**Regression test**
+`tests/unit/test_freshness_policy.py`, `tests/unit/test_keyword_and_scope.py`, `tests/unit/test_api_dataset_scope.py`; `test_shipped_default_excludes_superseded_public_content`, `test_compatibility_setting_still_returns_superseded_public_content`, `test_flag_never_hides_other_tenants_content_when_authorization_is_off`, `test_missing_dataset_scope_keeps_tenant_isolation` (PostgreSQL); `test_unscoped_tool_call_is_rejected_under_the_reject_policy`, `test_unscoped_tool_call_uses_the_single_dataset_default` (MCP).
+
+---
+
+### RET-009: Version metadata is rebuilt from chunk rows on every query
+
+**Status:** ACCEPTED LIMITATION
+**Severity:** MINOR
+**Area:** Retrieval / freshness performance
+**Affected code:** `PgVectorStore.list_document_versions`, `build_authorization_where_clause`
+
+**Problem**
+Every freshness-resolving query fetched governance metadata with `SELECT DISTINCT` over all of the dataset's chunk rows, then passed the excluded ids as a `NOT (document_id::text = ANY(%s))` array.
+
+**Evidence**
+Container, 10,000 documents and 30,000 chunks: the `DISTINCT` fetch ran 37.7 ms server-side; reading only `chunk_index = 0` returned identical rows in 12.4 ms. `list_document_versions()` took 130 ms in total, mostly building Python objects. Dense search went from 22.0 ms with no exclusions to 27.1 ms with the real 3,705 and 38.6 ms with 10,000. Every plan used the `dataset_id` index and a sort, never HNSW, so exclusions do not cut recall.
+
+**Fix applied**
+The fetch reads chunk 0 only. The exclusion predicate is unchanged: the `uuid <> ALL` variant saved at most about 9 ms and would raise an SQL error on any non-UUID id.
+
+**Why accepted**
+The remaining cost is linear and per query, fine at this project's corpus sizes. It does not scale: at 50,000 and 100,000 documents (3 chunks each) the fetch took 22 to 41 s with either query, because the chunk table no longer fit in the PostgreSQL container's memory. Removing it needs a document-level version table or a maintained projection (see the decision in `docs/topics/freshness-lifecycle.md`), a schema change deferred for approval; it is required before a deployment of that size.
+
+**Regression test**
+`test_version_fetch_returns_one_row_per_multi_chunk_document` in `tests/integration/test_freshness_lifecycle.py`.
+
+---
+
+### RET-010: Version metadata without an active member keeps every candidate visible
+
+**Status:** ACCEPTED LIMITATION
+**Severity:** MODERATE
+**Area:** Retrieval / freshness semantics
+**Affected code:** `retrieval/freshness.py`
+
+**Problem**
+Originally a family with several `status: active` members kept all of them, so publishing v2 without editing v1's `status` left two current versions.
+
+**Fix applied (conflicting active versions)**
+The `supersedes` link now decides: an active member superseded, directly or transitively, by another active member is excluded. Active members the links cannot order (branches, cycles) resolve to the latest `effective_from`, then the greatest `document_id`. Each resolution logs at most one `freshness_multiple_active_family_members` and one `freshness_conflicting_active_versions` warning, with counts and sample ids, instead of one per family per query.
+
+**Still accepted**
+A family with no active member excludes nothing; a member without `effective_from` is never excluded by `as_of`; `status` alone never hides a document outside a family, so deleting the current version makes its predecessor visible again; a broken `supersedes` link forms no family. Each avoids guessing from missing metadata and is pinned by tests.
+
+**Regression test**
+`tests/unit/test_freshness_lifecycle_rules.py`; `test_new_version_published_while_old_still_active`, `test_branching_active_versions_keep_the_latest`, `test_deleting_the_current_version_leaves_the_old_one_unlinked` in `tests/integration/test_chunk_scope_and_lifecycle.py`.
+
+---
+
+### RET-011: `get_latest_document` ignored `as_of` and resolved shared filenames by row order
+
+**Status:** FIXED
+**Severity:** MODERATE
+**Area:** Agentic RAG / freshness
+**Affected code:** `agent/tools.py:get_latest_document`, `freshness.resolve_current_document_source`
+
+**Problem**
+The tool redirected to the *current* version without passing the caller's `as_of`, then fetched under exclusions computed for `as_of`, which excluded that current version. A source matching several documents by suffix resolved to whichever row `list_document_versions` returned first; that query has no `ORDER BY`.
+
+**Failure scenario**
+A historical agent query ("what applied in mid-2025?") got an empty result. A filename shared by two tenants could redirect into the other tenant's family; the fetch then failed closed, so nothing leaked, but the caller's own document was not returned.
+
+**Fix applied**
+The tool resolves `auth` first and redirects using the resolved `as_of`/`include_superseded`. Matching prefers an exact path, then drops other tenants' documents when the caller's tenant is known, and returns the request unchanged (with `freshness_ambiguous_source_reference`) when still ambiguous.
+
+**Result**
+On the local `techfusion` corpus all six `supersedes` redirects resolve as before. Its one shared filename, `confidential-integration-runbook.md` (in `tenant_alpha` and `tenant_beta`), used to resolve to whichever tenant's row came first; it now resolves to the caller's own copy when authorization supplies a tenant, and otherwise to nothing (the request is returned unchanged and matches no stored path).
+
+**Regression test**
+`test_get_latest_document_resolves_to_the_version_effective_on_as_of` (unit) and `test_get_latest_document_follows_as_of_against_the_database` (PostgreSQL); `test_ambiguous_suffix_reference_is_not_resolved_by_row_order`, `test_caller_tenant_disambiguates_a_shared_filename`.
+
+---
+
+### RET-012: BM25 returned zero-score rows, which still earned an RRF rank
+
+**Status:** FIXED
+**Severity:** MINOR
+**Area:** Retrieval / hybrid ranking
+**Affected code:** `PgVectorStore.search_keyword`, `rank_keyword_matches`
+
+**Problem**
+`search_keyword` returned the top `top_k` rows by BM25 score with no minimum, so a chunk sharing no term with the query was still returned (score 0) and contributed a rank to reciprocal rank fusion.
+
+**Fix applied**
+`rank_keyword_matches` keeps a row only if it contains a query term and, when the query has a term occurring in at most half the filtered rows, one of those terms; a match only on corpus-common words earns no rank, and BM25 only orders the kept rows. A first version required a positive BM25 score instead, which dropped exact matches in tiny filtered corpora (BM25Okapi gives a term present in every row a negative idf); three `tests/integration/test_pgvector.py` cases caught it.
+
+**Result**
+Retrieval-only evaluation, 126 questions, `candidate_k=5`, run with freshness set back to the earlier behavior to isolate this change: recall@5 0.8611, recall@10 0.9206, MRR 0.7669, identical to before, with no retrieved source changed for either the zero-score rule alone or both rules. Over the 483-chunk `techfusion` corpus neither rule removes any top-5 or top-20 BM25 row for these questions; the change matters when a filtered candidate set has fewer genuine matches than `top_k`.
+
+Full branch (keyword rules plus the freshness default, **RET-008**), same 126 questions:
+
+| Config | Before recall@5 / recall@10 / MRR / stale rate | After |
+|---|---|---|
+| `config/default.yaml` (dense) | 0.8413 / 0.8889 / 0.7257 / 0.0769 | 0.8426 / 0.8783 / 0.7319 / 0.0769 |
+| `hybrid-retrieval.yaml` | 0.8611 / 0.9206 / 0.7669 / 0.0769 | 0.8505 / 0.9180 / 0.7788 / 0.0769 |
+| `secure-rag-baseline-v1.yaml` | 0.7884 / 0.8320 / 0.7534 / 0.0 | 0.7884 / 0.8320 / 0.7552 / 0.0 |
+
+The recall drops come from freshness, not keyword ranking (the isolated runs above are unchanged), mainly from two version-comparison questions, recovered by **RET-014**, whose entry has the final numbers. Raw summary: `experiments/results/freshness/eval_retrieval_37_1.json`.
+
+**Regression test**
+`tests/unit/test_keyword_and_scope.py` (including `test_exact_match_in_a_tiny_corpus_still_ranks`); `test_content_update_replaces_chunks_under_a_stable_document_id` (PostgreSQL) asserts a removed word gets no keyword result; the `search_keyword` cases in `tests/integration/test_pgvector.py`.
+
+---
+
+### RET-013: Chunk-id lookups were not scoped to a dataset
+
+**Status:** FIXED
+**Severity:** MINOR
+**Area:** Retrieval / dataset isolation
+**Affected code:** `VectorStore.get_chunks_by_ids`, `get_chunks_by_section`; `RetrievalPipeline.expand_with_relationships`; `agent/tools.py:get_related_context`
+
+**Problem**
+Both queries filtered by id plus the authorization predicate only. `get_related_context` did not require a `dataset_id`, so a chunk id from another dataset resolved when the ACL allowed it, and that dataset's superseded versions were not excluded.
+
+**Fix applied**
+Both methods take a required `dataset_id` and filter on it in SQL (`IS NOT DISTINCT FROM`, so a null scope only matches legacy rows without a dataset). Expansion looks up parents and neighbors in each result's own dataset. `get_related_context` requires a `dataset_id`, like the other direct-fetch tools, for both the agent and MCP. The API paths reach these lookups only through `retrieve()`; graph evidence was already revalidated per dataset by `get_document_governance`.
+
+**Regression test**
+`test_chunk_id_lookup_never_crosses_datasets`, `test_get_related_context_refuses_another_datasets_chunk`, `test_get_related_context_refuses_another_tenants_chunk`, `test_relationship_expansion_looks_up_neighbors_in_the_results_own_dataset` (PostgreSQL, `tests/integration/test_chunk_scope_and_lifecycle.py`); `test_get_related_context_dispatches_by_chunk_id` (MCP); `test_get_related_context_requires_a_dataset_id` (unit).
+
+---
+
+### RET-014: Version-comparison questions could not see the superseded version
+
+**Status:** FIXED
+**Severity:** MINOR
+**Area:** Retrieval / freshness semantics
+**Affected code:** `AuthorizationContext.version_scope`, `retrieval/freshness.py`, `api/request_auth.build_authorization_context`, the query routers, `mcp/server.py`, `retrieval/pipeline.source_label`
+
+**Problem**
+"What changed between Alpha retention policy versions 1 and 2?" and "How did the production deployment strategy change from v1 to v2?" need both versions, but current-mode freshness excluded v1, and no request field could ask otherwise.
+
+**Fix applied**
+An explicit `version_scope` request field (`"current"` default, or `"history"`) on `POST /query`, the agent routes, `/graph/query`, and the MCP RAG tools, rather than a bare `include_superseded` switch. History scope keeps every family member already effective on `as_of` (all of them without a date) and still excludes versions that took effect later; tenant, role, and trust predicates are unchanged, and each use logs a `freshness_version_history_requested` audit event. Evidence labels now carry `version X (status)`, so the model can tell the superseded text from the current one. The gold schema has a matching `version_scope` field. The two comparison rows in the local, gitignored `techfusion_gold.jsonl` set it to `history`, so the techfusion numbers below are not reproducible from the repository alone; the tracked synthetic fixture `data/version_history_demo_docs/` with `data/eval/version_history_gold.jsonl` reproduces the same cases.
+
+**Result**
+Both comparison questions retrieve v1 and v2 again in the dense and hybrid configs. Retrieval-only evaluation (126 questions), before the 37.0/37.1 branch versus now:
+
+| Config | Before recall@5 / recall@10 / MRR | Now |
+|---|---|---|
+| `config/default.yaml` | 0.8413 / 0.8889 / 0.7257 | 0.8505 / 0.8862 / 0.7358 |
+| `hybrid-retrieval.yaml` | 0.8611 / 0.9206 / 0.7669 | 0.8585 / 0.9259 / 0.7788 |
+| `secure-rag-baseline-v1.yaml` | 0.7884 / 0.8320 / 0.7534 | 0.7963 / 0.8399 / 0.7552 |
+
+The remaining default recall@10 drop is one row: the current-version question "A user upload allows 90 minutes for high-severity escalation..." lists the superseded `security-escalation-v1.md` as relevant while expecting version 2.0, so excluding v1 is correct (its retrieval is what `stale_document_error_rate` counts as an error). In hybrid mode, removing v1 chunks changes BM25 statistics; one question lost and another gained its source in the top 5.
+
+**Regression test**
+History-scope cases in `tests/unit/test_freshness_lifecycle_rules.py` and `tests/unit/test_freshness_policy.py`; `test_version_scope_reaches_the_authorization_context` (API); `test_history_scope_returns_every_version_for_a_comparison` and `test_history_scope_never_bypasses_the_acl` (PostgreSQL); `tests/integration/test_version_history_eval.py` runs `evaluate()` over the tracked fixture and checks that current mode loses v1 on the same rows.
+
+---
+
 ### GRAPH-001: Neo4j failed on one unknown config key and on a null inside a MERGE key
 
 **Status:** FIXED
@@ -2046,7 +2245,18 @@ During one specialized-tool run, a `get_related_context` call failed with an exe
 The same call succeeded when run directly. Postgres logs show the database in recovery at that moment ("was not properly shut down"), and neighboring requests stalled for up to 10 minutes. Docker reports no OOM kill and no container restart, and the logs name no cause. The host had 1.6GB of 7.8GB free shortly afterward, with the 3B model loaded, which fits memory pressure but does not prove it.
 
 **Fix applied**
-None. The run was discarded and repeated, and the repeat had no crash and full tool success. Live evals now avoid running other heavy work at the same time.
+None. The original run was discarded and repeated. Live evals avoid running other heavy work at the same time, and datasets beyond about 10,000 documents need more than the dev compose's 1 GiB for PostgreSQL (see the reproduction below).
+
+**Reproduced and narrowed (2026-11-22 and 2026-11-23)**
+The freshness scale benchmark crashed the server with the same signature (`server process exited with exit code 2`, no preceding `ERROR`, automatic recovery) three times on 2026-11-22 and again in a controlled rerun on 2026-11-23, with the container's cgroup counters sampled every 2 to 3 seconds:
+
+- During the rerun the container sat at exactly its 1 GiB `memory.max` for the whole query phase: `memory.events` `max` rose from 34 to 19,356 by the crash, swap use peaked at 62.6 MiB in the crash sample, and `oom_kill` stayed 0. The process that exited was a fresh, short-lived backend (it logged nothing), not one of the benchmark's query backends.
+- Exit code 2 is PostgreSQL's quick-exit (SIGQUIT) path; the kernel OOM killer would show `terminated by signal 9`. So the backend was not OOM-killed, and what sent the signal is still unproven.
+- The old `SELECT DISTINCT` over 300,000 chunk rows, run alone four times at 1 GiB on 2026-11-23, did not crash (about 5,500 more limit hits). One 2026-11-22 crash was a standalone `DISTINCT` in `psql`, but on tables a crashed benchmark had just loaded; every other crash was during the full workload (bulk inserts with checkpoints and autovacuum, then large scans).
+- The same full workload with the limit raised live to 2 GiB (`docker update`) completed with 0 crashes and no new `memory.max` hits; peak usage was 1,644 MiB (1.72 GB).
+
+**Diagnosis**
+The trigger is the PostgreSQL container running pinned at its 1 GiB limit (constant reclaim and swapping) under a workload that needs about 1.7 GB. Small sample: at 1 GiB all 3 full-workload runs crashed, plus that one standalone `DISTINCT`; at 2 GiB the 1 full-workload run did not. The compose limit was restored to 1 GiB; raising it is a deployment decision. Details: `experiments/reports/postgres_memory_crash_investigation.md`.
 
 **Interview takeaway**
 Check the infrastructure before filing a tool bug: one row of a green-looking report can be a database restart. A report that hides the error text behind a safe label also needs a log line to find the cause.
@@ -2766,6 +2976,27 @@ The branches are learning exercises, not release candidates. Treat them as idea 
 
 ---
 
+### OPS-020: From the Windows host, any SQL statement over about 16 KB cost an extra 44 ms
+
+**Status:** ACCEPTED LIMITATION
+**Severity:** MINOR
+**Area:** Benchmarking methodology / local environment
+**Affected code:** host processes talking to the Docker Desktop Postgres port; `PgVectorStore.search`
+
+**Problem**
+A freshness benchmark run from the host showed authorization making dense search 10x slower (49 ms vs 5 ms) and a sudden jump once the excluded-id array passed a few hundred ids.
+
+**Diagnosis**
+Postgres executed both queries in under 0.5 ms. A padded `SELECT 1` took 0.42 ms at 16 KB and 44.9 ms at 16.5 KB from the host, and 0.24 to 0.28 ms at 19 KB from another container on the compose network. `store.search` inlines the 384-float query vector twice (about 15 KB), so any extra clause crossed the threshold.
+
+**Impact**
+Host-side timings of searches with authorization or exclusions are inflated by a constant that the containerized deployment does not have. Native uvicorn on the host and host-run integration tests pay it.
+
+**Mitigation**
+Database benchmarks run inside the compose network (`docker compose run rag-api python scripts/benchmark_freshness.py --db`). Sending the vector once would shrink the statement, but it was not changed here.
+
+---
+
 ## 8. Production-Hardening Gaps
 
 These are not bugs; they are scope boundaries and process-local designs that are acceptable for this project's current demo/learning-exercise posture but would need real work before a genuine multi-replica or enterprise production deployment.
@@ -2794,24 +3025,21 @@ Documented explicitly rather than hidden; this is the interview-ready "durabilit
 
 ---
 
-### PROD-002: Re-spelling the same ingestion root churns document identity
+### PROD-002: Re-spelling the same ingestion root churned document identity
 
-**Status:** ACCEPTED LIMITATION
+**Status:** FIXED
 **Severity:** MINOR
 **Area:** Production-hardening / data identity
-**Affected code:** `document_id` keyed on literal `source` string
+**Affected code:** `IngestionPipeline.ingest_path`, `rag/ingestion/scheduler.py`, `resolved_source_path`
 
 **Problem**
-Document identity in this system is keyed on the literal `source` string everywhere; re-discovering the exact same physical file under a differently-spelled root (relative vs. absolute, or a different OS path-separator convention) is treated as a different document.
+Document identity is keyed on the literal `source` string. Re-discovering the same physical file under a differently-spelled root (relative vs. absolute, or a different path separator) was treated as a different document: the old entry was deleted and a new one created.
 
-**Failure scenario**
-The old entry is deleted and a new one created under the new spelling, rather than recognized as unchanged, churning identity without duplicating or losing content.
+**Fix applied**
+Both `ingest_path` and the scheduled scan match each discovered file to a stored source by resolved path and keep the stored spelling via `ingest_file(..., source_override=...)`. Already-ingested documents are never renormalized, so no mass delete-and-recreate happens. Without this, the deletion guard (**PROD-005**) would have withheld the old spelling's deletion and left duplicates.
 
-**Why not fixed**
-Normalizing every discovered source to a canonical resolved form would force a one-time mass delete-and-recreate across every already-ingested document in every existing dataset on its very next re-ingestion, disproportionate to the actual bug this was found alongside (see **BUG** entry for incremental-ingestion deleted-document detection, folded into this limitation).
-
-**Notes**
-Verified directly with two end-to-end tests that this churn never duplicates or loses content, only re-creates identity.
+**Regression test**
+`test_same_root_reingested_with_a_different_spelling_keeps_the_stored_identity`, `test_posix_style_persisted_source_vs_native_discovered_path_never_duplicates` in `tests/unit/test_ingestion_stats.py`; `test_earlier_spelling_of_the_same_file_is_reused` in `tests/unit/test_ingestion_scheduler.py`.
 
 ---
 
@@ -2830,6 +3058,120 @@ Change detection now tracks the graph side too (`documents.graph_checksum`, see 
 
 **Regression test**
 `test_graph_only_reset_is_rebuilt_on_the_next_ingest` in `tests/unit/test_graph_projection_retry.py`.
+
+---
+
+### PROD-004: Deletion is a hard delete, and version publication is atomic per file only
+
+**Status:** ACCEPTED LIMITATION
+**Severity:** MODERATE
+**Area:** Production-hardening / document lifecycle
+**Affected code:** `IngestionPipeline.delete_sources`, `replace_document_chunks`, `supersedes` front matter
+
+**Problem**
+The lifecycle rules, now explicit and tested:
+
+- **Content update:** checksum, chunk delete, and chunk insert commit in one transaction under a stable `document_id` (**BUG-005**).
+- **New version:** a separate document that becomes current as soon as its own transaction commits, even if the old version still says `status: active` (**RET-010**); the old version stays stored for `as_of` queries. Links are by filename suffix, not by id.
+- **Deletion:** the `documents` row is deleted, chunks cascade, graph facts are deleted per document. No tombstone or retention period. Deleting the current version dissolves its family, so the predecessor is visible again.
+
+**Failure scenario**
+A deleted policy cannot be answered historically. Nothing spans two files, so a new version and the edit retiring the old one are separate commits.
+
+**Why accepted**
+No retention requirement exists yet, and the rules need no schema change. No answer or evidence cache exists to invalidate: the only caches are keyed by text hash (token counts), image checksum, or evaluation inputs. A stable family id or `supersedes_document_id` would be more reliable than filename suffixes, but needs a schema column, a backfill, and a front-matter field; deferred to the projection decision in `docs/topics/freshness-lifecycle.md`.
+
+**Regression test**
+`test_content_update_replaces_chunks_under_a_stable_document_id` and `test_deleted_document_disappears_from_every_retrieval_path` in `tests/integration/test_freshness_lifecycle.py`; the lifecycle tests in `tests/integration/test_chunk_scope_and_lifecycle.py`.
+
+---
+
+### PROD-005: A directory ingest treated an empty or unmounted root as every file deleted
+
+**Status:** FIXED
+**Severity:** MODERATE
+**Area:** Production-hardening / ingestion
+**Affected code:** `IngestionPipeline.ingest_path`, `discover_files`, `deletion_blocked_reason`, CLI `--allow-mass-delete`
+
+**Problem**
+`ingest_path` deleted every stored document under the root that its walk did not find. A directory that exists but is empty (an unmounted mount point, a sync client mid-reset) was indistinguishable from "all files deleted", and `Path.rglob` silently skipped unreadable subdirectories.
+
+**Fix applied**
+`ingest_path` and the scheduler share one walk (`discover_files`: `os.walk` with an error callback, hidden and temporary files skipped, extensions matched case-insensitively) and one guard (`deletion_blocked_reason`). Deletion is withheld when the walk had errors, found no files, or would remove more than `ingestion.max_delete_fraction` (0.5) of the root's documents; each deletion is re-checked against the filesystem. `IngestionStats` reports `deletion_candidates` and `deletion_blocked_reason`, and the CLI exits with code 3. `--allow-mass-delete` (`make ingest ... ALLOW_MASS_DELETE=1`) is the explicit override for the empty-directory and fraction guards; an incomplete walk never deletes.
+
+**Behavior change**
+A directory ingest now skips hidden directories and lock/swap files, and matches `.MD`-style extensions on case-sensitive filesystems.
+
+**Regression test**
+`TestDeletionGuards` in `tests/unit/test_ingestion_stats.py` (empty root, override, fraction, walk error, temporary files, CLI exit code 3); the scheduler cases in `tests/unit/test_ingestion_scheduler.py` and `tests/integration/test_ingestion_scheduler.py`.
+
+---
+
+### PROD-006: Scheduled directory ingestion is single-host and best effort
+
+**Status:** ACCEPTED LIMITATION
+**Severity:** MINOR
+**Area:** Production-hardening / ingestion
+**Affected code:** `rag/ingestion/scheduler.py`
+
+**Problem**
+The opt-in scheduler (disabled by default) has known limits:
+
+- Locking is an in-process lock plus an exclusive lock file. Two hosts scanning one share, or two processes both taking over the same stale lock, can overlap; ingestion itself is race-safe, so the cost is duplicate work.
+- A rename is processed as delete plus add (new `document_id`), and `supersedes` links naming the old filename break. Renames are only counted (`probable_renames`).
+- Between ingesting a new file and deleting a removed one, both are briefly searchable.
+- The Prometheus counters live in the scheduler's own process, which serves no `/metrics`; logs and the manifest are the durable record.
+- Unchanged files are skipped without loading only when no vision provider or graph projection is active; otherwise every file is parsed each round.
+
+**Why accepted**
+Polling a local directory does not justify a queue, a scheduler service, or a database lock table. The database, not the manifest, decides what changed, so restarts and a lost manifest cause neither re-ingestion nor deletion.
+
+The manifest's fast-path hint includes the inode, so an atomic write-then-rename replacement that keeps size and mtime is still re-hashed.
+
+**Regression test**
+`tests/unit/test_ingestion_scheduler.py` and `tests/integration/test_ingestion_scheduler.py` (PostgreSQL): lifecycle, restart with a fresh pipeline and no manifest, unavailable, emptied, and partially unreadable roots, concurrent triggers from two pipelines, atomic replacement with identical size and mtime, temporary and lock files, renames, an interrupted ingestion retried on the next round, and the deletion threshold.
+
+---
+
+### PROD-007: Source registry and external connectors are designed, not implemented
+
+**Status:** ACCEPTED LIMITATION
+**Severity:** MINOR
+**Area:** Production-hardening / ingestion sources
+**Affected code:** none (design in `docs/topics/freshness-lifecycle.md`)
+
+**Problem**
+Only local directories can be synchronized. SharePoint, Confluence, and Git need a source registry (source id, provider, tenant/dataset, location, sync cursor, last success, status, deletion policy) and a connector contract (`list_changes(cursor)` yielding upserts and deletes, keyed `source_id:external_id`).
+
+**Why accepted**
+Deferred until a real source is required. OAuth, webhooks, API quotas, and mapping provider permissions to `allowed_roles` are each substantial and provider-specific.
+
+---
+
+### PROD-008: A zero settle window still deferred freshly written files on Windows
+
+**Status:** FIXED
+**Severity:** MINOR
+**Area:** Ingestion / scheduler
+**Affected code:** `ingestion/scheduler.py` settle-window check
+
+**Problem**
+Two scheduler unit tests failed on a full-suite run of the committed branch and passed in earlier runs. The failing scans reported both files as `deferred` although the tests set `settle_seconds: 0`.
+
+**Diagnosis**
+The check was `clock() - st_mtime < settle_seconds`. On Windows a newly written file's mtime can be stamped a fraction of a microsecond after `time.time()` reads the clock, which makes the age negative and so less than 0. Writing 2,000 files and comparing at once, 327 (16%) had an mtime ahead of `time.time()`.
+
+**Fix applied**
+`settle_seconds == 0` now disables the window instead of comparing against it.
+
+**Result**
+The new test fails on the previous code and passes on the fix; the scheduler test file passed 5 of 5 repeated runs.
+
+**Regression test**
+`test_zero_settle_window_ingests_a_file_whose_mtime_is_ahead_of_the_clock` in `tests/unit/test_ingestion_scheduler.py` (a clock set 1 microsecond before the newest mtime).
+
+**Interview takeaway**
+A "disabled" threshold compared with `<` is not disabled when the measured quantity can be slightly negative. Treat zero as off explicitly, and suspect clock-source differences when a timing test fails only sometimes.
 
 ---
 
@@ -2940,6 +3282,9 @@ The following issues are resolved, with a concrete fix and regression test cited
 | AGT-001 | Agentic RAG | Step budgets collided with the happy path, mislabeling most runs as max_steps |
 | AGT-002 | Agentic RAG | Citation metrics measured the wrong set and a model that rarely cites |
 | AGT-003 | Agentic RAG | A classify fix exposed a RAGAS gap on the classic route |
+| AGT-005 | Agentic RAG | Tool-selection prompt's chunk_id fix was unverified against live tool selection |
+| AGT-006 | Agentic RAG | Specialized tools were unreachable for reasons the prompts could not fix |
+| AGT-007 | Agentic RAG | The corrective tool selection ran outside the step budget |
 | EVAL-002 | Evaluation | A 15-question pilot hid a failure that the full 62-question set exposed |
 | EVAL-003 | Evaluation | A keyword heuristic produced false regression counts, and a test relied on it |
 | EVAL-005 | Evaluation | Safety metrics read as a perfect zero until the gold paths were checked |
@@ -2987,6 +3332,15 @@ The following issues are resolved, with a concrete fix and regression test cited
 | CTX-016 | Context Engineering / GraphRAG | Two graph facts from one chunk collided on identity, and one was silently dropped |
 | CTX-017 | Context Engineering | Agent decision prompts were never budgeted, so a small context window could silently truncate them |
 | EVAL-014 | Evaluation / Context Engineering | `sources`/citations could credit evidence Context Engineering had already dropped or compressed |
+| RET-007 | Retrieval | Freshness family resolution compared every pair of documents on every query |
+| RET-011 | Agentic RAG | `get_latest_document` ignored `as_of` and resolved shared filenames by row order |
+| RET-008 | Retrieval | Superseded versions were excluded only when authorization was on |
+| RET-012 | Retrieval | BM25 returned zero-score rows, which still earned an RRF rank |
+| RET-013 | Retrieval | Chunk-id lookups were not scoped to a dataset |
+| PROD-002 | Data | Re-spelling the same ingestion root churned document identity |
+| PROD-005 | Ingestion | A directory ingest treated an empty or unmounted root as every file deleted |
+| RET-014 | Retrieval | Version-comparison questions could not see the superseded version |
+| PROD-008 | Ingestion | A zero settle window still deferred freshly written files on Windows |
 
 ---
 
@@ -3045,3 +3399,9 @@ Performed after restructuring:
 **Follow-up (live Neo4j verification):** the graph integration tests ran against a live Neo4j, which verified **GRAPH-008**'s revalidation and exposed **GRAPH-012**, now fixed.
 
 **Follow-up (Codex audit, 2026-11-01):** **SEC-020**, **SEC-021**, **GRAPH-013** and **EVAL-016** fixed; **BUG-015**, **GRAPH-008**, **CTX-007**, **CTX-015** and **DIST-006** corrected, since each earlier fix was incomplete. Reset and re-ingest any graph built under the first **BUG-015** fix before final runs.
+
+**Follow-up (2026-11-22, freshness and lifecycle audit):** **RET-007** and **RET-011** fixed; **RET-008** in progress (decoupling flag added, default unchanged pending approval); **RET-009**, **RET-010**, **PROD-004**, **PROD-006**, **PROD-007** and **OPS-020** recorded as accepted limitations; **RET-012**, **RET-013** and **PROD-005** open. **PROD-002** mitigated for scheduled scans. Benchmark: `experiments/reports/freshness_benchmark.md`.
+
+**Follow-up (2026-11-22, 37.1 freshness fixes):** **RET-008**, **RET-012**, **RET-013**, **PROD-002** and **PROD-005** fixed; **RET-010** narrowed (conflicting active versions now resolved by `supersedes` links); **RET-014** opened from the retrieval evaluation; **RET-007**, **RET-009** and **OPS-019** updated with the 10,000 to 100,000 document scale run, which also reproduced the PostgreSQL crash three times. The earlier follow-up line above is a point-in-time record.
+
+**Follow-up (2026-11-23 and 2026-11-25, version comparison and merge preparation):** **RET-014** fixed with an explicit `version_scope` (`history` keeps ACL predicates and audits each use), reproducible from the tracked fixture `data/version_history_demo_docs/` with `data/eval/version_history_gold.jsonl`. **OPS-019** stays open: the crash was reproduced with memory sampling and narrowed to PostgreSQL running pinned at its 1 GiB limit, but what sends the quit signal is unproven (`experiments/reports/postgres_memory_crash_investigation.md`). **AGT-005**, **AGT-006** and **AGT-007** moved from the summary table to section 10, since they were already fixed. **PROD-008** (a scheduler timing bug found by the full suite) fixed.

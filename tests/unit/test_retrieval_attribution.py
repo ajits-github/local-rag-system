@@ -194,6 +194,10 @@ class _ScriptedVectorStore:
         _dense, bm25 = self._by_query[query]
         return bm25[:top_k]
 
+    def list_document_versions(self, dataset_id):
+        """No version families in this fixture."""
+        return []
+
 
 class _IdentityEmbedder:
     """Embedder double that returns the raw query text as its own "embedding"."""

@@ -312,28 +312,14 @@ def test_deletion_detection_stays_scoped_to_its_own_dataset(tmp_path: Path):
     )
 
 
-def test_same_root_reingested_with_a_different_spelling_replaces_without_duplicating(
+def test_same_root_reingested_with_a_different_spelling_keeps_the_stored_identity(
     tmp_path: Path, monkeypatch
 ):
-    """Re-spelling the same root between runs churns identity but never duplicates or loses content.
+    """Re-spelling the same root reuses each file's stored `source`, so nothing churns.
 
-    Known, bounded limitation adjacent to A1, not a reintroduction of it.
-    `document_id` is keyed on the literal `source` string everywhere in
-    this system (see the project's "Document identity" docs), not just in
-    deletion detection -- a differently-spelled root produces a
-    differently-spelled `source` for the same physical file, which this
-    system already treats as a distinct identity. `_source_is_under_root`'s
-    scoping guarantees no *cross-root* document is ever wrongly deleted; it
-    does not, and given the existing string-keyed identity model safely
-    cannot, guarantee document_id continuity when the same root is spelled
-    differently across runs. Normalizing every discovered source to a
-    resolved/absolute form would avoid this specific churn but would also
-    make every already-ingested (relative-form) document in every existing
-    dataset mismatch on its very next re-ingestion, forcing a one-time mass
-    delete-and-recreate well out of proportion to this edge case, so it was
-    deliberately not done. What's verified here is the safe fallback: the
-    old spelling's document is replaced, never left as an orphaned
-    duplicate alongside the new one, and its content is never lost.
+    The discovered path is matched to a stored source by resolved path, and
+    the stored spelling is kept via `source_override`; already-ingested
+    documents are never renormalized.
     """
     root = tmp_path / "kb"
     root.mkdir()
@@ -347,22 +333,20 @@ def test_same_root_reingested_with_a_different_spelling_replaces_without_duplica
     absolute_root = (tmp_path / "kb").resolve()
     stats = pipeline.ingest_path(absolute_root, "test-dataset")
 
-    assert stats.deleted == 1
-    assert stats.new == 1
-    assert len(vs.list_document_sources("test-dataset")) == 1  # never duplicated
-    assert len(vs.written_chunks) == chunks_after_first_run  # content survives, not lost
+    assert (stats.deleted, stats.new, stats.unchanged) == (0, 0, 1)
+    assert vs.list_document_sources("test-dataset") == [str(Path("kb") / "a.md")]
+    assert len(vs.written_chunks) == chunks_after_first_run
 
 
 def test_posix_style_persisted_source_vs_native_discovered_path_never_duplicates(
     tmp_path: Path, monkeypatch
 ):
-    """A source persisted with POSIX separators (e.g. a Linux container run) is safely replaced.
+    """A source persisted with POSIX separators (e.g. a Linux container run) keeps its identity.
 
-    Simulates the cross-platform half of the same limitation described in
-    test_same_root_reingested_with_a_different_spelling_replaces_without_duplicating:
-    a document ingested elsewhere with forward-slash separators, rediscovered
-    on this host with native separators. The safe invariant holds:
-    replaced, not duplicated.
+    The cross-platform half of
+    test_same_root_reingested_with_a_different_spelling_keeps_the_stored_identity:
+    the stored forward-slash spelling is reused, so the stale document is
+    updated in place, not deleted and re-created.
     """
     root = tmp_path / "kb"
     root.mkdir()
@@ -376,8 +360,8 @@ def test_posix_style_persisted_source_vs_native_discovered_path_never_duplicates
 
     stats = pipeline.ingest_path(Path("kb"), "test-dataset")
 
-    assert stats.deleted == 1  # the differently-separated entry is replaced, not left orphaned
-    assert len(vs.list_document_sources("test-dataset")) == 1  # never duplicated
+    assert (stats.deleted, stats.changed) == (0, 1)
+    assert vs.list_document_sources("test-dataset") == [posix_source]
 
 
 class TestSourceIsUnderRoot:
@@ -432,3 +416,111 @@ class TestSourceIsUnderRoot:
         monkeypatch.chdir(tmp_path)
         windows_style_source = "kb\\sub\\a.md"
         assert _source_is_under_root(windows_style_source, Path("kb")) is True
+
+
+class TestDeletionGuards:
+    """`ingest_path` withholds deletion unless the walk is complete and plausible."""
+
+    def _root(self, tmp_path: Path, n: int) -> Path:
+        root = tmp_path / "kb"
+        root.mkdir()
+        for i in range(n):
+            (root / f"d{i}.md").write_text(f"Doc {i}.", encoding="utf-8")
+        return root
+
+    def test_empty_root_withholds_deletion(self, tmp_path: Path):
+        """An emptied directory (e.g. an unmounted share) deletes nothing by default."""
+        root = self._root(tmp_path, 2)
+        pipeline, vs = _pipeline()
+        pipeline.ingest_path(root, "ds")
+        for f in root.iterdir():
+            f.unlink()
+        stats = pipeline.ingest_path(root, "ds")
+        assert (stats.deleted, stats.deletion_candidates) == (0, 2)
+        assert stats.deletion_blocked_reason == "no_files_found"
+        assert len(vs.list_document_sources("ds")) == 2
+
+    def test_allow_mass_delete_is_the_explicit_override(self, tmp_path: Path):
+        """The operator flag deletes what is really gone."""
+        root = self._root(tmp_path, 2)
+        pipeline, vs = _pipeline()
+        pipeline.ingest_path(root, "ds")
+        for f in root.iterdir():
+            f.unlink()
+        stats = pipeline.ingest_path(root, "ds", allow_mass_delete=True)
+        assert (stats.deleted, stats.deletion_blocked_reason) == (2, None)
+        assert vs.list_document_sources("ds") == []
+
+    def test_fraction_guard_and_ordinary_deletion(self, tmp_path: Path):
+        """Deleting 3 of 4 is withheld; deleting 1 of 4 proceeds."""
+        root = self._root(tmp_path, 4)
+        pipeline, vs = _pipeline()
+        pipeline.ingest_path(root, "ds")
+        (root / "d0.md").unlink()
+        assert pipeline.ingest_path(root, "ds").deleted == 1
+        for i in (1, 2, 3):
+            (root / f"d{i}.md").write_text("x", encoding="utf-8")
+        (root / "d4.md").write_text("y", encoding="utf-8")
+        for i in (1, 2, 3):
+            (root / f"d{i}.md").unlink()
+        stats = pipeline.ingest_path(root, "ds")
+        assert stats.deletion_blocked_reason == "delete_fraction_exceeded"
+        assert stats.deleted == 0
+
+    def test_walk_error_blocks_deletion_even_with_the_override(self, tmp_path: Path, monkeypatch):
+        """An incomplete walk is never evidence of deletion."""
+        import os
+
+        root = self._root(tmp_path, 2)
+        pipeline, vs = _pipeline()
+        pipeline.ingest_path(root, "ds")
+        (root / "d0.md").unlink()
+        real_walk = os.walk
+
+        def walk_with_error(top, onerror=None, **kwargs):
+            onerror(PermissionError(13, "denied", str(Path(top) / "restricted")))
+            yield from real_walk(top, onerror=onerror, **kwargs)
+
+        monkeypatch.setattr(os, "walk", walk_with_error)
+        stats = pipeline.ingest_path(root, "ds", allow_mass_delete=True)
+        assert stats.deletion_blocked_reason == "enumeration_incomplete"
+        assert stats.deleted == 0 and stats.enumeration_errors
+
+    def test_temporary_and_hidden_files_are_not_ingested(self, tmp_path: Path):
+        """Lock and swap files no longer crash or pollute a directory ingest."""
+        root = self._root(tmp_path, 1)
+        (root / "~$d0.md").write_text("lock", encoding="utf-8")
+        (root / ".hidden").mkdir()
+        (root / ".hidden" / "x.md").write_text("hidden", encoding="utf-8")
+        (root / "UPPER.MD").write_text("upper", encoding="utf-8")
+        pipeline, vs = _pipeline()
+        pipeline.ingest_path(root, "ds")
+        assert sorted(Path(s).name for s in vs.list_document_sources("ds")) == ["UPPER.MD", "d0.md"]
+
+    def test_cli_exits_3_when_deletion_is_withheld(self, tmp_path: Path, monkeypatch, capsys):
+        """`python -m rag.ingestion.pipeline` signals a withheld deletion with exit code 3."""
+        import sys
+
+        import pytest
+
+        from rag.ingestion import pipeline as module
+        from rag.schemas import IngestionStats
+
+        calls = {}
+
+        class _Stub:
+            def __init__(self, config):
+                pass
+
+            def ingest_path(self, path, dataset_id, allow_mass_delete=False):
+                calls["allow"] = allow_mass_delete
+                return IngestionStats(
+                    deletion_candidates=2, deletion_blocked_reason="no_files_found"
+                )
+
+        monkeypatch.setattr(module, "IngestionPipeline", _Stub)
+        monkeypatch.setattr(sys, "argv", ["ingest", str(tmp_path), "--dataset-id", "ds"])
+        with pytest.raises(SystemExit) as exc:
+            module.main()
+        assert exc.value.code == 3 and calls["allow"] is False
+        assert "--allow-mass-delete" in capsys.readouterr().err

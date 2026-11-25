@@ -46,8 +46,8 @@ _HOSTED_RERANKER_PROVIDERS = frozenset({"cohere"})
 def source_label(result: SearchResult) -> str:
     """Build the provenance label for a retrieved source.
 
-    Includes section, content type, trust level, injection status, and
-    relationship-expansion origin. For image chunks, distinguishes
+    Includes section, content type, document version and status, trust
+    level, injection status, and relationship-expansion origin. For image chunks, distinguishes
     caption/alt-text content from a vision-generated description so the
     generated answer never implies visual inspection that didn't happen.
 
@@ -82,6 +82,9 @@ def source_label(result: SearchResult) -> str:
         parts.append("agent tool result")
     elif result.origin == "graph":
         parts.append("knowledge graph fact")
+    if meta.document_version or meta.status:
+        version = f"version {meta.document_version}" if meta.document_version else "version"
+        parts.append(f"{version} ({meta.status})" if meta.status else version)
     if meta.trust_level and meta.trust_level.lower() != "authoritative":
         parts.append(f"trust: {meta.trust_level}")
     if result.injection_suspected:
@@ -227,6 +230,9 @@ class RetrievalPipeline:
         # Read once: when False, a caller-supplied AuthorizationContext is
         # never passed down to the vectorstore.
         self._authorization_enabled = config.security.authorization.enabled
+        self._freshness_without_authorization = (
+            config.retrieval.freshness.apply_without_authorization
+        )
         # Independent toggle. When True, a missing identity is treated as
         # zero roles (fail-closed) rather than unrestricted.
         self._field_redaction_enabled = config.security.field_redaction.enabled
@@ -275,16 +281,21 @@ class RetrievalPipeline:
     def authorization_enabled(self) -> bool:
         """Whether `config.security.authorization.enabled` was set at construction.
 
-        Read-only mirror of the private kill-switch `resolve_auth` checks
-        internally. Exposed so a caller that needs to resolve auth more
-        than once for the same request (e.g. `rag.agent.graph._execute_tool`,
-        `rag.mcp.server._run_tool`) can decide whether pre-fetching
-        `versions` to share across those calls is actually worthwhile --
-        when this is `False`, `resolve_auth` never touches the database
-        regardless of how many times it's called, so pre-fetching would
-        only add a wasted query.
+        Read-only mirror of the kill-switch `resolve_auth` checks. Whether
+        `resolve_auth` queries the database also depends on the freshness
+        setting; see `resolves_freshness`.
         """
         return self._authorization_enabled
+
+    def resolves_freshness(self, auth: AuthorizationContext | None) -> bool:
+        """Whether `resolve_auth(auth, ...)` would fetch document versions.
+
+        Lets callers that resolve the same request twice decide whether
+        pre-fetching `versions` once is worthwhile.
+        """
+        return (auth is not None and self._authorization_enabled) or (
+            self._freshness_without_authorization
+        )
 
     def resolve_auth(
         self,
@@ -308,9 +319,9 @@ class RetrievalPipeline:
             unrestricted and is returned unchanged.
         filters : dict[str, Any] | None, optional
             Exact-match retrieval filters; only `filters["dataset_id"]`
-            is read, to scope freshness-exclusion resolution. Freshness
-            resolution is skipped (but tenant/role enforcement still
-            applies) when `dataset_id` is absent.
+            is read, to scope freshness-exclusion resolution. Without it,
+            versions of every dataset are resolved (families never span
+            datasets).
         versions : list[DocumentVersionInfo] | None, optional
             Pre-fetched document versions for the `dataset_id` in
             `filters`, to avoid a redundant `VectorStore.list_document_versions`
@@ -321,32 +332,62 @@ class RetrievalPipeline:
         Returns
         -------
         AuthorizationContext | None
-            `None` when `auth` is `None` or authorization is disabled
-            (fully unrestricted). Otherwise `auth`, with
-            `resolved_excluded_document_ids` populated when a
-            `dataset_id` was available to resolve freshness against.
+            When authorization is enabled and `auth` is set: `auth` with
+            `acl_enforced=True` and `resolved_excluded_document_ids`
+            populated. Otherwise, when
+            `retrieval.freshness.apply_without_authorization` is set (the
+            default), a freshness-only context (`acl_enforced=False`)
+            carrying the caller's `as_of`/`include_superseded` and the
+            exclusions; with it unset, `None` (fully unrestricted).
         """
-        if auth is None or not self._authorization_enabled:
+        acl_auth = (
+            auth.model_copy(update={"acl_enforced": True})
+            if auth is not None and self._authorization_enabled
+            else None
+        )
+        if acl_auth is None and not self._freshness_without_authorization:
             return None
         dataset_id = (filters or {}).get("dataset_id")
-        if dataset_id is None:
-            return auth
+        as_of = auth.as_of if auth is not None else None
+        include_superseded = auth.include_superseded if auth is not None else False
+        version_scope = auth.version_scope if auth is not None else "current"
         resolved_versions = (
             versions
             if versions is not None
             else self._vectorstore.list_document_versions(dataset_id)
         )
-        excluded = resolve_excluded_document_ids(
-            resolved_versions, auth.as_of, auth.include_superseded
+        if dataset_id is None:
+            # Unscoped: every dataset's versions; links never cross datasets.
+            logger.info("freshness_resolved_across_datasets")
+        excluded = sorted(
+            resolve_excluded_document_ids(
+                resolved_versions, as_of, include_superseded, version_scope
+            )
         )
+        if version_scope == "history":
+            log_audit_event(
+                "freshness_version_history_requested",
+                dataset_id=dataset_id,
+                as_of=as_of.isoformat() if as_of else None,
+                acl_enforced=acl_auth is not None,
+            )
         if excluded:
             log_audit_event(
                 "freshness_version_selected",
                 dataset_id=dataset_id,
                 excluded_document_count=len(excluded),
-                as_of=auth.as_of.isoformat() if auth.as_of else None,
+                as_of=as_of.isoformat() if as_of else None,
+                acl_enforced=acl_auth is not None,
             )
-        return auth.model_copy(update={"resolved_excluded_document_ids": sorted(excluded)})
+        if acl_auth is not None:
+            return acl_auth.model_copy(update={"resolved_excluded_document_ids": excluded})
+        return AuthorizationContext(
+            as_of=as_of,
+            include_superseded=include_superseded,
+            version_scope=version_scope,
+            resolved_excluded_document_ids=excluded,
+            acl_enforced=False,
+        )
 
     def _audit_authorization_exclusions(
         self,
@@ -359,8 +400,8 @@ class RetrievalPipeline:
 
         Authorization runs as a SQL filter, so this pipeline cannot otherwise
         tell "no relevant documents" from "relevant documents denied". It runs
-        only when an authorization context is active and the results are short
-        of `fetch_k`.
+        only when an ACL-enforcing context is active and the results are short
+        of `fetch_k`; a freshness-only context never produces this event.
 
         Parameters
         ----------
@@ -382,7 +423,7 @@ class RetrievalPipeline:
         Errors from `count_excluded_by_authorization` are logged and never
         break retrieval.
         """
-        if effective_auth is None or len(candidates) >= fetch_k:
+        if effective_auth is None or not effective_auth.acl_enforced or len(candidates) >= fetch_k:
             return
         try:
             excluded_count = self._vectorstore.count_excluded_by_authorization(
@@ -850,11 +891,11 @@ class RetrievalPipeline:
         never given a freshly computed `.score` (it inherits the
         originating result's); check `origin`, not `.score`, to tell
         expanded context from directly-retrieved context. A
-        `parent_chunk_id`/section lookup can never cross a `dataset_id`
-        boundary, since it's scoped to an already-`dataset_id`-filtered
-        result's own `document_id` (see `VectorStore.get_chunks_by_ids`/
-        `get_chunks_by_section`). Deduplicates against chunks already
-        present in `results` and across expansions of different results,
+        `parent_chunk_id`/section lookup is scoped in SQL to the originating
+        result's own `dataset_id` and to `auth` (see
+        `VectorStore.get_chunks_by_ids`/`get_chunks_by_section`).
+        Deduplicates against chunks already present in `results` and across
+        expansions of different results,
         capped at `max_related_elements` per originating result.
 
         Parameters
@@ -878,17 +919,20 @@ class RetrievalPipeline:
 
         parents_by_id: dict[str, Chunk] = {}
         if cfg.include_parent:
-            needed = {
-                r.chunk.metadata.parent_chunk_id
-                for r in results
-                if r.chunk.metadata.parent_chunk_id
-                and r.chunk.metadata.parent_chunk_id not in present_ids
-            }
-            if needed:
-                for chunk in self._vectorstore.get_chunks_by_ids(list(needed), auth=auth):
+            # A parent belongs to the same document, so it is looked up in the
+            # result's own dataset.
+            needed_by_dataset: dict[str | None, set[str]] = {}
+            for r in results:
+                parent_id = r.chunk.metadata.parent_chunk_id
+                if parent_id and parent_id not in present_ids:
+                    needed_by_dataset.setdefault(r.chunk.metadata.dataset_id, set()).add(parent_id)
+            for dataset_id, needed in needed_by_dataset.items():
+                for chunk in self._vectorstore.get_chunks_by_ids(
+                    sorted(needed), dataset_id=dataset_id, auth=auth
+                ):
                     parents_by_id[chunk.metadata.chunk_id] = chunk
 
-        section_cache: dict[tuple[str, str | None], list[Chunk]] = {}
+        section_cache: dict[tuple[str, str | None, str | None], list[Chunk]] = {}
         added_ids: set[str] = set()
         expanded: list[SearchResult] = []
 
@@ -902,10 +946,10 @@ class RetrievalPipeline:
                     related.append(parent)
 
             if cfg.include_neighbors:
-                section_key = (meta.document_id, meta.section_path)
+                section_key = (meta.document_id, meta.section_path, meta.dataset_id)
                 if section_key not in section_cache:
                     section_cache[section_key] = self._vectorstore.get_chunks_by_section(
-                        meta.document_id, meta.section_path, auth=auth
+                        meta.document_id, meta.section_path, dataset_id=meta.dataset_id, auth=auth
                     )
                 siblings = section_cache[section_key]
                 position = next(

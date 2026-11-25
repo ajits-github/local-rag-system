@@ -451,10 +451,14 @@ def _build_authorization_context(example: GoldExample) -> AuthorizationContext |
     """Build an `AuthorizationContext` from one gold example's caller-identity fields.
 
     Returns `None` when the example declares neither `user_tenant` nor
-    `user_roles`, matching `RetrievalPipeline`'s "`None` = fully
-    unrestricted" semantics.
+    `user_roles` nor a `"history"` `version_scope`, matching
+    `RetrievalPipeline`'s "`None` = fully unrestricted" semantics.
     """
-    if example.user_tenant is None and not example.user_roles:
+    if (
+        example.user_tenant is None
+        and not example.user_roles
+        and example.version_scope == "current"
+    ):
         return None
     return AuthorizationContext(
         tenant_id=example.user_tenant,
@@ -463,6 +467,7 @@ def _build_authorization_context(example: GoldExample) -> AuthorizationContext |
         require_trust_level=(
             example.expected_trust_level if example.requires_trust_filter else None
         ),
+        version_scope=example.version_scope,
     )
 
 

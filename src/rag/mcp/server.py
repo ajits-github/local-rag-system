@@ -68,6 +68,7 @@ from rag.observability import metrics as observability_metrics
 from rag.observability import tracing
 from rag.retrieval.authorization import AuthorizationContext
 from rag.retrieval.pipeline import RetrievalPipeline
+from rag.retrieval.scope import DatasetScopeError, resolve_dataset_id
 from rag.schemas import DocumentVersionInfo, SearchResult
 from rag.vectorstore.base import VectorStore
 
@@ -78,6 +79,7 @@ _ToolName = Literal[
 ]
 _BusinessToolName = Literal["get_customer_case", "get_case_status", "update_case_status"]
 _T = TypeVar("_T")
+VersionScope = Literal["current", "history"]
 
 #: The three tools that call `VectorStore` directly and resolve `auth`
 #: themselves (see `rag.agent.tools`'s module docstring), mirroring
@@ -192,11 +194,14 @@ def build_mcp_server(
         )
 
     async def _resolve_auth(
-        ctx: Context, as_of: date | None, require_trust_level: str | None
+        ctx: Context,
+        as_of: date | None,
+        require_trust_level: str | None,
+        version_scope: VersionScope,
     ) -> AuthorizationContext | None:
         """Build this call's `AuthorizationContext` from the transport, never from tool args.
 
-        `as_of`/`require_trust_level` are ordinary, non-privileged tool
+        `as_of`/`require_trust_level`/`version_scope` are ordinary, non-privileged tool
         arguments (matching `AgentQueryRequest`'s own fields), not
         identity claims, so they are read by name from the calling
         tool, the same as `build_authorization_context` treats them for
@@ -205,7 +210,9 @@ def build_mcp_server(
         anything but a verified identity.
         """
         identity = _resolve_identity(ctx)
-        return build_authorization_context(identity, None, None, as_of, require_trust_level)
+        return build_authorization_context(
+            identity, None, None, as_of, require_trust_level, version_scope
+        )
 
     async def _resolve_identity_only(ctx: Context) -> VerifiedIdentity | None:
         """`Resolve()`-compatible async wrapper around `_resolve_identity`.
@@ -333,16 +340,25 @@ def build_mcp_server(
         sharing one `VectorStore.list_document_versions` fetch avoids a
         redundant round trip. Skipped (stays `None`, matching prior
         behavior) whenever `resolve_auth` wouldn't touch the database
-        anyway: no `auth`, no `dataset_id`, or the authorization
-        kill-switch is off.
+        anyway (see `RetrievalPipeline.resolves_freshness`).
+
+        A missing `dataset_id` is scoped by `retrieval.dataset_scope` first,
+        exactly as at the HTTP boundary.
         """
         t0 = time.perf_counter()
+        try:
+            dataset_id = resolve_dataset_id(dataset_id, config)
+        except DatasetScopeError as exc:
+            raise ToolError(str(exc)) from None
+        if dataset_id and filters is not None:
+            filters = {**filters, "dataset_id": dataset_id}
+        elif dataset_id and tool_name == "search_knowledge_base":
+            filters = {"dataset_id": dataset_id}
         versions: list[DocumentVersionInfo] | None = None
         if (
             tool_name in _DIRECT_FETCH_TOOL_NAMES
             and dataset_id
-            and auth is not None
-            and pipeline.authorization_enabled
+            and pipeline.resolves_freshness(auth)
         ):
             versions = vectorstore.list_document_versions(dataset_id)
         try:
@@ -448,6 +464,7 @@ def build_mcp_server(
         dataset_id: str | None = None,
         as_of: date | None = None,
         require_trust_level: str | None = None,
+        version_scope: VersionScope = "current",
         auth: Annotated[AuthorizationContext | None, Resolve(_resolve_auth)] = None,
     ) -> list[McpChunkResult]:
         args = SearchKnowledgeBaseArgs(query=query, top_k=top_k, content_type=content_type)
@@ -474,6 +491,7 @@ def build_mcp_server(
         query: str,
         as_of: date | None = None,
         require_trust_level: str | None = None,
+        version_scope: VersionScope = "current",
         auth: Annotated[AuthorizationContext | None, Resolve(_resolve_auth)] = None,
     ) -> list[McpChunkResult]:
         args = GetDocumentArgs(source=source)
@@ -495,6 +513,7 @@ def build_mcp_server(
         query: str,
         as_of: date | None = None,
         require_trust_level: str | None = None,
+        version_scope: VersionScope = "current",
         auth: Annotated[AuthorizationContext | None, Resolve(_resolve_auth)] = None,
     ) -> list[McpChunkResult]:
         args = GetLatestDocumentArgs(source=source)
@@ -514,6 +533,7 @@ def build_mcp_server(
         dataset_id: str | None = None,
         as_of: date | None = None,
         require_trust_level: str | None = None,
+        version_scope: VersionScope = "current",
         auth: Annotated[AuthorizationContext | None, Resolve(_resolve_auth)] = None,
     ) -> list[McpChunkResult]:
         args = GetRelatedContextArgs(chunk_id=chunk_id)

@@ -54,9 +54,12 @@ def build_graph_authorization_predicate(
     if auth is None:
         return "", {}
 
-    caller_support_roles = [role for role in auth.roles if role in cross_tenant_support_roles]
-    clauses = [
-        f"""(
+    clauses: list[str] = []
+    parameters: dict[str, object] = {}
+    if auth.acl_enforced:
+        caller_support_roles = [role for role in auth.roles if role in cross_tenant_support_roles]
+        clauses.append(
+            f"""(
             {node_var}.tenant_id IS NULL
             OR {node_var}.tenant_id = $_auth_tenant_id
             OR (
@@ -68,12 +71,14 @@ def build_graph_authorization_predicate(
             {node_var}.allowed_roles IS NULL
             OR any(role IN {node_var}.allowed_roles WHERE role IN $_auth_roles)
         )"""
-    ]
-    parameters: dict[str, object] = {
-        "_auth_tenant_id": auth.tenant_id,
-        "_auth_support_roles": caller_support_roles,
-        "_auth_roles": auth.roles,
-    }
+        )
+        parameters.update(
+            {
+                "_auth_tenant_id": auth.tenant_id,
+                "_auth_support_roles": caller_support_roles,
+                "_auth_roles": auth.roles,
+            }
+        )
 
     if auth.resolved_excluded_document_ids:
         # Only relationships and Document nodes belong to one document. The null
@@ -82,7 +87,7 @@ def build_graph_authorization_predicate(
         clauses.append(f"({source} IS NULL OR NOT {source} IN $_auth_excluded_document_ids)")
         parameters["_auth_excluded_document_ids"] = auth.resolved_excluded_document_ids
 
-    if auth.require_trust_level:
+    if auth.acl_enforced and auth.require_trust_level:
         clauses.append(
             f"({node_var}.trust_level IS NULL OR {node_var}.trust_level = $_auth_trust_level)"
         )
@@ -110,7 +115,7 @@ def build_graph_path_authorization_predicate(
     Returns
     -------
     str
-        The fragment, or `""` when `auth` is `None`.
+        The fragment, or `""` when `auth` imposes no restriction.
     """
     if auth is None:
         return ""
@@ -120,6 +125,8 @@ def build_graph_path_authorization_predicate(
     rel_clause, _ = build_graph_authorization_predicate(
         auth, node_var="path_rel", cross_tenant_support_roles=cross_tenant_support_roles
     )
+    if not node_clause:
+        return ""
     return (
         f"all(path_node IN nodes({path_var}) WHERE {node_clause})"
         f" AND all(path_rel IN relationships({path_var}) WHERE {rel_clause})"
@@ -160,6 +167,12 @@ def is_fact_authorized(
     allowed_roles = properties.get("allowed_roles")
     trust_level = properties.get("trust_level")
     source_document_id = properties.get("source_document_id") or properties.get("document_id")
+
+    if not auth.acl_enforced:
+        return not (
+            source_document_id is not None
+            and source_document_id in auth.resolved_excluded_document_ids
+        )
 
     caller_support_roles = {role for role in auth.roles if role in cross_tenant_support_roles}
     tenant_ok = (

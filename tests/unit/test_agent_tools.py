@@ -77,7 +77,7 @@ class FakeVectorStore:
         self._chunks_by_id = chunks_by_id or {}
         self.get_chunks_by_ids_calls: list[dict] = []
 
-    def get_chunks_by_ids(self, chunk_ids, auth=None):
+    def get_chunks_by_ids(self, chunk_ids, dataset_id=None, auth=None):
         """Record the call and return the chunks found in the fixed mapping."""
         self.get_chunks_by_ids_calls.append({"chunk_ids": chunk_ids, "auth": auth})
         return [self._chunks_by_id[cid] for cid in chunk_ids if cid in self._chunks_by_id]
@@ -155,7 +155,9 @@ def test_get_related_context_expands_from_seed_chunk():
     )
     auth = AuthorizationContext(tenant_id="tenant_alpha", roles=["operator"])
 
-    chunks = get_related_context(GetRelatedContextArgs(chunk_id="c1"), pipeline, vectorstore, auth)
+    chunks = get_related_context(
+        GetRelatedContextArgs(chunk_id="c1"), pipeline, vectorstore, auth, "ds1"
+    )
 
     assert chunks == [related]
     assert vectorstore.get_chunks_by_ids_calls == [{"chunk_ids": ["c1"], "auth": auth}]
@@ -175,11 +177,15 @@ def test_get_related_context_uses_resolved_auth_not_the_raw_auth_it_was_given():
     pipeline = FakePipeline(resolve_auth_result=resolved)
     raw_auth = AuthorizationContext(tenant_id="tenant_beta", roles=["operator"])
 
-    get_related_context(GetRelatedContextArgs(chunk_id="c1"), pipeline, vectorstore, raw_auth)
+    get_related_context(
+        GetRelatedContextArgs(chunk_id="c1"), pipeline, vectorstore, raw_auth, "ds1"
+    )
 
     assert vectorstore.get_chunks_by_ids_calls == [{"chunk_ids": ["c1"], "auth": resolved}]
     assert pipeline.expand_calls[0]["auth"] == resolved
-    assert pipeline.resolve_auth_calls == [{"auth": raw_auth, "filters": None, "versions": None}]
+    assert pipeline.resolve_auth_calls == [
+        {"auth": raw_auth, "filters": {"dataset_id": "ds1"}, "versions": None}
+    ]
 
 
 def test_get_related_context_threads_dataset_id_into_resolve_auth_filters():
@@ -200,6 +206,20 @@ def test_get_related_context_threads_dataset_id_into_resolve_auth_filters():
     ]
 
 
+def test_get_related_context_requires_a_dataset_id():
+    """Like the other direct-fetch tools, a missing dataset_id is a tool error."""
+    import pytest
+
+    from rag.agent.tools import ToolExecutionError
+
+    vectorstore = FakeVectorStore(chunks_by_id={"c1": _chunk("c1")})
+    with pytest.raises(ToolExecutionError):
+        get_related_context(
+            GetRelatedContextArgs(chunk_id="c1"), FakePipeline(), vectorstore, None, None
+        )
+    assert vectorstore.get_chunks_by_ids_calls == []
+
+
 def test_get_related_context_returns_empty_when_seed_not_found():
     """A chunk_id that doesn't resolve (missing, or excluded by auth) is empty, not an error."""
     vectorstore = FakeVectorStore(chunks_by_id={})
@@ -207,7 +227,7 @@ def test_get_related_context_returns_empty_when_seed_not_found():
     auth = AuthorizationContext(tenant_id="tenant_alpha", roles=["operator"])
 
     chunks = get_related_context(
-        GetRelatedContextArgs(chunk_id="missing"), pipeline, vectorstore, auth
+        GetRelatedContextArgs(chunk_id="missing"), pipeline, vectorstore, auth, "ds1"
     )
 
     assert chunks == []
@@ -225,7 +245,9 @@ def test_get_related_context_only_returns_expanded_origin_chunks():
         ]
     )
 
-    chunks = get_related_context(GetRelatedContextArgs(chunk_id="c1"), pipeline, vectorstore, None)
+    chunks = get_related_context(
+        GetRelatedContextArgs(chunk_id="c1"), pipeline, vectorstore, None, "ds1"
+    )
 
     assert chunks == [expanded]
     # The seed itself (origin="tool_fetched") must not be echoed back as "related".

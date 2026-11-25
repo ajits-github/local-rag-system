@@ -26,13 +26,26 @@ Every route that needs an identity (`/query`, `/ingest`, `/agent/query`,
   - `agent/graph.py`'s `_execute_tool` (the universal per-tool-dispatch
     step every agent tool call passes through).
   - `agent/tools.py`'s `get_document`/`get_latest_document`/
-    `get_related_context` (the three direct-fetch tools).
+    `get_related_context` (the three direct-fetch tools) and the four
+    graph tools.
   - `mcp/server.py`'s `_run_tool`.
+  - `graph/pipeline.py`'s graph retrieval and graph-seeded retrieval.
 - `vectorstore/pgvector.py`'s `build_authorization_where_clause` is the
   actual SQL predicate, called once per read method inside
   `pgvector.py` (`search`, `search_keyword`, `get_chunks_by_ids`,
   `get_chunks_by_section`, etc.), so the tenant/role/trust rule is
   identical regardless of which path reaches the database.
+  `graph/authorization.py` expresses the same rule for Cypher and as a
+  Python re-check.
+
+With `retrieval.freshness.apply_without_authorization` on (the default),
+`resolve_auth` also returns a freshness-only context
+(`acl_enforced=False`) for a caller that would otherwise be unrestricted.
+Both predicate builders then emit only the superseded-document exclusion:
+no tenant, role, or trust term, and no `authorization_denied` audit
+event. With authorization enabled, a caller's context is always
+`acl_enforced=True`, whatever the caller supplied. See
+[Freshness & document lifecycle](freshness-lifecycle.md).
 
 This consistency was not always true. `KNOWN_ISSUES.md`'s "Agent tools that
 queried the vector store directly skipped the authorization

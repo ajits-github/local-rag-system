@@ -409,7 +409,7 @@ def test_get_related_context_given_a_synthetic_mcp_chunk_id_returns_empty_not_a_
     """
 
     class EmptyVectorStore:
-        def get_chunks_by_ids(self, chunk_ids, auth=None):
+        def get_chunks_by_ids(self, chunk_ids, dataset_id=None, auth=None):
             return []
 
         def list_document_versions(self, dataset_id):

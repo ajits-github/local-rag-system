@@ -11606,3 +11606,120 @@ AGT-004 and OPS-019 are unchanged. `experiment_041`'s step counts can read low, 
 
 ### Next recommended step
 Reset and re-ingest the graph, record a graph-mode benchmark, then run the larger agent evaluation on the candidate config as the new baseline.
+
+## 2026-11-22 (session 32): Freshness, document lifecycle, and scheduled ingestion (37.0)
+
+### Context
+Prompt 37.0 asked for an audit, a benchmark, and minimal fixes for document freshness, its coupling to authorization, the document lifecycle, and an opt-in scheduled directory scan. Branch `feat/freshness-lifecycle-ingestion`; nothing pushed.
+
+### What the audit confirmed
+- `_build_families` compared every ordered pair of documents on every freshness-resolving query (RET-007).
+- `resolve_auth` returned `None` whenever authorization was disabled or the request had no context, and skipped freshness without a `dataset_id`, so the default config retrieves superseded versions (RET-008).
+- `list_document_versions` de-duplicated every chunk row per query (RET-009).
+- `get_latest_document` redirected to the current version while fetching under `as_of` exclusions, so a historical query got nothing; ambiguous suffix matches depended on unordered rows (RET-011).
+- `ingest_path` deletes a whole root's documents if the directory is empty (PROD-005).
+- No answer or evidence cache exists; the context cache docstring wrongly said re-ingestion assigns new `chunk_id`s (corrected; wording only).
+
+### Benchmark first
+`scripts/benchmark_freshness.py` keeps a frozen copy of the pairwise resolver and checks the new one against it. Pairwise: 1,138 ms at 1,000 documents, 151.6 s for one call at 10,000. Indexed: 11 ms and 148 ms, identical results in both modes. The runs against Postgres first went through the Windows host and showed authorization making search 10x slower. That was a Docker Desktop artifact: statements over about 16 KB took an extra 44 ms from the host and none from inside the compose network (OPS-020). All SQL figures were then taken inside the `rag-api` container. A clean old-code baseline ran from a git worktree of `cff0af8`, and was stopped at 10,000 documents because its timed loops would have run the pairwise resolver about 30 times.
+
+Results inside the container: at 1,000 documents the freshness stage fell from 891 ms to 31 ms. At 10,000 it is 234 ms against 36 ms for dense search. Exclusion arrays add at most 17 ms at 10,000 ids, so the predicate stayed. Reading only `chunk_index = 0` returns identical version rows in 12.4 ms instead of 37.7 ms server-side, and was applied.
+
+### What changed
+- Indexed family construction; deterministic source matching with tenant disambiguation; `get_latest_document` uses the resolved `as_of`.
+- `retrieval.freshness.apply_without_authorization` (default false) and `AuthorizationContext.acl_enforced`: a freshness-only context whose SQL and Cypher predicates carry only exclusions. With authorization on, a caller context is always forced to `acl_enforced=True`.
+- `rag.ingestion.scheduler`, disabled by default: per-source lock, settle window, temp-file filtering, digest skip, spelling reuse (mitigates PROD-002), deletion withheld on walk errors, empty scans, or more than `max_delete_fraction`; atomic manifest; `rag_ingestion_scan_*` metrics.
+- `IngestionPipeline.delete_sources` factored out of `ingest_path` unchanged.
+- Docs: `docs/topics/freshness-lifecycle.md` (enforcement map, lifecycle, scheduler, connector design, projection decision), `experiments/reports/freshness_benchmark.md`.
+
+### Also found
+BM25 returns zero-score rows that still earn an RRF rank (RET-012). `get_chunks_by_ids` is not dataset-scoped (RET-013). pgvector never chose the HNSW index for these filtered queries; why was not tested.
+
+### Verification
+Unit: 1536 passed, 8 skipped. PostgreSQL integration (new files plus authorization, ingestion, MCP, agent-tool and dataset isolation): 59 passed, 1 skipped (Ollama). Real-corpus specialized-tool fixtures: 16 passed. Live Neo4j graph tests: 16 passed, 1 skipped (Ollama); the first run had one write transaction timeout right after Neo4j started, which passed on rerun. Ruff and `mkdocs build --strict` pass; mypy reports only the 9 pre-existing `redundant-cast` errors in `rag/ontology`. New tests: `tests/unit/test_freshness_policy.py`, `tests/unit/test_ingestion_scheduler.py`, `tests/integration/test_freshness_lifecycle.py`, `tests/integration/test_ingestion_scheduler.py`.
+
+### Open problems and approvals needed
+Turning `apply_without_authorization` on by default; requiring `dataset_id` on `POST /query`; any change to the ambiguous-metadata rules (RET-010); the searchable-state projection (deferred); guards on `ingest_path` itself (PROD-005).
+
+### Next recommended step
+Decide the default for the freshness flag, then run the agent evaluation with it on, since `get_latest_document` rows depend on it.
+
+## 2026-11-22 (session 33): Freshness fixes before merge (37.1)
+
+### Context
+Prompt 37.1 approved the indexed resolver, the opt-in scheduler, deferring the projection, and full-document replacement, and asked for ten follow-ups on the same branch before merge. Nothing committed or pushed.
+
+### Baseline first
+Retrieval-only evaluation (126 questions) on the branch as left by session 32, before any 37.1 change: default recall@5 0.8413 / recall@10 0.8889 / MRR 0.7257, hybrid 0.8611 / 0.9206 / 0.7669, secure 0.7884 / 0.8320 / 0.7534. The first attempt failed on `.env`'s container-only `RAG_CONFIG_PATH`, the known trap in CLAUDE.md; all host runs now blank it.
+
+### What changed
+- RET-013: `get_chunks_by_ids`/`get_chunks_by_section` take a required `dataset_id`; expansion uses each result's dataset; `get_related_context` requires a dataset for the agent and MCP.
+- RET-012: `rank_keyword_matches` drops rows containing no query term and, when the query has a term in at most half the rows, rows matching only corpus-common words. Measured on its own (freshness set back to the old behavior) it changed no retrieved source and no metric: on the 483-chunk corpus no top-20 BM25 row is removed for these questions. The first version required a positive BM25 score; the full integration run then failed three `test_pgvector.py` cases, because BM25Okapi gives a term present in every row of a tiny filtered corpus a negative idf, so exact matches vanished. Eligibility is now term containment, with the score only for ordering.
+- PROD-005: `ingest_path` and the scheduler share `discover_files` and `deletion_blocked_reason`; the CLI exits 3 when deletion is withheld and `--allow-mass-delete` overrides all but an incomplete walk. The guard immediately exposed that re-spelling a root would now leave duplicates instead of churning, so `ingest_path` reuses stored spellings too, which fixes PROD-002.
+- Freshness on by default (`apply_without_authorization: true`, `false` for compatibility); unscoped requests resolve every dataset's families (links never cross datasets); `retrieval.dataset_scope` adds `default_dataset_id` and `missing_dataset_policy: all_datasets | reject`, applied in the four query routers and the MCP server.
+- Lifecycle rules: an active version superseded by another active version is excluded; unordered active heads resolve by latest `effective_from`, then `document_id`; warnings are aggregated per resolution, after per-family logging would have flooded logs (and the benchmark) on every query.
+- Scheduler: the manifest hint includes the inode, so atomic replacement with unchanged size and mtime is re-hashed.
+
+### Evaluation after
+Default 0.8426 / 0.8783 / 0.7319, hybrid 0.8505 / 0.9180 / 0.7788, secure 0.7884 / 0.8320 / 0.7552. Default `document_unauthorized_retrieval_rate` 0.9412 to 0.5882 (superseded v1 files listed as forbidden are no longer retrieved). `stale_document_error_rate` stayed 0.0769: I had predicted 0, but the remaining case is an untrusted document outside any family, which only authorization-on trust filtering removes. Two version-comparison questions lost v1 (RET-014), the main source of the small recall drop.
+
+### Scale benchmark
+In the container: resolution p50 134 ms / 1.32 s / 2.25 s at 10,000 / 50,000 / 100,000 documents, 7 / 43 / 88 MiB, pairwise 166 s at 10,000. Under the GIL 8 concurrent requests at 100,000 wait 20 s p50 at 0.39 per second. PostgreSQL crashed three times (`exit code 2`, no error), twice during the old `DISTINCT` fetch; the version fetch alone took 22 to 41 s at 50,000 and 100,000 because the table no longer fit in memory. End-to-end at those sizes was not run after the third crash. The first scale run lost its results because the script wrote only at the end; it now checkpoints after each size.
+
+### Verification
+Unit: 1565 passed, 8 skipped. Integration against live PostgreSQL and Neo4j: 167 passed, 49 skipped (all need Ollama, which was not running), 0 failed; this includes the real-corpus specialized-tool fixtures and the graph authorization tests. The first full integration run had 5 failures, all from intended changes: three keyword tests that exposed the BM25 eligibility flaw above, and two agent tests calling `get_related_context` without a dataset. Ruff and `mkdocs build --strict` pass; mypy reports only the 9 `redundant-cast` errors in `rag/ontology` that also exist on `main`.
+
+### Open problems
+RET-014 (needs an API decision), RET-009 and the projection before any 50,000-document dataset, OPS-019's cause, the three pre-existing unformatted test files, and the mypy casts in `rag/ontology` (separate branch).
+
+### Next recommended step
+Decide RET-014 and whether the branch merges with freshness on by default, then commit in reviewable pieces.
+
+## 2026-11-23 (session 34): Version comparison, the recall check, and the PostgreSQL crash
+
+### Context
+After reviewing 37.1, the user asked for RET-014 to be fixed as an explicit historical-retrieval option with authorization still applied (not a bare `include_superseded` switch), the retrieval evaluation rerun, and the benchmark crashes investigated before preparing the merge.
+
+### RET-014
+`version_scope: "current" | "history"` on `AuthorizationContext`, the four query routes, and the MCP RAG tools. History keeps every family member effective on `as_of` (all without a date) and still drops later versions; the ACL predicates are untouched, each use writes a `freshness_version_history_requested` audit event, and evidence labels now say `version X (status)`. The gold schema gained the same field; the two comparison rows in the gitignored `techfusion_gold.jsonl` were set to `history` locally (backup of the previous file kept outside the repository). The first integration version of the new tests failed for a familiar reason: the test helper did not raise `reranker_top_n`, so tied constant-vector chunks from one document filled the default top 5.
+
+### Evaluation
+Retrieval-only, 126 questions, recall@5 / recall@10 / MRR before the 37.0/37.1 branch and now: default 0.8413 / 0.8889 / 0.7257 to 0.8505 / 0.8862 / 0.7358, hybrid 0.8611 / 0.9206 / 0.7669 to 0.8585 / 0.9259 / 0.7788, secure 0.7884 / 0.8320 / 0.7534 to 0.7963 / 0.8399 / 0.7552. Both comparison questions retrieve v1 and v2 again. The remaining default recall@10 loss is one row whose gold lists the superseded `security-escalation-v1.md` as relevant while expecting version 2.0; excluding it is correct. Hybrid's small recall@5 change is BM25 statistics shifting once v1 chunks are excluded (one question lost its source from the top 5, another gained one).
+
+### PostgreSQL crash
+The Docker VM had restarted, so the kernel log from the first crashes was gone. A controlled rerun with `log_temp_files = 0` and the container's cgroup counters sampled every 2 seconds reproduced the crash: memory pinned at exactly the 1 GiB limit for the whole query phase, about 19,000 `memory.max` hits, ~65 MB of swap, `oom_kill` 0. The exiting process was a short-lived backend that logged nothing; exit code 2 is PostgreSQL's quick-exit (SIGQUIT) path, so it was not OOM-killed. The old `DISTINCT` alone, four times at 1 GiB, did not crash. The full workload with the limit raised to 2 GiB via `docker update` completed with no crash and no new limit hits, peaking at 1.72 GB. Conclusion: the trigger is running pinned at the 1 GiB limit under a workload needing ~1.7 GB; what delivers the signal is still unproven. The limit and `log_temp_files` were restored afterwards. The 2 GiB run also produced the missing end-to-end numbers: 3.1 s p50 dense retrieval at 100,000 documents, 2.5 s of it freshness.
+
+### Also noticed
+The final integration run looked hung; it was the 49 Ollama-dependent tests running for the first time on this branch, because Ollama had been started on the host. PowerShell's `>` redirection buffered the verbose log, which hid progress; launching pytest with `Start-Process` and `faulthandler_timeout` gave live output and a stack-dump guard.
+
+### Verification
+Unit: 1572 passed, 8 skipped. Integration against live PostgreSQL and Neo4j with Ollama deliberately unreachable (as in earlier runs): 168 passed, 49 skipped (all need Ollama), 1 failed: the Neo4j write-transaction timeout on the first graph write, seen once before in session 32; both graph files then passed on rerun (16 passed, 1 skipped). Of the Ollama-dependent tests, the 4 that ran before the run was stopped passed. Ruff and `mkdocs build --strict` pass; mypy reports only the 9 pre-existing `redundant-cast` errors in `rag/ontology`.
+
+### Open problems
+OPS-019's signal source; RET-009/projection before any 50,000-document dataset; the three pre-existing unformatted test files; the mypy casts in `rag/ontology` (separate branch).
+
+### Next recommended step
+Merge in reviewable commits, then decide whether the dev compose should give PostgreSQL 2 GiB.
+
+## 2026-11-25 (session 35): Pre-push verification of the freshness branch
+
+### Context
+The three branch commits (`1c8540d`, `ffaf335`, `598eb03`) were made on 2026-11-23. Before pushing, the user asked to replace the reference to the gitignored crash log with a tracked summary, make the RET-014 comparison cases reproducible without the gitignored corpus, rerun the full suites against HEAD, run a security review, and recheck `KNOWN_ISSUES.md`.
+
+### Crash evidence
+`experiments/reports/postgres_memory_crash_investigation.md` summarizes the raw cgroup trace (1,267 samples, 13:30 to 14:22 UTC on 2026-11-23) by phase. Rechecking the raw numbers corrected two figures: the four standalone `DISTINCT` runs added about 5,500 `memory.max` hits (the earlier "~3,400" counted only runs 2 to 4), and one 2026-11-22 crash was a standalone `DISTINCT`, so "only under the full workload" was too strong. The crash at 13:54:53.945 UTC coincides with the trace's swap peak (62.6 MiB).
+
+### Reproducible RET-014 fixture
+`data/version_history_demo_docs/` (8 synthetic documents: two compared families, a v3 effective in 2027, an admin-only v2, one unrelated document) and `data/eval/version_history_gold.jsonl` (4 rows). `tests/integration/test_version_history_eval.py` runs `evaluate()` with a word-hashing embedder and checks that current mode loses v1 on the same rows. With the real embedder and `secure-rag-baseline-v1.yaml`: recall@10 1.0, MRR 1.0, unauthorized retrieval 0.0. A first CLI run reported unauthorized retrieval 1.0: both CLIs read `--config` and ignore `RAG_CONFIG_PATH`, so it had run on `default.yaml` with authorization off; the documented command was corrected.
+
+### Scheduler timing bug (PROD-008)
+A full-suite run of HEAD on system Python 3.12 failed two scheduler unit tests that had passed before; the scans reported both files `deferred` despite `settle_seconds: 0`. On Windows a new file's mtime can be stamped just after `time.time()` reads the clock, making the age negative; 327 of 2,000 fresh files showed it. `settle_seconds == 0` now disables the window, with a regression test that fails on the old code.
+
+### Verification
+HEAD (`598eb03`, clean worktree, project venv): unit 1572 passed, 8 skipped (missing `rdflib`, `pyshacl`, `anthropic`); integration 169 passed, 49 skipped (Ollama made unreachable). The system-Python run additionally hit three Neo4j write-transaction timeouts in `test_graph_authorization_isolation.py`; that file passed twice on rerun. Working tree with the proposed changes: unit 1573 passed, 8 skipped; integration 171 passed, 49 skipped; then the 13 files holding the 49 Ollama-dependent tests against live Ollama: 75 passed, 2 xfailed (AGT-004), 0 skipped. Ruff and `mkdocs build --strict` pass. Security review of the three commits: no HIGH or MEDIUM findings.
+
+### Open problems
+OPS-019's signal source; RET-009/projection before any 50,000-document dataset; the Neo4j first-write timeout; the mypy casts in `rag/ontology` (separate branch).
+
+### Next recommended step
+Commit the follow-up changes after review, then push.

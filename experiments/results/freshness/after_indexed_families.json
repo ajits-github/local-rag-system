@@ -1,0 +1,180 @@
+{
+  "label": "after_indexed_families",
+  "machine": {
+    "platform": "Windows-11-10.0.26200-SP0",
+    "processor": "Intel64 Family 6 Model 140 Stepping 1, GenuineIntel",
+    "cpu_count": 8,
+    "python": "3.14.6",
+    "git_commit": "cff0af8",
+    "src_dirty": true
+  },
+  "synthetic_data": {
+    "family_fraction": 0.3,
+    "max_chain": 4,
+    "tenants": 5,
+    "null_tenant_fraction": 0.1,
+    "collision_fraction": 0.05
+  },
+  "resolution": [
+    {
+      "n_documents": 100,
+      "n_families": 20,
+      "setup_ms_excluded_from_timings": 5.75020001269877,
+      "current": {
+        "exclusions_current_mode": {
+          "repeats": 30,
+          "median_ms": 0.9218499981216155,
+          "p95_ms": 1.3451999984681606,
+          "min_ms": 0.865699999849312,
+          "max_ms": 1.4502999983960763
+        },
+        "exclusions_as_of_mode": {
+          "repeats": 30,
+          "median_ms": 0.8578499982832,
+          "p95_ms": 1.0020000045187771,
+          "min_ms": 0.8302999922307208,
+          "max_ms": 1.1000999948009849
+        },
+        "resolve_current_document_source": {
+          "repeats": 30,
+          "median_ms": 0.8205499980249442,
+          "p95_ms": 1.340999995591119,
+          "min_ms": 0.8044999995036051,
+          "max_ms": 1.4950999902794138
+        },
+        "peak_memory_kib": 78.31640625,
+        "excluded_count_current_mode": 34
+      },
+      "legacy": {
+        "exclusions_current_mode": {
+          "repeats": 30,
+          "median_ms": 10.504100006073713,
+          "p95_ms": 11.635199989541434,
+          "min_ms": 9.867100001429208,
+          "max_ms": 11.796799997682683
+        },
+        "peak_memory_kib": 7.658203125,
+        "results_identical_current_mode": true,
+        "results_identical_as_of_mode": true
+      }
+    },
+    {
+      "n_documents": 1000,
+      "n_families": 190,
+      "setup_ms_excluded_from_timings": 10.379599989391863,
+      "current": {
+        "exclusions_current_mode": {
+          "repeats": 30,
+          "median_ms": 11.122750001959503,
+          "p95_ms": 12.463699997169897,
+          "min_ms": 9.979900001781061,
+          "max_ms": 13.170699996408075
+        },
+        "exclusions_as_of_mode": {
+          "repeats": 30,
+          "median_ms": 10.35865000449121,
+          "p95_ms": 12.966600013896823,
+          "min_ms": 9.494600002653897,
+          "max_ms": 18.655499996384606
+        },
+        "resolve_current_document_source": {
+          "repeats": 30,
+          "median_ms": 9.487049996096175,
+          "p95_ms": 11.007300010533072,
+          "min_ms": 8.771699998760596,
+          "max_ms": 11.568999994779006
+        },
+        "peak_memory_kib": 764.35546875,
+        "excluded_count_current_mode": 383
+      },
+      "legacy": {
+        "exclusions_current_mode": {
+          "repeats": 30,
+          "median_ms": 1137.598050001543,
+          "p95_ms": 1258.0414000112796,
+          "min_ms": 1099.9331000057282,
+          "max_ms": 1384.9494000023697
+        },
+        "peak_memory_kib": 89.048828125,
+        "results_identical_current_mode": true,
+        "results_identical_as_of_mode": true
+      }
+    },
+    {
+      "n_documents": 10000,
+      "n_families": 1875,
+      "setup_ms_excluded_from_timings": 102.75530000217259,
+      "current": {
+        "exclusions_current_mode": {
+          "repeats": 10,
+          "median_ms": 147.93189999909373,
+          "p95_ms": 197.2684000065783,
+          "min_ms": 126.47069999366067,
+          "max_ms": 197.2684000065783
+        },
+        "exclusions_as_of_mode": {
+          "repeats": 10,
+          "median_ms": 128.36399998923298,
+          "p95_ms": 148.7572000041837,
+          "min_ms": 123.68990000686608,
+          "max_ms": 148.7572000041837
+        },
+        "resolve_current_document_source": {
+          "repeats": 10,
+          "median_ms": 127.87479999678908,
+          "p95_ms": 145.37050000217278,
+          "min_ms": 122.07639998814557,
+          "max_ms": 145.37050000217278
+        },
+        "peak_memory_kib": 9678.5712890625,
+        "excluded_count_current_mode": 3822
+      },
+      "legacy": {
+        "exclusions_current_mode": {
+          "repeats": 1,
+          "median_ms": 151605.64360000717,
+          "p95_ms": 151605.64360000717,
+          "min_ms": 151605.64360000717,
+          "max_ms": 151605.64360000717
+        },
+        "peak_memory_kib": null,
+        "results_identical_current_mode": true,
+        "results_identical_as_of_mode": true
+      }
+    },
+    {
+      "n_documents": 100000,
+      "n_families": 18598,
+      "setup_ms_excluded_from_timings": 1064.7448999952758,
+      "current": {
+        "exclusions_current_mode": {
+          "repeats": 5,
+          "median_ms": 1835.183400005917,
+          "p95_ms": 2091.3829000055557,
+          "min_ms": 1744.5640999940224,
+          "max_ms": 2091.3829000055557
+        },
+        "exclusions_as_of_mode": {
+          "repeats": 5,
+          "median_ms": 1800.0869000097737,
+          "p95_ms": 2036.034800010384,
+          "min_ms": 1710.0055000046268,
+          "max_ms": 2036.034800010384
+        },
+        "resolve_current_document_source": {
+          "repeats": 5,
+          "median_ms": 1751.597499998752,
+          "p95_ms": 1768.746600006125,
+          "min_ms": 1656.9438000005903,
+          "max_ms": 1768.746600006125
+        },
+        "peak_memory_kib": 110721.7861328125,
+        "excluded_count_current_mode": 37534
+      },
+      "legacy": {
+        "skipped": true,
+        "reason": "projected 15161s per call from the measured O(N^2) growth exceeds --max-legacy-seconds=400"
+      }
+    }
+  ]
+}

@@ -1,0 +1,240 @@
+{
+  "label": "scale_resolution_37_1_in_container",
+  "machine": {
+    "platform": "Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-glibc2.41",
+    "processor": "",
+    "cpu_count": 8,
+    "python": "3.11.16",
+    "git_commit": "unknown",
+    "src_dirty": false
+  },
+  "synthetic_data": {
+    "family_fraction": 0.3,
+    "max_chain": 4,
+    "tenants": 5,
+    "null_tenant_fraction": 0.1,
+    "collision_fraction": 0.05
+  },
+  "resolution": [
+    {
+      "n_documents": 10000,
+      "n_families": 1875,
+      "setup_ms_excluded_from_timings": 78.55811700210324,
+      "current": {
+        "exclusions_current_mode": {
+          "n": 20,
+          "p50_ms": 133.6441584990098,
+          "p95_ms": 184.1070269983902,
+          "p99_ms": 184.1070269983902,
+          "min_ms": 125.61055200058036,
+          "max_ms": 184.1070269983902
+        },
+        "exclusions_as_of_mode": {
+          "n": 20,
+          "p50_ms": 162.3438009992242,
+          "p95_ms": 239.52389300029608,
+          "p99_ms": 239.52389300029608,
+          "min_ms": 136.53414500004146,
+          "max_ms": 239.52389300029608
+        },
+        "resolve_current_document_source": {
+          "n": 20,
+          "p50_ms": 316.99701200159325,
+          "p95_ms": 868.6103399995773,
+          "p99_ms": 868.6103399995773,
+          "min_ms": 148.69176800129935,
+          "max_ms": 868.6103399995773
+        },
+        "peak_memory_kib": 7393.3994140625,
+        "excluded_count_current_mode": 3830,
+        "concurrent": [
+          {
+            "threads": 1,
+            "n": 12,
+            "p50_ms": 162.9671339997003,
+            "p95_ms": 267.22605200120597,
+            "p99_ms": 267.22605200120597,
+            "min_ms": 128.57597700349288,
+            "max_ms": 267.22605200120597,
+            "throughput_per_s": 5.542859013408278
+          },
+          {
+            "threads": 4,
+            "n": 12,
+            "p50_ms": 954.1342939992319,
+            "p95_ms": 1106.690624001203,
+            "p99_ms": 1106.690624001203,
+            "min_ms": 604.8554250010056,
+            "max_ms": 1106.690624001203,
+            "throughput_per_s": 4.30771202176644
+          },
+          {
+            "threads": 8,
+            "n": 24,
+            "p50_ms": 1822.1245455006283,
+            "p95_ms": 2670.134040999983,
+            "p99_ms": 2956.3853479994577,
+            "min_ms": 673.0646869982593,
+            "max_ms": 2956.3853479994577,
+            "throughput_per_s": 4.24870126036283
+          }
+        ]
+      },
+      "legacy": {
+        "family_build_and_current_mode": {
+          "n": 1,
+          "p50_ms": 166409.72929399868,
+          "p95_ms": 166409.72929399868,
+          "p99_ms": 166409.72929399868,
+          "min_ms": 166409.72929399868,
+          "max_ms": 166409.72929399868
+        },
+        "families_identical": true,
+        "as_of_exclusions_identical": true,
+        "current_mode_extra_exclusions": 8,
+        "current_mode_dropped_exclusions": 0
+      }
+    },
+    {
+      "n_documents": 50000,
+      "n_families": 9317,
+      "setup_ms_excluded_from_timings": 2985.381606998999,
+      "current": {
+        "exclusions_current_mode": {
+          "n": 10,
+          "p50_ms": 1319.618117000573,
+          "p95_ms": 2012.3700410003948,
+          "p99_ms": 2012.3700410003948,
+          "min_ms": 986.3547509994532,
+          "max_ms": 2012.3700410003948
+        },
+        "exclusions_as_of_mode": {
+          "n": 10,
+          "p50_ms": 1136.738219000108,
+          "p95_ms": 2014.3188209985965,
+          "p99_ms": 2014.3188209985965,
+          "min_ms": 1046.0955630005628,
+          "max_ms": 2014.3188209985965
+        },
+        "resolve_current_document_source": {
+          "n": 10,
+          "p50_ms": 1188.0783354990854,
+          "p95_ms": 2003.0930259999877,
+          "p99_ms": 2003.0930259999877,
+          "min_ms": 1023.5098120028852,
+          "max_ms": 2003.0930259999877
+        },
+        "peak_memory_kib": 44452.16015625,
+        "excluded_count_current_mode": 18869,
+        "concurrent": [
+          {
+            "threads": 1,
+            "n": 12,
+            "p50_ms": 1598.5939925012644,
+            "p95_ms": 3282.814928999869,
+            "p99_ms": 3282.814928999869,
+            "min_ms": 808.1385629993747,
+            "max_ms": 3282.814928999869,
+            "throughput_per_s": 0.5451370179346688
+          },
+          {
+            "threads": 4,
+            "n": 12,
+            "p50_ms": 3330.9039379983005,
+            "p95_ms": 4102.701641000749,
+            "p99_ms": 4102.701641000749,
+            "min_ms": 1958.7009389979357,
+            "max_ms": 4102.701641000749,
+            "throughput_per_s": 1.1786347832112487
+          },
+          {
+            "threads": 8,
+            "n": 24,
+            "p50_ms": 6621.390135500405,
+            "p95_ms": 9223.794835001172,
+            "p99_ms": 9628.776419001952,
+            "min_ms": 4355.245696002385,
+            "max_ms": 9628.776419001952,
+            "throughput_per_s": 1.1262972718903
+          }
+        ]
+      },
+      "legacy": {
+        "skipped": true,
+        "projected_seconds_per_call": 4160.243232349967,
+        "reason": "projected 4160s per call from the measured O(N^2) growth exceeds --max-legacy-seconds=300"
+      }
+    },
+    {
+      "n_documents": 100000,
+      "n_families": 18598,
+      "setup_ms_excluded_from_timings": 1208.9056259974313,
+      "current": {
+        "exclusions_current_mode": {
+          "n": 10,
+          "p50_ms": 2252.0149254996795,
+          "p95_ms": 3473.3048350026365,
+          "p99_ms": 3473.3048350026365,
+          "min_ms": 1726.8753160024062,
+          "max_ms": 3473.3048350026365
+        },
+        "exclusions_as_of_mode": {
+          "n": 10,
+          "p50_ms": 2356.392717500057,
+          "p95_ms": 3770.3297270018084,
+          "p99_ms": 3770.3297270018084,
+          "min_ms": 1979.694677000225,
+          "max_ms": 3770.3297270018084
+        },
+        "resolve_current_document_source": {
+          "n": 10,
+          "p50_ms": 2059.111512500749,
+          "p95_ms": 3076.472623000882,
+          "p99_ms": 3076.472623000882,
+          "min_ms": 1952.2277180003584,
+          "max_ms": 3076.472623000882
+        },
+        "peak_memory_kib": 89593.2109375,
+        "excluded_count_current_mode": 37631,
+        "concurrent": [
+          {
+            "threads": 1,
+            "n": 12,
+            "p50_ms": 2332.7823969993915,
+            "p95_ms": 5483.143093999388,
+            "p99_ms": 5483.143093999388,
+            "min_ms": 1847.0408710018091,
+            "max_ms": 5483.143093999388,
+            "throughput_per_s": 0.3777315006842905
+          },
+          {
+            "threads": 4,
+            "n": 12,
+            "p50_ms": 8074.749068999154,
+            "p95_ms": 13233.243414000754,
+            "p99_ms": 13233.243414000754,
+            "min_ms": 5878.02773400108,
+            "max_ms": 13233.243414000754,
+            "throughput_per_s": 0.4165405375121303
+          },
+          {
+            "threads": 8,
+            "n": 24,
+            "p50_ms": 20054.681089501173,
+            "p95_ms": 26139.778201999434,
+            "p99_ms": 26740.409243000613,
+            "min_ms": 11938.181475001329,
+            "max_ms": 26740.409243000613,
+            "throughput_per_s": 0.39056933707391
+          }
+        ]
+      },
+      "legacy": {
+        "skipped": true,
+        "projected_seconds_per_call": 16640.972929399868,
+        "reason": "projected 16641s per call from the measured O(N^2) growth exceeds --max-legacy-seconds=300"
+      }
+    }
+  ],
+  "process_peak_rss_mib": 1109.16015625
+}

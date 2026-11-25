@@ -1,0 +1,27 @@
+{
+  "label": "scale_db_fetch_psql_50k_100k",
+  "date": "2026-11-22",
+  "how": "psql inside the local-rag-postgres container (no network hop), \\timing on, run by hand after scale_db_37_1_in_container crashed at 50k. Tables and data from that run: bench_fresh_chunks, 3 chunks per document, HNSW index dropped, PostgreSQL 16.14, container memory limit 1 GiB, shared_buffers 128MB, work_mem 4MB.",
+  "table_rows": {"bench_10000": 30000, "bench_50000": 150000, "bench_100000": 300000},
+  "queries": {
+    "first_chunk_only": "SELECT ... FROM bench_fresh_chunks WHERE dataset_id = X AND chunk_index = 0 (the query list_document_versions now uses)",
+    "distinct_all_columns": "SELECT DISTINCT document_id, source, status, document_version, effective_from, supersedes_source, tenant_id FROM bench_fresh_chunks WHERE dataset_id = X (the previous query)"
+  },
+  "timings_ms": {
+    "bench_50000": {
+      "first_chunk_only": [41258.6, 35113.8, 27701.6],
+      "distinct_all_columns": [36148.3, 24949.7, 35813.8]
+    },
+    "bench_100000": {
+      "first_chunk_only": [22607.3, 33621.5],
+      "distinct_all_columns": [57925.5]
+    }
+  },
+  "server_crashes": [
+    "2026-11-22 18:26:22 UTC, first scale run, during the database part (exact query not logged)",
+    "2026-11-22 19:05:16 UTC, scale_db_37_1_in_container, inside the version-fetch-variants loop at 50k, after list_document_versions (chunk_index = 0) had completed",
+    "2026-11-22 19:17:11 UTC, the second distinct_all_columns run on bench_100000 in psql"
+  ],
+  "crash_signature": "LOG: server process (PID n) exited with exit code 2; no preceding ERROR; automatic recovery",
+  "notes": "Times include reading most of a ~1 GB heap from disk each run; the working set does not fit in the container's memory. End-to-end and concurrent retrieval at 50k and 100k were not run after the third crash."
+}

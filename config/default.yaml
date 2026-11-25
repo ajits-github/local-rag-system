@@ -95,14 +95,28 @@ retrieval:
     include_parent: true
     include_neighbors: true
     max_related_elements: 3
+  freshness:
+    apply_without_authorization: true # exclude superseded versions for every query; false = only for authorized requests (pre-2026-11 behavior)
+  dataset_scope:
+    default_dataset_id: null # single-dataset deployments: dataset used when a request names none
+    missing_dataset_policy: all_datasets # all_datasets | reject (422); tenant/role enforcement never depends on this
 
 ingestion:
   supported_extensions: [".pdf", ".docx", ".html", ".htm", ".txt", ".md"]
+  max_delete_fraction: 0.5 # a directory ingest that would delete more of a root's documents needs --allow-mass-delete
   layout_parsing:
     pdf_parser: pdfplumber # swap point: only parser implemented so far; see docs/architecture.md
     heading_font_size_ratio: 1.15
     title_font_size_ratio: 1.8
     max_heading_words: 12
+  scheduled_scan:
+    enabled: false # python -m rag.ingestion.scheduler refuses to run when false; see docs/topics/ingestion.md
+    interval_seconds: 3600
+    state_dir: data/ingestion_state # per-source manifest + lock files
+    settle_seconds: 30 # files modified more recently are deferred, never deleted
+    max_delete_fraction: 0.5 # refuse a round that would delete more than this share of known documents
+    lock_stale_seconds: 21600
+    sources: [] # e.g. [{path: data/knowledge_base, dataset_id: techfusion, tenant_id: null}]
 
 vision:
   provider: none # swap point: none (default/no-op) or ollama (local, offline); see docs/architecture.md

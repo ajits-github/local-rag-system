@@ -301,6 +301,9 @@ class DocumentVersionInfo(BaseModel):
         Raw filename this document supersedes, as authored.
     tenant_id : str or None
         Owning tenant.
+    dataset_id : str or None
+        Dataset the document belongs to; versions in different datasets
+        never form one family.
 
     Notes
     -----
@@ -315,6 +318,7 @@ class DocumentVersionInfo(BaseModel):
     effective_from: date | None = None
     supersedes_source: str | None = None
     tenant_id: str | None = None
+    dataset_id: str | None = None
 
 
 class IngestionStats(BaseModel):
@@ -338,6 +342,13 @@ class IngestionStats(BaseModel):
         `VisionProvider` was configured (`config.vision.provider ==
         "none"`): an absent value, not a zeroed one, so "vision wasn't
         used" is distinguishable from "vision ran and touched zero images".
+    deletion_candidates : int
+        Stored documents under the walked root whose files were not found.
+    deletion_blocked_reason : str or None
+        Why those documents were not deleted (`enumeration_incomplete`,
+        `no_files_found`, or `delete_fraction_exceeded`), or `None`.
+    enumeration_errors : list[str]
+        Directories the walk could not read.
     """
 
     discovered: int = 0
@@ -349,6 +360,9 @@ class IngestionStats(BaseModel):
     chunks_reused: int = 0
     results: list[dict[str, Any]] = Field(default_factory=list)
     vision_stats: VisionCallStats | None = None
+    deletion_candidates: int = 0
+    deletion_blocked_reason: str | None = None
+    enumeration_errors: list[str] = Field(default_factory=list)
 
 
 class VisionCallStats(BaseModel):

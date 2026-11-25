@@ -305,6 +305,41 @@ class RelationshipExpansionConfig(BaseModel):
     max_related_elements: int = 3
 
 
+class FreshnessConfig(BaseModel):
+    """Document-version freshness tunables (see `rag.retrieval.freshness`).
+
+    Attributes
+    ----------
+    apply_without_authorization : bool
+        When `True` (the default), superseded versions are excluded for
+        every query, including when `security.authorization.enabled` is
+        `False` or the request has no authorization context; no tenant,
+        role, or trust filtering is added. `False` restores the earlier
+        behavior, where freshness ran only for authorized requests.
+    """
+
+    apply_without_authorization: bool = True
+
+
+class DatasetScopeConfig(BaseModel):
+    """How a request without a `dataset_id` filter is scoped.
+
+    Attributes
+    ----------
+    default_dataset_id : str or None
+        For single-dataset deployments: the dataset applied at the API and
+        MCP boundary when a request names none.
+    missing_dataset_policy : {"all_datasets", "reject"}
+        For multi-dataset deployments (no default): `all_datasets` searches
+        every dataset and resolves freshness per dataset; `reject` refuses
+        the request (HTTP 422, or an MCP tool error). Tenant and role
+        enforcement never depend on this setting.
+    """
+
+    default_dataset_id: str | None = None
+    missing_dataset_policy: Literal["all_datasets", "reject"] = "all_datasets"
+
+
 class RetrievalConfig(BaseModel):
     """Retrieval provider selection and result-count tuning.
 
@@ -324,6 +359,10 @@ class RetrievalConfig(BaseModel):
         Hybrid-retrieval-specific settings.
     relationship_expansion : RelationshipExpansionConfig
         Post-rerank context-expansion settings.
+    freshness : FreshnessConfig
+        Document-version freshness settings.
+    dataset_scope : DatasetScopeConfig
+        Scoping of requests that name no `dataset_id`.
     """
 
     provider: Literal["dense", "hybrid"] = "dense"
@@ -333,6 +372,8 @@ class RetrievalConfig(BaseModel):
     relationship_expansion: RelationshipExpansionConfig = Field(
         default_factory=RelationshipExpansionConfig
     )
+    freshness: FreshnessConfig = Field(default_factory=FreshnessConfig)
+    dataset_scope: DatasetScopeConfig = Field(default_factory=DatasetScopeConfig)
 
 
 class LayoutParsingConfig(BaseModel):
@@ -352,13 +393,81 @@ class LayoutParsingConfig(BaseModel):
     max_heading_words: int = 12
 
 
-class IngestionConfig(BaseModel):
-    """File-type filtering and layout-parsing tunables for the ingestion pipeline."""
+class ScanSourceConfig(BaseModel):
+    """One local directory the scheduled scan keeps in sync with one dataset.
 
+    Attributes
+    ----------
+    path : str
+        Directory to scan recursively. Persisted `source` values are built
+        from this exact spelling, so keep it identical to earlier
+        ingestions of the same root to keep `document_id`s stable.
+    dataset_id : str
+        Dataset every discovered document is ingested into.
+    tenant_id : str or None
+        When set, documents are ingested as this tenant (front matter
+        naming another tenant is rejected for that file). `None` keeps the
+        CLI behavior: front matter decides.
+    extensions : list[str] or None
+        File extensions to include; `None` uses
+        `ingestion.supported_extensions`.
+    """
+
+    path: str
+    dataset_id: str
+    tenant_id: str | None = None
+    extensions: list[str] | None = None
+
+
+class ScheduledScanConfig(BaseModel):
+    """Opt-in periodic directory scan (`python -m rag.ingestion.scheduler`).
+
+    Attributes
+    ----------
+    enabled : bool
+        The scheduler refuses to run unless this is `True`.
+    interval_seconds : int
+        Pause between scan rounds in loop mode.
+    state_dir : str
+        Directory for per-source manifests and lock files.
+    settle_seconds : int
+        Files modified more recently than this are deferred to the next
+        round (they may still be being written) and are never deleted.
+    max_delete_fraction : float
+        Deletion reconciliation is refused when it would remove more than
+        this fraction of a source's known documents in one round.
+    lock_stale_seconds : int
+        A lock file older than this is treated as left by a dead process.
+    sources : list[ScanSourceConfig]
+        Directories to scan.
+    """
+
+    enabled: bool = False
+    interval_seconds: int = 3600
+    state_dir: str = "data/ingestion_state"
+    settle_seconds: int = 30
+    max_delete_fraction: float = 0.5
+    lock_stale_seconds: int = 6 * 3600
+    sources: list[ScanSourceConfig] = Field(default_factory=list)
+
+
+class IngestionConfig(BaseModel):
+    """File-type filtering, layout parsing, and deletion-safety tunables for ingestion.
+
+    Attributes
+    ----------
+    max_delete_fraction : float
+        `ingest_path` withholds deletion when a directory walk would remove
+        more than this fraction of the root's stored documents; pass
+        `allow_mass_delete=True` (CLI `--allow-mass-delete`) to proceed.
+    """
+
+    max_delete_fraction: float = 0.5
     supported_extensions: list[str] = Field(
         default_factory=lambda: [".pdf", ".docx", ".html", ".htm", ".txt", ".md"]
     )
     layout_parsing: LayoutParsingConfig = Field(default_factory=LayoutParsingConfig)
+    scheduled_scan: ScheduledScanConfig = Field(default_factory=ScheduledScanConfig)
 
 
 class AuthorizationConfig(BaseModel):
