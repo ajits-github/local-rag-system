@@ -49,6 +49,27 @@ event. Evidence labels carry `version X (status)` in either scope, so the
 prompt shows which text is superseded. `include_superseded` remains an
 internal field that no request sets.
 
+A tracked synthetic fixture covers this without the gitignored corpus:
+`data/version_history_demo_docs/` (two compared families, a version
+effective after the query date, and a v2 restricted to an admin role) with
+`data/eval/version_history_gold.jsonl` (two `history` comparisons, one
+`current` control, one role-restricted `history` question).
+`tests/integration/test_version_history_eval.py` runs `evaluate()` on it
+with a deterministic embedder. To run it with the real embedder and
+authorization on (both CLIs read `--config`, not `RAG_CONFIG_PATH`):
+
+```bash
+CFG=config/experiments/secure-rag-baseline-v1.yaml
+python -m rag.ingestion.pipeline data/version_history_demo_docs \
+  --dataset-id version_history_demo --config $CFG
+python -m rag.eval.run_eval --gold data/eval/version_history_gold.jsonl \
+  --dataset-id version_history_demo --skip-generation --config $CFG
+```
+
+With that config, recall@10 and MRR are 1.0 and no unauthorized or future
+version is retrieved. Under `config/default.yaml` authorization is off, so
+the role-restricted row retrieves the admin-only v2 by design.
+
 ## Where freshness and authorization are enforced
 
 All filtering below happens in the database query (SQL predicate) or in

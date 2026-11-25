@@ -36,9 +36,6 @@ without basis. Detailed chronological session history remains in
 | EVAL-007 | MODERATE | ACCEPTED LIMITATION | Evaluation | A keyword-overlap answer metric penalized correct refusals |
 | EVAL-009 | MINOR | ACCEPTED LIMITATION | Evaluation | Generation dominated latency, and the latency A/B could not be trusted |
 | AGT-004 | MAJOR | IN PROGRESS | Agentic RAG | The tool worked, but the agent rarely chose it (specialized-tool selection) |
-| AGT-005 | MODERATE | FIXED | Agentic RAG | Tool-selection prompt's chunk_id fix was unverified against live tool selection |
-| AGT-006 | MAJOR | FIXED | Agentic RAG | Specialized tools were unreachable for reasons the prompts could not fix |
-| AGT-007 | MODERATE | FIXED | Agentic RAG | The corrective tool selection ran outside the step budget |
 | OPS-019 | MINOR | OPEN | Operations | Postgres crashed and recovered during a live eval on the 8GB box |
 | SEC-007 | MODERATE | ACCEPTED LIMITATION | Security | Upload atomicity: a crash between the DB write and the file install leaves the database one step ahead (verified, self-healing on retry) |
 | MULTI-002 | MINOR | ACCEPTED LIMITATION | Multimodal | A working vision provider did not improve answers, because the model was weak |
@@ -1307,7 +1304,7 @@ Both methods take a required `dataset_id` and filter on it in SQL (`IS NOT DISTI
 "What changed between Alpha retention policy versions 1 and 2?" and "How did the production deployment strategy change from v1 to v2?" need both versions, but current-mode freshness excluded v1, and no request field could ask otherwise.
 
 **Fix applied**
-An explicit `version_scope` request field (`"current"` default, or `"history"`) on `POST /query`, the agent routes, `/graph/query`, and the MCP RAG tools, rather than a bare `include_superseded` switch. History scope keeps every family member already effective on `as_of` (all of them without a date) and still excludes versions that took effect later; tenant, role, and trust predicates are unchanged, and each use logs a `freshness_version_history_requested` audit event. Evidence labels now carry `version X (status)`, so the model can tell the superseded text from the current one. The gold schema has a matching `version_scope` field; the two comparison rows in the local, gitignored `techfusion_gold.jsonl` set it to `history`.
+An explicit `version_scope` request field (`"current"` default, or `"history"`) on `POST /query`, the agent routes, `/graph/query`, and the MCP RAG tools, rather than a bare `include_superseded` switch. History scope keeps every family member already effective on `as_of` (all of them without a date) and still excludes versions that took effect later; tenant, role, and trust predicates are unchanged, and each use logs a `freshness_version_history_requested` audit event. Evidence labels now carry `version X (status)`, so the model can tell the superseded text from the current one. The gold schema has a matching `version_scope` field. The two comparison rows in the local, gitignored `techfusion_gold.jsonl` set it to `history`, so the techfusion numbers below are not reproducible from the repository alone; the tracked synthetic fixture `data/version_history_demo_docs/` with `data/eval/version_history_gold.jsonl` reproduces the same cases.
 
 **Result**
 Both comparison questions retrieve v1 and v2 again in the dense and hybrid configs. Retrieval-only evaluation (126 questions), before the 37.0/37.1 branch versus now:
@@ -1321,7 +1318,7 @@ Both comparison questions retrieve v1 and v2 again in the dense and hybrid confi
 The remaining default recall@10 drop is one row: the current-version question "A user upload allows 90 minutes for high-severity escalation..." lists the superseded `security-escalation-v1.md` as relevant while expecting version 2.0, so excluding v1 is correct (its retrieval is what `stale_document_error_rate` counts as an error). In hybrid mode, removing v1 chunks changes BM25 statistics; one question lost and another gained its source in the top 5.
 
 **Regression test**
-History-scope cases in `tests/unit/test_freshness_lifecycle_rules.py` and `tests/unit/test_freshness_policy.py`; `test_version_scope_reaches_the_authorization_context` (API); `test_history_scope_returns_every_version_for_a_comparison` and `test_history_scope_never_bypasses_the_acl` (PostgreSQL).
+History-scope cases in `tests/unit/test_freshness_lifecycle_rules.py` and `tests/unit/test_freshness_policy.py`; `test_version_scope_reaches_the_authorization_context` (API); `test_history_scope_returns_every_version_for_a_comparison` and `test_history_scope_never_bypasses_the_acl` (PostgreSQL); `tests/integration/test_version_history_eval.py` runs `evaluate()` over the tracked fixture and checks that current mode loses v1 on the same rows.
 
 ---
 
@@ -2251,15 +2248,15 @@ The same call succeeded when run directly. Postgres logs show the database in re
 None. The original run was discarded and repeated. Live evals avoid running other heavy work at the same time, and datasets beyond about 10,000 documents need more than the dev compose's 1 GiB for PostgreSQL (see the reproduction below).
 
 **Reproduced and narrowed (2026-11-22 and 2026-11-23)**
-The freshness scale benchmark crashed the server with the same signature (`server process exited with exit code 2`, no preceding `ERROR`, automatic recovery) three times on 2026-11-22 and again in a controlled rerun on 2026-11-23, with a 2-second sample of the container's cgroup counters:
+The freshness scale benchmark crashed the server with the same signature (`server process exited with exit code 2`, no preceding `ERROR`, automatic recovery) three times on 2026-11-22 and again in a controlled rerun on 2026-11-23, with the container's cgroup counters sampled every 2 to 3 seconds:
 
-- During the rerun the container sat at exactly its 1 GiB `memory.max` for the whole query phase: `memory.events` `max` rose by about 19,000, swap use reached ~65 MB, and `oom_kill` stayed 0. The process that exited was a fresh, short-lived backend (it logged nothing), not one of the benchmark's query backends.
+- During the rerun the container sat at exactly its 1 GiB `memory.max` for the whole query phase: `memory.events` `max` rose from 34 to 19,356 by the crash, swap use peaked at 62.6 MiB in the crash sample, and `oom_kill` stayed 0. The process that exited was a fresh, short-lived backend (it logged nothing), not one of the benchmark's query backends.
 - Exit code 2 is PostgreSQL's quick-exit (SIGQUIT) path; the kernel OOM killer would show `terminated by signal 9`. So the backend was not OOM-killed, and what sent the signal is still unproven.
-- The old `SELECT DISTINCT` over 300,000 chunk rows, run alone four times at 1 GiB, did not crash (another ~3,400 limit hits). Crashes only happened under the full workload: bulk inserts with checkpoints and autovacuum, then large scans.
-- The same full workload with the limit raised live to 2 GiB (`docker update`) completed with 0 crashes and no new `memory.max` hits; peak usage was 1.72 GB.
+- The old `SELECT DISTINCT` over 300,000 chunk rows, run alone four times at 1 GiB on 2026-11-23, did not crash (about 5,500 more limit hits). One 2026-11-22 crash was a standalone `DISTINCT` in `psql`, but on tables a crashed benchmark had just loaded; every other crash was during the full workload (bulk inserts with checkpoints and autovacuum, then large scans).
+- The same full workload with the limit raised live to 2 GiB (`docker update`) completed with 0 crashes and no new `memory.max` hits; peak usage was 1,644 MiB (1.72 GB).
 
 **Diagnosis**
-The trigger is the PostgreSQL container running pinned at its 1 GiB limit (constant reclaim and swapping) under a workload that needs about 1.7 GB. Small sample: 4 of 4 full-workload runs crashed at 1 GiB, 1 of 1 did not at 2 GiB. The compose limit was restored to 1 GiB; raising it is a deployment decision. Details: `experiments/results/freshness/crash_repro_memory_trace.log`, `scale_db_fetch_psql_50k_100k.json`, `scale_db_2g_37_1_in_container.json`.
+The trigger is the PostgreSQL container running pinned at its 1 GiB limit (constant reclaim and swapping) under a workload that needs about 1.7 GB. Small sample: at 1 GiB all 3 full-workload runs crashed, plus that one standalone `DISTINCT`; at 2 GiB the 1 full-workload run did not. The compose limit was restored to 1 GiB; raising it is a deployment decision. Details: `experiments/reports/postgres_memory_crash_investigation.md`.
 
 **Interview takeaway**
 Check the infrastructure before filing a tool bug: one row of a green-looking report can be a database restart. A report that hides the error text behind a safe label also needs a log line to find the cause.
@@ -3151,6 +3148,33 @@ Deferred until a real source is required. OAuth, webhooks, API quotas, and mappi
 
 ---
 
+### PROD-008: A zero settle window still deferred freshly written files on Windows
+
+**Status:** FIXED
+**Severity:** MINOR
+**Area:** Ingestion / scheduler
+**Affected code:** `ingestion/scheduler.py` settle-window check
+
+**Problem**
+Two scheduler unit tests failed on a full-suite run of the committed branch and passed in earlier runs. The failing scans reported both files as `deferred` although the tests set `settle_seconds: 0`.
+
+**Diagnosis**
+The check was `clock() - st_mtime < settle_seconds`. On Windows a newly written file's mtime can be stamped a fraction of a microsecond after `time.time()` reads the clock, which makes the age negative and so less than 0. Writing 2,000 files and comparing at once, 327 (16%) had an mtime ahead of `time.time()`.
+
+**Fix applied**
+`settle_seconds == 0` now disables the window instead of comparing against it.
+
+**Result**
+The new test fails on the previous code and passes on the fix; the scheduler test file passed 5 of 5 repeated runs.
+
+**Regression test**
+`test_zero_settle_window_ingests_a_file_whose_mtime_is_ahead_of_the_clock` in `tests/unit/test_ingestion_scheduler.py` (a clock set 1 microsecond before the newest mtime).
+
+**Interview takeaway**
+A "disabled" threshold compared with `<` is not disabled when the measured quantity can be slightly negative. Treat zero as off explicitly, and suspect clock-source differences when a timing test fails only sometimes.
+
+---
+
 ## 9. Needs Verification
 
 Both entries below have since been verified (see their status lines); they stay in this section so existing references keep pointing here.
@@ -3258,6 +3282,9 @@ The following issues are resolved, with a concrete fix and regression test cited
 | AGT-001 | Agentic RAG | Step budgets collided with the happy path, mislabeling most runs as max_steps |
 | AGT-002 | Agentic RAG | Citation metrics measured the wrong set and a model that rarely cites |
 | AGT-003 | Agentic RAG | A classify fix exposed a RAGAS gap on the classic route |
+| AGT-005 | Agentic RAG | Tool-selection prompt's chunk_id fix was unverified against live tool selection |
+| AGT-006 | Agentic RAG | Specialized tools were unreachable for reasons the prompts could not fix |
+| AGT-007 | Agentic RAG | The corrective tool selection ran outside the step budget |
 | EVAL-002 | Evaluation | A 15-question pilot hid a failure that the full 62-question set exposed |
 | EVAL-003 | Evaluation | A keyword heuristic produced false regression counts, and a test relied on it |
 | EVAL-005 | Evaluation | Safety metrics read as a perfect zero until the gold paths were checked |
@@ -3313,6 +3340,7 @@ The following issues are resolved, with a concrete fix and regression test cited
 | PROD-002 | Data | Re-spelling the same ingestion root churned document identity |
 | PROD-005 | Ingestion | A directory ingest treated an empty or unmounted root as every file deleted |
 | RET-014 | Retrieval | Version-comparison questions could not see the superseded version |
+| PROD-008 | Ingestion | A zero settle window still deferred freshly written files on Windows |
 
 ---
 
@@ -3375,3 +3403,5 @@ Performed after restructuring:
 **Follow-up (2026-11-22, freshness and lifecycle audit):** **RET-007** and **RET-011** fixed; **RET-008** in progress (decoupling flag added, default unchanged pending approval); **RET-009**, **RET-010**, **PROD-004**, **PROD-006**, **PROD-007** and **OPS-020** recorded as accepted limitations; **RET-012**, **RET-013** and **PROD-005** open. **PROD-002** mitigated for scheduled scans. Benchmark: `experiments/reports/freshness_benchmark.md`.
 
 **Follow-up (2026-11-22, 37.1 freshness fixes):** **RET-008**, **RET-012**, **RET-013**, **PROD-002** and **PROD-005** fixed; **RET-010** narrowed (conflicting active versions now resolved by `supersedes` links); **RET-014** opened from the retrieval evaluation; **RET-007**, **RET-009** and **OPS-019** updated with the 10,000 to 100,000 document scale run, which also reproduced the PostgreSQL crash three times. The earlier follow-up line above is a point-in-time record.
+
+**Follow-up (2026-11-23 and 2026-11-25, version comparison and merge preparation):** **RET-014** fixed with an explicit `version_scope` (`history` keeps ACL predicates and audits each use), reproducible from the tracked fixture `data/version_history_demo_docs/` with `data/eval/version_history_gold.jsonl`. **OPS-019** stays open: the crash was reproduced with memory sampling and narrowed to PostgreSQL running pinned at its 1 GiB limit, but what sends the quit signal is unproven (`experiments/reports/postgres_memory_crash_investigation.md`). **AGT-005**, **AGT-006** and **AGT-007** moved from the summary table to section 10, since they were already fixed. **PROD-008** (a scheduler timing bug found by the full suite) fixed.

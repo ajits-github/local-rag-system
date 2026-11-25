@@ -158,7 +158,8 @@ The real `techfusion` data was intact after each recovery.
 ### Rerun at 2 GiB, and the crash investigation (2026-11-23)
 
 The PostgreSQL crash was reproduced once more at 1 GiB, with the container's
-cgroup counters sampled every 2 seconds (`crash_repro_memory_trace.log`):
+cgroup counters sampled every 2 to 3 seconds
+(`postgres_memory_crash_investigation.md` summarizes the trace):
 memory pinned at exactly 1 GiB for the whole query phase, about 19,000
 `memory.max` hits, ~65 MB of swap, and no OOM kill. Run alone four times
 at 1 GiB, the old `DISTINCT` did not crash. The same full workload with the

@@ -11700,3 +11700,26 @@ OPS-019's signal source; RET-009/projection before any 50,000-document dataset; 
 
 ### Next recommended step
 Merge in reviewable commits, then decide whether the dev compose should give PostgreSQL 2 GiB.
+
+## 2026-11-25 (session 35): Pre-push verification of the freshness branch
+
+### Context
+The three branch commits (`1c8540d`, `ffaf335`, `598eb03`) were made on 2026-11-23. Before pushing, the user asked to replace the reference to the gitignored crash log with a tracked summary, make the RET-014 comparison cases reproducible without the gitignored corpus, rerun the full suites against HEAD, run a security review, and recheck `KNOWN_ISSUES.md`.
+
+### Crash evidence
+`experiments/reports/postgres_memory_crash_investigation.md` summarizes the raw cgroup trace (1,267 samples, 13:30 to 14:22 UTC on 2026-11-23) by phase. Rechecking the raw numbers corrected two figures: the four standalone `DISTINCT` runs added about 5,500 `memory.max` hits (the earlier "~3,400" counted only runs 2 to 4), and one 2026-11-22 crash was a standalone `DISTINCT`, so "only under the full workload" was too strong. The crash at 13:54:53.945 UTC coincides with the trace's swap peak (62.6 MiB).
+
+### Reproducible RET-014 fixture
+`data/version_history_demo_docs/` (8 synthetic documents: two compared families, a v3 effective in 2027, an admin-only v2, one unrelated document) and `data/eval/version_history_gold.jsonl` (4 rows). `tests/integration/test_version_history_eval.py` runs `evaluate()` with a word-hashing embedder and checks that current mode loses v1 on the same rows. With the real embedder and `secure-rag-baseline-v1.yaml`: recall@10 1.0, MRR 1.0, unauthorized retrieval 0.0. A first CLI run reported unauthorized retrieval 1.0: both CLIs read `--config` and ignore `RAG_CONFIG_PATH`, so it had run on `default.yaml` with authorization off; the documented command was corrected.
+
+### Scheduler timing bug (PROD-008)
+A full-suite run of HEAD on system Python 3.12 failed two scheduler unit tests that had passed before; the scans reported both files `deferred` despite `settle_seconds: 0`. On Windows a new file's mtime can be stamped just after `time.time()` reads the clock, making the age negative; 327 of 2,000 fresh files showed it. `settle_seconds == 0` now disables the window, with a regression test that fails on the old code.
+
+### Verification
+HEAD (`598eb03`, clean worktree, project venv): unit 1572 passed, 8 skipped (missing `rdflib`, `pyshacl`, `anthropic`); integration 169 passed, 49 skipped (Ollama made unreachable). The system-Python run additionally hit three Neo4j write-transaction timeouts in `test_graph_authorization_isolation.py`; that file passed twice on rerun. Working tree with the proposed changes: unit 1573 passed, 8 skipped; integration 171 passed, 49 skipped; then the 13 files holding the 49 Ollama-dependent tests against live Ollama: 75 passed, 2 xfailed (AGT-004), 0 skipped. Ruff and `mkdocs build --strict` pass. Security review of the three commits: no HIGH or MEDIUM findings.
+
+### Open problems
+OPS-019's signal source; RET-009/projection before any 50,000-document dataset; the Neo4j first-write timeout; the mypy casts in `rag/ontology` (separate branch).
+
+### Next recommended step
+Commit the follow-up changes after review, then push.
